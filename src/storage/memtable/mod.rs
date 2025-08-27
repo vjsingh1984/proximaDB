@@ -134,7 +134,7 @@ impl MemtableFactory {
     // /// Create SST-optimized memtable (SkipList for concurrent access)
     // pub fn create_for_sst(
     //     config: MemtableConfig,
-    // ) -> specialized::LsmMemtable<String, crate::storage::engines::sst::SstRecord> {
+    // ) -> specialized::LsmMemtable<String, crate::storage::engines::impls::sst::SstRecord> {
     //     specialized::SpecializedMemtableFactory::create_skiplist_for_sst(config)
     // }
 

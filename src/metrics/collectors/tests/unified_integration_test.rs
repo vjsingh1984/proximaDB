@@ -133,7 +133,7 @@ mod tests {
         assert!(collector_names.contains(&"filesystem".to_string()));
         
         // Verify metrics summary
-        let summary = unified.get_metrics_summary().await;
+        let summary = unified.metrics_summary().await;
         assert!(summary.system_health > 0.0);
         assert!(summary.cache_hit_rate >= 0.0 && summary.cache_hit_rate <= 1.0);
     }

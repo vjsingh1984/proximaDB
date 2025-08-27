@@ -13,7 +13,7 @@ use dashmap::DashMap;
 use super::unified::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
     QuantizedVector, QuantizationMetadata,
-    QuantizationLevelType, BinaryQuantization,
+    QuantizationLevel, BinaryQuantization,
     InMemoryCodebookStore,
 };
 use crate::compute::distance_computation::engine::{
@@ -56,7 +56,7 @@ impl Default for StorageQuantizationConfig {
             primary_level: Some(UnifiedQuantizationLevel::pq8(32)),
             // Binary sketch for filtering
             filter_level: Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                     threshold: None,
                     sign_based: false, // Use median-based binary quantization
                 })),
@@ -234,7 +234,7 @@ impl StorageQuantizationEngine {
         
         // Train primary quantization (PQ)
         if let Some(ref level) = self.config.primary_level {
-            if let Some(QuantizationLevelType::Pq(pq)) = &level.level_type {
+            if let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
                 let codebook_id = format!("storage_pq_{}_{}", 
                     pq.num_subvectors, pq.bits_per_code);
                 
@@ -311,7 +311,7 @@ impl StorageQuantizationEngine {
             if let Some(ref level) = self.config.primary_level {
                 // Clone level and add codebook_id if PQ
                 let mut level_with_codebook = level.clone();
-                if let Some(QuantizationLevelType::Pq(ref mut pq)) = &mut level_with_codebook.level_type {
+                if let Some(QuantizationLevel::Pq(ref mut pq)) = &mut level_with_codebook.level_type {
                     // Set the codebook_id based on the configuration
                     pq.codebook_id = Some(format!("storage_pq_{}_{}", 
                         pq.num_subvectors, pq.bits_per_code));
@@ -493,7 +493,7 @@ impl StorageQuantizationEngine {
         metric: &DistanceMetric,
     ) -> Result<f32> {
         match &quantized_vector.quantization_level.level_type {
-            Some(QuantizationLevelType::Scalar(scalar)) => {
+            Some(QuantizationLevel::Scalar(scalar)) => {
                 // Use existing INT8 SIMD infrastructure from distance_computation
                 // The quantized data is stored in the data field
                 let int8_data: Vec<i8> = quantized_vector.data.iter().map(|&b| b as i8).collect();
@@ -508,14 +508,14 @@ impl StorageQuantizationEngine {
                 );
                 Ok(result.raw_value)
             }
-            Some(QuantizationLevelType::Binary(_)) => {
+            Some(QuantizationLevel::Binary(_)) => {
                 // Use Hamming distance for binary vectors
                 // Binary data is stored in the data field
                 let query_binary = self.fp32_to_binary(query);
                 let hamming_dist = self.calculate_hamming_distance(&query_binary, &quantized_vector.data);
                 Ok(hamming_dist as f32)
             }
-            Some(QuantizationLevelType::Pq(_)) => {
+            Some(QuantizationLevel::Pq(_)) => {
                 // Use PQ lookup table optimization
                 self.calculate_pq_simd_distance(query, quantized_vector, metric)
             }
@@ -701,7 +701,7 @@ impl StorageQuantizationEngine {
         
         // Check if we have PQ quantization configuration and precompute distance table
         if let Some(ref level) = self.config.primary_level {
-            if let Some(QuantizationLevelType::Pq(pq)) = &level.level_type {
+            if let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
                 // Precompute distance table for faster PQ distance calculations
                 let _distance_table = self.precompute_pq_distance_table(
                     query,

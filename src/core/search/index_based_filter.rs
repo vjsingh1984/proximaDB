@@ -113,7 +113,7 @@ pub struct ColumnMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ColumnDataType {
+pub enum ColumnData {
     String,
     Integer,
     Float,

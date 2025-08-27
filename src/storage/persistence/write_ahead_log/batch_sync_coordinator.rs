@@ -344,7 +344,7 @@ mod tests {
         // NoSync should not perform any syncs
         coordinator.request_sync("test_collection".to_string(), "file:///test.wal".to_string()).await.unwrap();
         
-        let stats = coordinator.get_stats().await;
+        let stats = coordinator.stats().await;
         assert_eq!(stats.total_syncs, 0);
     }
     
@@ -361,7 +361,7 @@ mod tests {
         // SyncFull should sync immediately
         coordinator.request_sync("test_collection".to_string(), file_url).await.unwrap();
         
-        let stats = coordinator.get_stats().await;
+        let stats = coordinator.stats().await;
         assert_eq!(stats.total_syncs, 1);
         assert_eq!(stats.batch_syncs, 0); // No batching for immediate sync
     }
@@ -388,7 +388,7 @@ mod tests {
         ).await.unwrap();
         
         // Stats should show no syncs yet
-        let stats = coordinator.get_stats().await;
+        let stats = coordinator.stats().await;
         assert_eq!(stats.total_syncs, 0);
         
         // Request sync for second file - should trigger batch
@@ -401,7 +401,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         
         // Stats should show batch sync
-        let stats = coordinator.get_stats().await;
+        let stats = coordinator.stats().await;
         assert_eq!(stats.total_syncs, 2);
         assert_eq!(stats.batch_syncs, 1);
         assert_eq!(stats.avg_batch_size, 2.0);

@@ -116,7 +116,7 @@ impl MetadataFilterPushdown {
                 };
                 let mut bloom_builder = BloomFilterBuilder::new(config);
                 for value in values.iter().flatten() {
-                    bloom_builder.add(&serde_json::to_vec(value).unwrap_or_default());
+                    bloom_builder.add(&serde_json::to_vec(value).clone());
                 }
                 let bloom = bloom_builder.build();
                 self.bloom_filters.insert(column_name.clone(), Arc::new(bloom));
@@ -223,7 +223,7 @@ impl MetadataFilterPushdown {
                 if let Some(bloom) = self.bloom_filters.get(field) {
                     match operator {
                         ComparisonOperator::Equals => {
-                            let value_bytes = serde_json::to_vec(value).unwrap_or_default();
+                            let value_bytes = serde_json::to_vec(value).clone();
                             bloom.as_ref().contains(&value_bytes)
                         }
                         _ => true, // Can't use bloom filter for other operators
@@ -480,7 +480,7 @@ impl MetadataFilterPushdown {
                 exprs.iter()
                     .map(|expr| self.get_indexed_candidates(expr, indexed_columns))
                     .reduce(|a, b| a.intersection(&b).cloned().collect())
-                    .unwrap_or_default()
+                    .clone()
             }
             FilterExpression::Or(exprs) => {
                 // Union of candidates
@@ -506,7 +506,7 @@ impl MetadataFilterPushdown {
             ComparisonOperator::Equals => {
                 index.inverted_index.get(value)
                     .cloned()
-                    .unwrap_or_default()
+                    .clone()
             }
             ComparisonOperator::In => {
                 if let Value::Array(values) = value {
@@ -514,7 +514,7 @@ impl MetadataFilterPushdown {
                         .flat_map(|v| {
                             index.inverted_index.get(v)
                                 .cloned()
-                                .unwrap_or_default()
+                                .clone()
                         })
                         .collect()
                 } else {
@@ -566,7 +566,7 @@ impl MetadataBloomBuilder {
             
             // Serialize the metadata value for the bloom filter
             if let Some(ref value) = entry.value {
-                let serialized = serde_json::to_vec(value).unwrap_or_default();
+                let serialized = serde_json::to_vec(value).clone();
                 builder.add(&serialized);
             }
         }

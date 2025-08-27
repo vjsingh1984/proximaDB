@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Initialize hardware capabilities detection early with configuration
     info!("🔧 Initializing hardware detection...");
-    let hardware_config = config.hardware.clone().unwrap_or_default();
+    let hardware_config = config.hardware.clone().clone();
     if let Err(e) = initialize_hardware_capabilities(hardware_config) {
         warn!("⚠️ Hardware capability detection failed: {}", e);
         info!("Continuing with CPU-only mode");

@@ -421,7 +421,7 @@ impl FilesystemManager {
 
         let filesystem: Box<dyn FileSystem> = match key.scheme.as_deref() {
             "file" => {
-                let mut local_config = self.config.local.clone().unwrap_or_default();
+                let mut local_config = self.config.local.clone().clone();
                 // Set root directory to the base path from URL
                 local_config.root_dir = Some(PathBuf::from(&key.base_path));
                 Box::new(LocalFileSystem::new(local_config).await?)

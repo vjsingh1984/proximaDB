@@ -466,7 +466,7 @@ impl WALBehaviorWrapper {
         let mut search_results = Vec::new();
         for (rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
             let search_result = SearchResult {
-                id: vector_record.id.clone().unwrap_or_default(),
+                id: vector_record.id.clone().clone(),
                 vector_id: vector_record.id.clone(),
                 score: similarity.raw_distance, // Add score field
                 similarity: similarity.rank_value,
@@ -514,8 +514,8 @@ impl WALBehaviorWrapper {
     }
 
     /// Get vector by ID within a specific collection (MODERN)
-    pub async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
-        self.inner.get_vector_by_id(collection_id, vector_id).await
+    pub async fn vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
+        self.inner.vector_by_id(collection_id, vector_id).await
     }
 
     /// Check if global flush is needed
@@ -639,7 +639,7 @@ impl WALBehaviorWrapper {
     pub async fn get_latest_vector(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         // MVCC is now handled natively by GlobalPartitionedMemtable
         // No need for separate version tracking at WAL level
-        self.inner.get_vector_by_id(collection_id, vector_id).await
+        self.inner.vector_by_id(collection_id, vector_id).await
     }
 
 
@@ -729,7 +729,7 @@ impl WALBehaviorWrapper {
         );
 
         for collection_id in &collections_to_flush {
-            let (entries, size) = self.inner.get_collection_stats(collection_id).await;
+            let (entries, size) = self.inner.collection_stats(collection_id).await;
             tracing::info!(
                 "🔍 COLLECTIONS_FLUSH_CHECK: Collection {} has {} entries, {} bytes ({}MB)",
                 collection_id,
@@ -776,7 +776,7 @@ impl WALBehaviorWrapper {
         >,
     > {
         // Call the main get_stats method and convert String keys to String
-        let string_stats = self.get_stats().await?;
+        let string_stats = self.stats().await?;
         let mut result = std::collections::HashMap::new();
         for (k, v) in string_stats {
             result.insert(k, v);
@@ -790,7 +790,7 @@ impl WALBehaviorWrapper {
         collection_id: &crate::core::String,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
-        self.inner.get_vector_by_id(collection_id, vector_id).await
+        self.inner.vector_by_id(collection_id, vector_id).await
     }
 
     /// Get vectors for specific collection with limit (MODERN)

@@ -10,7 +10,7 @@ use chrono::Utc;
 use super::*;
 use crate::core::VectorRecord;
 use crate::proto::proximadb;
-use crate::index::axis::types::{IndexSelectionStrategy, IndexSpecification, DataType, IndexAlgorithm};
+use crate::index::axis::types::{IndexSelectionStrategy, IndexSpecification, Data, IndexAlgorithm};
 
 /// Mock collection service for testing
 #[derive(Debug, Clone)]
@@ -92,12 +92,12 @@ fn create_test_strategy() -> IndexSelectionStrategy {
     IndexSelectionStrategy {
         indexes: vec![
             IndexSpecification {
-                // data_type removed -  DataType::DenseVector { dimension: 128 },
+                // data_type removed -  Data::DenseVector { dimension: 128 },
                 algorithm: IndexAlgorithm::HNSW,
                 configuration: HashMap::new(),
             },
             IndexSpecification {
-                // data_type removed -  DataType::Metadata,
+                // data_type removed -  Data::Metadata,
                 algorithm: IndexAlgorithm::BTree,
                 configuration: HashMap::new(),
             },
@@ -486,7 +486,7 @@ mod metrics_tests {
             manager.insert("test_collection", &vector).await.unwrap();
         }
         
-        let metrics = manager.get_metrics().await;
+        let metrics = manager.metrics().await;
         
         assert_eq!(metrics.total_vectors_indexed, 3);
         assert_eq!(metrics.total_migrations, 0); // No migrations yet
@@ -500,7 +500,7 @@ mod metrics_tests {
         let manager = AxisManager::new(config).await.unwrap();
         
         // Initial metrics
-        let initial_metrics = manager.get_metrics().await;
+        let initial_metrics = manager.metrics().await;
         assert_eq!(initial_metrics.total_vectors_indexed, 0);
         
         // Insert vectors
@@ -510,7 +510,7 @@ mod metrics_tests {
         }
         
         // Updated metrics
-        let updated_metrics = manager.get_metrics().await;
+        let updated_metrics = manager.metrics().await;
         assert_eq!(updated_metrics.total_vectors_indexed, 5);
     }
 }
@@ -727,7 +727,7 @@ mod integration_tests {
         assert!(!search_results.is_empty());
         
         // Check metrics
-        let metrics = manager.get_metrics().await;
+        let metrics = manager.metrics().await;
         assert_eq!(metrics.total_vectors_indexed, 10);
         
         // Evaluate migration
@@ -769,7 +769,7 @@ mod integration_tests {
         }
         
         // Check overall metrics
-        let metrics = manager.get_metrics().await;
+        let metrics = manager.metrics().await;
         assert_eq!(metrics.total_vectors_indexed, 15); // 3 collections * 5 vectors
         
         // Check that all collections have strategies

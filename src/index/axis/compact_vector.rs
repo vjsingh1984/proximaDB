@@ -108,9 +108,9 @@ impl CompactVector {
     ) -> Result<Self> {
         let id_bytes = id.as_bytes();
         
-        let mut data = Vec::with_capacity(1 + quantized.len() + id_bytes.len());
+        let mut data = Vec::with_capacity(1 + quantized_vector.len() + id_bytes.len());
         data.push(quantization_method);
-        data.extend_from_slice(quantized);
+        data.extend_from_slice(quantized_vector);
         data.extend_from_slice(id_bytes);
         
         Ok(Self { 
@@ -244,28 +244,28 @@ impl CompactVectorCollection {
         quantized_vector: &[u8],
         method: u8,
     ) -> Result<()> {
-        let compact = CompactVector::new_quantized(&id, quantized, method)?;
+        let compact = CompactVector::new_quantized(&id, quantized_vector, method)?;
         let index = self.vectors.len();
         self.vectors.push(compact);
         self.id_index.insert(id, index);
         Ok(())
     }
     
-    pub fn get_by_id(&self, id: &str) -> Option<&CompactVector> {
-        self.id_index.get(key).map(|index| &self.vectors[*index])
+    pub fn by_id(&self, id: &str) -> Option<&CompactVector> {
+        self.id_index.get(id).map(|index| &self.vectors[*index])
     }
     
-    pub fn get_by_index(&self, index: usize) -> Option<&CompactVector> {
+    pub fn by_index(&self, index: usize) -> Option<&CompactVector> {
         self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */
     }
     
     /// Get vector as FP32 using stored dimension
-    pub fn get_vector_f32(&self, id: &str) -> Option<Result<&[f32]>> {
+    pub fn vector_f32(&self, id: &str) -> Option<Result<&[f32]>> {
         self.get_by_id(id).map(|v| v.vector_as_f32(self.dimension))
     }
     
     /// Get vector ID using stored dimension
-    pub fn get_vector_id(&self, index: usize) -> Option<&str> {
+    pub fn vector_id(&self, index: usize) -> Option<&str> {
         self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|v| v.id(self.dimension))
     }
     

@@ -20,8 +20,8 @@ mod tests {
     use crate::proto::proximadb::{
         Collection, CollectionConfig, IndexingAlgorithm, StorageEngine, VectorRecord
     };
-    use crate::services::collection_service::CollectionService;
-    use crate::services::vector_operations_service::VectorOperationsService;
+    use crate::services::collection::manager::CollectionService;
+    use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
     use crate::storage::memtable::GlobalMemtable;
     

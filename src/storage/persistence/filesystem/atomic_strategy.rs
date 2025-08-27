@@ -204,7 +204,6 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
 #[derive(Clone)]
 pub struct SameMountTempExecutor {
     temp_suffix: String,
-    #[allow(dead_code)]
     config: AtomicWriteConfig,
 }
 
@@ -248,7 +247,7 @@ impl SameMountTempExecutor {
         // Generate unique temp filename with timestamp and process ID
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .clone()
             .as_millis();
         let pid = std::process::id();
         let temp_filename = format!(
@@ -398,7 +397,7 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         // Generate local temp file
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .clone()
             .as_millis();
         let pid = std::process::id();
         let temp_filename = format!("proximadb_{}_{}.tmp", timestamp, pid);

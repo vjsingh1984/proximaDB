@@ -83,9 +83,9 @@ use tracing::{debug, error, info};
                total_queries, elapsed, total_queries as f64 / elapsed.as_secs_f64());
         
         // Check parser pool statistics
-        let pool = get_global_pool();
-        let stats = pool.get_stats();
-        let (created, reused, pool_size, peak) = stats.get_stats();
+        let pool = global_pool();
+        let stats = pool.stats();
+        let (created, reused, pool_size, peak) = stats.stats();
         
         debug!("📊 Parser Pool Stats - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
                created, reused, pool_size, peak);
@@ -340,9 +340,9 @@ use tracing::{debug, error, info};
         assert_eq!(errors, 0, "No errors should occur in concurrent test");
         
         // Check component statistics
-        let pool = get_global_pool();
-        let pool_stats = pool.get_stats();
-        let (created, reused, pool_size, peak) = pool_stats.get_stats();
+        let pool = global_pool();
+        let pool_stats = pool.stats();
+        let (created, reused, pool_size, peak) = pool_stats.stats();
         
         debug!("📊 Final Component Statistics:");
         debug!("  Parser Pool - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
@@ -399,9 +399,9 @@ use tracing::{debug, error, info};
                (final_cache_memory.saturating_sub(initial_cache_memory)) / 1024);
         
         // Check component resource usage
-        let pool = get_global_pool();
-        let pool_stats = pool.get_stats();
-        let (created, reused, pool_size, _) = pool_stats.get_stats();
+        let pool = global_pool();
+        let pool_stats = pool.stats();
+        let (created, reused, pool_size, _) = pool_stats.stats();
         
         let cache = get_global_query_cache();
         let cache_size = cache.size();
@@ -435,7 +435,7 @@ use tracing::{debug, error, info};
         debug!("🧪 Benchmarking complete SQL engine performance...");
         
         // Warm up all components
-        let pool = get_global_pool();
+        let pool = global_pool();
         pool.warmup(num_cpus::get());
         
         // Pre-populate cache with some common queries
@@ -512,8 +512,8 @@ use tracing::{debug, error, info};
         assert!(throughput > 10000.0, "Throughput should be >10K queries/sec, got {:.0}", throughput);
         
         // Check final statistics
-        let pool_stats = pool.get_stats();
-        let (created, reused, _, _) = pool_stats.get_stats();
+        let pool_stats = pool.stats();
+        let (created, reused, _, _) = pool_stats.stats();
         
         let cache = get_global_query_cache();
         let cache_stats = cache.stats();

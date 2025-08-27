@@ -166,12 +166,12 @@ impl ConcurrentIdMapping {
     }
 
     /// Get internal ID for external ID
-    pub fn get_internal(&self, external_id: &str) -> Option<usize> {
+    pub fn internal(&self, external_id: &str) -> Option<usize> {
         self.external_to_internal.get(external_id).map(|entry| *entry.value())
     }
 
     /// Get external ID for internal ID
-    pub fn get_external(&self, internal_id: usize) -> Option<String> {
+    pub fn external(&self, internal_id: usize) -> Option<String> {
         self.internal_to_external.get(&internal_id).map(|entry| entry.value().clone())
     }
 
@@ -468,7 +468,7 @@ mod tests {
 
         // Test lookups
         assert_eq!(mapping.get_internal("external1"), Some(0));
-        assert_eq!(mapping.get_external(1), Some("external2".to_string()));
+        assert_eq!(mapping.external(1), Some("external2".to_string()));
 
         // Test remove
         assert_eq!(mapping.remove_by_external("external1"), Some(0));

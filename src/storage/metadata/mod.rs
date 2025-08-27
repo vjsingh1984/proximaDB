@@ -37,7 +37,7 @@ use std::collections::HashMap;
 // Re-exports
 pub use transaction_coordinator::TransactionId;
 pub use store::{MetadataStore, MetadataStoreConfig};
-pub use write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLogManager, SystemMetadata, VersionedCollectionMetadata};
+pub use write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog, SystemMetadata, VersionedCollectionMetadata};
 
 // Re-export strategy types for convenience
 pub use crate::storage::strategy::{StorageEngineType, IndexingAlgorithm, DistanceMetric};

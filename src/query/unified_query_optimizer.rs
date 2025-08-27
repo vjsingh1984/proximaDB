@@ -22,7 +22,7 @@ use crate::compute::quantization::storage_engine::{
 };
 use crate::core::search::{SearchParams, FilterExpression};
 use crate::proto::proximadb::{Collection, CompressionAlgorithm, QuantizationConfig};
-use crate::storage::engines::columnar::common::EarlyTerminationConfig;
+use crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig;
 // Note: SearchStageContext from search_modes is for search stages, not query context - using StorageQueryContext instead
 
 // ================================================================================
@@ -165,7 +165,7 @@ pub struct FilterOptimizationHints {
 /// Index strategy for query execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStrategy {
-    pub index_type: IndexType,
+    pub index_type: Index,
     pub params: HashMap<String, serde_json::Value>,
 }
 
@@ -215,13 +215,13 @@ pub enum ExecutionStep {
     
     /// Index lookup (shared by both)
     IndexLookup {
-        index_type: IndexType,
+        index_type: Index,
         lookup_params: IndexLookupParams,
     },
     
     /// Bloom filter check (shared)
     BloomFilterCheck {
-        filter_type: BloomFilterType,
+        filter_type: BloomFilter,
         expected_false_positive_rate: f64,
     },
 }
@@ -257,11 +257,11 @@ impl UnifiedCostModel {
     /// Calculate index lookup cost
     fn calculate_index_lookup_cost(&self, index: &IndexOperation) -> f64 {
         match index.index_type {
-            IndexType::HNSW => 1.5,
-            IndexType::IVF => 2.0,
-            IndexType::LSH => 2.5,
-            IndexType::BTree => 0.5,
-            IndexType::Hash => 0.3,
+            Index::HNSW => 1.5,
+            Index::IVF => 2.0,
+            Index::LSH => 2.5,
+            Index::BTree => 0.5,
+            Index::Hash => 0.3,
         }
     }
     
@@ -500,7 +500,7 @@ impl UnifiedQueryOptimizer {
         // Add bloom filter checks if available
         if cost_analysis.has_bloom_filters {
             steps.insert(0, ExecutionStep::BloomFilterCheck {
-                filter_type: BloomFilterType::Hierarchical,
+                filter_type: BloomFilter::Hierarchical,
                 expected_false_positive_rate: 0.01,
             });
         }
@@ -577,7 +577,7 @@ enum Operation {
 
 /// Index operation details
 struct IndexOperation {
-    index_type: IndexType,
+    index_type: Index,
     lookup_params: IndexLookupParams,
 }
 
@@ -607,7 +607,7 @@ pub enum SearchExecutionMethod {
     DirectFP32,
     Progressive { stages: Vec<ProgressiveStage> },
     QuantizedOnly { quantization_type: QuantizationType },
-    IndexBased { index_type: IndexType },
+    IndexBased { index_type: Index },
 }
 
 /// Filter execution methods
@@ -646,7 +646,7 @@ pub enum QuantizationType {
 
 /// Index types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum IndexType {
+pub enum Index {
     HNSW,
     IVF,
     LSH,
@@ -663,7 +663,7 @@ pub struct IndexLookupParams {
 
 /// Bloom filter types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum BloomFilterType {
+pub enum BloomFilter {
     Standard,
     Hierarchical,
     Counting,
@@ -772,7 +772,7 @@ pub struct ColumnMetadata {
 
 /// Column data types
 #[derive(Debug, Clone)]
-pub enum ColumnDataType {
+pub enum ColumnData {
     Integer,
     Float,
     String,
@@ -794,7 +794,7 @@ pub struct ColumnStatistics {
 #[derive(Debug, Clone)]
 pub struct IndexInfo {
     pub index_name: String,
-    pub index_type: IndexType,
+    pub index_type: Index,
     pub selectivity: f64,
 }
 
@@ -1061,7 +1061,7 @@ impl UnifiedQueryOptimizer {
         } else if cost_analysis.has_bloom_filters {
             // Large dataset with indexes
             SearchExecutionMethod::IndexBased {
-                index_type: IndexType::HNSW, // Default to HNSW for now
+                index_type: Index::HNSW, // Default to HNSW for now
             }
         } else {
             // Large dataset without indexes - quantized only

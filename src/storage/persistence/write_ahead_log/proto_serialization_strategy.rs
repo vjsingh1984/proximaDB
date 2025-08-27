@@ -366,8 +366,8 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
     }
 
     async fn get_stats(&self) -> Result<WALStats> {
-        let memtable_stats = self.memtable_manager.get_stats().await?;
-        let disk_stats = self.disk_manager.get_stats().await?;
+        let memtable_stats = self.memtable_manager.stats().await?;
+        let disk_stats = self.disk_manager.stats().await?;
         
         Ok(WALStats {
             total_entries: memtable_stats.total_vectors_added,

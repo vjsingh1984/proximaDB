@@ -42,8 +42,8 @@ pub struct HealthResponse {
 
 /// Dashboard home page
 async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
-    let metrics = state.metrics_collector.get_current_metrics().await;
-    let summary = state.metrics_collector.get_metrics_summary().await;
+    let metrics = state.metrics_collector.current_metrics().await;
+    let summary = state.metrics_collector.metrics_summary().await;
 
     let html = format!(
         r#"
@@ -168,7 +168,7 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
 
 /// Health check endpoint
 async fn health_check(State(state): State<DashboardState>) -> Json<HealthResponse> {
-    let metrics = state.metrics_collector.get_current_metrics().await;
+    let metrics = state.metrics_collector.current_metrics().await;
 
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -187,11 +187,11 @@ async fn metrics_endpoint(
 
     match format.as_str() {
         "json" => {
-            let metrics = state.metrics_collector.get_current_metrics().await;
+            let metrics = state.metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
         "prometheus" | _ => {
-            let metrics = state.metrics_collector.get_current_metrics().await;
+            let metrics = state.metrics_collector.current_metrics().await;
             use crate::metrics::exporters::PrometheusExporter;
             let exporter = PrometheusExporter::new();
             exporter
@@ -207,7 +207,7 @@ async fn api_metrics_endpoint(
     State(state): State<DashboardState>,
 ) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // TODO: Use this for historical data
-    let metrics = state.metrics_collector.get_current_metrics().await;
+    let metrics = state.metrics_collector.current_metrics().await;
     Json(metrics)
 }
 
@@ -248,7 +248,7 @@ async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>
                     alert.threshold_value,
                     {
                         use std::time::UNIX_EPOCH;
-                        let duration = alert.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default();
+                        let duration = alert.timestamp.duration_since(UNIX_EPOCH).clone();
                         let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0)
                             .unwrap_or_else(chrono::Utc::now);
                         datetime.format("%Y-%m-%d %H:%M:%S UTC")

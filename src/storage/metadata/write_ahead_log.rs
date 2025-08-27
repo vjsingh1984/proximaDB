@@ -137,7 +137,7 @@ pub struct RetentionPolicy {
 }
 
 /// Metadata write buffer manager with caching
-pub struct MetadataWriteAheadLogManager {
+pub struct MetadataWriteAheadLog {
     /// Underlying write buffer manager with modern batch strategy (Avro)
     write_buffer_strategy: crate::storage::persistence::write_ahead_log::WriteAheadLogManager,
 
@@ -154,9 +154,9 @@ pub struct MetadataWriteAheadLogManager {
     stats: Arc<tokio::sync::RwLock<MetadataStats>>,
 }
 
-impl std::fmt::Debug for MetadataWriteAheadLogManager {
+impl std::fmt::Debug for MetadataWriteAheadLog {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MetadataWriteAheadLogManager")
+        f.debug_struct("MetadataWriteAheadLog")
             .field("config", &self.config)
             .field("metadata_cache_info", &"<cached data>")
             .field("cache_timestamps", &"<timestamps>")
@@ -174,13 +174,13 @@ pub struct MetadataStats {
     pub write_buffer_reads: u64,
 }
 
-impl MetadataWriteAheadLogManager {
+impl MetadataWriteAheadLog {
     /// Create new metadata write buffer manager
     pub async fn new(
         config: MetadataWALConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self> {
-        tracing::debug!("🚀 Creating MetadataWriteAheadLogManager with B+Tree memtable for sorted access");
+        tracing::debug!("🚀 Creating MetadataWriteAheadLog with B+Tree memtable for sorted access");
 
         // Create write buffer manager using modern batch factory pattern
         let write_buffer_manager = crate::storage::persistence::write_ahead_log::WriteAheadLogManager::create_with_batch_factory(
@@ -296,10 +296,10 @@ impl MetadataWriteAheadLogManager {
             collection_id
         );
 
-        // Search in write buffer using modern get_vector_by_id through WALBehaviorWrapper
+        // Search in write buffer using modern vector_by_id through WALBehaviorWrapper
         let vector_id = format!("metadata_{}", collection_id);
         let vector_record = if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            behavior_wrapper.get_vector_by_id(collection_id, &vector_id).await?
+            behavior_wrapper.vector_by_id(collection_id, &vector_id).await?
         } else {
             None
         };
@@ -364,7 +364,7 @@ impl MetadataWriteAheadLogManager {
 
         // Try to get stats to see if there's any data using modern interface
         if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.get_stats().await {
+            if let Ok(stats_map) = behavior_wrapper.stats().await {
                 let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
                 if total_entries > 0 {
                     tracing::info!(
@@ -384,7 +384,7 @@ impl MetadataWriteAheadLogManager {
 
         // Call write buffer strategy recover to load from disk using modern interface
         let recovered_entries = if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.get_stats().await {
+            if let Ok(stats_map) = behavior_wrapper.stats().await {
                 stats_map.values().map(|s| s.total_entries).sum()
             } else {
                 0
@@ -404,7 +404,7 @@ impl MetadataWriteAheadLogManager {
 
         // Get write buffer statistics to see what collections exist using modern interface
         if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.get_stats().await {
+            if let Ok(stats_map) = behavior_wrapper.stats().await {
                 let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
                 let collections_count = stats_map.len();
                 tracing::info!(
@@ -418,7 +418,7 @@ impl MetadataWriteAheadLogManager {
                 // we can scan for these entries and rebuild our cache
                 if let Ok(collection_ids) = self.get_all_collection_ids().await {
                     for collection_id in collection_ids {
-                        if let Ok(Some(metadata)) = self.get_collection(&collection_id).await {
+                        if let Ok(Some(metadata)) = self.collection(&collection_id).await {
                             tracing::debug!(
                                 "📦 Recovered collection: {} ({})",
                                 metadata.name,
@@ -450,7 +450,7 @@ impl MetadataWriteAheadLogManager {
 
         // Get stats to find collections using modern interface
         if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.get_stats().await {
+            if let Ok(stats_map) = behavior_wrapper.stats().await {
                 // Extract collection IDs from write buffer stats
                 let collection_ids: Vec<String> = stats_map.keys().cloned().collect();
                 
@@ -477,7 +477,7 @@ impl MetadataWriteAheadLogManager {
         tracing::debug!("🗑️ Deleting metadata for collection: {}", collection_id);
 
         // Check if exists
-        let exists = self.get_collection(collection_id).await?.is_some();
+        let exists = self.collection(collection_id).await?.is_some();
 
         if exists {
             // Create vector record for delete operation using MVCC logical delete
@@ -549,7 +549,7 @@ impl MetadataWriteAheadLogManager {
             size_delta
         );
 
-        if let Some(mut metadata) = self.get_collection(collection_id).await? {
+        if let Some(mut metadata) = self.collection(collection_id).await? {
             // Update stats
             if vector_delta > 0 {
                 metadata.vector_count += vector_delta as u64;

@@ -256,7 +256,7 @@ impl MultiTierDeduplicator {
                 self.results_without_id.push(result);
             } else {
                 // ID-based deduplication across and within tiers
-                let vector_id = result.vector_record.id.clone().unwrap_or_default();
+                let vector_id = result.vector_record.id.clone().clone();
                 let should_replace = match self.id_to_latest.get(&vector_id) {
                     Some(existing) => {
                         // Multi-criteria replacement logic (in order of priority):

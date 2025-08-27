@@ -213,8 +213,8 @@ impl RecoveryManager {
             stats.recovery_errors = recovery_errors;
         }
         
-        let stats = self.get_stats().await?;
-        let pool_stats = thread_pool.get_stats().await;
+        let stats = self.stats().await?;
+        let pool_stats = thread_pool.stats().await;
         
         info!(
             "✅ Parallel WAL recovery completed: {} collections, {} vectors, {} errors (peak {} threads, {}ms)",
@@ -753,7 +753,7 @@ mod tests {
         assert_eq!(remaining_files.len(), 0, "WAL files should be deleted after recovery");
         
         // Check stats
-        let stats = recovery_manager.get_stats().await.expect("Failed to get stats");
+        let stats = recovery_manager.stats().await.expect("Failed to get stats");
         assert_eq!(stats.total_vectors_recovered, 3);
         assert_eq!(stats.total_files_recovered, 3);
     }
@@ -762,7 +762,7 @@ mod tests {
     fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageEngine> {
         use crate::storage::traits::{UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult, CompactionParameters, CompactionResult};
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use crate::services::collection_service::CollectionService;
+        use crate::services::collection::manager::CollectionService;
         use async_trait::async_trait;
         use std::collections::HashMap;
         
@@ -792,7 +792,7 @@ mod tests {
                 
                 Ok(FlushResult {
                     success: true,
-                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    collections_affected: vec![params.collection_id.clone().clone()],
                     entries_flushed: params.vector_records.len() as u64,
                     bytes_written: params.vector_records.len() as u64 * 256,
                     files_created: 1,
@@ -807,7 +807,7 @@ mod tests {
             async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
                 Ok(CompactionResult {
                     success: true,
-                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    collections_affected: vec![params.collection_id.clone().clone()],
                     entries_processed: 0,
                     entries_removed: 0,
                     bytes_read: 0,
@@ -824,7 +824,7 @@ mod tests {
                 Ok(HashMap::new())
             }
             
-            async fn get_vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<VectorRecord>> {
+            async fn vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<VectorRecord>> {
                 Ok(None)
             }
             

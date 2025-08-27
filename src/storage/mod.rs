@@ -55,7 +55,7 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::sst::SstStorage;
+pub use engines::impls::sst::SstStorage;
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
 // pub use engines::viper::ViperEngine;
 

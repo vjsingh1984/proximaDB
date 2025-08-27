@@ -328,12 +328,12 @@ mod base_traits_tests {
             healthy: false,
         };
 
-        let metrics = service.get_metrics().await;
+        let metrics = service.metrics().await;
         assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(false));
         assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(false));
 
         service.start().await.unwrap();
-        let metrics = service.get_metrics().await;
+        let metrics = service.metrics().await;
         assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(true));
         assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(true));
     }

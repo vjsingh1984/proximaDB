@@ -106,7 +106,7 @@ fn test_index_strategy_builder_build() {
     assert!(!strategy.routing_rules.is_empty());
     
     let has_vector_index = strategy.indexes.iter().any(|idx| {
-        matches!(idx.data_type, DataType::DenseVector { .. })
+        matches!(idx.data_type, Data::DenseVector { .. })
     });
     assert!(has_vector_index);
 }

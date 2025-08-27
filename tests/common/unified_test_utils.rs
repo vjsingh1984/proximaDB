@@ -664,21 +664,6 @@ pub mod operations {
         })
     }
     
-    /// DEPRECATED: Use build_flush_params() + engine.do_flush() directly
-    #[deprecated(note = "Use build_flush_params() + engine.do_flush() for direct production calls")]
-    pub async fn insert_and_flush_sst(
-        engine: &SstStorage,
-        environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>
-    ) -> Result<()> {
-        let flush_params = build_flush_params(environment, vectors, StorageEngine::Sst).await?;
-        let result = engine.do_flush(&flush_params).await?;
-        if !result.success {
-            return Err(anyhow::anyhow!("SST flush failed"));
-        }
-        Ok(())
-    }
-    
     /// Build correct storage URL for SST search operations
     pub fn build_sst_storage_url(environment: &UnifiedTestEnvironment) -> String {
         // SST expects storage_url to point directly to where .sst files are located

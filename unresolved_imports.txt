@@ -1,0 +1,16 @@
+`arrow_schema
+`block_structures
+`crate
+`engines
+`eventlog_consumer
+`ivf_posting_list_storage
+`management
+`migration_engine
+`monitor
+`recovery
+`search_common`
+`sst_io_layer
+`strategy
+`types
+`universal_index_storage
+`vector_search

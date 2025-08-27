@@ -202,7 +202,7 @@ async fn test_recovered_collections_metadata_empty() {
     let (storage_engine, _temp_dir) = create_basic_storage_engine().await;
     
     // Test get recovered collections metadata from empty storage
-    let result = storage_engine.get_recovered_collections_metadata().await;
+    let result = storage_engine.recovered_collections_metadata().await;
     assert!(result.is_ok(), "Should successfully get recovered collections");
     
     let collections = result.unwrap();

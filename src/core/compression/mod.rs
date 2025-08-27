@@ -470,7 +470,7 @@ pub fn create_parquet_writer_properties(
 
 /// Column data types for mixed compression optimization
 #[derive(Debug, Clone, PartialEq)]
-pub enum ColumnDataType {
+pub enum ColumnData {
     /// Binary quantized vectors (for fast filtering)
     BinaryQuantized,
     /// INT8 quantized vectors
@@ -490,53 +490,53 @@ pub enum ColumnDataType {
 }
 
 /// Get optimal compression algorithm for specific column type
-pub fn get_optimal_compression_for_column(column_type: &ColumnDataType) -> CompressionAlgorithm {
+pub fn optimal_compression_for_column(column_type: &ColumnData) -> CompressionAlgorithm {
     match column_type {
-        ColumnDataType::BinaryQuantized => CompressionAlgorithm::None, // Fast filtering
-        ColumnDataType::Int8Quantized => CompressionAlgorithm::Snappy, // Fast decompression
-        ColumnDataType::ProductQuantized => CompressionAlgorithm::Zstd, // Best ratio
-        ColumnDataType::FullPrecision => CompressionAlgorithm::Lz4, // Fast decompression for reranking
-        ColumnDataType::Identifier => CompressionAlgorithm::Gzip, // Maximum compression
-        ColumnDataType::Metadata => CompressionAlgorithm::Brotli, // Maximum compression for cold data
-        ColumnDataType::Timestamp => CompressionAlgorithm::Lz4, // Fast access
-        ColumnDataType::Generic => CompressionAlgorithm::Zstd, // Balanced default
+        ColumnData::BinaryQuantized => CompressionAlgorithm::None, // Fast filtering
+        ColumnData::Int8Quantized => CompressionAlgorithm::Snappy, // Fast decompression
+        ColumnData::ProductQuantized => CompressionAlgorithm::Zstd, // Best ratio
+        ColumnData::FullPrecision => CompressionAlgorithm::Lz4, // Fast decompression for reranking
+        ColumnData::Identifier => CompressionAlgorithm::Gzip, // Maximum compression
+        ColumnData::Metadata => CompressionAlgorithm::Brotli, // Maximum compression for cold data
+        ColumnData::Timestamp => CompressionAlgorithm::Lz4, // Fast access
+        ColumnData::Generic => CompressionAlgorithm::Zstd, // Balanced default
     }
 }
 
 /// Detect column data type from column name and context
-pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> ColumnDataType {
+pub fn detect_column_type(column_name: &str, context: &CompressionContext) -> ColumnData {
     let name_lower = column_name.to_lowercase();
     
     match context {
         CompressionContext::Parquet => {
             // VIPER/NOVA columnar storage context
             if name_lower.contains("binary") || name_lower.contains("bin_") {
-                ColumnDataType::BinaryQuantized
+                ColumnData::BinaryQuantized
             } else if name_lower.contains("int8") || name_lower.contains("quantized_int8") {
-                ColumnDataType::Int8Quantized
+                ColumnData::Int8Quantized
             } else if name_lower.contains("pq") || name_lower.contains("product_quantized") {
-                ColumnDataType::ProductQuantized
+                ColumnData::ProductQuantized
             } else if name_lower.contains("vector") || name_lower.contains("embedding") {
-                ColumnDataType::FullPrecision
+                ColumnData::FullPrecision
             } else if name_lower == "id" || name_lower.contains("_id") {
-                ColumnDataType::Identifier
+                ColumnData::Identifier
             } else if name_lower.contains("timestamp") || name_lower.contains("created_at") 
                      || name_lower.contains("updated_at") {
-                ColumnDataType::Timestamp
+                ColumnData::Timestamp
             } else if name_lower.contains("metadata_info") || name_lower.contains("extra_") {
-                ColumnDataType::Metadata
+                ColumnData::Metadata
             } else {
-                ColumnDataType::Generic
+                ColumnData::Generic
             }
         }
         _ => {
             // For non-Parquet contexts, use generic detection
             if name_lower == "id" || name_lower.contains("_id") {
-                ColumnDataType::Identifier
+                ColumnData::Identifier
             } else if name_lower.contains("vector") {
-                ColumnDataType::FullPrecision
+                ColumnData::FullPrecision
             } else {
-                ColumnDataType::Generic
+                ColumnData::Generic
             }
         }
     }
@@ -562,7 +562,7 @@ pub fn create_mixed_compression_mapping(column_names: &[String]) -> HashMap<Stri
     
     for column_name in column_names {
         let column_type = detect_column_type(column_name, &CompressionContext::Parquet);
-        let optimal_algorithm = get_optimal_compression_for_column(&column_type);
+        let optimal_algorithm = optimal_compression_for_column(&column_type);
         mapping.insert(column_name.clone(), optimal_algorithm);
         
         tracing::debug!("Mixed compression mapping: {} -> {:?} (type: {:?})", 
@@ -816,15 +816,15 @@ mod tests {
         
         // Test column type detection
         let test_columns = vec![
-            ("id".to_string(), ColumnDataType::Identifier),
-            ("vector".to_string(), ColumnDataType::FullPrecision),
-            ("binary_quantized".to_string(), ColumnDataType::BinaryQuantized),
-            ("int8_quantized".to_string(), ColumnDataType::Int8Quantized),
-            ("pq_vectors".to_string(), ColumnDataType::ProductQuantized),
-            ("extra_metadata_info".to_string(), ColumnDataType::Metadata),
-            ("timestamp".to_string(), ColumnDataType::Timestamp),
-            ("created_at".to_string(), ColumnDataType::Timestamp),
-            ("unknown_field".to_string(), ColumnDataType::Generic),
+            ("id".to_string(), ColumnData::Identifier),
+            ("vector".to_string(), ColumnData::FullPrecision),
+            ("binary_quantized".to_string(), ColumnData::BinaryQuantized),
+            ("int8_quantized".to_string(), ColumnData::Int8Quantized),
+            ("pq_vectors".to_string(), ColumnData::ProductQuantized),
+            ("extra_metadata_info".to_string(), ColumnData::Metadata),
+            ("timestamp".to_string(), ColumnData::Timestamp),
+            ("created_at".to_string(), ColumnData::Timestamp),
+            ("unknown_field".to_string(), ColumnData::Generic),
         ];
         
         for (column_name, expected_type) in test_columns {
@@ -835,18 +835,18 @@ mod tests {
         
         // Test optimal algorithm selection
         let algorithm_tests = vec![
-            (ColumnDataType::BinaryQuantized, CompressionAlgorithm::None),
-            (ColumnDataType::Int8Quantized, CompressionAlgorithm::Snappy),
-            (ColumnDataType::ProductQuantized, CompressionAlgorithm::Zstd),
-            (ColumnDataType::FullPrecision, CompressionAlgorithm::Lz4),
-            (ColumnDataType::Identifier, CompressionAlgorithm::Gzip),
-            (ColumnDataType::Metadata, CompressionAlgorithm::Brotli),
-            (ColumnDataType::Timestamp, CompressionAlgorithm::Lz4),
-            (ColumnDataType::Generic, CompressionAlgorithm::Zstd),
+            (ColumnData::BinaryQuantized, CompressionAlgorithm::None),
+            (ColumnData::Int8Quantized, CompressionAlgorithm::Snappy),
+            (ColumnData::ProductQuantized, CompressionAlgorithm::Zstd),
+            (ColumnData::FullPrecision, CompressionAlgorithm::Lz4),
+            (ColumnData::Identifier, CompressionAlgorithm::Gzip),
+            (ColumnData::Metadata, CompressionAlgorithm::Brotli),
+            (ColumnData::Timestamp, CompressionAlgorithm::Lz4),
+            (ColumnData::Generic, CompressionAlgorithm::Zstd),
         ];
         
         for (column_type, expected_algorithm) in algorithm_tests {
-            let selected_algorithm = get_optimal_compression_for_column(&column_type);
+            let selected_algorithm = optimal_compression_for_column(&column_type);
             assert_eq!(selected_algorithm, expected_algorithm,
                 "Algorithm selection failed for: {:?}", column_type);
         }

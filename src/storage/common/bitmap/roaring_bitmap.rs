@@ -153,7 +153,7 @@ impl RoaringBitmapIndex {
         self.indexes
             .get(field)
             .map(|field_index| field_index.keys().cloned().collect())
-            .unwrap_or_default()
+            .clone()
     }
 
     /// Get cardinality (unique value count) for a field
@@ -507,7 +507,7 @@ mod tests {
             index.insert(i, &metadata);
         }
 
-        let stats = index.get_stats();
+        let stats = index.stats();
         assert_eq!(stats.total_fields, 2);
         assert_eq!(stats.total_rows, 100);
         assert_eq!(stats.total_insertions, 100);

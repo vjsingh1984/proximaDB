@@ -293,26 +293,26 @@ impl Default for TransactionalOperationsConfig {
 
 impl StorageConfig {
     /// Get storage URLs from locations
-    pub fn get_storage_urls(&self) -> Vec<String> {
+    pub fn storage_urls(&self) -> Vec<String> {
         self.storage_locations.iter().map(|loc| loc.url.clone()).collect()
     }
     
     /// Get WAL URLs derived from storage URLs
-    pub fn get_write_buffer_urls(&self) -> Vec<String> {
+    pub fn write_buffer_urls(&self) -> Vec<String> {
         self.storage_locations.iter()
             .map(|loc| format!("{}/wal", loc.url.trim_end_matches('/')))
             .collect()
     }
     
     /// Get data URLs derived from storage URLs
-    pub fn get_data_urls(&self) -> Vec<String> {
+    pub fn data_urls(&self) -> Vec<String> {
         self.storage_locations.iter()
             .map(|loc| format!("{}/data", loc.url.trim_end_matches('/')))
             .collect()
     }
     
     /// Get index URLs derived from storage URLs
-    pub fn get_index_urls(&self) -> Vec<String> {
+    pub fn index_urls(&self) -> Vec<String> {
         self.storage_locations.iter()
             .map(|loc| format!("{}/index", loc.url.trim_end_matches('/')))
             .collect()
@@ -516,7 +516,7 @@ pub struct SstConfig {
     /// Prefetch size in KB
     pub prefetch_size_kb: u32,
     /// Decompression cache configuration
-    pub decompression_cache_config: Option<crate::storage::engines::sst::decompression_cache::CacheConfig>,
+    pub decompression_cache_config: Option<crate::storage::engines::impls::sst::decompression_cache::CacheConfig>,
 
     }
 
@@ -583,7 +583,7 @@ impl Default for SstConfig {
             mmap_enabled: true,
             prefetch_enabled: true,
             prefetch_size_kb: 64,
-            decompression_cache_config: Some(crate::storage::engines::sst::decompression_cache::CacheConfig::default()),
+            decompression_cache_config: Some(crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default()),
         
     }
     }

@@ -127,7 +127,7 @@ use tracing::{debug, error, info};
         assert!(result.is_ok(), "Failed to store collection metrics: {:?}", result);
         
         // Retrieve metrics
-        let retrieved = store.get_collection_metrics("test_collection_001").await.unwrap();
+        let retrieved = store.collection_metrics("test_collection_001").await.unwrap();
         assert!(retrieved.is_some(), "Failed to retrieve stored metrics");
         
         let retrieved_metrics = retrieved.unwrap();
@@ -222,7 +222,7 @@ use tracing::{debug, error, info};
         
         // Verify all collections can be retrieved
         for collection_id in &test_collections {
-            let retrieved = store.get_collection_metrics(collection_id).await.unwrap();
+            let retrieved = store.collection_metrics(collection_id).await.unwrap();
             assert!(retrieved.is_some(), "Failed to retrieve metrics for {}", collection_id);
             assert_eq!(retrieved.unwrap().collection_id, *collection_id);
         }
@@ -301,7 +301,7 @@ use tracing::{debug, error, info};
         store.store_collection_metrics(&test_metrics).await.unwrap();
         
         // Verify metrics exist
-        let retrieved = store.get_collection_metrics("cleanup_test_collection").await.unwrap();
+        let retrieved = store.collection_metrics("cleanup_test_collection").await.unwrap();
         assert!(retrieved.is_some());
         
         // Clean up collection metrics
@@ -309,7 +309,7 @@ use tracing::{debug, error, info};
         assert!(cleanup_result.is_ok(), "Failed to cleanup collection metrics: {:?}", cleanup_result);
         
         // Verify metrics are gone
-        let retrieved_after_cleanup = store.get_collection_metrics("cleanup_test_collection").await.unwrap();
+        let retrieved_after_cleanup = store.collection_metrics("cleanup_test_collection").await.unwrap();
         assert!(retrieved_after_cleanup.is_empty(), "Metrics should be cleaned up");
         
         info!("✅ Metrics cleanup test passed");
@@ -347,7 +347,7 @@ use tracing::{debug, error, info};
                 store_clone.store_collection_metrics(&metrics).await.unwrap();
                 
                 // Retrieve metrics
-                let retrieved = store_clone.get_collection_metrics(&collection_id).await.unwrap();
+                let retrieved = store_clone.collection_metrics(&collection_id).await.unwrap();
                 assert!(retrieved.is_some());
                 assert_eq!(retrieved.unwrap().vector_count, (i + 1) * 1000);
                 
@@ -408,7 +408,7 @@ use tracing::{debug, error, info};
         let store_result = store.store_collection_metrics(&test_metrics).await;
         assert!(store_result.is_ok(), "Failed to store through filesystem: {:?}", store_result);
         
-        let retrieve_result = store.get_collection_metrics("filesystem_test").await;
+        let retrieve_result = store.collection_metrics("filesystem_test").await;
         assert!(retrieve_result.is_ok(), "Failed to retrieve through filesystem: {:?}", retrieve_result);
         assert!(retrieve_result.unwrap().is_some());
         

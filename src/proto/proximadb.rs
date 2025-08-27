@@ -714,7 +714,7 @@ pub struct LshConfig {
     #[prost(int32, tag = "5")]
     pub max_candidates: i32,
     /// Projection type (default: GAUSSIAN)
-    #[prost(enumeration = "RandomProjectionType", tag = "6")]
+    #[prost(enumeration = "RandomProjection", tag = "6")]
     pub projection: i32,
 }
 /// Compression configuration for collections
@@ -1431,7 +1431,7 @@ pub struct FilterableColumnSpec {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
     /// Data type for Parquet schema
-    #[prost(enumeration = "FilterableDataType", tag = "2")]
+    #[prost(enumeration = "FilterableData", tag = "2")]
     pub data_type: i32,
     /// Whether to create an index
     #[prost(bool, tag = "3")]
@@ -2888,7 +2888,7 @@ impl VectorRepresentation {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum RandomProjectionType {
+pub enum RandomProjection {
     /// Gaussian random projection
     Gaussian = 0,
     /// Binary random projection
@@ -2896,16 +2896,16 @@ pub enum RandomProjectionType {
     /// Sparse random projection
     Sparse = 2,
 }
-impl RandomProjectionType {
+impl RandomProjection {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            RandomProjectionType::Gaussian => "GAUSSIAN",
-            RandomProjectionType::Binary => "BINARY",
-            RandomProjectionType::Sparse => "SPARSE",
+            RandomProjection::Gaussian => "GAUSSIAN",
+            RandomProjection::Binary => "BINARY",
+            RandomProjection::Sparse => "SPARSE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -3243,7 +3243,7 @@ impl ColumnEncoding {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum FilterableDataType {
+pub enum FilterableData {
     Unspecified = 0,
     FilterableString = 1,
     FilterableInteger = 2,
@@ -3254,22 +3254,22 @@ pub enum FilterableDataType {
     FilterableArrayInteger = 7,
     FilterableArrayFloat = 8,
 }
-impl FilterableDataType {
+impl FilterableData {
     /// String value of the enum field names used in the ProtoBuf definition.
     ///
     /// The values are not transformed in any way and thus are considered stable
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            FilterableDataType::Unspecified => "FILTERABLE_DATA_TYPE_UNSPECIFIED",
-            FilterableDataType::FilterableString => "FILTERABLE_STRING",
-            FilterableDataType::FilterableInteger => "FILTERABLE_INTEGER",
-            FilterableDataType::FilterableFloat => "FILTERABLE_FLOAT",
-            FilterableDataType::FilterableBoolean => "FILTERABLE_BOOLEAN",
-            FilterableDataType::FilterableDatetime => "FILTERABLE_DATETIME",
-            FilterableDataType::FilterableArrayString => "FILTERABLE_ARRAY_STRING",
-            FilterableDataType::FilterableArrayInteger => "FILTERABLE_ARRAY_INTEGER",
-            FilterableDataType::FilterableArrayFloat => "FILTERABLE_ARRAY_FLOAT",
+            FilterableData::Unspecified => "FILTERABLE_DATA_TYPE_UNSPECIFIED",
+            FilterableData::FilterableString => "FILTERABLE_STRING",
+            FilterableData::FilterableInteger => "FILTERABLE_INTEGER",
+            FilterableData::FilterableFloat => "FILTERABLE_FLOAT",
+            FilterableData::FilterableBoolean => "FILTERABLE_BOOLEAN",
+            FilterableData::FilterableDatetime => "FILTERABLE_DATETIME",
+            FilterableData::FilterableArrayString => "FILTERABLE_ARRAY_STRING",
+            FilterableData::FilterableArrayInteger => "FILTERABLE_ARRAY_INTEGER",
+            FilterableData::FilterableArrayFloat => "FILTERABLE_ARRAY_FLOAT",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.

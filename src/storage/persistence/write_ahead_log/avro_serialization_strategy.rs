@@ -260,7 +260,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                 &metric,
             );
             // Use empty string for vectors without IDs
-            let id = vector.id.clone().unwrap_or_default();
+            let id = vector.id.clone().clone();
             // Use rank_value for sorting (lower = more similar)
             results.push((id, distance_result.rank_value, vector));
         }
@@ -394,8 +394,8 @@ impl WALBatchStrategy for AvroSerializationStrategy {
     }
 
     async fn get_stats(&self) -> Result<WALStats> {
-        let memtable_stats = self.memtable_manager.get_stats().await?;
-        let disk_stats = self.disk_manager.get_stats().await?;
+        let memtable_stats = self.memtable_manager.stats().await?;
+        let disk_stats = self.disk_manager.stats().await?;
         
         Ok(WALStats {
             total_entries: memtable_stats.total_vectors_added,

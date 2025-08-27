@@ -66,7 +66,7 @@ pub trait CollectionMetadataProvider: Send + Sync {
     async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
     
     /// Get full collection metadata
-    async fn get_collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
+    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
     
     /// Get collection as unified type
     async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>>;
@@ -114,7 +114,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Retrieve a specific vector by ID from storage (required)
     /// This method should search across all storage layers (memtable, SSTables, Parquet files)
-    async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>>;
+    async fn vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>>;
 
     /// Engine-specific unified search with optimization capabilities (required)
     /// Each engine implements its own optimizations:
@@ -227,7 +227,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Get collection service for IndexConfig retrieval - to be implemented by each engine
     /// IndexConfig should be handled by AXIS indexing service
-    fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService>;
+    fn get_collection_service(&self) -> Option<&crate::services::collection::manager::CollectionService>;
 
     /// Get collection's IndexConfig from collection service
     async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
@@ -655,7 +655,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .map(|s| s.to_string())
                     .collect()
             })
-            .unwrap_or_default();
+            .clone();
 
         Ok(EngineHealth {
             healthy,
@@ -1032,7 +1032,7 @@ impl StorageQueryContext {
         let storage_assignment = collection.storage_assignment.as_ref();
         
         let metadata = StorageQueryMetadata {
-            collection_id: collection.id.clone().unwrap_or_default(),
+            collection_id: collection.id.clone().clone(),
             use_axis_indexes: config
                 .and_then(|c| c.index_config.as_ref())
                 .map(|_| true)
@@ -1056,10 +1056,10 @@ impl StorageQueryContext {
                     "PRISM" => StorageEngineStrategy::Prism,
                     _ => StorageEngineStrategy::Viper,
                 })
-                .unwrap_or_default(),
+                .clone(),
             storage_path: storage_assignment
                 .map(|sa| sa.base_location.clone())
-                .unwrap_or_default(),
+                .clone(),
             estimated_vector_count: config
                 .map(|c| c.estimated_vector_count)
                 ,
@@ -1076,7 +1076,7 @@ impl StorageQueryContext {
                     "archive" => PerformanceTier::Archive,
                     _ => PerformanceTier::Warm,
                 })
-                .unwrap_or_default(),
+                .clone(),
             compression_enabled: config
                 .and_then(|c| c.storage.as_ref())
                 .and_then(|s| s.compression.as_ref())

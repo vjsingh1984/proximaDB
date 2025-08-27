@@ -391,7 +391,7 @@ impl S3Client {
             "https://{}.s3.{}.amazonaws.com/{}",
             bucket, self.config.region, key
         );
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         let mut request = self
             .http_client

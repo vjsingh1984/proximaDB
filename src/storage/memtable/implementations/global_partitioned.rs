@@ -90,7 +90,7 @@ impl CollectionPartition {
     }
 
     /// Get vector by ID within this collection with MVCC + logical delete support
-    fn get_vector_by_id(&self, vector_id: &str) -> Option<VectorRecord> {
+    fn vector_by_id(&self, vector_id: &str) -> Option<VectorRecord> {
         // 🔧 FLEXIBLE: Skip immutable vectors (those without client-provided IDs)
         if vector_id.is_empty() {
             return None;
@@ -551,11 +551,11 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Get vector by ID within a specific collection (MODERN - no deserialization)
-    pub async fn get_vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
+    pub async fn vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
         if let Some(partition) = collections.get(collection_id) {
-            Ok(partition.get_vector_by_id(vector_id))
+            Ok(partition.vector_by_id(vector_id))
         } else {
             Ok(None)
         }
@@ -1010,7 +1010,7 @@ fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batc
 /// Higher score = older collection (should be flushed sooner)
 fn calculate_age_score(timestamp: std::time::SystemTime) -> f64 {
     let now = std::time::SystemTime::now();
-    let age_duration = now.duration_since(timestamp).unwrap_or_default();
+    let age_duration = now.duration_since(timestamp).clone();
     
     // Age in minutes (higher = older)
     let age_minutes = age_duration.as_secs() as f64 / 60.0;

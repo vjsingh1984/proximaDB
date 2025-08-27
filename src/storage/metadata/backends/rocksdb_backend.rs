@@ -347,7 +347,7 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
         }
     }
     
-    async fn get_collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
+    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
         // First get UUID
         let uuid = match self.get_uuid(collection_id).await? {
             Some(uuid) => uuid,
@@ -389,8 +389,8 @@ impl CollectionMetadataProvider for RocksDbMetadataBackend {
     }
     
     async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
-        // get_collection_metadata already returns a Collection
-        self.get_collection_metadata(collection_id).await
+        // collection_metadata already returns a Collection
+        self.collection_metadata(collection_id).await
     }
     
     async fn list_collections(&self) -> Result<Vec<Collection>> {
@@ -1002,7 +1002,7 @@ mod tests {
         backend.upsert_collection_record(record.clone()).await.unwrap();
         
         // Test get by name
-        let retrieved = backend.get_collection_metadata("test_collection").await.unwrap();
+        let retrieved = backend.collection_metadata("test_collection").await.unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.uuid, "test-uuid-123");
@@ -1025,7 +1025,7 @@ mod tests {
         assert!(deleted);
         
         // Verify deletion
-        let after_delete = backend.get_collection_metadata("test_collection").await.unwrap();
+        let after_delete = backend.collection_metadata("test_collection").await.unwrap();
         assert!(after_delete.is_empty());
     }
     

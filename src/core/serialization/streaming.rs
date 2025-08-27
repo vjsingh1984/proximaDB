@@ -289,7 +289,7 @@ impl StreamingCompressor {
     }
 
     /// Get current performance metrics
-    pub fn get_metrics(&self) -> StreamingMetrics {
+    pub fn metrics(&self) -> StreamingMetrics {
         self.metrics.read().clone()
     }
 
@@ -564,7 +564,7 @@ mod tests {
         
         let _results = compressor.compress_stream(vectors, vector_config).await.unwrap();
         
-        let metrics = compressor.get_metrics();
+        let metrics = compressor.metrics();
         assert!(metrics.vectors_processed > 0);
         assert!(metrics.batches_processed > 0);
         assert!(metrics.compression_ratio > 0.0);
@@ -594,7 +594,7 @@ mod tests {
             compressor.optimize_performance().await.unwrap();
         }
         
-        let metrics = compressor.get_metrics();
+        let metrics = compressor.metrics();
         assert!(metrics.vectors_processed > 0);
         
         compressor.shutdown().await.unwrap();

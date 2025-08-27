@@ -151,7 +151,7 @@ async fn test_cache_metrics_integration() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     
     // Get current metrics
-    let metrics = cache_aggregator.get_current_metrics().await;
+    let metrics = cache_aggregator.current_metrics().await;
     assert!(metrics.overall_hit_rate > 0.0);
     
     // Get optimization hints

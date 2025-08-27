@@ -89,7 +89,7 @@ impl EngineMetricsCollector {
     }
     
     /// Get engine statistics for comparison
-    pub async fn get_engine_statistics(&self, engine_name: &str) -> EngineStatistics {
+    pub async fn engine_statistics(&self, engine_name: &str) -> EngineStatistics {
         let acc = self.accumulated_metrics.read().await;
         let mut stats = EngineStatistics::default();
         
@@ -123,7 +123,7 @@ impl EngineMetricsCollector {
         let mut engine_stats = HashMap::new();
         
         for engine_name in engines.keys() {
-            let stats = self.get_engine_statistics(engine_name).await;
+            let stats = self.engine_statistics(engine_name).await;
             engine_stats.insert(engine_name.clone(), stats);
         }
         
@@ -213,7 +213,7 @@ impl MetricsCollector for EngineMetricsCollector {
         
         // Collect metrics for each registered engine
         for engine_name in &engine_names {
-            let stats = self.get_engine_statistics(engine_name).await;
+            let stats = self.engine_statistics(engine_name).await;
             
             // Add engine-specific metrics
             values.insert(
@@ -368,12 +368,12 @@ mod tests {
         collector.record_operation("DVIPER", "search", 20.0, true, 512).await;
         
         // Get statistics
-        let dsst_stats = collector.get_engine_statistics("DSST").await;
+        let dsst_stats = collector.engine_statistics("DSST").await;
         assert_eq!(dsst_stats.total_operations, 2);
         assert_eq!(dsst_stats.total_errors, 0);
         assert_eq!(dsst_stats.total_bytes_processed, 3072);
         
-        let dviper_stats = collector.get_engine_statistics("DVIPER").await;
+        let dviper_stats = collector.engine_statistics("DVIPER").await;
         assert_eq!(dviper_stats.total_operations, 2);
         assert_eq!(dviper_stats.total_errors, 1);
         assert_eq!(dviper_stats.error_rate, 0.5);
@@ -401,7 +401,7 @@ mod tests {
         // Allow async recording to complete
         tokio::time::sleep(Duration::from_millis(10)).await;
         
-        let stats = collector.get_engine_statistics("DSST").await;
+        let stats = collector.engine_statistics("DSST").await;
         assert_eq!(stats.total_operations, 1);
         assert_eq!(stats.total_bytes_processed, 8192);
     }

@@ -225,7 +225,7 @@ mod tests {
             .await.expect("Failed to write batch");
 
         // Search for the vector
-        let found_vector = strategy.search_vector_by_id(&collection_id.to_string(), &search_id.clone().unwrap_or_default())
+        let found_vector = strategy.search_vector_by_id(&collection_id.to_string(), &search_id.clone().clone())
             .await.expect("Failed to search vector");
 
         assert!(found_vector.is_some());
@@ -251,7 +251,7 @@ mod tests {
             .await.expect("Failed to write batch");
 
         // Search for the vector
-        let found_vector = strategy.search_vector_by_id(&collection_id.to_string(), &search_id.clone().unwrap_or_default())
+        let found_vector = strategy.search_vector_by_id(&collection_id.to_string(), &search_id.clone().clone())
             .await.expect("Failed to search vector");
 
         assert!(found_vector.is_some());
@@ -394,12 +394,12 @@ mod tests {
             .await.expect("Failed to write batch");
 
         // Get stats
-        let stats = strategy.get_stats().await.expect("Failed to get stats");
+        let stats = strategy.stats().await.expect("Failed to get stats");
         assert!(stats.memory_entries > 0);
         assert!(stats.memory_size_bytes > 0);
 
         // Get collection-specific stats
-        let collection_stats = strategy.get_collection_stats(&collection_id.to_string())
+        let collection_stats = strategy.collection_stats(&collection_id.to_string())
             .await.expect("Failed to get collection stats");
         assert!(collection_stats.total_entries > 0);
     }
@@ -418,12 +418,12 @@ mod tests {
             .await.expect("Failed to write batch");
 
         // Get stats
-        let stats = strategy.get_stats().await.expect("Failed to get stats");
+        let stats = strategy.stats().await.expect("Failed to get stats");
         assert!(stats.memory_entries > 0);
         assert!(stats.memory_size_bytes > 0);
 
         // Get collection-specific stats
-        let collection_stats = strategy.get_collection_stats(&collection_id.to_string())
+        let collection_stats = strategy.collection_stats(&collection_id.to_string())
             .await.expect("Failed to get collection stats");
         assert!(collection_stats.total_entries > 0);
     }

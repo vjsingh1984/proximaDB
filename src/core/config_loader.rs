@@ -66,7 +66,7 @@ impl ConfigLoader {
     }
     
     /// Get cloud authentication configuration
-    pub fn get_cloud_auth_info() -> String {
+    pub fn cloud_auth_info() -> String {
         let mut auth_info = Vec::new();
         
         // AWS authentication

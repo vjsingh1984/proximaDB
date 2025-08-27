@@ -1246,7 +1246,7 @@ impl WriteAheadLogManager {
         if let Ok(records) = proto_serializer.deserialize_batch(payload) {
             // Use the modern batch API with sync option
             if immediate_sync {
-                self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone().unwrap_or_default(), r)).collect(), true).await
+                self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone().clone(), r)).collect(), true).await
                     .map(|sequences| sequences.into_iter().next())
             } else {
                 self.insert_vectors(collection_id.to_string(), records).await
@@ -1516,7 +1516,7 @@ impl WriteAheadLogManager {
                 
                 // Create search result using standardized similarity scoring
                 let search_result = crate::core::search::InternalSearchResult::from_distance_standard(
-                    vector_record.id.clone().unwrap_or_default(),
+                    vector_record.id.clone().clone(),
                     similarity_result.raw_value, // Raw distance value
                     &distance_metric, // Distance metric for conversion
                     if include_vectors { 
@@ -1679,7 +1679,7 @@ impl WriteAheadLogManager {
                                 crate::proto::proximadb::metadata_item::Value::NumberValue(n) => n.to_string(),
                                 crate::proto::proximadb::metadata_item::Value::BoolValue(b) => b.to_string(),
                             })
-                            .unwrap_or_default();
+                            .clone();
                         
                         // Compare based on operator
                         return self.compare_values(&metadata_value, operator, value);

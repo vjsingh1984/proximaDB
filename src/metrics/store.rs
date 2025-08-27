@@ -199,7 +199,7 @@ impl MetricsPersistenceLayer {
     }
     
     /// Get metrics for a specific collection
-    pub async fn get_collection_metrics(&self, collection_id: &str) -> Result<Option<CollectionMetrics>> {
+    pub async fn collection_metrics(&self, collection_id: &str) -> Result<Option<CollectionMetrics>> {
         // Check cache first
         let cache = self.snapshot_cache.read().await;
         if let Some(snapshot) = cache.get(collection_id) {
@@ -215,7 +215,7 @@ impl MetricsPersistenceLayer {
     }
     
     /// Get global metrics
-    pub async fn get_global_metrics(&self) -> Result<GlobalMetrics> {
+    pub async fn global_metrics(&self) -> Result<GlobalMetrics> {
         let cache = self.snapshot_cache.read().await;
         
         let mut global = GlobalMetrics::default();
@@ -232,7 +232,7 @@ impl MetricsPersistenceLayer {
         }
         
         // Calculate operations per second (rough estimate)
-        let uptime = chrono::Utc::now().timestamp() - self.get_start_time();
+        let uptime = chrono::Utc::now().timestamp() - self.start_time();
         if uptime > 0 {
             global.operations_per_second = (global.total_operations as f64) / (uptime as f64);
             global.uptime_seconds = uptime;
@@ -400,18 +400,18 @@ impl MetricsPersistenceLayer {
     }
     
     /// Get approximate start time (for uptime calculation)
-    fn get_start_time(&self) -> i64 {
+    fn start_time(&self) -> i64 {
         // In production, this would be tracked properly
         chrono::Utc::now().timestamp() - 3600 // Default to 1 hour ago
     }
     
     /// Get filesystem factory reference (for tests)
-    pub fn get_filesystem_factory(&self) -> Result<&FilesystemFactory> {
+    pub fn filesystem_factory(&self) -> Result<&FilesystemFactory> {
         Ok(&self.filesystem_factory)
     }
     
     /// Get configuration reference (for tests)
-    pub fn get_config(&self) -> &MetricsConfig {
+    pub fn config(&self) -> &MetricsConfig {
         &self.config
     }
     
@@ -424,7 +424,7 @@ impl MetricsPersistenceLayer {
     }
     
     /// Get global metrics (for tests)
-    pub async fn get_global_metrics_stored(&self) -> Result<Option<GlobalMetrics>> {
+    pub async fn global_metrics_stored(&self) -> Result<Option<GlobalMetrics>> {
         let path = format!("{}/global_metrics.json", self.base_path);
         if !self.filesystem_factory.exists(&path).await? {
             return Ok(None);
@@ -467,7 +467,7 @@ impl MetricsPersistenceLayer {
         // Remove from cache
         self.snapshot_cache.write().await.remove(collection_id);
         
-        // Remove snapshot file (this is what get_collection_metrics checks)
+        // Remove snapshot file (this is what collection_metrics checks)
         let snapshot_path = format!("{}/snapshots/collections/{}/snapshot_latest.bincode",
                                    self.base_path, collection_id);
         if self.filesystem_factory.exists(&snapshot_path).await? {

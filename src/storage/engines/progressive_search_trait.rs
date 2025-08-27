@@ -56,7 +56,7 @@ pub trait ProgressiveSearchEngine: Send + Sync {
     ) -> Result<Vec<QuantizedVector>>;
     
     /// Get full precision vectors for final ranking
-    async fn get_fp32_vectors(
+    async fn fp32_vectors(
         &self,
         collection_id: &str,
         vector_ids: &[String],
@@ -95,7 +95,7 @@ pub enum QuantizedVectorData {
 
 /// Implementation for SST storage engine
 #[async_trait]
-impl ProgressiveSearchEngine for crate::storage::engines::sst::SstStorage {
+impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage {
     async fn search_binary(
         &self,
         collection_id: &str,
@@ -172,7 +172,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::sst::SstStorage {
         Ok(vec![])
     }
     
-    async fn get_fp32_vectors(
+    async fn fp32_vectors(
         &self,
         collection_id: &str,
         vector_ids: &[String],
@@ -193,7 +193,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::sst::SstStorage {
 
 /// Implementation for VIPER storage engine
 #[async_trait]
-impl ProgressiveSearchEngine for crate::storage::engines::viper::ViperEngine {
+impl ProgressiveSearchEngine for crate::storage::engines::impls::viper::ViperEngine {
     async fn search_binary(
         &self,
         collection_id: &str,
@@ -243,7 +243,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::viper::ViperEngine {
         Ok(vec![])
     }
     
-    async fn get_fp32_vectors(
+    async fn fp32_vectors(
         &self,
         collection_id: &str,
         vector_ids: &[String],

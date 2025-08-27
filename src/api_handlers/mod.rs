@@ -17,7 +17,6 @@
 //! Unified handlers module for shared business logic between REST and gRPC
 
 pub mod unified_handlers;
-pub mod conversions;
 
 #[cfg(test)]
 mod unified_handlers_tests;

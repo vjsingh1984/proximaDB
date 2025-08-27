@@ -29,8 +29,8 @@ use crate::proto::proximadb::{
     VectorBatchRequest, VectorSearchRequest, VectorOperationResponse,
     CollectionOperation, VectorOperation,
 };
-use crate::services::collection_service::CollectionService;
-use crate::services::vector_operations_service::VectorOperationsService;
+use crate::services::collection::manager::CollectionService;
+use crate::services::operations::vectors::VectorOperationsService;
 
 /// Unified handlers that implement all business logic for API operations
 /// 
@@ -70,7 +70,7 @@ impl UnifiedHandlers {
             
         let (success, collection, collections_opt, affected_count, error_msg, error_code) = match operation {
             CollectionOperation::CollectionCreate => self.handle_create_collection(request).await?,
-            CollectionOperation::CollectionGet => self.handle_get_collection(request).await?,
+            CollectionOperation::CollectionGet => self.handle_collection(request).await?,
             CollectionOperation::CollectionList => self.handle_list_collections(request).await?,
             CollectionOperation::CollectionUpdate => self.handle_update_collection(request).await?,
             CollectionOperation::CollectionDelete => self.handle_delete_collection(request).await?,
@@ -90,7 +90,7 @@ impl UnifiedHandlers {
             }
         };
         
-        let collections = collections_opt.unwrap_or_default();
+        let collections = collections_opt.clone();
         let total_count = if collections.is_empty() { None } else { Some(collections.len() as i64) };
 
         Ok(CollectionResponse {
@@ -146,7 +146,7 @@ impl UnifiedHandlers {
                             .map(|arr| arr.iter()
                                 .filter_map(|v| v.as_str().map(String::from))
                                 .collect())
-                            .unwrap_or_default();
+                            .clone();
                         let count = vector_ids.len() as i64;
                         
                         Ok(VectorOperationResponse {
@@ -344,7 +344,7 @@ impl UnifiedHandlers {
     }
     
     /// Get a single vector by ID
-    pub async fn handle_get_vector(
+    pub async fn handle_vector(
         &self,
         collection_id: &str,
         vector_id: &str,
@@ -383,8 +383,8 @@ impl UnifiedHandlers {
                 // Convert VectorRecord to proto SearchVectorRecord (no metadata conversion loss)
                 let proto_result = crate::proto::proximadb::SearchVectorRecord {
                     id: vector_record.id.unwrap_or_else(|| "unknown".to_string()),
-                    score: 1.0, // Perfect match for get_vector
-                    similarity: Some(1.0), // Perfect match for get_vector
+                    score: 1.0, // Perfect match for vector retrieval
+                    similarity: Some(1.0), // Perfect match for vector retrieval
                     vector: if include_vector { vector_record.vector } else { vec![] },
                     metadata: if include_metadata { 
                         // Metadata is already Vec<MetadataItem>
@@ -617,18 +617,18 @@ impl UnifiedHandlers {
     }
     
     /// Get metrics using VectorOperationsService
-    pub async fn get_metrics(&self) -> Result<serde_json::Value> {
+    pub async fn metrics(&self) -> Result<serde_json::Value> {
         debug!("📊 UnifiedHandlers: Getting service metrics");
-        self.vector_operations_service.get_metrics().await
+        self.vector_operations_service.metrics().await
     }
     
     /// Get collection-specific metrics (placeholder until metrics service is integrated)
-    pub async fn get_collection_metrics(&self, collection_id: &str, _include_hints: bool) -> Result<serde_json::Value> {
+    pub async fn collection_metrics(&self, collection_id: &str, _include_hints: bool) -> Result<serde_json::Value> {
         debug!("📊 UnifiedHandlers: Getting metrics for collection {}", collection_id);
         
         // TODO: Replace with actual metrics query service
         // For now, return basic collection info from collection service
-        if let Ok(Some(collection)) = self.collection_service.get_proto_collection(collection_id).await {
+        if let Ok(Some(collection)) = self.collection_service.collection(collection_id).await {
             let response = serde_json::json!({
                 "collection_id": collection_id,
                 "metrics": {
@@ -649,7 +649,7 @@ impl UnifiedHandlers {
     }
     
     /// Get query optimization hints (placeholder until metrics service is integrated)
-    pub async fn get_query_hints(&self, collection_id: &str, _query_type: Option<String>) -> Result<serde_json::Value> {
+    pub async fn query_hints(&self, collection_id: &str, _query_type: Option<String>) -> Result<serde_json::Value> {
         debug!("📊 UnifiedHandlers: Getting query hints for collection {}", collection_id);
         
         // TODO: Replace with actual metrics query service
@@ -693,7 +693,7 @@ impl UnifiedHandlers {
     }
     
     /// Handle get collection operation with dual resolution
-    async fn handle_get_collection(
+    async fn handle_collection(
         &self,
         request: CollectionRequest,
     ) -> Result<(bool, Option<Collection>, Option<Vec<Collection>>, i64, Option<String>, Option<String>)> {
@@ -710,7 +710,7 @@ impl UnifiedHandlers {
         
         debug!("🔍 Getting collection: '{}' -> collection_id: '{}'", collection_identifier, collection_id);
             
-        match self.collection_service.get_proto_collection(&collection_id).await {
+        match self.collection_service.collection(&collection_id).await {
             Ok(Some(collection)) => {
                 Ok((true, Some(collection), None, 1, None, None))
             }
@@ -818,7 +818,7 @@ impl UnifiedHandlers {
     }
     
     /// Get a specific collection by ID
-    pub async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
+    pub async fn collection(&self, collection_id: &str) -> Result<Option<Collection>> {
         debug!("🔍 UnifiedHandlers: Getting collection {}", collection_id);
         
         // Get collection metadata from the metadata backend

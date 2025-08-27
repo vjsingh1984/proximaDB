@@ -2,7 +2,7 @@ use crate::core::{String, StorageConfig, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
-    engines::sst::{CompactionManager, SstStorage},
+    engines::impls::sst::{Compaction, SstStorage},
     persistence::disk_manager::DiskManager,
     traits::CollectionMetadataProvider,
     CollectionMetadata,
@@ -67,7 +67,7 @@ pub struct StorageEngine {
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
     axis_index_manager: Arc<AxisManager>,
-    compaction_manager: Arc<CompactionManager>,
+    compaction_manager: Arc<Compaction>,
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 
     /// Shared distance computation engine for all storage operations
@@ -83,7 +83,7 @@ impl StorageEngine {
     //     self.sst_storage.clone()
     // }
     /// Get storage configuration
-    pub fn get_config(&self) -> &StorageConfig {
+    pub fn config(&self) -> &StorageConfig {
         &self.config
     }
 
@@ -169,8 +169,8 @@ impl StorageEngine {
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Initialize compaction manager with default config if not provided
-        let sst_config = config.sst_config.clone().unwrap_or_default();
-        let compaction_manager = Arc::new(CompactionManager::new(sst_config).await?);
+        let sst_config = config.sst_config.clone().clone();
+        let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
         
         // Create singleton SST storage instance
         let _sst_storage = Arc::new(SstStorage::new(
@@ -219,8 +219,8 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let sst_config = self.config.sst_config.clone().unwrap_or_default();
-        let mut temp_manager = CompactionManager::new(sst_config).await?;
+        let sst_config = self.config.sst_config.clone().clone();
+        let mut temp_manager = Compaction::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
 
@@ -247,7 +247,7 @@ impl StorageEngine {
     }
 
     /// Get WAL manager for sharing between services
-    pub fn get_write_ahead_log_manager(&self) -> Arc<WriteAheadLogManager> {
+    pub fn write_ahead_log_manager(&self) -> Arc<WriteAheadLogManager> {
         self.write_ahead_log_manager.clone()
     }
 
@@ -591,7 +591,7 @@ impl StorageEngine {
 
     /// Extract unique collection IDs and their metadata from recovered WAL entries
     /// This method is called by SharedServices during initialization to restore collection metadata
-    pub async fn get_recovered_collections_metadata(
+    pub async fn recovered_collections_metadata(
         &self,
     ) -> crate::storage::Result<Vec<(String, CollectionMetadata)>> {
         tracing::info!("📊 Extracting collection metadata from recovered WAL entries");
@@ -751,14 +751,14 @@ impl StorageEngine {
     // Use VectorOperationsService::search_vectors() with metadata filters instead
 
     /// Get search index statistics
-    pub async fn get_index_stats(
+    pub async fn index_stats(
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Option<HashMap<String, serde_json::Value>>> {
         // Get AXIS index statistics
         match self
             .axis_index_manager
-            .get_collection_stats(collection_id)
+            .collection_stats(collection_id)
             .await
         {
             Ok(stats) => {
@@ -885,7 +885,7 @@ impl StorageEngine {
 
     /// Get all vectors from a collection for linear search
     /// Retrieves vectors from both SST tree (recent writes) and MMAP readers (historical data)
-    pub async fn get_all_vectors(
+    pub async fn all_vectors(
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Vec<VectorRecord>> {

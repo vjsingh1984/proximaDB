@@ -155,7 +155,7 @@ impl RestHttpServerBuilder {
         } else {
             info!(
                 "  🌐 Non-TLS Mode: ENABLED on {}",
-                config.get_active_bind_address()
+                config.active_bind_address()
             );
             if config.tls_cert_file.is_some() || config.tls_key_file.is_some() {
                 warn!("  ⚠️  TLS certificates configured but invalid - falling back to non-TLS");
@@ -310,7 +310,7 @@ impl GrpcHttpServerBuilder {
         } else {
             info!(
                 "  🌐 Non-TLS Mode: ENABLED on {}",
-                config.get_active_bind_address()
+                config.active_bind_address()
             );
             if config.tls_cert_file.is_some() || config.tls_key_file.is_some() {
                 warn!("  ⚠️  TLS certificates configured but invalid - falling back to non-TLS");

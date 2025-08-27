@@ -148,12 +148,12 @@ impl JoinEngine {
 
     pub async fn execute_query(
         &self,
-        _query: &crate::index::axis::manager::HybridQuery,
+        _query: &crate::index::axis::management::manager::HybridQuery,
         _global_id_index: &Arc<GlobalIdIndex>,
         _metadata_index: &Arc<MetadataIndex>,
         _dense_vector_index: &Arc<DenseVectorIndex>,
         _sparse_vector_index: &Arc<SparseVectorIndex>,
-    ) -> Result<Vec<crate::index::axis::manager::ScoredResult>> {
+    ) -> Result<Vec<crate::index::axis::management::manager::ScoredResult>> {
         Ok(Vec::new())
     }
 }

@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn test_byte_aligned_basic() {
         let config = BloomFilterConfig {
-            // strategy removed -  crate::storage::engines::row_based::bloom_filter::BloomStrategy::ByteAligned,
+            // strategy removed -  crate::storage::engines::core::formats::row_based::bloom_filter::BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items: 100,
             ..Default::default()

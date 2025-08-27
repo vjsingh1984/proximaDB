@@ -110,7 +110,7 @@ mod tests {
             Ok(std::collections::HashMap::new())
         }
         
-        async fn get_vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
+        async fn vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
             Ok(None)
         }
 
@@ -132,7 +132,7 @@ mod tests {
             unimplemented!("Mock filesystem factory not needed for tests")
         }
         
-        fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService> {
+        fn get_collection_service(&self) -> Option<&crate::services::collection::manager::CollectionService> {
             None
         }
     }

@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
-use crate::services::collection_service::CollectionService;
+use crate::services::collection::manager::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
@@ -113,7 +113,7 @@ impl RestHttpServerConfig {
     }
 
     /// Get active bind address
-    pub fn get_active_bind_address(&self) -> SocketAddr {
+    pub fn active_bind_address(&self) -> SocketAddr {
         format!("0.0.0.0:{}", self.port).parse().unwrap()
     }
 }
@@ -165,7 +165,7 @@ impl GrpcHttpServerConfig {
     }
 
     /// Get active bind address
-    pub fn get_active_bind_address(&self) -> SocketAddr {
+    pub fn active_bind_address(&self) -> SocketAddr {
         self.bind_address
     }
 }
@@ -261,20 +261,20 @@ impl TLSConfig {
     }
 
     /// Get bind address for given port
-    pub fn get_bind_address(&self, port: u16) -> SocketAddr {
+    pub fn bind_address(&self, port: u16) -> SocketAddr {
         format!("{}:{}", self.bind_interface, port).parse().unwrap()
     }
 }
 
 impl MultiServerConfig {
     /// Get effective bind address for HTTP server
-    pub fn get_http_bind_address(&self) -> SocketAddr {
-        self.tls_config.get_bind_address(self.http_config.port)
+    pub fn http_bind_address(&self) -> SocketAddr {
+        self.tls_config.bind_address(self.http_config.port)
     }
 
     /// Get effective bind address for gRPC server
-    pub fn get_grpc_bind_address(&self) -> SocketAddr {
-        self.tls_config.get_bind_address(self.grpc_config.port)
+    pub fn grpc_bind_address(&self) -> SocketAddr {
+        self.tls_config.bind_address(self.grpc_config.port)
     }
 
     /// Check if TLS is enabled globally
@@ -386,15 +386,15 @@ impl SharedServices {
         let viper_config = crate::core::config::ViperConfig::default();
         debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
         let viper_engine = Arc::new(
-            crate::storage::engines::viper::ViperEngine::from_core_config(viper_config, filesystem_factory.clone()).await?
+            crate::storage::engines::impls::viper::ViperEngine::from_core_config(viper_config, filesystem_factory.clone()).await?
         );
         debug!("✅ SharedServices::new - VIPER engine created successfully");
         
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = Arc::new(
-            crate::storage::engines::sst::SstStorage::new(
-                storage_config.sst_config.clone().unwrap_or_default(),
+            crate::storage::engines::impls::sst::SstStorage::new(
+                storage_config.sst_config.clone().clone(),
                 filesystem_factory.clone(),
                 Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
             ).await?
@@ -507,7 +507,7 @@ impl SharedServices {
 
                 // Store the recovered collection in the metadata backend
                 match collection_service
-                    .get_metadata_backend()
+                    .metadata_backend()
                     .upsert_collection_proto(&proto_collection)
                     .await
                 {
@@ -560,7 +560,7 @@ impl SharedServices {
         
         // Get collections that need vector recovery
         let storage_ref = storage.read().await;
-        let recovered_collections = storage_ref.get_recovered_collections_metadata().await?;
+        let recovered_collections = storage_ref.recovered_collections_metadata().await?;
         
         if recovered_collections.is_empty() {
             info!("📋 SharedServices: No collections found for vector recovery");
@@ -714,7 +714,7 @@ impl MultiServer {
                 );
             }
 
-            let grpc_bind_addr = self.config.get_grpc_bind_address();
+            let grpc_bind_addr = self.config.grpc_bind_address();
 
             let grpc_handle = tokio::spawn(async move {
                 if let Err(e) = server_builder
@@ -736,7 +736,7 @@ impl MultiServer {
         if self.config.http_config.enable_rest {
             info!("📡 Starting REST Server on port 5678");
 
-            let rest_bind_addr = self.config.get_http_bind_address();
+            let rest_bind_addr = self.config.http_bind_address();
             let unified_handlers = services.unified_handlers.clone();
 
             let api_config = self.config.api_config.clone();
@@ -794,15 +794,15 @@ impl MultiServer {
     }
 
     /// Get server status
-    pub async fn get_status(&self) -> ServerStatus {
+    pub async fn status(&self) -> ServerStatus {
         let handles = self.server_handles.lock().await;
         let servers_running = !handles.is_empty();
 
         ServerStatus {
             http_running: self.config.http_config.enable_rest && servers_running,
             grpc_running: self.config.grpc_config.enable_grpc && servers_running,
-            http_address: Some(self.config.get_http_bind_address()),
-            grpc_address: Some(self.config.get_grpc_bind_address()),
+            http_address: Some(self.config.http_bind_address()),
+            grpc_address: Some(self.config.grpc_bind_address()),
             tls_enabled: self.config.is_tls_enabled(),
         }
     }

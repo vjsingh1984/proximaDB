@@ -323,7 +323,7 @@ where
     
     /// Check if ART is memory-efficient for current workload
     pub async fn is_memory_efficient(&self) -> bool {
-        let stats = self.get_memory_stats().await;
+        let stats = self.memory_stats().await;
         // ART is efficient when average bytes per entry is low
         stats.avg_bytes_per_entry < 64
     }
@@ -373,7 +373,7 @@ mod tests {
             memtable.insert(key.to_string(), format!("value_{}", key)).await.unwrap();
         }
         
-        let stats = memtable.get_memory_stats().await;
+        let stats = memtable.memory_stats().await;
         assert_eq!(stats.entry_count, 5);
         
         // ART should be memory efficient for similar keys

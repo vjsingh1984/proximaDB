@@ -100,7 +100,7 @@ mod tests {
             .await.unwrap();
         
         // Retrieve row group metadata
-        let cached = metadata_cache.get_row_group_metadata("test.parquet", 0).await;
+        let cached = metadata_cache.row_group_metadata("test.parquet", 0).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap()["row_count"], 1000);
     }

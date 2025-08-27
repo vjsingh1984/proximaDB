@@ -305,7 +305,7 @@ impl FileSystem for LocalFileSystem {
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         // Create parent directories if requested
         if options.create_dirs {

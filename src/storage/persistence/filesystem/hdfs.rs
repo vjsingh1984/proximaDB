@@ -231,7 +231,7 @@ impl HdfsClient {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()> {
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         // Step 1: Create file (WebHDFS two-step process)
         let create_url = format!(

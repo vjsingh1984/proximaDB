@@ -296,7 +296,7 @@ impl AccessPatternMetricsCollector {
     }
     
     /// Get pattern predictions for prefetching
-    pub async fn get_predictions(&self) -> Vec<AccessPrediction> {
+    pub async fn predictions(&self) -> Vec<AccessPrediction> {
         let patterns = self.pattern_engine.recognized_patterns.read().await;
         patterns.iter()
             .filter_map(|p| p.prediction.clone())
@@ -304,11 +304,11 @@ impl AccessPatternMetricsCollector {
     }
     
     /// Get correlation suggestions for a file
-    pub async fn get_correlated_files(&self, file_key: &str) -> Vec<CorrelatedItem> {
+    pub async fn correlated_files(&self, file_key: &str) -> Vec<CorrelatedItem> {
         self.correlation_tracker.file_correlations
             .get(file_key)
             .map(|entry| entry.clone())
-            .unwrap_or_default()
+            .clone()
     }
     
     /// Export metrics for unified framework

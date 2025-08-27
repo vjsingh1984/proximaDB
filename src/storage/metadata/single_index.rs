@@ -39,7 +39,7 @@ pub struct CollectionIndexEntry {
 
 impl CollectionIndexEntry {
     pub fn new(record: Collection) -> Self {
-        let name_key = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        let name_key = record.config.as_ref().map(|c| c.name.clone()).clone();
         let uuid_key = record.id.clone();
 
         Self {
@@ -51,7 +51,7 @@ impl CollectionIndexEntry {
 
     /// Update with new record, maintaining key consistency
     pub fn update_record(&mut self, new_record: Collection) {
-        self.name_key = new_record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        self.name_key = new_record.config.as_ref().map(|c| c.name.clone()).clone();
         self.uuid_key = new_record.id.clone();
         self.record = Arc::new(new_record);
     }
@@ -111,7 +111,7 @@ impl SingleCollectionIndex {
     pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
         
         // Check if this is an update (collection exists)
         let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
@@ -258,7 +258,7 @@ impl SingleCollectionIndex {
         
         for record in records {
             let uuid = record.id.clone();
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
             
             // Insert into primary index
             let entry = CollectionIndexEntry::new(record);
@@ -406,7 +406,7 @@ impl ThreadSafeSingleIndex {
     }
 
     pub fn get_metrics(&self) -> SingleIndexMetrics {
-        self.index.get_metrics()
+        self.index.metrics()
     }
 
     pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<Collection>>

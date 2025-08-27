@@ -46,7 +46,7 @@ impl From<&Collection> for CollectionLookupResult {
     fn from(record: &Collection) -> Self {
         Self {
             uuid: record.id.clone(),
-            name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+            name: record.config.as_ref().map(|c| c.name.clone()).clone(),
             dimension: record.config.as_ref().map(|c| c.dimension),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record.config.as_ref().and_then(|c| c.primary_index.clone()).unwrap_or_else(|| "None".to_string()),
@@ -133,7 +133,7 @@ impl MetadataMemoryIndexes {
     pub async fn upsert_collection(&self, record: Collection) {
         let start_time = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)
@@ -162,7 +162,7 @@ impl MetadataMemoryIndexes {
     pub async fn remove_collection(&self, uuid: &str) {
         if let Some((_, record)) = self.uuid_to_record.remove(uuid) {
             // Remove from name index
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
             self.name_to_uuid.remove(&name);
 
             // Remove from secondary indexes
@@ -377,7 +377,7 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Store full names only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
             prefix_index
                 .entry(name)
                 .or_insert_with(Vec::new)
@@ -423,7 +423,7 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Remove full name only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
             if let Some(uuids) = prefix_index.get_mut(&name) {
                 uuids.retain(|uuid| uuid != &record.id);
                 if uuids.is_empty() {

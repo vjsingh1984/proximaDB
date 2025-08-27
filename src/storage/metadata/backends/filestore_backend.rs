@@ -896,7 +896,7 @@ impl FilestoreMetadataBackend {
             sequence: self.next_sequence(),
             timestamp: chrono::Utc::now().timestamp(),
             operation_type: OperationType::Update,
-            collection_id: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+            collection_id: record.config.as_ref().map(|c| c.name.clone()).clone(),
             collection_data: Some(record.clone()),
         };
         
@@ -961,7 +961,7 @@ impl FilestoreMetadataBackend {
                     tx.register_rollback(
                         "secondary_index",
                         RollbackAction::RemoveFromSecondaryIndex {
-                            name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+                            name: record.config.as_ref().map(|c| c.name.clone()).clone(),
                             uuid: record.id.clone(),
                         },
                     )
@@ -1302,7 +1302,7 @@ impl CollectionMetadataProvider for FilestoreMetadataBackend {
         Ok(self.find_collection(collection_id).map(|r| r.id))
     }
     
-    async fn get_collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
+    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
         // Use optimized internal lookup that tries both name and UUID
         Ok(self.find_collection(collection_id))
     }

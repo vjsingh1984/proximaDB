@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 use tracing::{debug, trace};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::compute::quantization::types::QuantizationLevelType;
+use crate::compute::quantization::types::QuantizationLevel;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb::QuantizationConfig;
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
@@ -304,7 +304,7 @@ impl QueryPreprocessor {
         let levels = self.get_quantization_levels(config);
         
         // Quantize based on configuration
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevelType::Binary(_)))) {
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Binary(_)))) {
             if let Ok(quantized) = self.quantization_engine
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
                 .await
@@ -317,7 +317,7 @@ impl QueryPreprocessor {
             }
         }
         
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevelType::Scalar(_)))) {
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Scalar(_)))) {
             if let Ok(quantized) = self.quantization_engine
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
                 .await
@@ -330,7 +330,7 @@ impl QueryPreprocessor {
             }
         }
         
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevelType::Pq(ref pq)) if pq.bits_per_code == 4)) {
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4)) {
             if let Ok(quantized) = self.quantization_engine
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq4)
                 .await
@@ -343,7 +343,7 @@ impl QueryPreprocessor {
             }
         }
         
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevelType::Pq(ref pq)) if pq.bits_per_code == 8)) {
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 8)) {
             if let Ok(quantized) = self.quantization_engine
                 .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq8)
                 .await

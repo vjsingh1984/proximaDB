@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use super::{
-    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLogManager, VersionedCollectionMetadata},
+    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog, VersionedCollectionMetadata},
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
@@ -119,7 +119,7 @@ enum LockType {
 /// Atomic metadata store with MVCC and transactions
 pub struct AtomicMetadataStore {
     /// Write buffer manager for persistence
-    write_buffer_manager: Arc<MetadataWriteAheadLogManager>,
+    write_buffer_manager: Arc<MetadataWriteAheadLog>,
 
     /// Version store for MVCC
     version_store: Arc<RwLock<HashMap<String, Vec<VersionInfo>>>>,
@@ -170,7 +170,7 @@ impl AtomicMetadataStore {
     ) -> Result<Self> {
         tracing::debug!("🚀 Creating AtomicMetadataStore with MVCC and Write Buffer backing");
 
-        let write_buffer_manager = Arc::new(MetadataWriteAheadLogManager::new(config, filesystem).await?);
+        let write_buffer_manager = Arc::new(MetadataWriteAheadLog::new(config, filesystem).await?);
 
         let store = Self {
             write_buffer_manager,
@@ -588,15 +588,15 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         tracing::debug!("🔍 Getting collection metadata: {}", collection_id);
 
         // Read from write buffer manager (which handles caching)
-        if let Some(versioned) = self.write_buffer_manager.get_collection(collection_id).await? {
+        if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
             let metadata = CollectionMetadata {
                 id: versioned.id,
                 name: versioned.name,
                 dimension: versioned.dimension,
                 distance_metric: versioned.distance_metric,
                 indexing_algorithm: versioned.indexing_algorithm,
-                timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
-                updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
+                updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
                 vector_count: versioned.vector_count,
                 total_size_bytes: versioned.total_size_bytes,
                 config: versioned.config,
@@ -642,7 +642,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     }
 
     async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
-        let exists = self.get_collection(collection_id).await?.is_some();
+        let exists = self.collection(collection_id).await?.is_some();
 
         if exists {
             let transaction_id = self
@@ -683,8 +683,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
-                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
@@ -744,12 +744,12 @@ impl MetadataStoreInterface for AtomicMetadataStore {
 
     async fn health_check(&self) -> Result<bool> {
         // Check write buffer manager health
-        let _stats = self.write_buffer_manager.get_stats().await?;
+        let _stats = self.write_buffer_manager.stats().await?;
         Ok(true)
     }
 
     async fn get_storage_stats(&self) -> Result<MetadataStorageStats> {
-        let write_buffer_stats = self.write_buffer_manager.get_stats().await?;
+        let write_buffer_stats = self.write_buffer_manager.stats().await?;
         let _atomic_stats = self.stats.read().await;
 
         Ok(MetadataStorageStats {

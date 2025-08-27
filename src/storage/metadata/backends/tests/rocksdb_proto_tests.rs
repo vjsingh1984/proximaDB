@@ -12,7 +12,7 @@ mod tests {
     use crate::proto::proximadb::{
         Collection as Collection, CollectionConfig as CollectionConfig,
         CollectionStats, CollectionMetadata, DistanceMetric, StorageEngine, 
-        IndexingAlgorithm, FilterableColumnSpec, FilterableDataType,
+        IndexingAlgorithm, FilterableColumnSpec, FilterableData,
         IndexConfig, HnswConfig, QuantizationConfig, StorageQuantizationConfig,
         QuantizationLevel,
     };
@@ -54,7 +54,7 @@ mod tests {
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "author".to_string(),
-                        // data_type removed -  FilterableDataType::FilterableString as i32,
+                        // data_type removed -  FilterableData::FilterableString as i32,
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(1000),
@@ -65,7 +65,7 @@ mod tests {
                     },
                     FilterableColumnSpec {
                         name: "date".to_string(),
-                        // data_type removed -  FilterableDataType::FilterableDatetime as i32,
+                        // data_type removed -  FilterableData::FilterableDatetime as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
@@ -74,7 +74,7 @@ mod tests {
                     },
                     FilterableColumnSpec {
                         name: "rating".to_string(),
-                        // data_type removed -  FilterableDataType::FilterableFloat as i32,
+                        // data_type removed -  FilterableData::FilterableFloat as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: Some(50),
@@ -414,7 +414,7 @@ mod tests {
             config.distance_metric = DistanceMetric::Euclidean as i32;
             config.filterable_columns.push(FilterableColumnSpec {
                 name: "new_field".to_string(),
-                // data_type removed -  FilterableDataType::FilterableBoolean as i32,
+                // data_type removed -  FilterableData::FilterableBoolean as i32,
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(2),

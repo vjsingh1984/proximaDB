@@ -112,7 +112,7 @@ impl MetricsQueryService {
     }
     
     /// Get global metrics
-    pub async fn get_global_metrics(&self) -> Result<GlobalMetrics> {
+    pub async fn global_metrics(&self) -> Result<GlobalMetrics> {
         // Check cache first
         let cache = self.cache.read().await;
         if let Some(cached) = &cache.global {
@@ -124,7 +124,7 @@ impl MetricsQueryService {
         drop(cache);
         
         // Load from store
-        let metrics = self.store.get_global_metrics().await?;
+        let metrics = self.store.global_metrics().await?;
         
         // Update cache
         let mut cache = self.cache.write().await;
@@ -138,7 +138,7 @@ impl MetricsQueryService {
     }
     
     /// Get metrics for a specific collection
-    pub async fn get_collection_metrics(
+    pub async fn collection_metrics(
         &self,
         collection_id: &str,
         options: MetricsQueryOptions,
@@ -157,7 +157,7 @@ impl MetricsQueryService {
         drop(cache);
         
         // Load from store
-        let metrics = self.store.get_collection_metrics(collection_id).await?
+        let metrics = self.store.collection_metrics(collection_id).await?
             .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
         
         // Generate optimization hints if requested
@@ -178,12 +178,12 @@ impl MetricsQueryService {
     }
     
     /// Get query optimization hints for a collection
-    pub async fn get_query_hints(
+    pub async fn query_hints(
         &self,
         collection_id: &str,
         query_type: Option<String>,
     ) -> Result<QueryOptimizationHints> {
-        let metrics = self.store.get_collection_metrics(collection_id).await?
+        let metrics = self.store.collection_metrics(collection_id).await?
             .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
         
         let mut hints = metrics.generate_hints(&self.config);
@@ -205,7 +205,7 @@ impl MetricsQueryService {
     }
     
     /// Get metrics for all collections (summary only)
-    pub async fn get_all_collections_summary(&self) -> Result<Vec<serde_json::Value>> {
+    pub async fn all_collections_summary(&self) -> Result<Vec<serde_json::Value>> {
         let snapshots = self.store.load_all_snapshots().await?;
         
         let mut summaries = Vec::new();

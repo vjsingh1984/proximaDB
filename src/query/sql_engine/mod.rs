@@ -28,8 +28,8 @@ pub mod planner;
 pub mod comprehensive_sql_tests;
 
 pub use parser::{SqlParser, ParsedQuery};
-pub use pool::{LockFreeParserPool, get_global_pool, parse_sql_global, PoolStats};
-pub use vector_array_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, get_global_simd_parser};
+pub use pool::{LockFreeParserPool, global_pool, parse_sql_global, PoolStats};
+pub use vector_array_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, global_simd_parser};
 pub use executor::{SqlExecutor, SqlExecutionResult};
 pub use planner::{QueryPlanner, ExecutionPlan};
 
@@ -72,7 +72,7 @@ impl SqlEngine {
     /// Execute SQL query
     pub async fn execute(&self, sql: &str) -> Result<SqlExecutionResult> {
         // Parse SQL using lock-free parser pool
-        let mut parsed_query = get_global_pool().parse_sql(sql.to_string())?;
+        let mut parsed_query = global_pool().parse_sql(sql.to_string())?;
         
         // Resolve collection name to UUID if we have a collection service
         if let Some(collection_service) = &self.collection_service {
@@ -113,7 +113,7 @@ impl SqlEngine {
     /// Extract collection ID from SQL query for caching
     fn extract_collection_from_sql(&self, sql: &str) -> String {
         // Simple extraction - in real implementation might parse more thoroughly
-        if let Ok(parsed) = get_global_pool().parse_sql(sql.to_string()) {
+        if let Ok(parsed) = global_pool().parse_sql(sql.to_string()) {
             parsed.from_collection
         } else {
             "unknown".to_string()
@@ -123,7 +123,7 @@ impl SqlEngine {
     /// Execute SQL query without caching (for debugging or one-time queries)
     pub async fn execute_uncached(&self, sql: &str) -> Result<SqlExecutionResult> {
         // Parse SQL using lock-free parser pool
-        let mut parsed_query = get_global_pool().parse_sql(sql.to_string())?;
+        let mut parsed_query = global_pool().parse_sql(sql.to_string())?;
         
         // Resolve collection name to UUID if we have a collection service
         if let Some(collection_service) = &self.collection_service {

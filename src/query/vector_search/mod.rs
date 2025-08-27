@@ -28,6 +28,27 @@ use crate::index::axis::{
     IndexAlgorithm as AxisIndexAlgorithm,
 };
 use crate::compute::distance_computation::DistanceMetric;
+use crate::services::operations::vectors::VectorOperationsService;
+
+// Type aliases for compatibility
+pub type VectorSearchQuery = SearchQuery;
+pub type VectorSearchResult = crate::core::service_types::VectorSearchResult;
+pub type SearchParameters = SearchConfig;
+
+// Search query structure
+#[derive(Debug, Clone)]
+pub struct SearchQuery {
+    pub vector: Vec<f32>,
+    pub top_k: usize,
+    pub distance_metric: DistanceMetric,
+}
+
+// Search configuration
+#[derive(Debug, Clone)]
+pub struct SearchConfig {
+    pub algorithm: SearchAlgorithm,
+    pub timeout_ms: Option<u64>,
+}
 
 /// Vector search algorithm types (AXIS-based)
 #[derive(Debug, Clone)]
@@ -257,4 +278,12 @@ impl SearchAlgorithmFactory {
             hash_width: 1.0,
         }
     }
+}
+/// Execute vector search with given parameters
+pub async fn execute_search(
+    vector_service: &VectorOperationsService,
+    params: &SearchConfig,
+) -> Result<VectorSearchResult> {
+    // Placeholder implementation - delegates to vector service
+    Err(anyhow!("Vector search not yet implemented"))
 }

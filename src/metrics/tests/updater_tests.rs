@@ -67,8 +67,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(100)).await;
         
         // Verify metrics were stored
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics("test_collection_flush").await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics("test_collection_flush").await.unwrap();
         assert!(metrics.is_some(), "Flush metrics should be stored");
         
         let collection_metrics = metrics.unwrap();
@@ -101,8 +101,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(100)).await;
         
         // Verify metrics were stored
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics("test_collection_compaction_info").await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics("test_collection_compaction_info").await.unwrap();
         assert!(metrics.is_some(), "Compaction metrics should be stored");
         
         let collection_metrics = metrics.unwrap();
@@ -136,8 +136,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(100)).await;
         
         // Verify metrics were stored
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics("test_collection_search").await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics("test_collection_search").await.unwrap();
         assert!(metrics.is_some(), "Search metrics should be stored");
         
         let collection_metrics = metrics.unwrap();
@@ -170,8 +170,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(100)).await;
         
         // Verify metrics were stored
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics("test_collection_operation").await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics("test_collection_operation").await.unwrap();
         assert!(metrics.is_some(), "Operation metrics should be stored");
         
         let collection_metrics = metrics.unwrap();
@@ -239,11 +239,11 @@ use tracing::{debug, error, info};
         debug!("📊 Completed concurrent updates for {} operations", completed_collections.len());
         
         // Verify metrics were updated for all unique collections
-        let store = updater.get_store();
+        let store = updater.store();
         let unique_collections: std::collections::HashSet<_> = completed_collections.into_iter().collect();
         
         for collection_id in unique_collections {
-            let metrics = store.get_collection_metrics(&collection_id).await.unwrap();
+            let metrics = store.collection_metrics(&collection_id).await.unwrap();
             assert!(metrics.is_some(), "Metrics not found for collection {}", collection_id);
             
             let collection_metrics = metrics.unwrap();
@@ -285,8 +285,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(200)).await;
         
         // Verify aggregation calculations
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics(collection_id).await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics(collection_id).await.unwrap();
         assert!(metrics.is_some(), "Aggregated metrics should exist");
         
         let collection_metrics = metrics.unwrap();
@@ -401,8 +401,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(300)).await;
         
         // Verify all metrics were integrated correctly
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics(collection_id).await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics(collection_id).await.unwrap();
         assert!(metrics.is_some(), "Integrated metrics should exist");
         
         let collection_metrics = metrics.unwrap();
@@ -453,8 +453,8 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(100)).await;
         
         // Verify timestamp was preserved and updated
-        let store = updater.get_store();
-        let metrics = store.get_collection_metrics(collection_id).await.unwrap();
+        let store = updater.store();
+        let metrics = store.collection_metrics(collection_id).await.unwrap();
         assert!(metrics.is_some());
         
         let collection_metrics = metrics.unwrap();

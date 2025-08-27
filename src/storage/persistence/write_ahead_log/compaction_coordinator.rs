@@ -19,8 +19,8 @@ use tokio::sync::{RwLock, Mutex};
 use tracing::{debug, info, warn};
 
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
-// use crate::storage::engines::viper::ViperEngine;
-use crate::storage::engines::sst::SstStorage;
+// use crate::storage::engines::impls::viper::ViperEngine;
+use crate::storage::engines::impls::sst::SstStorage;
 use crate::storage::traits::FlushResult;
 use crate::index::axis::AxisManager;
 
@@ -39,7 +39,7 @@ pub struct CompactionCoordinator {
     collection_states: Arc<RwLock<HashMap<String, CollectionCompactionState>>>,
     
     /// Storage engines for compaction
-    viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
+    viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
     sst_engine: Arc<SstStorage>,
     
     /// Compaction configuration
@@ -194,12 +194,12 @@ pub struct CompactionResult {
 impl CompactionCoordinator {
     /// Create new compaction coordinator
     pub fn new(
-        viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
+        viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
         sst_engine: Arc<SstStorage>,
         config: Option<CompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {
-        let config = config.unwrap_or_default();
+        let config = config.clone();
         
         info!(
             "🔧 CompactionCoordinator: Initializing with config: max_files={}, max_size={}MB, max_flushes={}",
@@ -692,7 +692,7 @@ impl CompactionCoordinator {
         match engine_type {
             "VIPER" => {
                 // Use VIPER engine's file discovery
-                self.viper_engine.get_parquet_files_for_collection(collection_id).await
+                self.viper_engine.parquet_files_for_collection(collection_id).await
             }
             "LSM" | "SST" => {
                 // For SST engine, we'd need to implement similar discovery

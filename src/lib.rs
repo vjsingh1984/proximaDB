@@ -33,7 +33,7 @@
 //! - **Enterprise Ready**: RBAC, audit logs, compliance
 
 pub mod api;
-pub mod common;  // Shared infrastructure
+pub mod infrastructure;  // Shared infrastructure components
 pub mod compute;
 // pub mod consensus;  // Disabled - requires raft dependency
 pub mod core;
@@ -60,7 +60,8 @@ pub mod version;
 //     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));
 // }
 
-pub use core::*;
+// Re-export commonly used types from core
+pub use core::{Config, VectorRecord, error::Error};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -233,7 +234,7 @@ impl ProximaDB {
     /// Get the multi-server status
     pub async fn server_status(&self) -> Option<network::multi_server::ServerStatus> {
         if let Some(ref multi_server) = self.multi_server {
-            Some(multi_server.get_status().await)
+            Some(multi_server.status().await)
         } else {
             None
         }

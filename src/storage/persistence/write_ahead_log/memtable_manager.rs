@@ -114,7 +114,7 @@ impl MemtableManager {
         collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
-        self.wal_behavior.get_vector_by_id(collection_id, vector_id).await
+        self.wal_behavior.vector_by_id(collection_id, vector_id).await
     }
     
     /// Get all unflushed batches for a collection
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(all_vectors.len(), 1);
         
         // Check stats
-        let stats = manager.get_stats().await.expect("Failed to get stats");
+        let stats = manager.stats().await.expect("Failed to get stats");
         assert_eq!(stats.total_vectors_added, 1);
         assert_eq!(stats.total_batches_added, 1);
     }

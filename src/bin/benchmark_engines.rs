@@ -176,7 +176,7 @@ async fn benchmark_sst_engine(
     info!("🔧 Benchmarking SST engine...");
     
     // Create SST engine instance
-    let config = proximadb::storage::engines::sst::SstConfig::default();
+    let config = proximadb::storage::engines::impls::sst::SstConfig::default();
     let engine = Arc::new(SstStorage::new(config)) as Arc<dyn UnifiedStorageEngine>;
     
     // Run benchmarks
@@ -257,7 +257,7 @@ async fn benchmark_raptor_engine(
     info!("🔧 Benchmarking RAPTOR engine...");
     
     // Create RAPTOR engine instance
-    let config = proximadb::storage::engines::raptor::RaptorConfig::default();
+    let config = proximadb::storage::engines::impls::raptor::RaptorConfig::default();
     let engine = Arc::new(RaptorEngine::new(config).await?) as Arc<dyn UnifiedStorageEngine>;
     
     // Run benchmarks
@@ -278,7 +278,7 @@ async fn benchmark_prism_engine(
     info!("🔧 Benchmarking PRISM engine...");
     
     // Create PRISM engine instance
-    let config = proximadb::storage::engines::prism::PrismConfig::default();
+    let config = proximadb::storage::engines::impls::prism::PrismConfig::default();
     let engine = Arc::new(PrismEngine::new(config).await?) as Arc<dyn UnifiedStorageEngine>;
     
     // Run benchmarks

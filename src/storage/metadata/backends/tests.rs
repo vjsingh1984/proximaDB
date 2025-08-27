@@ -3,7 +3,7 @@ mod metadata_backend_tests {
     use super::super::*;
     use crate::core::StorageConfig;
     use crate::network::multi_server::{MultiServerConfig, SharedServices};
-    use crate::services::collection_service::CollectionService;
+    use crate::services::collection::manager::CollectionService;
     use crate::storage::metadata::backends::filestore_backend::{
         FilestoreMetadataBackend, FilestoreMetadataConfig,
     };
@@ -38,7 +38,7 @@ mod metadata_backend_tests {
             mmap_enabled: true,
             lsm_config: Default::default(),
             cache_size_mb: 10,
-            bloom_filter_config: Some(crate::storage::engines::row_based::bloom_filter::BloomFilterConfig {
+            bloom_filter_config: Some(crate::storage::engines::core::formats::row_based::bloom_filter::BloomFilterConfig {
                 bits_per_key: 10,
                 enabled: true,
                 ..Default::default()
@@ -66,7 +66,7 @@ mod metadata_backend_tests {
             let storage = storage_engine.read().await;
             // The storage engine should now have access to collection metadata
             let collection_exists = storage
-                .get_collection_metadata(&String::from("test_collection"))
+                .collection_metadata(&String::from("test_collection"))
                 .await
                 .unwrap();
             assert!(collection_exists.is_empty()); // No collections yet
@@ -103,7 +103,7 @@ mod metadata_backend_tests {
         {
             let storage = storage_engine.read().await;
             let collection_metadata = storage
-                .get_collection_metadata(&String::from("test_collection"))
+                .collection_metadata(&String::from("test_collection"))
                 .await
                 .unwrap();
             assert!(collection_metadata.is_some());
@@ -159,7 +159,7 @@ mod metadata_backend_tests {
         
         // Initially, storage engine should not have access to collections
         let initial_result = storage_engine
-            .get_collection_metadata(&String::from("test"))
+            .collection_metadata(&String::from("test"))
             .await;
         assert!(initial_result.is_err()); // Should error without metadata provider
         
@@ -170,7 +170,7 @@ mod metadata_backend_tests {
         
         // Now storage engine should be able to access collections
         let result = storage_engine
-            .get_collection_metadata(&String::from("test"))
+            .collection_metadata(&String::from("test"))
             .await
             .unwrap();
         assert!(result.is_empty()); // No collections exist yet
@@ -200,7 +200,7 @@ mod metadata_backend_tests {
         
         // Verify storage engine can now see the collection
         let metadata = storage_engine
-            .get_collection_metadata(&String::from("test"))
+            .collection_metadata(&String::from("test"))
             .await
             .unwrap();
         assert!(metadata.is_some());

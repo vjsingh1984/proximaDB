@@ -295,7 +295,7 @@ impl<T> PooledItem<T> {
     }
 
     /// Get mutable reference to the buffer
-    pub fn get_mut(&mut self) -> &mut T {
+    pub fn as_mut(&mut self) -> &mut T {
         self.buffer.as_mut().expect("Buffer should be present")
     }
 
@@ -483,7 +483,7 @@ impl VectorMemoryPool {
     }
 
     /// Get comprehensive statistics for all pools
-    pub fn get_comprehensive_stats(&self) -> VectorPoolStats {
+    pub fn comprehensive_stats(&self) -> VectorPoolStats {
         VectorPoolStats {
             serialization: self.serialization_buffers.stats(),
             vector: self.vector_buffers.stats(),
@@ -501,7 +501,7 @@ impl VectorMemoryPool {
     }
     
     /// Get a f32 buffer from the pool
-    pub fn get_f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
+    pub fn f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
         let mut item = self.vector_buffers.acquire();
         item.get_mut().clear();
         item.get_mut().reserve(capacity);

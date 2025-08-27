@@ -99,7 +99,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(&full_url)
-                .unwrap_or_default()
+                .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::info!(
@@ -165,7 +165,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_url)
-                .unwrap_or_default()
+                .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::info!(
@@ -274,7 +274,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Check Write Buffer data (unflushed)
-            if let Some(wal_record) = wal_behavior.get_vector_by_id(collection_id, vector_id).await? {
+            if let Some(wal_record) = wal_behavior.vector_by_id(collection_id, vector_id).await? {
                 // Check if not expired
                 let current_time = chrono::Utc::now().timestamp() as u32;
                 let is_expired = wal_record.expires_at
@@ -337,7 +337,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     // Create VectorRecord from SearchResult
                     let vector_record = VectorRecord {
                         id: search_result.vector_id,
-                        vector: search_result.vector.unwrap_or_default(),
+                        vector: search_result.vector.clone(),
                         metadata: search_result.metadata.into_iter()
                             .map(|(key, value)| crate::proto::proximadb::MetadataItem {
                                 key,
@@ -418,7 +418,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         tracing::info!("🔄 Starting Write Buffer recovery from global memtable (in-memory only)");
         
         if let Some(wal_behavior) = self.get_wal_behavior() {
-            match wal_behavior.get_stats().await {
+            match wal_behavior.stats().await {
                 Ok(stats) => {
                     let total_vectors: usize = stats.values().map(|s| s.total_entries as usize).sum();
                     tracing::info!("✅ Write Buffer recovery: Found {} vectors in {} collections in global memtable", 
@@ -658,7 +658,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_base_url)
-                .unwrap_or_default()
+                .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::debug!(
@@ -696,7 +696,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_url)
-                .unwrap_or_default()
+                .clone()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::info!("🗑️ CLOUD_DELETE: Deleted batch from {} [bucket: {}]", cloud_url, bucket);
@@ -733,7 +733,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 Ok(_) => {
                     // Log detailed information for monitoring
                     let bucket = fs.extract_bucket_from_url(cloud_base_url)
-                        .unwrap_or_default()
+                        .clone()
                         .unwrap_or_else(|| "unknown".to_string());
                     
                     tracing::debug!("✅ CLOUD_HEALTH: Cloud storage accessible at {} [bucket: {}]", cloud_base_url, bucket);
@@ -918,7 +918,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn should_trigger_flush(&self, collection_id: &str) -> Result<bool> {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Get collection statistics from GlobalPartitionedMemtable
-            let stats = wal_behavior.get_stats().await?;
+            let stats = wal_behavior.stats().await?;
             
             if let Some(collection_stats) = stats.get(collection_id) {
                 // Check thresholds: memory size, entry count, or time-based

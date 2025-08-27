@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::proto::proximadb::VectorRecord;
-use crate::index::axis::metadata::{MetadataQueueService, StorageEngineType};
+use crate::index::axis::eventlog::{EventLogManager as MetadataQueueService, StorageEngineType};
 use crate::storage::engines::{FlushParameters, CompactionParameters};
 
 /// Simple flush-to-AXIS notifier
@@ -255,7 +255,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
         // Verify events were queued
-        let stats = queue_service.get_stats().await;
+        let stats = queue_service.stats().await;
         assert!(stats.total_pending_events > 0);
     }
     

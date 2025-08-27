@@ -7,22 +7,22 @@
 use std::collections::HashMap;
 use std::cmp::Ordering;
 use crate::proto::proximadb::{MetadataItem, metadata_item::Value as MetadataValue};
-use crate::proto::proximadb::{FilterableColumnSpec, FilterableDataType};
+use crate::proto::proximadb::{FilterableColumnSpec, FilterableData};
 use crate::core::search::{FilterExpression, ComparisonOperator};
 
 /// Type-safe filter evaluator that uses collection metadata for datatype information
 pub struct TypeSafeFilterEvaluator {
     /// Column metadata from collection configuration
-    column_types: HashMap<String, FilterableDataType>,
+    column_types: HashMap<String, FilterableData>,
 }
 
 impl TypeSafeFilterEvaluator {
     /// Create a new evaluator from collection metadata
     pub fn new(filterable_columns: &[FilterableColumnSpec]) -> Self {
-        let column_types: HashMap<String, FilterableDataType> = filterable_columns
+        let column_types: HashMap<String, FilterableData> = filterable_columns
             .iter()
             .filter_map(|col| {
-                FilterableDataType::try_from(col.data_type)
+                FilterableData::try_from(col.data_type)
                     .ok()
                     .map(|dt| (col.name.clone(), dt))
             })
@@ -158,11 +158,11 @@ impl TypeSafeFilterEvaluator {
         &self,
         metadata_value: &Option<MetadataValue>,
         json_value: &serde_json::Value,
-        expected_type: Option<FilterableDataType>,
+        expected_type: Option<FilterableData>,
     ) -> Option<Ordering> {
         match (metadata_value, expected_type) {
             // String comparison
-            (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableString)) => {
+            (Some(MetadataValue::StringValue(s)), Some(FilterableData::FilterableString)) => {
                 if let serde_json::Value::String(js) = json_value {
                     Some(s.cmp(js))
                 } else {
@@ -171,7 +171,7 @@ impl TypeSafeFilterEvaluator {
             }
             
             // Number comparison - no casting needed, direct type comparison
-            (Some(MetadataValue::NumberValue(n)), Some(FilterableDataType::FilterableInteger) | Some(FilterableDataType::FilterableFloat)) => {
+            (Some(MetadataValue::NumberValue(n)), Some(FilterableData::FilterableInteger) | Some(FilterableData::FilterableFloat)) => {
                 match json_value {
                     serde_json::Value::Number(jn) => {
                         // Direct numeric comparison without conversion
@@ -188,7 +188,7 @@ impl TypeSafeFilterEvaluator {
             }
             
             // Boolean comparison
-            (Some(MetadataValue::BoolValue(b)), Some(FilterableDataType::FilterableBoolean)) => {
+            (Some(MetadataValue::BoolValue(b)), Some(FilterableData::FilterableBoolean)) => {
                 if let serde_json::Value::Bool(jb) = json_value {
                     Some(b.cmp(jb))
                 } else {
@@ -198,7 +198,7 @@ impl TypeSafeFilterEvaluator {
             
             // Cross-type conversions when metadata doesn't match expected type
             // This can happen with flexible schemas or type mismatches
-            (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableInteger)) => {
+            (Some(MetadataValue::StringValue(s)), Some(FilterableData::FilterableInteger)) => {
                 // Try to parse string as integer
                 if let (Ok(si), serde_json::Value::Number(jn)) = (s.parse::<i64>(), json_value) {
                     if let Some(ji) = jn.as_i64() {
@@ -211,7 +211,7 @@ impl TypeSafeFilterEvaluator {
                 }
             }
             
-            (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableFloat)) => {
+            (Some(MetadataValue::StringValue(s)), Some(FilterableData::FilterableFloat)) => {
                 // Try to parse string as float
                 if let (Ok(sf), serde_json::Value::Number(jn)) = (s.parse::<f64>(), json_value) {
                     if let Some(jf) = jn.as_f64() {
@@ -224,7 +224,7 @@ impl TypeSafeFilterEvaluator {
                 }
             }
             
-            (Some(MetadataValue::NumberValue(n)), Some(FilterableDataType::FilterableString)) => {
+            (Some(MetadataValue::NumberValue(n)), Some(FilterableData::FilterableString)) => {
                 // Convert number to string for comparison
                 if let serde_json::Value::String(js) = json_value {
                     n.to_string().as_str().cmp(js).into()
@@ -265,7 +265,7 @@ pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_j
 /// Extract metadata conditions for efficient filtering
 pub fn extract_typed_conditions(
     expr: &FilterExpression,
-    column_types: &HashMap<String, FilterableDataType>,
+    column_types: &HashMap<String, FilterableData>,
 ) -> HashMap<String, TypedCondition> {
     let mut conditions = HashMap::new();
     extract_conditions_recursive(expr, column_types, &mut conditions);
@@ -281,7 +281,7 @@ pub struct TypedCondition {
 
 fn extract_conditions_recursive(
     expr: &FilterExpression,
-    column_types: &HashMap<String, FilterableDataType>,
+    column_types: &HashMap<String, FilterableData>,
     conditions: &mut HashMap<String, TypedCondition>,
 ) {
     match expr {
@@ -289,13 +289,13 @@ fn extract_conditions_recursive(
             if let Some(&data_type) = column_types.get(field) {
                 // Convert JSON value to typed MetadataValue
                 let typed_value = match (data_type, value) {
-                    (FilterableDataType::FilterableString, serde_json::Value::String(s)) => {
+                    (FilterableData::FilterableString, serde_json::Value::String(s)) => {
                         Some(MetadataValue::StringValue(s.clone()))
                     }
-                    (FilterableDataType::FilterableInteger | FilterableDataType::FilterableFloat, serde_json::Value::Number(n)) => {
+                    (FilterableData::FilterableInteger | FilterableData::FilterableFloat, serde_json::Value::Number(n)) => {
                         n.as_f64().map(MetadataValue::NumberValue)
                     }
-                    (FilterableDataType::FilterableBoolean, serde_json::Value::Bool(b)) => {
+                    (FilterableData::FilterableBoolean, serde_json::Value::Bool(b)) => {
                         Some(MetadataValue::BoolValue(*b))
                     }
                     _ => None,
@@ -327,7 +327,7 @@ mod tests {
         let columns = vec![
             FilterableColumnSpec {
                 name: "category".to_string(),
-                data_type: FilterableDataType::FilterableString as i32,
+                data_type: FilterableData::FilterableString as i32,
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(100),
@@ -358,7 +358,7 @@ mod tests {
         let columns = vec![
             FilterableColumnSpec {
                 name: "price".to_string(),
-                data_type: FilterableDataType::FilterableFloat as i32,
+                data_type: FilterableData::FilterableFloat as i32,
                 indexed: true,
                 supports_range: true,
                 estimated_cardinality: None,

@@ -71,7 +71,7 @@ async fn test_three_layer_search_consistency_basic() {
     let _seq1 = memtable.add_wal_batch(collection_id, batch1).await.unwrap();
 
     // Verify WAL layer search finds the vector
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     assert_eq!(result.unwrap().version, Some(1));
 
@@ -86,7 +86,7 @@ async fn test_three_layer_search_consistency_basic() {
     let _seq2 = memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Verify latest version is returned (MVCC)
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
     assert_eq!(found_vector.version, Some(2));
@@ -104,7 +104,7 @@ async fn test_three_layer_search_consistency_basic() {
     let _seq3 = memtable.add_wal_batch(collection_id, batch3).await.unwrap();
 
     // Verify logical delete is respected (should return None)
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_empty(), "Vector should be logically deleted");
 
     // Verify search also respects logical delete
@@ -131,8 +131,8 @@ async fn test_get_before_delete_update_consistency() {
     let batch1 = create_wal_batch(collection_id, 1, vec![original_vector.clone()]);
     memtable.add_wal_batch(collection_id, batch1).await.unwrap();
 
-    // CRITICAL: Client must get_vector_by_id before issuing delete/update
-    let current_vector = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    // CRITICAL: Client must vector_by_id before issuing delete/update
+    let current_vector = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(current_vector.is_some());
     let current_vector = current_vector.unwrap();
 
@@ -152,7 +152,7 @@ async fn test_get_before_delete_update_consistency() {
     memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Verify update is successful and latest version is returned
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
     assert_eq!(found_vector.id, Some(vector_id.to_string()));
@@ -171,7 +171,7 @@ async fn test_get_before_delete_update_consistency() {
     memtable.add_wal_batch(collection_id, batch3).await.unwrap();
 
     // Verify delete is successful
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_empty(), "Vector should be deleted after tombstone");
 }
 
@@ -214,7 +214,7 @@ async fn test_version_ordering_across_layers() {
     memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Should return version 3 (highest)
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
     assert_eq!(found_vector.version, Some(3));
@@ -259,11 +259,11 @@ async fn test_expired_records_vs_active_records() {
     memtable.add_wal_batch(collection_id, batch).await.unwrap();
 
     // Active vector should be found
-    let active_result = memtable.get_vector_by_id(collection_id, "active_vector").await.unwrap();
+    let active_result = memtable.vector_by_id(collection_id, "active_vector").await.unwrap();
     assert!(active_result.is_some());
 
     // Expired vector should not be found
-    let expired_result = memtable.get_vector_by_id(collection_id, "expired_vector").await.unwrap();
+    let expired_result = memtable.vector_by_id(collection_id, "expired_vector").await.unwrap();
     assert!(expired_result.is_empty());
 
     // Search should only return active vector
@@ -303,7 +303,7 @@ async fn test_same_id_different_vector_values() {
     memtable.add_wal_batch(collection_id, batch2).await.unwrap();
 
     // Should return the latest version with the new vector values
-    let result = memtable.get_vector_by_id(collection_id, vector_id).await.unwrap();
+    let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
     assert!(result.is_some());
     let found_vector = result.unwrap();
     assert_eq!(found_vector.id, Some(vector_id.to_string()));
@@ -360,11 +360,11 @@ async fn test_multi_collection_mvcc_isolation() {
     memtable.add_wal_batch(collection_a, batch_delete).await.unwrap();
 
     // Collection A should not find the vector (deleted)
-    let result_a = memtable.get_vector_by_id(collection_a, vector_id).await.unwrap();
+    let result_a = memtable.vector_by_id(collection_a, vector_id).await.unwrap();
     assert!(result_a.is_empty());
 
     // Collection B should still find the vector (not deleted)
-    let result_b = memtable.get_vector_by_id(collection_b, vector_id).await.unwrap();
+    let result_b = memtable.vector_by_id(collection_b, vector_id).await.unwrap();
     assert!(result_b.is_some());
     assert_eq!(result_b.unwrap().vector, vec![0.0, 1.0, 0.0]);
 }
@@ -395,7 +395,7 @@ async fn test_flush_compaction_atomic_consistency() {
 
     // Simulate partial flush (some vectors moved to storage)
     // In real implementation, this would be atomic
-    let vec1_result = memtable.get_vector_by_id(collection_id, "vec1").await.unwrap();
+    let vec1_result = memtable.vector_by_id(collection_id, "vec1").await.unwrap();
     assert!(vec1_result.is_some());
 
     // TODO: When storage engines are implemented, test that flushed vectors

@@ -12,7 +12,7 @@ mod tests {
     use crate::proto::proximadb::{
         Collection as Collection, CollectionConfig as CollectionConfig,
         CollectionStats, CollectionMetadata, DistanceMetric, StorageEngine, 
-        IndexingAlgorithm, FilterableColumnSpec, FilterableDataType,
+        IndexingAlgorithm, FilterableColumnSpec, FilterableData,
     };
     use crate::storage::transaction_coordinator::{TransactionCoordinator, generate_transaction_id};
     use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -45,7 +45,7 @@ mod tests {
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "category".to_string(),
-                        // data_type removed -  FilterableDataType::FilterableString as i32,
+                        // data_type removed -  FilterableData::FilterableString as i32,
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(100),
@@ -56,7 +56,7 @@ mod tests {
                     },
                     FilterableColumnSpec {
                         name: "price".to_string(),
-                        // data_type removed -  FilterableDataType::FilterableFloat as i32,
+                        // data_type removed -  FilterableData::FilterableFloat as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
@@ -317,7 +317,7 @@ mod tests {
             config.filterable_columns = vec![
                 FilterableColumnSpec {
                     name: "timestamp".to_string(),
-                    // data_type removed -  FilterableDataType::FilterableDatetime as i32,
+                    // data_type removed -  FilterableData::FilterableDatetime as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: None,
@@ -326,7 +326,7 @@ mod tests {
                     },
                 FilterableColumnSpec {
                     name: "status".to_string(),
-                    // data_type removed -  FilterableDataType::FilterableString as i32,
+                    // data_type removed -  FilterableData::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(5),
@@ -335,7 +335,7 @@ mod tests {
                     },
                 FilterableColumnSpec {
                     name: "score".to_string(),
-                    // data_type removed -  FilterableDataType::FilterableInteger as i32,
+                    // data_type removed -  FilterableData::FilterableInteger as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),

@@ -124,11 +124,11 @@ async fn metrics_endpoint(
 
     match format.as_str() {
         "json" => {
-            let metrics = metrics_collector.get_current_metrics().await;
+            let metrics = metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
         "prometheus" | _ => {
-            let metrics = metrics_collector.get_current_metrics().await;
+            let metrics = metrics_collector.current_metrics().await;
             let exporter = PrometheusExporter::new();
             exporter
                 .export_system_metrics(&metrics)
@@ -143,7 +143,7 @@ async fn json_metrics_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // TODO: Use for historical data
-    let metrics = metrics_collector.get_current_metrics().await;
+    let metrics = metrics_collector.current_metrics().await;
     Json(metrics)
 }
 
@@ -151,7 +151,7 @@ async fn json_metrics_endpoint(
 async fn prometheus_metrics_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Result<String, StatusCode> {
-    let metrics = metrics_collector.get_current_metrics().await;
+    let metrics = metrics_collector.current_metrics().await;
     let exporter = PrometheusExporter::new();
     exporter
         .export_system_metrics(&metrics)
@@ -162,7 +162,7 @@ async fn prometheus_metrics_endpoint(
 async fn metrics_health_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<MetricsHealthResponse> {
-    let metrics = metrics_collector.get_current_metrics().await;
+    let metrics = metrics_collector.current_metrics().await;
 
     Json(MetricsHealthResponse {
         status: "healthy".to_string(),

@@ -22,17 +22,17 @@
 //!
 //! ## Integration Architecture:
 //! - Uses existing AccessPatternTracker from CrossCacheOrchestrator
-//! - Leverages existing GlobalTierManager for tier decisions  
+//! - Leverages existing GlobalTier for tier decisions  
 //! - Integrates with existing WorkloadMetrics and AccessPatternMetrics
 //! - Extends existing StorageTier enum with AXIS-specific mappings
 //! - Reuses existing policy engine infrastructure
 
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
-use crate::common::tier_policy_engine::{
+use crate::infrastructure::tier_policy_engine::{
     WorkloadPattern, StorageTier, 
-    GlobalTierManager
+    GlobalTier
 };
-use crate::index::axis::collection_state::TierLevel;
+use crate::index::axis::integration::collection_state::TierLevel;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ pub struct AxisTieringIntegration {
     access_tracker: Arc<AccessPatternTracker>,
     
     /// Reference to existing global tier manager  
-    global_tier_manager: Arc<GlobalTierManager>,
+    global_tier_manager: Arc<GlobalTier>,
     
     /// AXIS-specific index type preferences for tier mapping
     index_type_preferences: AxisIndexPreferences,
@@ -58,7 +58,7 @@ pub struct AxisTieringIntegration {
 #[derive(Debug, Clone)]
 pub struct AxisIndexPreferences {
     /// Index type to tier preferences mapping
-    preferences: std::collections::HashMap<AxisIndexType, IndexTierPreference>,
+    preferences: std::collections::HashMap<AxisIndex, IndexTierPreference>,
 }
 
 /// Index-specific tier preference configuration
@@ -100,7 +100,7 @@ pub struct AxisTierRecommendation {
 
 /// AXIS index types for tier optimization
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum AxisIndexType {
+pub enum AxisIndex {
     /// Hierarchical Navigable Small World (memory-preferred)
     HNSW,
     
@@ -125,7 +125,7 @@ impl Default for AxisIndexPreferences {
         let mut preferences = std::collections::HashMap::new();
         
         // HNSW: High memory preference, sensitive to latency
-        preferences.insert(AxisIndexType::HNSW, IndexTierPreference {
+        preferences.insert(AxisIndex::HNSW, IndexTierPreference {
             preferred_tier_level: 1, // Memory
             min_tier_level: 1,
             max_tier_level: 2, // Up to NVMe if needed
@@ -133,7 +133,7 @@ impl Default for AxisIndexPreferences {
         });
         
         // IVF: Moderate preference, NVMe-optimized
-        preferences.insert(AxisIndexType::IVF, IndexTierPreference {
+        preferences.insert(AxisIndex::IVF, IndexTierPreference {
             preferred_tier_level: 2, // NVMe
             min_tier_level: 1, 
             max_tier_level: 3, // Up to HDD acceptable
@@ -141,7 +141,7 @@ impl Default for AxisIndexPreferences {
         });
         
         // LSH: Disk-tolerant, flexible placement
-        preferences.insert(AxisIndexType::LSH, IndexTierPreference {
+        preferences.insert(AxisIndex::LSH, IndexTierPreference {
             preferred_tier_level: 3, // HDD acceptable
             min_tier_level: 1,
             max_tier_level: 4, // Can use cloud tiers
@@ -149,7 +149,7 @@ impl Default for AxisIndexPreferences {
         });
         
         // Flat: Memory-intensive, avoid slow tiers
-        preferences.insert(AxisIndexType::Flat, IndexTierPreference {
+        preferences.insert(AxisIndex::Flat, IndexTierPreference {
             preferred_tier_level: 1, // Memory
             min_tier_level: 1,
             max_tier_level: 2, // NVMe at most
@@ -164,7 +164,7 @@ impl AxisTieringIntegration {
     /// Create new AXIS tiering integration with existing infrastructure
     pub fn new(
         access_tracker: Arc<AccessPatternTracker>,
-        global_tier_manager: Arc<GlobalTierManager>,
+        global_tier_manager: Arc<GlobalTier>,
     ) -> Self {
         Self {
             access_tracker,
@@ -178,7 +178,7 @@ impl AxisTieringIntegration {
     pub async fn track_index_access(
         &self,
         collection_id: &str,
-        index_type: AxisIndexType,
+        index_type: AxisIndex,
     ) {
         // Use existing unified AccessPatternTracker
         self.access_tracker.track_access_async(
@@ -195,7 +195,7 @@ impl AxisTieringIntegration {
         &self,
         collection_id: &str,
         current_tier: &TierLevel,
-        index_type: AxisIndexType,
+        index_type: AxisIndex,
     ) -> Result<Option<AxisTierRecommendation>> {
         // Check if frequently accessed using existing tracker
         let is_hot = self.access_tracker.is_frequently_accessed(collection_id, 10).await;
@@ -211,7 +211,7 @@ impl AxisTieringIntegration {
                 TierLevel::Memory // Default for unknown types
             }
         } else {
-            // Cold data: use existing GlobalTierManager rule-based policy
+            // Cold data: use existing GlobalTier rule-based policy
             let rule_policy = self.global_tier_manager.rule_based_policy();
             let workload_pattern = WorkloadPattern::ReadHeavy; // AXIS indexes are read-heavy
             let tier_level = rule_policy.determine_tier(&workload_pattern, 1.0, 1); // Low frequency
@@ -252,9 +252,9 @@ impl AxisTieringIntegration {
                 mount_path: "/mnt/nvme".to_string() 
             },
             TierLevel::Cloud => StorageTier::CloudStandard { 
-                provider: crate::common::tier_policy_engine::CloudProvider::AwsS3 {
+                provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                     bucket: "proximadb-axis-standard".to_string(),
-                    storage_class: crate::common::tier_policy_engine::AwsStorageClass::Standard,
+                    storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
                     lifecycle_enabled: true,
                 },
                 region: "us-east-1".to_string(),
@@ -262,18 +262,18 @@ impl AxisTieringIntegration {
         }
     }
     
-    fn format_index_type(&self, index_type: &AxisIndexType) -> &'static str {
+    fn format_index_type(&self, index_type: &AxisIndex) -> &'static str {
         match index_type {
-            AxisIndexType::HNSW => "HNSW",
-            AxisIndexType::IVF => "IVF", 
-            AxisIndexType::PQ => "PQ",
-            AxisIndexType::LSH => "LSH",
-            AxisIndexType::Flat => "Flat",
-            AxisIndexType::Annoy => "Annoy",
+            AxisIndex::HNSW => "HNSW",
+            AxisIndex::IVF => "IVF", 
+            AxisIndex::PQ => "PQ",
+            AxisIndex::LSH => "LSH",
+            AxisIndex::Flat => "Flat",
+            AxisIndex::Annoy => "Annoy",
         }
     }
     
-    fn generate_rationale(&self, index_type: &AxisIndexType, is_hot: bool, tier: &TierLevel) -> String {
+    fn generate_rationale(&self, index_type: &AxisIndex, is_hot: bool, tier: &TierLevel) -> String {
         let index_name = self.format_index_type(index_type);
         
         if is_hot {
@@ -288,7 +288,7 @@ impl AxisTieringIntegration {
 
 /// AXIS operation types for pattern analysis  
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AxisOperationType {
+pub enum AxisOperation {
     Search,
     Insert, 
     Update,
@@ -303,17 +303,17 @@ mod tests {
     #[tokio::test]
     async fn test_axis_tiering_integration() {
         let access_tracker = Arc::new(AccessPatternTracker::new(1000));
-        let global_manager = Arc::new(GlobalTierManager::new());
+        let global_manager = Arc::new(GlobalTier::new());
         let integration = AxisTieringIntegration::new(access_tracker, global_manager);
         
         // Test index access tracking
-        integration.track_index_access("test_collection", AxisIndexType::HNSW).await;
+        integration.track_index_access("test_collection", AxisIndex::HNSW).await;
         
         // Test tier recommendation
         let recommendation = integration.recommend_tier(
             "test_collection",
             &TierLevel::Disk,
-            AxisIndexType::HNSW,
+            AxisIndex::HNSW,
         ).await.unwrap();
         
         // Should recommend faster tier for HNSW if accessed
@@ -326,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn test_tier_mapping() {
         let access_tracker = Arc::new(AccessPatternTracker::new(1000));
-        let global_manager = Arc::new(GlobalTierManager::new());
+        let global_manager = Arc::new(GlobalTier::new());
         let integration = AxisTieringIntegration::new(access_tracker, global_manager);
         
         // Test tier level mapping

@@ -937,7 +937,7 @@ pub fn initialize_hardware_capabilities_default() -> Result<()> {
 /// 
 /// # Panics
 /// Panics if called before initialize_hardware_capabilities()
-pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
+pub fn hardware_capabilities() -> Arc<HardwareCapabilities> {
     HARDWARE_CAPABILITIES.get()
         .expect("Hardware capabilities not initialized. Call initialize_hardware_capabilities() at startup.")
         .clone()
@@ -946,6 +946,12 @@ pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
 /// Try to get hardware capabilities without panicking
 pub fn try_get_hardware_capabilities() -> Option<Arc<HardwareCapabilities>> {
     HARDWARE_CAPABILITIES.get().cloned()
+}
+
+/// Get hardware capabilities (for backward compatibility)
+pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
+    try_get_hardware_capabilities()
+        .unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
 }
 
 /// Hardware capability queries for easy access

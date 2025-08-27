@@ -204,7 +204,7 @@ impl HardwareAccelerationManager {
     }
     
     /// Get optimal SIMD lane count for given data type
-    pub fn get_optimal_simd_lanes(&self, data_type: SIMDDataType) -> usize {
+    pub fn get_optimal_simd_lanes(&self, data_type: SIMDData) -> usize {
         match data_type {
             SIMDDataType::F32 => {
                 if self.simd_capabilities.avx512_supported && self.config.enable_avx512 {
@@ -465,7 +465,7 @@ pub enum WorkloadOperationType {
 
 /// Data types supported by SIMD operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SIMDDataType {
+pub enum SIMDData {
     /// 32-bit floating point
     F32,
     

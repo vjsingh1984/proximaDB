@@ -12,7 +12,7 @@ pub struct ClusterAssignment {
 
 /// What kind of data are we indexing?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DataType {
+pub enum Data {
     /// Dense vectors (fixed dimension, most elements non-zero)
     DenseVector { dimension: usize },
     
@@ -119,7 +119,7 @@ pub enum TokenFilter {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndexSpecification {
     /// What data are we indexing
-    pub data_type: DataType,
+    pub data_type: Data,
     
     /// How are we indexing it
     pub algorithm: IndexAlgorithm,
@@ -136,7 +136,7 @@ pub struct IndexSpecification {
 
 impl IndexSpecification {
     /// Create a new index specification
-    pub fn new(data_type: DataType, algorithm: IndexAlgorithm) -> Self {
+    pub fn new(data_type: Data, algorithm: IndexAlgorithm) -> Self {
         Self {
             data_type,
             algorithm,
@@ -148,7 +148,7 @@ impl IndexSpecification {
     
     /// Check if this index supports clustering optimization
     pub fn supports_clustering(&self) -> bool {
-        matches!(self.data_type, DataType::DenseVector { .. } | DataType::SparseVector { .. }) &&
+        matches!(self.data_type, Data::DenseVector { .. } | Data::SparseVector { .. }) &&
         matches!(self.algorithm, 
             IndexAlgorithm::HNSW { .. } | 
             IndexAlgorithm::IVF { .. } | 
@@ -160,18 +160,18 @@ impl IndexSpecification {
     
     /// Check if this index supports vector search
     pub fn supports_vector_search(&self) -> bool {
-        matches!(self.data_type, DataType::DenseVector { .. } | DataType::SparseVector { .. })
+        matches!(self.data_type, Data::DenseVector { .. } | Data::SparseVector { .. })
     }
     
     /// Check if this index supports metadata filtering
     pub fn supports_filtering(&self) -> bool {
-        matches!(self.data_type, DataType::Metadata) ||
+        matches!(self.data_type, Data::Metadata) ||
         matches!(self.algorithm, IndexAlgorithm::BTree { .. } | IndexAlgorithm::SkipList { .. })
     }
     
     /// Check if this index supports full-text search
     pub fn supports_text_search(&self) -> bool {
-        matches!(self.data_type, DataType::FullText) &&
+        matches!(self.data_type, Data::FullText) &&
         matches!(self.algorithm, IndexAlgorithm::InvertedIndex { .. })
     }
 }
@@ -239,6 +239,112 @@ pub enum ResultCombination {
     Rerank,
 }
 
+/// AXIS configuration for the entire system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AxisConfig {
+    /// Maximum memory usage in bytes
+    pub max_memory_bytes: u64,
+    
+    /// Default index algorithm to use
+    pub default_algorithm: IndexAlgorithm,
+    
+    /// Auto-migration enabled
+    pub enable_auto_migration: bool,
+    
+    /// Monitoring configuration
+    pub monitoring_enabled: bool,
+    
+    /// Performance thresholds
+    pub performance_thresholds: PerformanceThresholds,
+}
+
+/// Performance thresholds for monitoring
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceThresholds {
+    pub max_latency_ms: u64,
+    pub min_recall: f32,
+    pub max_memory_usage: f64,
+}
+
+impl Default for AxisConfig {
+    fn default() -> Self {
+        Self {
+            max_memory_bytes: 1024 * 1024 * 1024, // 1GB
+            default_algorithm: IndexAlgorithm::HNSW {
+                m: 16,
+                ef_construction: 200,
+                ef_search: 50,
+                max_elements: 1000000,
+            },
+            enable_auto_migration: true,
+            monitoring_enabled: true,
+            performance_thresholds: PerformanceThresholds {
+                max_latency_ms: 100,
+                min_recall: 0.9,
+                max_memory_usage: 0.8,
+            },
+        }
+    }
+}
+
+/// Migration decision for index transitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationDecision {
+    pub from_algorithm: IndexAlgorithm,
+    pub to_algorithm: IndexAlgorithm,
+    pub reason: MigrationReason,
+    pub estimated_cost: f64,
+    pub priority: MigrationPriority,
+}
+
+/// Reasons for migration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MigrationReason {
+    Performance,
+    Memory,
+    DataGrowth,
+    QueryPatternChange,
+}
+
+/// Migration priority levels
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MigrationPriority {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+/// Alert threshold configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertThresholds {
+    pub latency_ms: u64,
+    pub memory_usage: f64,
+    pub error_rate: f64,
+}
+
+/// Monitoring configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringConfig {
+    pub enabled: bool,
+    pub interval_seconds: u64,
+    pub thresholds: AlertThresholds,
+}
+
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_seconds: 60,
+            thresholds: AlertThresholds {
+                latency_ms: 100,
+                memory_usage: 0.8,
+                error_rate: 0.05,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,7 +352,7 @@ mod tests {
     #[test]
     fn test_index_capabilities() {
         let hnsw_index = IndexSpecification::new(
-            DataType::DenseVector { dimension: 128 },
+            Data::DenseVector { dimension: 128 },
             IndexAlgorithm::HNSW {
                 m: 16,
                 ef_construction: 200,
@@ -264,7 +370,7 @@ mod tests {
     #[test]
     fn test_metadata_index() {
         let btree_index = IndexSpecification::new(
-            DataType::Metadata,
+            Data::Metadata,
             IndexAlgorithm::BTree { max_keys_per_node: 100 }
         );
         

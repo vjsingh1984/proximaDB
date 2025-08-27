@@ -9,7 +9,7 @@ mod tests {
     use crate::core::search::{SearchParams, SearchResult, SearchResultSet, SemanticDistance};
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-    use crate::services::collection_service::CollectionService;
+    use crate::services::collection::manager::CollectionService;
 
     // Mock search engine for testing
     struct MockSearchEngine {
@@ -78,13 +78,13 @@ mod tests {
             filterable_columns: vec![
                 FilterableColumn {
                     name: "category".to_string(),
-                    // data_type removed -  ColumnDataType::String,
+                    // data_type removed -  ColumnData::String,
                     is_indexed: true,
                     estimated_cardinality: Some(10),
                 },
                 FilterableColumn {
                     name: "price".to_string(),
-                    // data_type removed -  ColumnDataType::Float,
+                    // data_type removed -  ColumnData::Float,
                     is_indexed: false,
                     estimated_cardinality: None,
                 },
@@ -145,7 +145,7 @@ mod tests {
         
         assert_eq!(context.filterable_columns.len(), 2);
         assert_eq!(context.filterable_columns[0].name, "category");
-        assert!(matches!(context.filterable_columns[0].data_type, ColumnDataType::String));
+        assert!(matches!(context.filterable_columns[0].data_type, ColumnData::String));
         assert!(context.filterable_columns[0].is_indexed);
         
         assert_eq!(context.available_quantization.len(), 2);
@@ -179,42 +179,42 @@ mod tests {
         let columns = vec![
             FilterableColumn {
                 name: "string_col".to_string(),
-                // data_type removed -  ColumnDataType::String,
+                // data_type removed -  ColumnData::String,
                 is_indexed: true,
                 estimated_cardinality: Some(100),
             },
             FilterableColumn {
                 name: "int_col".to_string(),
-                // data_type removed -  ColumnDataType::Integer,
+                // data_type removed -  ColumnData::Integer,
                 is_indexed: false,
                 estimated_cardinality: None,
             },
             FilterableColumn {
                 name: "bool_col".to_string(),
-                // data_type removed -  ColumnDataType::Boolean,
+                // data_type removed -  ColumnData::Boolean,
                 is_indexed: true,
                 estimated_cardinality: Some(2),
             },
             FilterableColumn {
                 name: "datetime_col".to_string(),
-                // data_type removed -  ColumnDataType::DateTime,
+                // data_type removed -  ColumnData::DateTime,
                 is_indexed: true,
                 estimated_cardinality: Some(1000),
             },
             FilterableColumn {
                 name: "json_col".to_string(),
-                // data_type removed -  ColumnDataType::Json,
+                // data_type removed -  ColumnData::Json,
                 is_indexed: false,
                 estimated_cardinality: None,
             },
         ];
         
         assert_eq!(columns.len(), 5);
-        assert!(matches!(columns[0].data_type, ColumnDataType::String));
-        assert!(matches!(columns[1].data_type, ColumnDataType::Integer));
-        assert!(matches!(columns[2].data_type, ColumnDataType::Boolean));
-        assert!(matches!(columns[3].data_type, ColumnDataType::DateTime));
-        assert!(matches!(columns[4].data_type, ColumnDataType::Json));
+        assert!(matches!(columns[0].data_type, ColumnData::String));
+        assert!(matches!(columns[1].data_type, ColumnData::Integer));
+        assert!(matches!(columns[2].data_type, ColumnData::Boolean));
+        assert!(matches!(columns[3].data_type, ColumnData::DateTime));
+        assert!(matches!(columns[4].data_type, ColumnData::Json));
         
         assert!(columns[0].is_indexed);
         assert!(!columns[1].is_indexed);
@@ -578,12 +578,12 @@ mod tests {
     #[test]
     fn test_column_data_type_variants() {
         let types = vec![
-            ColumnDataType::String,
-            ColumnDataType::Integer,
-            ColumnDataType::Float,
-            ColumnDataType::Boolean,
-            ColumnDataType::DateTime,
-            ColumnDataType::Json,
+            ColumnData::String,
+            ColumnData::Integer,
+            ColumnData::Float,
+            ColumnData::Boolean,
+            ColumnData::DateTime,
+            ColumnData::Json,
         ];
         
         assert_eq!(types.len(), 6);

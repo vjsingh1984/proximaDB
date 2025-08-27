@@ -10,7 +10,7 @@ pub mod smart_defaults;
 pub mod hardware_accelerated;
 
 pub use unified::{
-    UnifiedQuantizationLevel, QuantizationLevelType,
+    UnifiedQuantizationLevel, QuantizationLevel,
     UniformQuantization, ProductQuantization, ScalarQuantization, 
     BinaryQuantization, CustomQuantization, NoQuantization,
     UnifiedQuantizationEngine, CodebookStore, Codebook, 

@@ -158,7 +158,7 @@ async fn test_metadata_cache_specialization() {
     cache.put_schema_metadata("schema1", schema_metadata.clone()).await;
     
     // Retrieve metadata
-    let retrieved_coll: Option<CollectionMetadata> = cache.get_collection_metadata("coll1").await;
+    let retrieved_coll: Option<CollectionMetadata> = cache.collection_metadata("coll1").await;
     assert!(retrieved_coll.is_some());
     assert_eq!(retrieved_coll.unwrap().dimension, 128);
     
@@ -168,7 +168,7 @@ async fn test_metadata_cache_specialization() {
     
     // Test bulk invalidation for collection
     cache.invalidate_collection("coll1").await;
-    let retrieved_coll: Option<CollectionMetadata> = cache.get_collection_metadata("coll1").await;
+    let retrieved_coll: Option<CollectionMetadata> = cache.collection_metadata("coll1").await;
     assert!(retrieved_coll.is_empty());
 }
 

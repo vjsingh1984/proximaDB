@@ -11,7 +11,7 @@
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::VectorRecord;
-    use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification};
+    use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use crate::index::axis::index_factory::IndexFactory;
 use tracing::{debug, error, info};
 
@@ -81,7 +81,7 @@ use tracing::{debug, error, info};
             };
 
             let spec = IndexSpecification::new(
-                DataType::DenseVector { dimension: 128 },
+                Data::DenseVector { dimension: 128 },
                 algorithm.clone(),
             );
 
@@ -118,7 +118,7 @@ use tracing::{debug, error, info};
         };
 
         let spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 128 },
+            Data::DenseVector { dimension: 128 },
             ivf_pq,
         );
 
@@ -138,7 +138,7 @@ use tracing::{debug, error, info};
             };
 
             let spec = IndexSpecification::new(
-                DataType::DenseVector { dimension: dim },
+                Data::DenseVector { dimension: dim },
                 algorithm,
             );
 
@@ -230,7 +230,7 @@ use tracing::{debug, error, info};
             };
 
             let spec = IndexSpecification::new(
-                DataType::DenseVector { dimension: 128 },
+                Data::DenseVector { dimension: 128 },
                 algorithm,
             );
 
@@ -257,7 +257,7 @@ use tracing::{debug, error, info};
         // 4. Test retraining with expanded dataset
 
         let spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 128 },
+            Data::DenseVector { dimension: 128 },
             algorithm,
         );
 
@@ -276,7 +276,7 @@ use tracing::{debug, error, info};
         };
         
         let spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 16 },
+            Data::DenseVector { dimension: 16 },
             min_pq,
         );
         assert!(spec.supports_clustering());
@@ -289,7 +289,7 @@ use tracing::{debug, error, info};
         };
         
         let spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 128 },
+            Data::DenseVector { dimension: 128 },
             uneven_pq,
         );
         assert!(spec.supports_clustering());

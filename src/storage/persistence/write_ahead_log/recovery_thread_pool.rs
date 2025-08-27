@@ -242,7 +242,7 @@ mod tests {
         assert!(!pool.is_recovering());
         
         // Check stats
-        let stats = pool.get_stats().await;
+        let stats = pool.stats().await;
         assert_eq!(stats.collections_processed, 5);
         assert_eq!(stats.vectors_recovered, 100);
         assert!(stats.peak_concurrent_threads <= 4);

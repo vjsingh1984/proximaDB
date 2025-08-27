@@ -38,7 +38,7 @@ mod tests {
     use crate::query::sql_engine::planner::{
         MetadataFilter, VectorSearchParams,
     };
-    use crate::services::vector_operations_service::VectorOperationsService;
+    use crate::services::operations::vectors::VectorOperationsService;
     use crate::proto::proximadb::{VectorRecord, MetadataItem};
 use tracing::{debug, error, info};
 

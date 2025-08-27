@@ -83,12 +83,12 @@ impl UnifiedMetricsCollector {
     }
     
     /// Get current metrics snapshot (for dashboard compatibility)
-    pub async fn get_current_metrics(&self) -> crate::metrics::SystemMetrics {
+    pub async fn current_metrics(&self) -> crate::metrics::SystemMetrics {
         self.current_metrics.read().await.clone()
     }
     
     /// Get metrics summary (for dashboard compatibility)
-    pub async fn get_metrics_summary(&self) -> MetricsSummary {
+    pub async fn metrics_summary(&self) -> MetricsSummary {
         let metrics = self.current_metrics.read().await;
         MetricsSummary {
             system_health: 0.85,
@@ -105,7 +105,7 @@ impl UnifiedMetricsCollector {
     }
     
     /// Get active alerts (for dashboard compatibility)
-    pub async fn get_active_alerts(&self) -> Vec<crate::metrics::Alert> {
+    pub async fn active_alerts(&self) -> Vec<crate::metrics::Alert> {
         self.active_alerts.read().await.clone()
     }
 }

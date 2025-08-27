@@ -413,13 +413,13 @@ use std::sync::OnceLock;
 static GLOBAL_SIMD_PARSER: OnceLock<std::sync::Mutex<SimdVectorParser>> = OnceLock::new();
 
 /// Get global SIMD parser instance
-pub fn get_global_simd_parser() -> &'static std::sync::Mutex<SimdVectorParser> {
+pub fn global_simd_parser() -> &'static std::sync::Mutex<SimdVectorParser> {
     GLOBAL_SIMD_PARSER.get_or_init(|| std::sync::Mutex::new(SimdVectorParser::new()))
 }
 
 /// Convenience function to parse vector using global SIMD parser
 pub fn parse_vector_simd(json_str: &str) -> Result<Vec<f32>> {
-    let parser_mutex = get_global_simd_parser();
+    let parser_mutex = global_simd_parser();
     let mut parser = parser_mutex.lock().unwrap();
     parser.parse_vector_array(json_str)
 }
@@ -626,7 +626,7 @@ mod tests {
         
         // Test that global parser maintains statistics
         {
-            let parser_mutex = get_global_simd_parser();
+            let parser_mutex = global_simd_parser();
             let parser = parser_mutex.lock().unwrap();
             let stats = parser.stats();
             assert!(stats.vectors_parsed >= 2);

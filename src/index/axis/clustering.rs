@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification};
+use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -352,7 +352,7 @@ impl AxisClusteringEngine {
     }
 
     /// Get top-k nearest clusters
-    pub async fn get_nearest_clusters(
+    pub async fn nearest_clusters(
         &self,
         collection_id: &str,
         vector: &[f32],
@@ -689,7 +689,7 @@ impl AxisClusteringEngine {
         // Clustering only makes sense for vector data types
         let is_vector_data = matches!(
             spec.data_type, 
-            DataType::DenseVector { .. } | DataType::SparseVector { .. }
+            Data::DenseVector { .. } | Data::SparseVector { .. }
         );
         
         // And for algorithms that can benefit from clustering

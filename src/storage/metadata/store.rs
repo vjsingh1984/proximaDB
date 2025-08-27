@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{
-    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLogManager},
+    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog},
     CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
@@ -159,7 +159,7 @@ pub struct MetadataStore {
     transaction_coordinator: Option<Arc<crate::storage::transaction_coordinator::AtomicMetadataStore>>,
 
     /// Direct WAL manager for simple operations
-    write_buffer_manager: Arc<MetadataWriteAheadLogManager>,
+    write_buffer_manager: Arc<MetadataWriteAheadLog>,
 
     /// Filesystem factory
     filesystem: Arc<FilesystemFactory>,
@@ -209,7 +209,7 @@ impl MetadataStore {
 
         // Create WAL manager
         let write_buffer_manager = Arc::new(
-            MetadataWriteAheadLogManager::new(metadata_wal_config.clone(), filesystem.clone()).await?,
+            MetadataWriteAheadLog::new(metadata_wal_config.clone(), filesystem.clone()).await?,
         );
 
         // Create atomic metadata store if enabled
@@ -334,7 +334,7 @@ impl MetadataStore {
                 interval.tick().await;
 
                 // Update system metadata with current statistics
-                if let Ok(stats) = write_buffer_manager.get_stats().await {
+                if let Ok(stats) = write_buffer_manager.stats().await {
                     let mut sys_meta = system_metadata.write().await;
                     sys_meta.total_collections = stats.total_collections;
                     sys_meta.updated_at = Some(Utc::now().timestamp() as u32);
@@ -347,7 +347,7 @@ impl MetadataStore {
 
     /// Perform metadata backup
     async fn perform_backup(
-        write_buffer_manager: &MetadataWriteAheadLogManager,
+        write_buffer_manager: &MetadataWriteAheadLog,
         _filesystem: &FilesystemFactory,
         backup_config: &MetadataBackupConfig,
     ) -> Result<()> {
@@ -374,7 +374,7 @@ impl MetadataStore {
     }
 
     /// Get underlying WAL manager (for advanced operations)
-    pub fn write_buffer_manager(&self) -> &Arc<MetadataWriteAheadLogManager> {
+    pub fn write_buffer_manager(&self) -> &Arc<MetadataWriteAheadLog> {
         &self.write_buffer_manager
     }
 
@@ -476,18 +476,18 @@ impl MetadataStoreInterface for MetadataStore {
         collection_id: &str,
     ) -> Result<Option<CollectionMetadata>> {
         if let Some(atomic_store) = &self.transaction_coordinator {
-            atomic_store.get_collection(collection_id).await
+            atomic_store.collection(collection_id).await
         } else {
             // Direct WAL read
-            if let Some(versioned) = self.write_buffer_manager.get_collection(collection_id).await? {
+            if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
                 let metadata = CollectionMetadata {
                     id: versioned.id,
                     name: versioned.name,
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
-                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
@@ -567,8 +567,8 @@ impl MetadataStoreInterface for MetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
-                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).unwrap_or_default(),
+                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
@@ -651,7 +651,7 @@ impl MetadataStoreInterface for MetadataStore {
 
     async fn health_check(&self) -> Result<bool> {
         // Check WAL manager health
-        let _stats = self.write_buffer_manager.get_stats().await?;
+        let _stats = self.write_buffer_manager.stats().await?;
 
         // Check filesystem connectivity
         // TODO: Add filesystem health check
@@ -663,7 +663,7 @@ impl MetadataStoreInterface for MetadataStore {
         if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.get_storage_stats().await
         } else {
-            let wal_stats = self.write_buffer_manager.get_stats().await?;
+            let wal_stats = self.write_buffer_manager.stats().await?;
 
             Ok(MetadataStorageStats {
                 total_collections: wal_stats.total_collections,

@@ -74,7 +74,7 @@ impl PoolStats {
         }
     }
     
-    pub fn get_stats(&self) -> (usize, usize, usize, usize) {
+    pub fn stats(&self) -> (usize, usize, usize, usize) {
         (
             self.total_created.load(Ordering::Relaxed),
             self.total_reused.load(Ordering::Relaxed),
@@ -309,7 +309,7 @@ impl LockFreeParserPool {
     // }
     
     /// Get pool statistics for monitoring
-    pub fn get_stats(&self) -> Arc<PoolStats> {
+    pub fn stats(&self) -> Arc<PoolStats> {
         Arc::clone(&self.stats)
     }
     
@@ -353,13 +353,13 @@ use std::sync::OnceLock;
 static GLOBAL_PARSER_POOL: OnceLock<LockFreeParserPool> = OnceLock::new();
 
 /// Get global parser pool instance
-pub fn get_global_pool() -> &'static LockFreeParserPool {
+pub fn global_pool() -> &'static LockFreeParserPool {
     GLOBAL_PARSER_POOL.get_or_init(LockFreeParserPool::new)
 }
 
 /// Convenience function to parse SQL using global pool
 pub fn parse_sql_global(query: String) -> Result<ParsedQuery> {
-    get_global_pool().parse_sql(query)
+    global_pool().parse_sql(query)
 }
 
 #[cfg(test)]
@@ -386,15 +386,15 @@ use tracing::{debug, error, info};
     #[test]
     fn test_pool_reuse() {
         let pool = LockFreeParserPool::new();
-        let stats = pool.get_stats();
+        let stats = pool.stats();
         
         // First parse - should create new parser
         let _result1 = pool.parse_sql("SELECT id FROM test1 LIMIT 5".to_string());
-        let (created1, reused1, _, _) = stats.get_stats();
+        let (created1, reused1, _, _) = stats.stats();
         
         // Second parse - should reuse parser from pool
         let _result2 = pool.parse_sql("SELECT name FROM test2 LIMIT 3".to_string());
-        let (created2, reused2, _, _) = stats.get_stats();
+        let (created2, reused2, _, _) = stats.stats();
         
         // Should have reused at least one parser
         assert!(reused2 > reused1);
@@ -403,7 +403,7 @@ use tracing::{debug, error, info};
     #[test]
     fn test_concurrent_parsing() {
         let pool = Arc::new(LockFreeParserPool::new());
-        let stats = pool.get_stats();
+        let stats = pool.stats();
         
         // Conservative warmup based on CPU count
         let num_cpus = num_cpus::get();
@@ -429,7 +429,7 @@ use tracing::{debug, error, info};
             assert!(result.is_ok());
         }
         
-        let (created, reused, _, _) = stats.get_stats();
+        let (created, reused, _, _) = stats.stats();
         debug!("Concurrent test - Created: {}, Reused: {}, CPUs: {}", created, reused, num_cpus);
         
         // Should have good reuse ratio
@@ -485,8 +485,8 @@ use tracing::{debug, error, info};
         }
         
         let elapsed = start.elapsed();
-        let stats = pool.get_stats();
-        let (created, reused, pool_size, peak) = stats.get_stats();
+        let stats = pool.stats();
+        let (created, reused, pool_size, peak) = stats.stats();
         
         let total_queries = iterations * queries.len();
         debug!("SQL Parser Performance Test Results:");
@@ -516,8 +516,8 @@ use tracing::{debug, error, info};
         assert!(result2.is_ok());
         
         // Both should use same global pool instance
-        let pool1 = get_global_pool();
-        let pool2 = get_global_pool();
+        let pool1 = global_pool();
+        let pool2 = global_pool();
         assert!(std::ptr::eq(pool1, pool2));
     }
     
@@ -572,8 +572,8 @@ use tracing::{debug, error, info};
         // Should have very high success rate
         assert_eq!(total_success, expected_total);
         
-        let stats = pool.get_stats();
-        let (created, reused, _, _) = stats.get_stats();
+        let stats = pool.stats();
+        let (created, reused, _, _) = stats.stats();
         let reuse_ratio = reused as f64 / (created + reused) as f64 * 100.0;
         debug!("  Parser stats - Created: {}, Reused: {} ({:.1}% reuse)", created, reused, reuse_ratio);
         

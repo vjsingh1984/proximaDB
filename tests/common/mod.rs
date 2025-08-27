@@ -8,6 +8,9 @@ pub mod test_assignments;
 // Unified test utilities for all ProximaDB components  
 pub mod unified_test_utils;
 
+// Centralized test data generation
+pub mod test_data;
+
 // Global test counter to ensure unique collection IDs
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 static INIT: Once = Once::new();

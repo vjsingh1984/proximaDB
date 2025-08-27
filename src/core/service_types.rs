@@ -692,7 +692,7 @@ impl CollectionRequest {
     }
 
     /// Create a collection retrieval request
-    pub fn get_collection(collection_id: String) -> Self {
+    pub fn collection(collection_id: String) -> Self {
         Self {
             operation: CollectionOperation::Get,
             collection_id: Some(collection_id),
@@ -768,7 +768,7 @@ impl CollectionResponse {
 
     /// Set the single collection result
     pub fn with_collection(mut self, collection: crate::proto::proximadb::Collection) -> Self {
-        self.collection = Some(collection);
+        self.collection_id = Some(collection);
         self.affected_count = 1;
         self
     }

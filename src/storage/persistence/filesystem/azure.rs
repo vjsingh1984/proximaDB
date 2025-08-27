@@ -380,7 +380,7 @@ impl AzureClient {
             )
         };
 
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         let mut request = self
             .http_client

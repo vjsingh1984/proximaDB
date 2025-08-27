@@ -189,7 +189,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                         None
                                     }
                                 })
-                                .unwrap_or_default();
+                                .clone();
 
                             let metadata = vector_record
                                 .iter()
@@ -243,7 +243,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                     }
                                     _ => None,
                                 })
-                                .unwrap_or_default();
+                                .clone();
 
                             let timestamp_seconds = vector_record
                                 .iter()

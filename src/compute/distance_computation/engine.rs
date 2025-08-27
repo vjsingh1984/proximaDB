@@ -36,7 +36,7 @@ use tracing::{debug, info, trace};
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb::DistanceMetric;
 use super::create_distance_calculator;
-use crate::services::collection_service::CollectionService;
+use crate::services::collection::manager::CollectionService;
 use crate::core::hardware_capabilities::{get_hardware_capabilities, HardwareCapabilities};
 
 // Re-export HardwareBackend for public use
@@ -1334,7 +1334,7 @@ impl UnifiedDistanceCompute {
         // 2. Try to get collection default
         if let Some(service) = collection_service {
             if let Ok(Some(collection)) =
-                service.get_proto_collection(collection_id).await
+                service.collection(collection_id).await
             {
                 // Distance metric is in the config field of proto Collection
                 let metric = collection.config.as_ref().and_then(|c| Some(c.distance_metric));

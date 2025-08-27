@@ -59,7 +59,7 @@ pub struct StorageBasePath {
     pub mount_point: Option<String>,
 
     /// Disk type and performance characteristics
-    pub disk_type: DiskType,
+    pub disk_type: Disk,
 
     /// Available space and limits
     pub capacity_config: CapacityConfig,
@@ -67,7 +67,7 @@ pub struct StorageBasePath {
 
 /// Disk type for performance optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DiskType {
+pub enum Disk {
     /// NVMe SSD (highest performance)
     NvmeSsd { max_iops: u64 },
 
@@ -167,7 +167,7 @@ impl Default for StorageLayoutConfig {
                 base_dir: PathBuf::from("/data/proximadb"),
                 instance_id: 1,
                 mount_point: None,
-                disk_type: DiskType::Unknown,
+                disk_type: Disk::Unknown,
                 capacity_config: CapacityConfig::default(),
             }],
             node_instance: 1,
@@ -188,7 +188,7 @@ impl StorageLayoutConfig {
                     base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 1,
                     mount_point: Some("/data".to_string()),
-                    disk_type: DiskType::NvmeSsd { max_iops: 100000 },
+                    disk_type: Disk::NvmeSsd { max_iops: 100000 },
                     capacity_config: CapacityConfig {
                         max_wal_size_mb: Some(2048),
                         max_storage_size_mb: None,
@@ -201,7 +201,7 @@ impl StorageLayoutConfig {
                     base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 2,
                     mount_point: Some("/data2".to_string()),
-                    disk_type: DiskType::SataSsd { max_iops: 75000 },
+                    disk_type: Disk::SataSsd { max_iops: 75000 },
                     capacity_config: CapacityConfig {
                         max_wal_size_mb: Some(2048),
                         max_storage_size_mb: None,
@@ -240,7 +240,7 @@ impl StoragePathResolver {
 
     /// Get WAL directory for collection
     /// Returns: /data/proximadb/1/wal/{collection_uuid}/
-    pub fn get_wal_path(&mut self, collection_uuid: &str) -> Result<PathBuf, StorageLayoutError> {
+    pub fn wal_path(&mut self, collection_uuid: &str) -> Result<PathBuf, StorageLayoutError> {
         let instance_id = self.get_or_assign_instance(collection_uuid)?;
         let base_path = self.get_base_path(instance_id)?;
 
@@ -253,7 +253,7 @@ impl StoragePathResolver {
 
     /// Get storage directory for collection  
     /// Returns: /data/proximadb/1/store/{collection_uuid}/
-    pub fn get_storage_path(
+    pub fn storage_path(
         &mut self,
         collection_uuid: &str,
     ) -> Result<PathBuf, StorageLayoutError> {
@@ -269,7 +269,7 @@ impl StoragePathResolver {
 
     /// Get metadata directory (shared across node instance)
     /// Returns: /data/proximadb/1/metadata/
-    pub fn get_metadata_path(
+    pub fn metadata_path(
         &self,
         instance_id: Option<u32>,
     ) -> Result<PathBuf, StorageLayoutError> {
@@ -284,16 +284,16 @@ impl StoragePathResolver {
 
     /// Get temp directory for specific operation type
     /// Returns: /data/proximadb/1/wal/{collection_uuid}/___temp/
-    pub fn get_temp_path(
+    pub fn temp_path(
         &mut self,
         collection_uuid: &str,
         operation_type: TempOperationType,
         base_type: StorageType,
     ) -> Result<PathBuf, StorageLayoutError> {
         let base_path = match base_type {
-            StorageType::Wal => self.get_wal_path(collection_uuid)?,
-            StorageType::Storage => self.get_storage_path(collection_uuid)?,
-            StorageType::Metadata => self.get_metadata_path(None)?,
+            StorageType::Wal => self.wal_path(collection_uuid)?,
+            StorageType::Storage => self.storage_path(collection_uuid)?,
+            StorageType::Metadata => self.metadata_path(None)?,
         };
 
         let temp_suffix = match operation_type {
@@ -310,9 +310,9 @@ impl StoragePathResolver {
         &mut self,
         collection_uuid: &str,
     ) -> Result<CollectionPaths, StorageLayoutError> {
-        let wal_path = self.get_wal_path(collection_uuid)?;
-        let storage_path = self.get_storage_path(collection_uuid)?;
-        let metadata_path = self.get_metadata_path(None)?;
+        let wal_path = self.wal_path(collection_uuid)?;
+        let storage_path = self.storage_path(collection_uuid)?;
+        let metadata_path = self.metadata_path(None)?;
 
         // Create directories
         tokio::fs::create_dir_all(&wal_path)
@@ -329,17 +329,17 @@ impl StoragePathResolver {
 
         // Create temp directories
         let temp_paths = [
-            self.get_temp_path(
+            self.temp_path(
                 collection_uuid,
                 TempOperationType::General,
                 StorageType::Wal,
             )?,
-            self.get_temp_path(
+            self.temp_path(
                 collection_uuid,
                 TempOperationType::Compaction,
                 StorageType::Storage,
             )?,
-            self.get_temp_path(
+            self.temp_path(
                 collection_uuid,
                 TempOperationType::Flush,
                 StorageType::Storage,
@@ -414,7 +414,7 @@ impl StoragePathResolver {
     }
 
     /// Get all configured paths for debugging
-    pub fn get_all_paths(&self) -> Vec<String> {
+    pub fn all_paths(&self) -> Vec<String> {
         self.config
             .base_paths
             .iter()
@@ -474,9 +474,9 @@ mod tests {
         let mut resolver = StoragePathResolver::new(StorageLayoutConfig::default());
 
         let collection_uuid = "test-uuid-123";
-        let wal_path = resolver.get_wal_path(collection_uuid).unwrap();
-        let storage_path = resolver.get_storage_path(collection_uuid).unwrap();
-        let metadata_path = resolver.get_metadata_path(None).unwrap();
+        let wal_path = resolver.wal_path(collection_uuid).unwrap();
+        let storage_path = resolver.storage_path(collection_uuid).unwrap();
+        let metadata_path = resolver.metadata_path(None).unwrap();
 
         assert_eq!(
             wal_path,
@@ -497,14 +497,14 @@ mod tests {
                     base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 1,
                     mount_point: None,
-                    disk_type: DiskType::NvmeSsd { max_iops: 100000 },
+                    disk_type: Disk::NvmeSsd { max_iops: 100000 },
                     capacity_config: CapacityConfig::default(),
                 },
                 StorageBasePath {
                     base_dir: PathBuf::from("/data/proxima"),
                     instance_id: 2,
                     mount_point: None,
-                    disk_type: DiskType::SataSsd { max_iops: 50000 },
+                    disk_type: Disk::SataSsd { max_iops: 50000 },
                     capacity_config: CapacityConfig::default(),
                 },
             ],

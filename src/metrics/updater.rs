@@ -507,7 +507,7 @@ impl MetricsUpdateService {
         Self { store }
     }
     
-    pub fn get_store(&self) -> &Arc<MetricsPersistenceLayer> {
+    pub fn store(&self) -> &Arc<MetricsPersistenceLayer> {
         &self.store
     }
 }
@@ -520,7 +520,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         update: OperationMetricsUpdate,
     ) -> Result<()> {
         // Get or create collection metrics
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -552,7 +552,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         collection_id: &str,
         update: SearchMetricsUpdate,
     ) -> Result<()> {
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -582,7 +582,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         collection_id: &str,
         update: FlushMetricsUpdate,
     ) -> Result<()> {
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -611,7 +611,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         collection_id: &str,
         update: CompactionMetricsUpdate,
     ) -> Result<()> {
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -644,7 +644,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         collection_id: &str,
         update: StorageMetricsUpdate,
     ) -> Result<()> {
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -674,7 +674,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         collection_id: &str,
         update: DataCharacteristicsUpdate,
     ) -> Result<()> {
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -702,7 +702,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
         column_name: &str,
         stats: FilterableColumnStats,
     ) -> Result<()> {
-        let mut metrics = self.store.get_collection_metrics(collection_id).await?
+        let mut metrics = self.store.collection_metrics(collection_id).await?
             .unwrap_or_else(|| CollectionMetrics {
                 collection_id: collection_id.to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),

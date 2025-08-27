@@ -9,7 +9,7 @@ use tracing::{debug, trace, warn};
 
 use crate::core::errors::ProximaDBError;
 use crate::storage::persistence::filesystem::{FileSystem, FsResult, FilesystemError, FileMetadata, FileOptions};
-use crate::storage::engines::common::zero_copy_io_system::{
+use crate::storage::engines::core::io::zero_copy::{
     ZeroCopyIOSystem, QueryContext, FileAccessRequest, RequestPriority, OptimizedIOResult, IOStrategy
 };
 
@@ -244,13 +244,13 @@ impl ZeroCopyFilesystem {
         // For now, we use a default similarity search context.
         
         QueryContext {
-            query_type: crate::storage::engines::common::zero_copy_io_system::traits::QueryType::SimilaritySearch,
-            collection_context: Some(crate::storage::engines::common::zero_copy_io_system::traits::CollectionContext {
+            query_type: crate::storage::engines::core::io::zero_copy::traits::QueryType::SimilaritySearch,
+            collection_context: Some(crate::storage::engines::core::io::zero_copy::traits::CollectionContext {
                 collection_id: self.default_collection_id.clone(),
                 dimension: 768, // Default dimension
                 distance_metric: "cosine".to_string(),
-                query_patterns: vec![crate::storage::engines::common::zero_copy_io_system::traits::QueryType::SimilaritySearch],
-                access_frequency: crate::storage::engines::common::zero_copy_io_system::traits::AccessFrequency::Medium,
+                query_patterns: vec![crate::storage::engines::core::io::zero_copy::traits::QueryType::SimilaritySearch],
+                access_frequency: crate::storage::engines::core::io::zero_copy::traits::AccessFrequency::Medium,
             }),
             ..Default::default()
         }
@@ -420,7 +420,7 @@ impl FileSystem for ZeroCopyFilesystem {
     /// 2. For large files: Use staging directory for atomic moves
     /// 3. For small files: Direct write with cache population
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
-        let opts = options.unwrap_or_default();
+        let opts = options.clone();
         self.write_with_intelligent_staging(path, data, &opts).await
     }
 
@@ -577,7 +577,7 @@ impl Default for ZeroCopyFilesystemBuilder {
 mod tests {
     use super::*;
     use crate::storage::persistence::filesystem::local::LocalFileSystem;
-    use crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystemBuilder;
+    use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystemBuilder;
     use tempfile::TempDir;
 
     #[tokio::test]

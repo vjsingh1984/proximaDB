@@ -33,9 +33,9 @@ use crate::proto::proximadb::{VectorRecord, Collection, QuantizationConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
-use crate::services::collection_service::CollectionService;
-use crate::index::axis::manager::AxisManager;
-use crate::index::axis::serialization::IndexType;
+use crate::services::collection::manager::CollectionService;
+use crate::index::axis::management::manager::AxisManager;
+use crate::index::axis::storage::serialization::Index;
 
 /// Integrated search optimizer with zero-copy and caching
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer
@@ -178,7 +178,7 @@ pub struct PerformanceTracker {
 
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
-    index_search_times: HashMap<IndexType, PerformanceStats>,
+    index_search_times: HashMap<Index, PerformanceStats>,
     progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
     direct_search_times: HashMap<usize, PerformanceStats>, // by dataset size
     hardware_profile: HardwareProfile,
@@ -556,7 +556,7 @@ impl IntegratedSearchOptimizer {
                     id: r.id.clone(),
                     score: r.score,
                     similarity: r.similarity,
-                    vector: r.vector.clone().unwrap_or_default(),
+                    vector: r.vector.clone().clone(),
                     metadata: vec![], // Would convert metadata
                     version: r.version,
                     timestamp: r.timestamp,
@@ -595,7 +595,7 @@ impl IntegratedSearchOptimizer {
         let vector_views = self.create_zero_copy_views(&records)?;
         
         // Get a buffer from the pool for temporary operations
-        let mut buffer = self.buffer_pool.get_buffer();
+        let mut buffer = self.buffer_pool.buffer();
         
         // Process in batches to minimize memory allocation
         let batch_size = self.config.streaming_batch_size;
@@ -939,7 +939,7 @@ impl BufferPool {
     }
     
     /// Get a buffer from the pool
-    pub fn get_buffer(&self) -> BytesMut {
+    pub fn buffer(&self) -> BytesMut {
         let mut buffers = self.buffers.lock();
         
         if let Some(mut buffer) = buffers.pop() {
@@ -984,17 +984,17 @@ mod tests {
     fn test_buffer_pool() {
         let pool = BufferPool::new(1024 * 1024, 64 * 1024);
         
-        let buffer1 = pool.get_buffer();
+        let buffer1 = pool.buffer();
         assert!(buffer1.capacity() >= 64 * 1024);
         
-        let buffer2 = pool.get_buffer();
+        let buffer2 = pool.buffer();
         assert!(buffer2.capacity() >= 64 * 1024);
         
         pool.return_buffer(buffer1);
         pool.return_buffer(buffer2);
         
         // Getting again should reuse buffers
-        let buffer3 = pool.get_buffer();
+        let buffer3 = pool.buffer();
         assert!(buffer3.capacity() >= 64 * 1024);
     }
     

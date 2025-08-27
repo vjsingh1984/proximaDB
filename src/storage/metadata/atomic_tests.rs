@@ -477,7 +477,7 @@ mod tests {
             .expect("Failed to create collection");
         
         // Should retrieve collection
-        let retrieved = store.get_collection("test_collection").await
+        let retrieved = store.collection("test_collection").await
             .expect("Failed to get collection");
         
         assert!(retrieved.is_some());
@@ -492,7 +492,7 @@ mod tests {
         let (store, _temp_dir) = create_test_store().await;
         
         // Should return None for non-existent collection
-        let result = store.get_collection("nonexistent").await
+        let result = store.collection("nonexistent").await
             .expect("Get collection should not fail");
         
         assert!(result.is_empty());

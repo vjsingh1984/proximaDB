@@ -254,7 +254,7 @@ async fn test_bincode_memory_management() {
     create_collection_write_buffer_dir(collection_id).await;
     
     // Get initial memory stats
-    let initial_stats = strategy.get_stats()
+    let initial_stats = strategy.stats()
         .await
         .expect("Failed to get stats");
     
@@ -276,7 +276,7 @@ async fn test_bincode_memory_management() {
             .await
             .expect("Failed to write batch");
         
-        let stats = strategy.get_stats()
+        let stats = strategy.stats()
             .await
             .expect("Failed to get stats");
         
@@ -418,7 +418,7 @@ async fn test_bincode_collection_isolation() {
         }
         
         // Verify collection stats
-        let stats = strategy.get_collection_stats(collection_id)
+        let stats = strategy.collection_stats(collection_id)
             .await
             .expect("Failed to get collection stats");
         

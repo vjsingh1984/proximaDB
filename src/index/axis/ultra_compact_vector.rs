@@ -216,28 +216,28 @@ impl UltraCompactCollection {
     }
     
     /// Get vector by ID
-    pub fn get_by_id(&self, id: &str) -> Option<&UltraCompactVector> {
+    pub fn by_id(&self, id: &str) -> Option<&UltraCompactVector> {
         self.id_index.get(key).map(|index| &self.vectors[*index])
     }
     
     /// Get vector by index
-    pub fn get_by_index(&self, index: usize) -> Option<&UltraCompactVector> {
+    pub fn by_index(&self, index: usize) -> Option<&UltraCompactVector> {
         self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */
     }
     
     /// Get FP32 vector data
-    pub fn get_vector_f32(&self, id: &str) -> Option<&[f32]> {
+    pub fn vector_f32(&self, id: &str) -> Option<&[f32]> {
         self.get_by_id(id).map(|v| v.as_f32(self.dimension))
     }
     
     /// Get quantized vector data
-    pub fn get_vector_quantized(&self, id: &str) -> Option<&[u8]> {
+    pub fn vector_quantized(&self, id: &str) -> Option<&[u8]> {
         let size = self.quantized_size();
         self.get_by_id(id).map(|v| v.as_quantized(size))
     }
     
     /// Get vector ID by index
-    pub fn get_id(&self, index: usize) -> Option<&str> {
+    pub fn id(&self, index: usize) -> Option<&str> {
         let vector_size = self.vector_size();
         self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|v| v.id(vector_size))
     }

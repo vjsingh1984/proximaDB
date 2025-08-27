@@ -410,7 +410,7 @@ mod tests {
             true,
         ).await.unwrap();
         
-        let stats = service.get_stats().await;
+        let stats = service.stats().await;
         assert_eq!(stats.collections_with_queues, 1);
         assert_eq!(stats.total_pending_events, 1);
     }

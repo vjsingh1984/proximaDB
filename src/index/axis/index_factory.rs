@@ -28,9 +28,9 @@ use async_trait::async_trait;
 use crate::compute::distance_computation::DistanceMetric;
 // VectorRecord eliminated from AXIS - zero-overhead storage only
 // use crate::index::axis::hnsw_integration::{AxisHnswConfig, PartitionedHnswIndex};
-use crate::index::axis::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
-use crate::index::axis::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
-use crate::index::axis::lsh_index::{AxisLshConfig, AxisLshIndex};
+use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
+use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
+use crate::index::axis::indexes::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
 
 /// Trait for vector indexes that can be used by AXIS

@@ -8,7 +8,7 @@ mod tests {
         MetricsConfig,
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::services::vector_operations_service::VectorOperationsService;
+    use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::persistence::write_ahead_log::{
         flush_coordinator::WALFlushCoordinator,
         background_manager::BackgroundMaintenanceManager,
@@ -108,7 +108,7 @@ use tracing::{debug, error, info};
             Ok(HashMap::new())
         }
         
-        async fn get_vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<VectorRecord>> {
+        async fn vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<VectorRecord>> {
             Ok(None)
         }
         
@@ -131,7 +131,7 @@ use tracing::{debug, error, info};
             unimplemented!("Mock filesystem factory not needed for integration tests")
         }
         
-        fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService> {
+        fn get_collection_service(&self) -> Option<&crate::services::collection::manager::CollectionService> {
             None
         }
     }
@@ -265,7 +265,7 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(200)).await;
         
         // Verify metrics were recorded
-        let stored_metrics = metrics_store.get_collection_metrics(collection_id).await.unwrap();
+        let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
         assert!(stored_metrics.is_some(), "VectorOperationsService metrics should be stored");
         
         let collection_metrics = stored_metrics.unwrap();
@@ -319,7 +319,7 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(300)).await;
         
         // Verify flush metrics were recorded
-        let stored_metrics = metrics_store.get_collection_metrics(collection_id).await.unwrap();
+        let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
         assert!(stored_metrics.is_some(), "FlushCoordinator metrics should be stored");
         
         let collection_metrics = stored_metrics.unwrap();
@@ -383,7 +383,7 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(300)).await;
         
         // Verify compaction metrics were recorded
-        let stored_metrics = metrics_store.get_collection_metrics(collection_id).await.unwrap();
+        let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
         assert!(stored_metrics.is_some(), "BackgroundManager metrics should be stored");
         
         let collection_metrics = stored_metrics.unwrap();
@@ -489,7 +489,7 @@ use tracing::{debug, error, info};
         sleep(Duration::from_millis(500)).await;
         
         // Step 4: Verify comprehensive metrics collection
-        let stored_metrics = metrics_store.get_collection_metrics(collection_id).await.unwrap();
+        let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
         assert!(stored_metrics.is_some(), "End-to-end metrics should be stored");
         
         let collection_metrics = stored_metrics.unwrap();
@@ -579,7 +579,7 @@ use tracing::{debug, error, info};
         
         // Verify metrics for each collection
         for collection_id in &collections {
-            let stored_metrics = metrics_store.get_collection_metrics(collection_id).await.unwrap();
+            let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
             assert!(stored_metrics.is_some(), "Metrics should exist for collection {}", collection_id);
             
             let collection_metrics = stored_metrics.unwrap();
@@ -631,7 +631,7 @@ use tracing::{debug, error, info};
         {
             let (_, metrics_store) = create_test_metrics_components().await.unwrap();
             
-            let stored_metrics = metrics_store.get_collection_metrics(collection_id).await.unwrap();
+            let stored_metrics = metrics_store.collection_metrics(collection_id).await.unwrap();
             assert!(stored_metrics.is_some(), "Metrics should persist across restarts");
             
             let collection_metrics = stored_metrics.unwrap();

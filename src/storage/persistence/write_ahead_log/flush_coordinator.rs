@@ -79,11 +79,11 @@ pub struct WALFlushCoordinator {
     /// Storage engine registry for polymorphic flush delegation
     storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
     /// AXIS manager for IndexConfig-based indexing after flush
-    axis_manager: Option<Arc<crate::index::axis::manager::AxisManager>>,
+    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     /// Optimized flush coordinator for high-performance flushing
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
-    collection_service: Option<Arc<crate::services::collection_service::CollectionService>>,
+    collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
     /// Metrics updater for tracking flush operations
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
 }
@@ -103,7 +103,7 @@ impl WALFlushCoordinator {
     }
     
     /// Set collection service for metadata fetching
-    pub fn set_collection_service(&mut self, service: Arc<crate::services::collection_service::CollectionService>) {
+    pub fn set_collection_service(&mut self, service: Arc<crate::services::collection::manager::CollectionService>) {
         self.collection_service = Some(service);
     }
     
@@ -124,7 +124,7 @@ impl WALFlushCoordinator {
     }
 
     /// Set the AXIS manager for IndexConfig-based indexing
-    pub fn set_axis_manager(&mut self, axis_manager: Arc<crate::index::axis::manager::AxisManager>) {
+    pub fn set_axis_manager(&mut self, axis_manager: Arc<crate::index::axis::management::manager::AxisManager>) {
         self.axis_manager = Some(axis_manager);
         info!("🔗 FlushCoordinator: AXIS manager registered for IndexConfig-based indexing");
     }
@@ -231,7 +231,7 @@ impl WALFlushCoordinator {
         } else if let Some(ref collection_service) = self.collection_service {
             // Fallback: Use collection service (legacy path)
             warn!("⚠️ FALLBACK: Using collection service - context not provided");
-            match collection_service.get_proto_collection(collection_id).await {
+            match collection_service.collection(collection_id).await {
                 Ok(Some(collection)) => {
                     info!(
                         "📋 Coordinator: Fetched collection metadata for '{}' - engine: {:?}, compression: {:?}",
@@ -563,7 +563,7 @@ impl WALFlushCoordinator {
         flush_states
             .get(collection_id)
             .map(|state| state.pending_flushes.values().cloned().collect())
-            .unwrap_or_default()
+            .clone()
     }
 
     /// Cancel a pending flush (in case of errors)

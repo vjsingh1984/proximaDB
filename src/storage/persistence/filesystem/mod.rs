@@ -539,7 +539,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()> {
-        let opts = options.unwrap_or_default();
+        let opts = options.clone();
 
         match &opts.temp_path {
             None => {
@@ -1241,7 +1241,7 @@ impl FilesystemFactory {
     pub fn create_zero_copy_filesystem(
         &self,
         url: &str,
-        io_system: std::sync::Arc<crate::storage::engines::common::zero_copy_io_system::ZeroCopyIOSystem>,
+        io_system: std::sync::Arc<crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem>,
         collection_id: String,
         engine_type: String,
     ) -> FsResult<ZeroCopyFilesystem> {
@@ -1261,7 +1261,7 @@ impl FilesystemFactory {
         // In production, the FilesystemFactory should be refactored to use Arc<dyn FileSystem>
         // throughout to support zero-copy filesystem creation more efficiently
         let underlying_fs_arc = if scheme == "file" {
-            let local_config = self.config.local.clone().unwrap_or_default();
+            let local_config = self.config.local.clone().clone();
             // We'll need to use a blocking approach here since we're in a sync method
             // In a real implementation, this method should be async
             match tokio::runtime::Handle::try_current() {

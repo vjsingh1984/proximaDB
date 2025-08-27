@@ -10,15 +10,15 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification, ResultCombination};
-    use crate::index::axis::manager::{HybridQuery, VectorQuery, MetadataFilter, FilterOperator};
+    use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification, ResultCombination};
+    use crate::index::axis::management::manager::{HybridQuery, VectorQuery, MetadataFilter, FilterOperator};
 use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_hybrid_vector_metadata_search() {
         // Test combining vector search with metadata filtering
         let vector_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 768 },
+            Data::DenseVector { dimension: 768 },
             IndexAlgorithm::HNSW {
                 m: 16,
                 ef_construction: 200,
@@ -28,7 +28,7 @@ use tracing::{debug, error, info};
         );
 
         let metadata_spec = IndexSpecification::new(
-            DataType::Metadata,
+            Data::Metadata,
             IndexAlgorithm::BTree {
                 max_keys_per_node: 100,
             },
@@ -61,7 +61,7 @@ use tracing::{debug, error, info};
         // Test routing queries to appropriate indexes based on selectivity
         let indexes = vec![
             IndexSpecification {
-                // data_type removed -  DataType::DenseVector { dimension: 512 },
+                // data_type removed -  Data::DenseVector { dimension: 512 },
                 algorithm: IndexAlgorithm::HNSW {
                     m: 16,
                     ef_construction: 200,
@@ -73,7 +73,7 @@ use tracing::{debug, error, info};
                 selectivity_threshold: Some(0.1),  // Use for selective queries
             },
             IndexSpecification {
-                // data_type removed -  DataType::DenseVector { dimension: 512 },
+                // data_type removed -  Data::DenseVector { dimension: 512 },
                 algorithm: IndexAlgorithm::IVF {
                     nlist: 1000,
                     nprobe: 100,
@@ -84,7 +84,7 @@ use tracing::{debug, error, info};
                 selectivity_threshold: Some(0.5),  // Use for bulk queries
             },
             IndexSpecification {
-                // data_type removed -  DataType::Metadata,
+                // data_type removed -  Data::Metadata,
                 algorithm: IndexAlgorithm::BTree {
                     max_keys_per_node: 100,
                 },
@@ -97,15 +97,15 @@ use tracing::{debug, error, info};
         // Test routing logic
         for index in &indexes {
             match (&index.data_type, index.is_primary) {
-                (DataType::DenseVector { .. }, true) => {
+                (Data::DenseVector { .. }, true) => {
                     // Primary vector index for top-k queries
                     assert_eq!(index.name.as_ref().unwrap(), "primary_vector");
                 }
-                (DataType::DenseVector { .. }, false) => {
+                (Data::DenseVector { .. }, false) => {
                     // Secondary vector index for bulk operations
                     assert_eq!(index.name.as_ref().unwrap(), "bulk_vector");
                 }
-                (DataType::Metadata, _) => {
+                (Data::Metadata, _) => {
                     // Metadata index for filtering
                     assert_eq!(index.name.as_ref().unwrap(), "metadata_index");
                 }
@@ -124,7 +124,7 @@ use tracing::{debug, error, info};
         };
 
         let ivf_pq_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 768 },
+            Data::DenseVector { dimension: 768 },
             IndexAlgorithm::IVF {
                 nlist: 1000,
                 nprobe: 100,
@@ -152,7 +152,7 @@ use tracing::{debug, error, info};
         // Test fallback chain: HNSW -> IVF -> FLAT
         let index_chain = vec![
             IndexSpecification::new(
-                DataType::DenseVector { dimension: 128 },
+                Data::DenseVector { dimension: 128 },
                 IndexAlgorithm::HNSW {
                     m: 16,
                     ef_construction: 200,
@@ -161,7 +161,7 @@ use tracing::{debug, error, info};
                 },
             ),
             IndexSpecification::new(
-                DataType::DenseVector { dimension: 128 },
+                Data::DenseVector { dimension: 128 },
                 IndexAlgorithm::IVF {
                     nlist: 100,
                     nprobe: 10,
@@ -196,7 +196,7 @@ use tracing::{debug, error, info};
     async fn test_text_vector_hybrid_search() {
         // Test combining full-text search with vector similarity
         let text_spec = IndexSpecification::new(
-            DataType::FullText,
+            Data::FullText,
             IndexAlgorithm::InvertedIndex {
                 analyzer: crate::index::axis::types::TextAnalyzer {
                     tokenizer: crate::index::axis::types::Tokenizer::Standard,
@@ -211,7 +211,7 @@ use tracing::{debug, error, info};
         );
 
         let vector_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 384 },  // Sentence embedding dimension
+            Data::DenseVector { dimension: 384 },  // Sentence embedding dimension
             IndexAlgorithm::Annoy {
                 n_trees: 10,
                 search_k: -1,
@@ -228,7 +228,7 @@ use tracing::{debug, error, info};
     async fn test_sparse_dense_vector_combination() {
         // Test combining sparse and dense vector indexes
         let sparse_spec = IndexSpecification::new(
-            DataType::SparseVector { max_dimension: 50000 },
+            Data::SparseVector { max_dimension: 50000 },
             IndexAlgorithm::InvertedIndex {
                 analyzer: crate::index::axis::types::TextAnalyzer {
                     tokenizer: crate::index::axis::types::Tokenizer::Whitespace,
@@ -240,7 +240,7 @@ use tracing::{debug, error, info};
         );
 
         let dense_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 768 },
+            Data::DenseVector { dimension: 768 },
             IndexAlgorithm::LSH {
                 n_projections: 10,
                 n_hash_tables: 10,
@@ -266,7 +266,7 @@ use tracing::{debug, error, info};
         
         // Stage 1: Coarse search with LSH
         let coarse_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 512 },
+            Data::DenseVector { dimension: 512 },
             IndexAlgorithm::LSH {
                 n_projections: 5,
                 n_hash_tables: 5,
@@ -276,7 +276,7 @@ use tracing::{debug, error, info};
 
         // Stage 2: Refine with IVF-PQ
         let fine_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 512 },
+            Data::DenseVector { dimension: 512 },
             IndexAlgorithm::IVF {
                 nlist: 100,
                 nprobe: 20,
@@ -299,7 +299,7 @@ use tracing::{debug, error, info};
     async fn test_bloom_filter_prefiltering() {
         // Test using bloom filter for existence checks before main index
         let bloom_spec = IndexSpecification::new(
-            DataType::Identifier,
+            Data::Identifier,
             IndexAlgorithm::BloomFilter {
                 expected_elements: 1000000,
                 false_positive_rate: 0.01,
@@ -307,7 +307,7 @@ use tracing::{debug, error, info};
         );
 
         let main_spec = IndexSpecification::new(
-            DataType::DenseVector { dimension: 256 },
+            Data::DenseVector { dimension: 256 },
             IndexAlgorithm::HNSW {
                 m: 16,
                 ef_construction: 200,
@@ -327,7 +327,7 @@ use tracing::{debug, error, info};
     async fn test_skiplist_ordered_search() {
         // Test skip list for maintaining sorted order
         let skiplist_spec = IndexSpecification::new(
-            DataType::Metadata,
+            Data::Metadata,
             IndexAlgorithm::SkipList {
                 max_level: 16,
                 probability: 0.5,

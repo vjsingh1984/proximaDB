@@ -101,13 +101,13 @@ impl Default for IvfConfig {
 
 /// Random projection types for LSH
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum RandomProjectionType {
+pub enum RandomProjection {
     Gaussian,
     Binary,
     Sparse,
 }
 
-impl Default for RandomProjectionType {
+impl Default for RandomProjection {
     fn default() -> Self {
         Self::Gaussian
     }
@@ -127,7 +127,7 @@ pub struct LshConfig {
     /// Maximum candidates to check during search
     pub max_candidates: u32,
     /// Random projection type
-    pub projection: RandomProjectionType,
+    pub projection: RandomProjection,
 }
 
 impl Default for LshConfig {
@@ -138,7 +138,7 @@ impl Default for LshConfig {
             bucket_width: 4.0,
             binary_vectors: false,
             max_candidates: 100,
-            projection: RandomProjectionType::default(),
+            projection: RandomProjection::default(),
         }
     }
 }
@@ -225,9 +225,9 @@ impl IndexConfig {
             binary_vectors: l.binary_vectors,
             max_candidates: l.max_candidates as u32,
             projection: match l.projection {
-                1 => RandomProjectionType::Binary,
-                2 => RandomProjectionType::Sparse,
-                _ => RandomProjectionType::Gaussian,
+                1 => RandomProjection::Binary,
+                2 => RandomProjection::Sparse,
+                _ => RandomProjection::Gaussian,
             },
         });
 
@@ -283,9 +283,9 @@ impl IndexConfig {
             binary_vectors: l.binary_vectors,
             max_candidates: l.max_candidates as i32,
             projection: match l.projection {
-                RandomProjectionType::Gaussian => 0,
-                RandomProjectionType::Binary => 1,
-                RandomProjectionType::Sparse => 2,
+                RandomProjection::Gaussian => 0,
+                RandomProjection::Binary => 1,
+                RandomProjection::Sparse => 2,
             },
         });
 
@@ -324,7 +324,7 @@ impl IndexConfig {
     }
 
     /// Get configuration for specific algorithm
-    pub fn get_algorithm_config(&self, algorithm: &str) -> HashMap<String, serde_json::Value> {
+    pub fn algorithm_config(&self, algorithm: &str) -> HashMap<String, serde_json::Value> {
         let mut config = HashMap::new();
         
         match algorithm {

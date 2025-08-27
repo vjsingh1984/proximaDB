@@ -12,7 +12,7 @@ use crate::core::search::{SearchParams, SearchResultSet, InternalSearchResult};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use crate::services::collection_service::CollectionService;
+use crate::services::collection::manager::CollectionService;
 
 /// SearchPlan - High-level search execution plan with optimization metadata.
 /// 
@@ -61,7 +61,7 @@ pub struct FilterableColumn {
     /// Column name
     pub name: String,
     /// Column data type
-    pub data_type: ColumnDataType,
+    pub data_type: ColumnData,
     /// Whether this column is indexed
     pub is_indexed: bool,
     /// Estimated cardinality for optimization
@@ -70,7 +70,7 @@ pub struct FilterableColumn {
 
 /// Column data types for type-safe filtering
 #[derive(Debug, Clone)]
-pub enum ColumnDataType {
+pub enum ColumnData {
     String,
     Integer,
     Float,
@@ -218,7 +218,7 @@ impl IntegratedSearchOptimizer {
     ) -> Result<SearchPlan> {
         // Get collection from service
         let collection = self.collection_service
-            .get_proto_collection(collection_id)
+            .collection(collection_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
         
@@ -231,19 +231,19 @@ impl IntegratedSearchOptimizer {
                     .map(|col| FilterableColumn {
                         name: col.name.clone(),
                         data_type: match col.data_type {
-                            1 => ColumnDataType::String,
-                            2 => ColumnDataType::Integer,
-                            3 => ColumnDataType::Float,
-                            4 => ColumnDataType::Boolean,
-                            5 => ColumnDataType::DateTime,
-                            _ => ColumnDataType::Json,
+                            1 => ColumnData::String,
+                            2 => ColumnData::Integer,
+                            3 => ColumnData::Float,
+                            4 => ColumnData::Boolean,
+                            5 => ColumnData::DateTime,
+                            _ => ColumnData::Json,
                         },
                         is_indexed: col.indexed,
                         estimated_cardinality: col.estimated_cardinality.map(|c| c as usize),
                     })
                     .collect()
             })
-            .unwrap_or_default();
+            .clone();
         
         // Analyze storage characteristics
         let storage_info = self.analyze_storage_info(collection_id).await?;

@@ -230,7 +230,7 @@ async fn test_avro_stats_tracking() {
     create_collection_write_buffer_dir(collection_id).await;
     
     // Get initial stats
-    let initial_stats = strategy.get_stats()
+    let initial_stats = strategy.stats()
         .await
         .expect("Failed to get stats");
     
@@ -249,7 +249,7 @@ async fn test_avro_stats_tracking() {
         .expect("Failed to write batch");
     
     // Check updated stats
-    let updated_stats = strategy.get_stats()
+    let updated_stats = strategy.stats()
         .await
         .expect("Failed to get stats");
     
@@ -282,7 +282,7 @@ async fn test_avro_collection_stats() {
         .expect("Failed to write batch");
     
     // Get collection-specific stats
-    let col_stats = strategy.get_collection_stats(collection_id)
+    let col_stats = strategy.collection_stats(collection_id)
         .await
         .expect("Failed to get collection stats");
     
@@ -377,7 +377,7 @@ async fn test_avro_empty_collection_operations() {
     .expect("Failed to search empty collection");
     assert_eq!(search_results.len(), 0);
     
-    let stats = strategy.get_collection_stats(collection_id)
+    let stats = strategy.collection_stats(collection_id)
         .await
         .expect("Failed to get stats for empty collection");
     assert_eq!(stats.total_entries, 0);
@@ -483,7 +483,7 @@ mod integration_tests {
             Ok(std::collections::HashMap::new())
         }
         
-        async fn get_vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
+        async fn vector_by_id(&self, _collection_id: &str, _vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
             Ok(None)
         }
         
@@ -505,7 +505,7 @@ mod integration_tests {
             panic!("Mock engine doesn't have filesystem factory")
         }
         
-        fn get_collection_service(&self) -> Option<&crate::services::collection_service::CollectionService> {
+        fn get_collection_service(&self) -> Option<&crate::services::collection::manager::CollectionService> {
             None
         }
     }

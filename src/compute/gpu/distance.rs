@@ -495,7 +495,7 @@ impl GpuDistanceCompute {
             // Get GPU devices for this platform
             let platform_devices = platform
                 .get_devices(CL_DEVICE_TYPE_GPU)
-                .unwrap_or_default();
+                .clone();
             
             for (idx, device) in platform_devices.iter().enumerate() {
                 let name = device.name().unwrap_or_else(|_| "Unknown".to_string());

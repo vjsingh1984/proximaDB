@@ -1,0 +1,675 @@
+// Parquet Metadata Serializer for Zero-Copy Cache
+// Hierarchical structure: Footer → Row Group Info → Column Info
+// Enables filtering at row group level without reading column data
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use bytemuck::{Pod, Zeroable, cast_slice, try_cast_slice};
+use serde::{Serialize, Deserialize};
+
+use crate::storage::engines::core::io::zero_copy::{
+    MetadataSerializer, EngineMetadata, QueryContext, DataRange,
+};
+use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::core::errors::ProximaDBError;
+
+/// Parquet Footer metadata (fixed size, bytemuck-compatible)
+#[repr(C)]
+#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+pub struct ParquetFooterHeader {
+    /// Total file size
+    pub file_size: u64,
+    
+    /// Number of row groups
+    pub num_row_groups: u32,
+    
+    /// Footer offset in metadata
+    pub footer_offset: u32,
+    
+    /// Footer size
+    pub footer_size: u32,
+    
+    /// Schema offset in metadata
+    pub schema_offset: u32,
+    
+    /// Schema size
+    pub schema_size: u32,
+    
+    /// Total number of rows
+    pub total_rows: u64,
+    
+    /// Number of columns
+    pub num_columns: u32,
+    
+    /// File version
+    pub parquet_version: u32,
+    
+    /// Created timestamp
+    pub created_timestamp: u64,
+    
+    /// File compression used
+    pub compression_type: u8,
+    
+    /// Reserved for future use
+    pub reserved: [u8; 7],
+}
+
+/// Parquet Row Group metadata (fixed size, array-based)
+#[repr(C)]
+#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+pub struct ParquetRowGroupHeader {
+    /// Row group offset in file
+    pub offset: u64,
+    
+    /// Row group total byte size (compressed)
+    pub compressed_size: u64,
+    
+    /// Row group total byte size (uncompressed)
+    pub uncompressed_size: u64,
+    
+    /// Number of rows in this row group
+    pub num_rows: u64,
+    
+    /// Number of columns in this row group
+    pub num_columns: u32,
+    
+    /// Statistics offset (relative to start of variable data)
+    pub statistics_offset: u32,
+    
+    /// Statistics size
+    pub statistics_size: u32,
+    
+    /// Minimum key value hash (for range filtering)
+    pub min_key_hash: u64,
+    
+    /// Maximum key value hash (for range filtering)
+    pub max_key_hash: u64,
+    
+    /// Row group priority (0=cold, 255=hot)
+    pub priority: u8,
+    
+    /// Reserved
+    pub reserved: [u8; 7],
+}
+
+/// Parquet Column Chunk metadata (fixed size)
+#[repr(C)]
+#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+pub struct ParquetColumnHeader {
+    /// Column chunk offset in file
+    pub offset: u64,
+    
+    /// Column chunk size (compressed)
+    pub compressed_size: u32,
+    
+    /// Column chunk size (uncompressed)
+    pub uncompressed_size: u32,
+    
+    /// Data type encoding (INT32, BYTE_ARRAY, etc.)
+    pub data_type: u32,
+    
+    /// Encoding type (PLAIN, RLE, etc.)
+    pub encoding: u32,
+    
+    /// Compression type for this column
+    pub compression: u32,
+    
+    /// Number of values in column
+    pub num_values: u64,
+    
+    /// Number of null values
+    pub null_count: u64,
+    
+    /// Distinct count (if available)
+    pub distinct_count: u64,
+    
+    /// Min value hash (for range queries)
+    pub min_value_hash: u64,
+    
+    /// Max value hash (for range queries)
+    pub max_value_hash: u64,
+    
+    /// Reserved
+    pub reserved: [u32; 2],
+}
+
+/// Complete Parquet metadata structure
+pub struct ParquetMetadata {
+    /// Fixed-size footer header
+    pub footer: ParquetFooterHeader,
+    
+    /// Fixed-size row group headers (array)
+    pub row_groups: Vec<ParquetRowGroupHeader>,
+    
+    /// Column headers for each row group
+    pub columns: Vec<Vec<ParquetColumnHeader>>,
+    
+    /// Variable-size data (schema, statistics, column indexes)
+    pub variable_data: Vec<u8>,
+    
+    /// Parsed schema (lazy-loaded)
+    schema: parking_lot::RwLock<Option<Arc<Vec<u8>>>>,
+    
+    /// Parsed column statistics (lazy-loaded by row group)
+    column_stats: parking_lot::RwLock<HashMap<u32, Arc<Vec<u8>>>>,
+}
+
+/// Parquet metadata serializer implementation
+pub struct ParquetMetadataSerializer {
+    /// Filesystem for reading files
+    filesystem: Arc<FilesystemFactory>,
+}
+
+impl ParquetMetadataSerializer {
+    pub fn new(filesystem: Arc<FilesystemFactory>) -> Self {
+        Self { filesystem }
+    }
+    
+    /// Parse Parquet file and extract metadata
+    async fn extract_metadata(&self, file_path: &str) -> Result<ParquetMetadata, ProximaDBError> {
+        let fs = self.filesystem.get_filesystem(file_path)?;
+        
+        // Read file size
+        let file_size = fs.get_file_size(file_path).await?;
+        
+        // Read footer from the end of file (Parquet format stores footer at end)
+        let footer_size_bytes = 4; // Last 4 bytes contain footer size
+        let footer_size_data = fs.read_range(
+            file_path,
+            file_size - footer_size_bytes,
+            footer_size_bytes,
+        ).await?;
+        
+        let footer_size = u32::from_le_bytes([
+            footer_size_data[0],
+            footer_size_data[1], 
+            footer_size_data[2],
+            footer_size_data[3],
+        ]) as u64;
+        
+        // Read the actual footer
+        let footer_start = file_size - footer_size - footer_size_bytes;
+        let footer_data = fs.read_range(file_path, footer_start, footer_size).await?;
+        
+        // Parse footer to get row group and schema information
+        let (row_group_info, schema_info) = self.parse_parquet_footer(&footer_data)?;
+        
+        // Build row group headers
+        let mut row_groups = Vec::new();
+        let mut columns = Vec::new();
+        let mut variable_data = Vec::new();
+        
+        // Add schema to variable data
+        let schema_offset = variable_data.len() as u32;
+        variable_data.extend_from_slice(&schema_info);
+        
+        // Process each row group
+        for (rg_idx, rg_info) in row_group_info.iter().enumerate() {
+            // Add statistics to variable data
+            let stats_offset = variable_data.len() as u32;
+            let stats_data = self.extract_row_group_statistics(rg_info)?;
+            variable_data.extend_from_slice(&stats_data);
+            
+            // Create row group header
+            let rg_header = ParquetRowGroupHeader {
+                offset: rg_info.offset,
+                compressed_size: rg_info.compressed_size,
+                uncompressed_size: rg_info.uncompressed_size,
+                num_rows: rg_info.num_rows,
+                num_columns: rg_info.columns.len() as u32,
+                statistics_offset: stats_offset,
+                statistics_size: stats_data.len() as u32,
+                min_key_hash: rg_info.min_key_hash,
+                max_key_hash: rg_info.max_key_hash,
+                priority: if rg_idx < 3 { 255 } else { 128 }, // First few row groups are hot
+                reserved: [0; 7],
+            };
+            
+            row_groups.push(rg_header);
+            
+            // Process columns in this row group
+            let mut rg_columns = Vec::new();
+            for col_info in &rg_info.columns {
+                let col_header = ParquetColumnHeader {
+                    offset: col_info.offset,
+                    compressed_size: col_info.compressed_size,
+                    uncompressed_size: col_info.uncompressed_size,
+                    data_type: col_info.data_type,
+                    encoding: col_info.encoding,
+                    compression: col_info.compression,
+                    num_values: col_info.num_values,
+                    null_count: col_info.null_count,
+                    distinct_count: col_info.distinct_count,
+                    min_value_hash: col_info.min_value_hash,
+                    max_value_hash: col_info.max_value_hash,
+                    reserved: [0; 2],
+                };
+                rg_columns.push(col_header);
+            }
+            columns.push(rg_columns);
+        }
+        
+        // Create footer header
+        let footer = ParquetFooterHeader {
+            file_size,
+            num_row_groups: row_groups.len() as u32,
+            footer_offset: 0, // Will be updated when serialized
+            footer_size: footer_data.len() as u32,
+            schema_offset,
+            schema_size: schema_info.len() as u32,
+            total_rows: row_groups.iter().map(|rg| rg.num_rows).sum(),
+            num_columns: if !row_groups.is_empty() { row_groups[0].num_columns } else { 0 },
+            parquet_version: 2, // Parquet version 2.x
+            created_timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            compression_type: 1, // SNAPPY as default
+            reserved: [0; 7],
+        };
+        
+        Ok(ParquetMetadata {
+            footer,
+            row_groups,
+            columns,
+            variable_data,
+            schema: parking_lot::RwLock::new(None),
+            column_stats: parking_lot::RwLock::new(HashMap::new()),
+        })
+    }
+    
+    /// Parse Parquet footer to extract row group and schema information
+    fn parse_parquet_footer(&self, footer_data: &[u8]) -> Result<(Vec<RowGroupInfo>, Vec<u8>), ProximaDBError> {
+        // Parse Parquet footer format
+        // This is a simplified implementation - real implementation would use Parquet libraries
+        
+        let mut row_groups = Vec::new();
+        
+        // For demo, assume 4 row groups of 256MB each with 4 columns
+        let row_group_size = 256 * 1024 * 1024; // 256MB
+        let num_columns = 4;
+        let column_size = row_group_size / num_columns;
+        
+        for i in 0..4 {
+            let rg_offset = (i * row_group_size) as u64;
+            
+            let mut columns = Vec::new();
+            for col_idx in 0..num_columns {
+                let col_offset = rg_offset + (col_idx * column_size) as u64;
+                columns.push(ColumnInfo {
+                    offset: col_offset,
+                    compressed_size: (column_size * 70 / 100) as u32, // 70% compression
+                    uncompressed_size: column_size as u32,
+                    data_type: match col_idx {
+                        0 => 6, // BYTE_ARRAY (string IDs)
+                        1 => 3, // FIXED_LEN_BYTE_ARRAY (vectors)
+                        2 => 4, // FLOAT (scores)
+                        3 => 6, // BYTE_ARRAY (metadata JSON)
+                        _ => 1, // INT32
+                    },
+                    encoding: 0, // PLAIN
+                    compression: 1, // SNAPPY
+                    num_values: 1000000, // 1M values per column
+                    null_count: 0,
+                    distinct_count: if col_idx == 0 { 1000000 } else { 100000 },
+                    min_value_hash: 0x1000_0000_0000_0000 + (i * 0x1000_0000_0000) as u64,
+                    max_value_hash: 0x8000_0000_0000_0000 + (i * 0x1000_0000_0000) as u64,
+                });
+            }
+            
+            row_groups.push(RowGroupInfo {
+                offset: rg_offset,
+                compressed_size: (row_group_size * 70 / 100) as u64, // 70% compression
+                uncompressed_size: row_group_size as u64,
+                num_rows: 1000000, // 1M rows per row group
+                columns,
+                min_key_hash: 0x1000_0000_0000_0000 + (i * 0x1000_0000_0000) as u64,
+                max_key_hash: 0x8000_0000_0000_0000 + (i * 0x1000_0000_0000) as u64,
+            });
+        }
+        
+        // Create schema data (simplified)
+        let schema_data = b"parquet_schema_placeholder".to_vec();
+        
+        Ok((row_groups, schema_data))
+    }
+    
+    /// Extract row group statistics
+    fn extract_row_group_statistics(&self, _rg_info: &RowGroupInfo) -> Result<Vec<u8>, ProximaDBError> {
+        // Extract column statistics for row group
+        // This would parse actual Parquet statistics in real implementation
+        
+        // For demo, create placeholder statistics
+        Ok(b"row_group_statistics_placeholder".to_vec())
+    }
+}
+
+/// Temporary row group info for parsing
+#[derive(Debug)]
+struct RowGroupInfo {
+    offset: u64,
+    compressed_size: u64,
+    uncompressed_size: u64,
+    num_rows: u64,
+    columns: Vec<ColumnInfo>,
+    min_key_hash: u64,
+    max_key_hash: u64,
+}
+
+/// Temporary column info for parsing
+#[derive(Debug)]
+struct ColumnInfo {
+    offset: u64,
+    compressed_size: u32,
+    uncompressed_size: u32,
+    data_type: u32,
+    encoding: u32,
+    compression: u32,
+    num_values: u64,
+    null_count: u64,
+    distinct_count: u64,
+    min_value_hash: u64,
+    max_value_hash: u64,
+}
+
+impl MetadataSerializer for ParquetMetadataSerializer {
+    fn engine_id(&self) -> &'static str {
+        "PARQUET"
+    }
+    
+    fn serialize_metadata(&self, file_path: &str, _collection_id: &str) -> Result<Vec<u8>, ProximaDBError> {
+        // This would be async in practice, but trait doesn't support async yet
+        let metadata = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.extract_metadata(file_path))
+        })?;
+        
+        let mut buffer = Vec::new();
+        
+        // Serialize footer header (fixed size)
+        buffer.extend_from_slice(bytemuck::bytes_of(&metadata.footer));
+        
+        // Serialize row group count
+        buffer.extend_from_slice(&(metadata.row_groups.len() as u32).to_le_bytes());
+        
+        // Serialize row group headers (fixed size array)
+        for rg in &metadata.row_groups {
+            buffer.extend_from_slice(bytemuck::bytes_of(rg));
+        }
+        
+        // Serialize column headers for each row group
+        for rg_columns in &metadata.columns {
+            buffer.extend_from_slice(&(rg_columns.len() as u32).to_le_bytes());
+            for col in rg_columns {
+                buffer.extend_from_slice(bytemuck::bytes_of(col));
+            }
+        }
+        
+        // Serialize variable data size
+        buffer.extend_from_slice(&(metadata.variable_data.len() as u32).to_le_bytes());
+        
+        // Serialize variable data (compressed with bincode if enabled)
+        buffer.extend_from_slice(&metadata.variable_data);
+        
+        Ok(buffer)
+    }
+    
+    fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
+        let mut offset = 0;
+        
+        // Deserialize footer header
+        if data.len() < offset + std::mem::size_of::<ParquetFooterHeader>() {
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet metadata size".into()));
+        }
+        
+        let footer = *bytemuck::from_bytes::<ParquetFooterHeader>(
+            &data[offset..offset + std::mem::size_of::<ParquetFooterHeader>()]
+        );
+        offset += std::mem::size_of::<ParquetFooterHeader>();
+        
+        // Deserialize row group count
+        if data.len() < offset + 4 {
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet metadata".into()));
+        }
+        let rg_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
+        offset += 4;
+        
+        // Deserialize row group headers
+        let rg_header_size = std::mem::size_of::<ParquetRowGroupHeader>();
+        let total_rg_size = rg_count as usize * rg_header_size;
+        
+        if data.len() < offset + total_rg_size {
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet row group headers".into()));
+        }
+        
+        let rg_data = &data[offset..offset + total_rg_size];
+        let row_groups: Vec<ParquetRowGroupHeader> = try_cast_slice(rg_data)?.to_vec();
+        offset += total_rg_size;
+        
+        // Deserialize column headers for each row group
+        let mut columns = Vec::new();
+        for _ in 0..rg_count {
+            if data.len() < offset + 4 {
+                return Err(ProximaDBError::InvalidInput("Invalid column count".into()));
+            }
+            let col_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
+            offset += 4;
+            
+            let col_header_size = std::mem::size_of::<ParquetColumnHeader>();
+            let total_col_size = col_count as usize * col_header_size;
+            
+            if data.len() < offset + total_col_size {
+                return Err(ProximaDBError::InvalidInput("Invalid Parquet column headers".into()));
+            }
+            
+            let col_data = &data[offset..offset + total_col_size];
+            let rg_columns: Vec<ParquetColumnHeader> = try_cast_slice(col_data)?.to_vec();
+            columns.push(rg_columns);
+            offset += total_col_size;
+        }
+        
+        // Deserialize variable data size
+        if data.len() < offset + 4 {
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet variable data size".into()));
+        }
+        let var_data_size = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
+        offset += 4;
+        
+        // Deserialize variable data
+        if data.len() < offset + var_data_size as usize {
+            return Err(ProximaDBError::InvalidInput("Invalid Parquet variable data".into()));
+        }
+        let variable_data = data[offset..offset + var_data_size as usize].to_vec();
+        
+        let metadata = ParquetMetadata {
+            footer,
+            row_groups,
+            columns,
+            variable_data,
+            schema: parking_lot::RwLock::new(None),
+            column_stats: parking_lot::RwLock::new(HashMap::new()),
+        };
+        
+        Ok(Box::new(metadata))
+    }
+    
+    fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
+        let parquet_metadata = metadata.as_any().downcast_ref::<ParquetMetadata>().unwrap();
+        
+        // Check if we can skip entire file based on row group statistics
+        if !query_context.id_lookups.is_empty() {
+            // Check if any row group might contain the requested IDs
+            let mut any_might_exist = false;
+            
+            for id in &query_context.id_lookups {
+                let id_hash = self.hash_string(id);
+                
+                for rg in &parquet_metadata.row_groups {
+                    if id_hash >= rg.min_key_hash && id_hash <= rg.max_key_hash {
+                        any_might_exist = true;
+                        break;
+                    }
+                }
+                
+                if any_might_exist {
+                    break;
+                }
+            }
+            
+            if !any_might_exist {
+                return true; // None of the IDs exist in any row group
+            }
+        }
+        
+        // Check metadata filters
+        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold") {
+            if let Ok(threshold) = ttl_threshold.parse::<u64>() {
+                if parquet_metadata.footer.created_timestamp < threshold {
+                    return true; // Entire file is expired
+                }
+            }
+        }
+        
+        // Check vector similarity threshold with estimated selectivity
+        if let Some(threshold) = query_context.distance_threshold {
+            let estimated_selectivity = metadata.estimated_selectivity(query_context);
+            if estimated_selectivity < 0.001 && threshold > 0.9 {
+                return true; // Very low selectivity with high threshold
+            }
+        }
+        
+        false // Can't skip, need to read some row groups
+    }
+    
+    fn get_required_ranges(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> Option<Vec<DataRange>> {
+        let parquet_metadata = metadata.as_any().downcast_ref::<ParquetMetadata>().unwrap();
+        
+        // For vector similarity search, typically need entire file
+        if query_context.query_vector.is_some() && query_context.id_lookups.is_empty() {
+            return None; // Read entire file for similarity search
+        }
+        
+        // For ID lookups, determine which row groups to read
+        if !query_context.id_lookups.is_empty() {
+            let mut required_ranges = Vec::new();
+            
+            // Always include footer for metadata
+            required_ranges.push(DataRange {
+                offset: parquet_metadata.footer.file_size - parquet_metadata.footer.footer_size as u64 - 4,
+                length: parquet_metadata.footer.footer_size as u64 + 4,
+                priority: 255, // Critical
+            });
+            
+            // Check which row groups contain the requested IDs
+            for (rg_idx, rg) in parquet_metadata.row_groups.iter().enumerate() {
+                let mut need_row_group = false;
+                
+                for id in &query_context.id_lookups {
+                    let id_hash = self.hash_string(id);
+                    if id_hash >= rg.min_key_hash && id_hash <= rg.max_key_hash {
+                        need_row_group = true;
+                        break;
+                    }
+                }
+                
+                if need_row_group {
+                    // For columnar format, we might only need specific columns
+                    if let Some(columns) = query_context.metadata_filters.get("required_columns") {
+                        // Parse required columns and add only those column chunks
+                        let col_names: Vec<&str> = columns.split(',').collect();
+                        
+                        if let Some(rg_columns) = parquet_metadata.columns.get(rg_idx) {
+                            for (col_idx, col) in rg_columns.iter().enumerate() {
+                                if col_idx < col_names.len() {
+                                    required_ranges.push(DataRange {
+                                        offset: col.offset,
+                                        length: col.compressed_size as u64,
+                                        priority: rg.priority,
+                                    });
+                                }
+                            }
+                        }
+                    } else {
+                        // Read entire row group
+                        required_ranges.push(DataRange {
+                            offset: rg.offset,
+                            length: rg.compressed_size,
+                            priority: rg.priority,
+                        });
+                    }
+                }
+            }
+            
+            // Sort by priority (highest first)
+            required_ranges.sort_by_key(|r| std::cmp::Reverse(r.priority));
+            
+            return Some(required_ranges);
+        }
+        
+        None
+    }
+    
+    // Helper methods
+    fn hash_string(&self, s: &str) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        s.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl EngineMetadata for ParquetMetadata {
+    fn file_size(&self) -> u64 {
+        self.footer.file_size
+    }
+    
+    fn estimated_selectivity(&self, query_context: &QueryContext) -> f32 {
+        // Estimate selectivity based on query type
+        if !query_context.id_lookups.is_empty() {
+            // ID lookups are very selective
+            let total_rows = self.footer.total_rows as f32;
+            let requested_ids = query_context.id_lookups.len() as f32;
+            (requested_ids / total_rows).min(1.0)
+        } else if query_context.query_vector.is_some() {
+            // Vector similarity depends on top_k
+            if let Some(top_k) = query_context.top_k {
+                let total_rows = self.footer.total_rows as f32;
+                (top_k as f32 / total_rows).min(1.0)
+            } else {
+                0.1 // Default 10% selectivity for similarity
+            }
+        } else {
+            1.0 // Scan everything
+        }
+    }
+    
+    fn memory_footprint(&self) -> usize {
+        std::mem::size_of::<ParquetFooterHeader>() +
+        self.row_groups.len() * std::mem::size_of::<ParquetRowGroupHeader>() +
+        self.columns.iter().map(|rg_cols| rg_cols.len() * std::mem::size_of::<ParquetColumnHeader>()).sum::<usize>() +
+        self.variable_data.len()
+    }
+}
+
+// Enable downcasting for the metadata
+impl ParquetMetadata {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+// Implement Clone for ParquetMetadata
+impl Clone for ParquetMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            footer: self.footer,
+            row_groups: self.row_groups.clone(),
+            columns: self.columns.clone(),
+            variable_data: self.variable_data.clone(),
+            schema: parking_lot::RwLock::new(None), // Reset lazy-loaded data
+            column_stats: parking_lot::RwLock::new(HashMap::new()),
+        }
+    }
+}

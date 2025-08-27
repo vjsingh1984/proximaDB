@@ -232,7 +232,7 @@ impl FilesystemMetricsCollector {
     }
     
     /// Get engine-specific file statistics
-    pub fn get_engine_stats(&self, engine_type: StorageEngineType) -> EngineFileStats {
+    pub fn engine_stats(&self, engine_type: StorageEngineType) -> EngineFileStats {
         match engine_type {
             StorageEngineType::SST => EngineFileStats {
                 files_read: self.general_metrics.sst_files_read.load(Ordering::Relaxed),

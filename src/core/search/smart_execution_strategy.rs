@@ -231,7 +231,7 @@ impl SmartExecutionStrategy {
         let start = std::time::Instant::now();
         
         // Get collection metadata
-        let metadata = self.get_collection_metadata(collection_id).await?;
+        let metadata = self.collection_metadata(collection_id).await?;
         
         // Check system resources
         let resources = self.resource_monitor.get_current_state();
@@ -277,7 +277,7 @@ impl SmartExecutionStrategy {
     }
     
     /// Get or fetch collection metadata
-    async fn get_collection_metadata(&self, collection_id: &str) -> Result<CollectionMetadata> {
+    async fn collection_metadata(&self, collection_id: &str) -> Result<CollectionMetadata> {
         // Check cache first
         {
             let cache = self.collection_cache.read();

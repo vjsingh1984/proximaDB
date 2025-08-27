@@ -366,7 +366,7 @@ impl GcsClient {
 
         tracing::debug!("📤 Uploading {} bytes to GCS: {}", data.len(), url);
 
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         let mut request = self
             .http_client

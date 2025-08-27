@@ -305,7 +305,7 @@ impl InternalSearchResult {
 
         SearchVectorRecord {
             id: self.id.clone(),
-            vector: if include_vector { self.vector.clone().unwrap_or_default() } else { Vec::new() },
+            vector: if include_vector { self.vector.clone().clone() } else { Vec::new() },
             metadata,
             score: self.score,
             similarity: self.similarity,

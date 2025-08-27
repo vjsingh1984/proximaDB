@@ -69,7 +69,7 @@ pub struct CheckpointStats {
 }
 
 /// Checkpoint manager for filestore backend
-pub struct FilestoreCheckpointManager {
+pub struct FilestoreCheckpoint {
     config: MetadataCheckpointConfig,
     filesystem: Arc<FilesystemFactory>,
     filestore_url: String,
@@ -77,7 +77,7 @@ pub struct FilestoreCheckpointManager {
     stats: CheckpointStats,
 }
 
-impl FilestoreCheckpointManager {
+impl FilestoreCheckpoint {
     /// Create new checkpoint manager
     pub fn new(
         config: MetadataCheckpointConfig,

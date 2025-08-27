@@ -185,7 +185,7 @@ impl EventLogQuery for EventLogServiceAdapter {
     
     async fn get_health(&self) -> Result<ServiceHealth> {
         let stats = self.stats.read().await;
-        let manager_stats = self.manager.get_stats().await;
+        let manager_stats = self.manager.stats().await;
         
         Ok(ServiceHealth {
             status: HealthStatus::Healthy,
@@ -363,7 +363,7 @@ impl EventLogServiceFactory {
                 let coordinator_url = std::env::var("EVENTLOG_COORDINATOR_URL")
                     .context("EVENTLOG_COORDINATOR_URL required")?;
                 let peers = std::env::var("EVENTLOG_PEERS")
-                    .unwrap_or_default()
+                    .clone()
                     .split(',')
                     .map(|s| s.to_string())
                     .collect();

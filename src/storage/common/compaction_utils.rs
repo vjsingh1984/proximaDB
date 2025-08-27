@@ -15,8 +15,8 @@ use tracing::{debug, info};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::common::compaction_orchestrator::{GenericFileMetadata, TieredFileRegistry};
-use crate::storage::engines::sst::flush_eventlog_integration::SstFlushHandler;
-// use crate::storage::engines::viper::ViperFlushHandler;  // TODO: Fix import issue
+use crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler;
+// use crate::storage::engines::impls::viper::ViperFlushHandler;  // TODO: Fix import issue
 use crate::core::config::CompactionConfig;
 
 /// Storage engine type for EventLog filtering
@@ -196,7 +196,7 @@ impl CompactionFileDiscovery {
         filtered_files.compactable_files
             .get(&level)
             .map(|files| files.iter().map(|f| f.path.clone()).collect())
-            .unwrap_or_default()
+            .clone()
     }
 }
 

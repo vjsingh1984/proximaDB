@@ -2,6 +2,7 @@ pub mod service_types;  // Core service types for vector operations
 pub mod base62;
 pub mod config;
 pub mod config_loader;
+pub mod conversions;  // Unified conversion utilities
 pub mod vector_record_migration;
 pub mod error;
 pub mod grpc_metadata_parser;

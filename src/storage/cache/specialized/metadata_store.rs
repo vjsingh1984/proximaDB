@@ -91,7 +91,7 @@ impl MetadataStore {
     }
     
     /// Get collection metadata
-    pub async fn get_collection_metadata<T>(&self, collection_id: &str) -> Option<T> 
+    pub async fn collection_metadata<T>(&self, collection_id: &str) -> Option<T> 
     where
         T: serde::de::DeserializeOwned,
     {
@@ -211,7 +211,7 @@ impl MetadataStore {
     }
     
     /// Get cached row group metadata
-    pub async fn get_row_group_metadata(
+    pub async fn row_group_metadata(
         &self,
         file_path: &str,
         row_group_idx: usize,

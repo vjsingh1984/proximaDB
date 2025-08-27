@@ -72,7 +72,7 @@ pub struct SearchParams {
     pub enable_clustering_hint: Option<bool>,
     
     /// Runtime optimization hints for search strategy selection
-    pub runtime_hints: Option<crate::query::unified_search_optimizer::SearchHints>,
+    pub runtime_hints: Option<crate::query::unified_query_optimizer::FilterOptimizationHints>,
     
     /// Hint to enable/disable metadata filtering optimization
     pub enable_metadata_filtering_hint: Option<bool>,
@@ -233,7 +233,7 @@ pub use results::{InternalSearchResult, SearchResultSet, SearchDebugInfo, Quanti
 // and convert to proto types at the API boundary.
 pub use unified_interface::{
     UnifiedSearchEngine, IntegratedSearchOptimizer, SearchPlan,
-    CollectionConfig, FilterableColumn, ColumnDataType, StorageInfo, OptimizationHint,
+    CollectionConfig, FilterableColumn, ColumnData, StorageInfo, OptimizationHint,
 };
 
 /// JSON Value Comparison Utilities

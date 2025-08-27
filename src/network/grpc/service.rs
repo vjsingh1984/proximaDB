@@ -15,9 +15,9 @@ use crate::proto::proximadb::{
     SearchResult, VectorBatchRequest, VectorOperation,
     VectorOperationResponse, VectorSearchRequest, VectorGetRequest,
 };
-use crate::services::collection_service::CollectionService;
-use crate::services::vector_operations_service::VectorOperationsService;
-use crate::network::grpc::conversions::convert_search_results;
+use crate::services::collection::manager::CollectionService;
+use crate::services::operations::vectors::VectorOperationsService;
+use crate::core::conversions::convert_search_results;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::VectorOperationMetrics as SchemaVectorOperationMetrics;
 
@@ -262,7 +262,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 let collection = self
                     .collection_service
-                    .get_proto_collection(collection_id)
+                    .collection(collection_id)
                     .await
                     .map_err(|e| Status::internal(format!("Failed to get collection: {}", e)))?;
 
@@ -436,7 +436,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         storage_engine: 0, // 0 means don't update
                         storage_config: None,
                         description: description.flatten(), // Flatten Option<Option<String>> to Option<String>
-                        tags: tags.unwrap_or_default(),
+                        tags: tags.clone(),
                         owner: owner.flatten(), // Flatten Option<Option<String>> to Option<String>
                         filterable_columns: vec![],
                         index_configs: vec![],
@@ -677,14 +677,14 @@ impl ProximaDb for ProximaDbGrpcService {
                         crate::proto::proximadb::search_params::QuantizationHint::NoQuantization(_) => None,
                         crate::proto::proximadb::search_params::QuantizationHint::Binary(_) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Binary(crate::compute::BinaryQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Binary(crate::compute::BinaryQuantization {
                                     threshold: None,
                                     sign_based: false,
                                 })),
                             }),
                         crate::proto::proximadb::search_params::QuantizationHint::Scalar(s) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Scalar(crate::compute::ScalarQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Scalar(crate::compute::ScalarQuantization {
                                     bits: s.bits as i32,
                                     scale: 1.0,
                                     offset: 0.0,
@@ -693,7 +693,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             }),
                         crate::proto::proximadb::search_params::QuantizationHint::Product(p) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Pq(crate::compute::ProductQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Pq(crate::compute::ProductQuantization {
                                     bits_per_code: p.bits_per_code as i32,
                                     num_subvectors: p.num_subvectors as i32,
                                     codebook_id: None,
@@ -702,7 +702,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             }),
                         crate::proto::proximadb::search_params::QuantizationHint::Uniform(u) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Uniform(crate::compute::UniformQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Uniform(crate::compute::UniformQuantization {
                                     bits: 8, // default
                                     scale: Some(u.scale),
                                     offset: Some(u.offset),
@@ -902,14 +902,14 @@ impl ProximaDb for ProximaDbGrpcService {
                         crate::proto::proximadb::search_params::QuantizationHint::NoQuantization(_) => None,
                         crate::proto::proximadb::search_params::QuantizationHint::Binary(_) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Binary(crate::compute::BinaryQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Binary(crate::compute::BinaryQuantization {
                                     threshold: None,
                                     sign_based: false,
                                 })),
                             }),
                         crate::proto::proximadb::search_params::QuantizationHint::Scalar(s) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Scalar(crate::compute::ScalarQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Scalar(crate::compute::ScalarQuantization {
                                     bits: s.bits as i32,
                                     scale: 1.0,
                                     offset: 0.0,
@@ -918,7 +918,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             }),
                         crate::proto::proximadb::search_params::QuantizationHint::Product(p) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Pq(crate::compute::ProductQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Pq(crate::compute::ProductQuantization {
                                     bits_per_code: p.bits_per_code as i32,
                                     num_subvectors: p.num_subvectors as i32,
                                     codebook_id: None,
@@ -927,7 +927,7 @@ impl ProximaDb for ProximaDbGrpcService {
                             }),
                         crate::proto::proximadb::search_params::QuantizationHint::Uniform(u) => 
                             Some(crate::compute::UnifiedQuantizationLevel {
-                                level_type: Some(crate::compute::QuantizationLevelType::Uniform(crate::compute::UniformQuantization {
+                                level_type: Some(crate::compute::QuantizationLevel::Uniform(crate::compute::UniformQuantization {
                                     bits: 8, // default
                                     scale: Some(u.scale),
                                     offset: Some(u.offset),
@@ -1138,7 +1138,7 @@ impl ProximaDb for ProximaDbGrpcService {
         // Debug: Log the actual search results structure
         debug!(
             "🔍 Raw search results JSON: {}",
-            serde_json::to_string_pretty(&search_results).unwrap_or_default()
+            serde_json::to_string_pretty(&search_results).clone()
         );
 
         // Convert results to gRPC format
@@ -1164,7 +1164,7 @@ impl ProximaDb for ProximaDbGrpcService {
                                 .filter_map(|x| x.as_f64().map(|f| f as f32))
                                 .collect()
                         })
-                        .unwrap_or_default()
+                        .clone()
                 } else {
                     vec![]
                 },
@@ -1194,7 +1194,7 @@ impl ProximaDb for ProximaDbGrpcService {
                                     })
                                     .collect()
                             })
-                            .unwrap_or_default()
+                            .clone()
                     } else {
                         vec![]
                     },
@@ -1264,7 +1264,7 @@ impl ProximaDb for ProximaDbGrpcService {
             self.vector_operations_service.clone(),
         );
 
-        match unified_handlers.handle_get_vector(
+        match unified_handlers.handle_vector(
             &req.collection_id,
             &req.vector_id,
             include_vectors,

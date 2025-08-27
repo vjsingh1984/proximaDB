@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::services::collection_service::CollectionService;
+use crate::services::collection::manager::CollectionService;
 use crate::proto::proximadb::FilterableColumnSpec;
 
 /// Storage engine types supported by ProximaDB
@@ -213,7 +213,7 @@ impl BackgroundFlushContext {
     ) -> Result<Self> {
         // Single collection service call - all subsequent operations use this context
         let collection = service
-            .get_proto_collection(collection_id)
+            .collection(collection_id)
             .await
             .context("Failed to fetch collection from service")?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection_id))?;

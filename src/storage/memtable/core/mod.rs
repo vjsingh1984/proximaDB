@@ -112,4 +112,4 @@ impl Default for MemtableConfig {
 // Re-export common types for convenience (these may not exist yet)
 // pub use crate::core::{VectorId, VectorRecord};
 // pub use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-// pub use crate::storage::engines::sst::LsmEntry;
+// pub use crate::storage::engines::impls::sst::LsmEntry;

@@ -150,7 +150,7 @@ impl ProductionMetricsManager {
         }
         
         // Get overall system summary
-        let summary = self.unified_collector.get_metrics_summary().await;
+        let summary = self.unified_collector.metrics_summary().await;
         
         info!(
             "System summary - Health: {:.1}%, CPU: {:.1}%, Memory: {:.1}%, QPS: {:.0}, P99 latency: {:.1}ms",
@@ -191,7 +191,7 @@ impl ProductionMetricsManager {
     
     /// Export metrics for external monitoring systems (Prometheus, Grafana, etc.)
     pub async fn export_metrics(&self) -> String {
-        let samples = self.unified_collector.collect_all().await.unwrap_or_default();
+        let samples = self.unified_collector.collect_all().await.clone();
         
         let mut output = String::new();
         output.push_str("# ProximaDB Unified Metrics Export\n");

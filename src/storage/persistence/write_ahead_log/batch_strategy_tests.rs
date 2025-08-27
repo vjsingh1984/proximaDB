@@ -55,7 +55,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WALVectorBatch>> {
             let collections = self.collections.read().await;
-            Ok(collections.get(key).cloned().unwrap_or_default())
+            Ok(collections.get(key).cloned().clone())
         }
 
         async fn clear_flushed(&self, collection_id: &str) -> Result<usize> {
@@ -182,7 +182,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_stats(&self) -> Result<WALStats> {
             if let Some(behavior) = &self.wal_behavior {
-                let collection_stats = behavior.get_stats().await?;
+                let collection_stats = behavior.stats().await?;
                 let total_entries: u64 = collection_stats.values().map(|s| s.total_entries).sum();
                 let total_memory: u64 = collection_stats.values().map(|s| s.memory_size_bytes).sum();
                 
@@ -216,7 +216,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_collection_stats(&self, collection_id: &str) -> Result<WALStats> {
             if let Some(behavior) = &self.wal_behavior {
-                let all_stats = behavior.get_stats().await?;
+                let all_stats = behavior.stats().await?;
                 if let Some(collection_stat) = all_stats.get(key) {
                     let mut collection_stats = HashMap::new();
                     collection_stats.insert(collection_id.to_string(), collection_stat.clone());
@@ -400,7 +400,7 @@ mod write_ahead_log_batch_strategy_tests {
         let collection_id = "stats_collection";
         
         // Initially no stats
-        let stats = strategy.get_collection_stats(collection_id).await.unwrap();
+        let stats = strategy.collection_stats(collection_id).await.unwrap();
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.collections_count, 0);
 
@@ -411,7 +411,7 @@ mod write_ahead_log_batch_strategy_tests {
         strategy.write_native_batch(batch2, collection_id).await.unwrap();
 
         // Check updated stats
-        let stats = strategy.get_collection_stats(collection_id).await.unwrap();
+        let stats = strategy.collection_stats(collection_id).await.unwrap();
         assert_eq!(stats.total_entries, 8); // 5 + 3 vectors
         assert_eq!(stats.collections_count, 1);
         assert!(stats.memory_size_bytes > 0);
@@ -431,7 +431,7 @@ mod write_ahead_log_batch_strategy_tests {
         strategy.write_native_batch(batch2, "collection2").await.unwrap();
 
         // Check global stats
-        let stats = strategy.get_stats().await.unwrap();
+        let stats = strategy.stats().await.unwrap();
         assert_eq!(stats.total_entries, 10); // 4 + 6 vectors
         assert_eq!(stats.collections_count, 2);
         assert!(stats.memory_size_bytes > 0);
@@ -675,7 +675,7 @@ mod write_ahead_log_batch_strategy_tests {
         }
 
         // Verify all collections were created
-        let stats = strategy.get_stats().await.unwrap();
+        let stats = strategy.stats().await.unwrap();
         assert_eq!(stats.collections_count, 5);
         assert_eq!(stats.total_entries, 50); // 5 collections * 10 vectors each
     }

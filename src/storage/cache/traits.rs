@@ -151,7 +151,7 @@ impl<V: CacheValue> CacheEntry<V> {
     pub fn age(&self) -> std::time::Duration {
         SystemTime::now()
             .duration_since(self.inserted_at)
-            .unwrap_or_default()
+            .clone()
     }
 }
 

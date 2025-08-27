@@ -119,7 +119,7 @@ mod tests {
         assert_eq!(parsed.query_type, QueryType::Select);
         
         // Check statistics
-        let stats = parser.get_stats();
+        let stats = parser.stats();
         assert_eq!(stats.total_queries_parsed, 1);
         assert!(stats.total_parse_time_ms >= 0.0);
     }
@@ -191,7 +191,7 @@ mod tests {
             let _ = parser.parse(sql);
         }
         
-        let stats = parser.get_stats();
+        let stats = parser.stats();
         assert_eq!(stats.total_queries_parsed, queries.len() as u64);
         
         // Either all GPU or all CPU (depending on availability)
@@ -238,7 +238,7 @@ use tracing::{debug, error, info};
         
         // Check final stats
         let parser = parser_mutex.lock().unwrap();
-        let stats = parser.get_stats();
+        let stats = parser.stats();
         assert_eq!(stats.total_queries_parsed, 5);
     }
     
@@ -296,7 +296,7 @@ use tracing::{debug, error, info};
         debug!("GPU total time: {:.2}ms", gpu_elapsed.as_secs_f64() * 1000.0);
         debug!("CPU total time: {:.2}ms", cpu_elapsed.as_secs_f64() * 1000.0);
         
-        let gpu_stats = gpu_parser.get_stats();
+        let gpu_stats = gpu_parser.stats();
         if gpu_stats.gpu_accelerated_count > 0 {
             let speedup = cpu_elapsed.as_secs_f64() / gpu_elapsed.as_secs_f64();
             debug!("GPU speedup: {:.2}x", speedup);

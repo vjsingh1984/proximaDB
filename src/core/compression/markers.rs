@@ -28,7 +28,7 @@ pub const MARKER_LZMA: u8 = 0x0D;
 pub const MARKER_LZO: u8 = 0x0E;
 
 /// Get compression marker for algorithm
-pub fn get_compression_marker(algorithm: &CompressionAlgorithm) -> u8 {
+pub fn compression_marker(algorithm: &CompressionAlgorithm) -> u8 {
     match algorithm {
         CompressionAlgorithm::None => MARKER_UNCOMPRESSED,
         CompressionAlgorithm::Zstd => MARKER_ZSTD,
@@ -48,7 +48,7 @@ pub fn get_compression_marker(algorithm: &CompressionAlgorithm) -> u8 {
 }
 
 /// Get unified compression algorithm from marker
-pub fn get_compression_algorithm_from_marker(marker: u8) -> CompressionAlgorithm {
+pub fn compression_algorithm_from_marker(marker: u8) -> CompressionAlgorithm {
     match marker {
         MARKER_UNCOMPRESSED => CompressionAlgorithm::None,
         MARKER_ZSTD => CompressionAlgorithm::Zstd,

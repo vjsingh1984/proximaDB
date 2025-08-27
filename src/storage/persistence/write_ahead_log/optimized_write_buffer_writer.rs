@@ -9,7 +9,7 @@ use crate::proto::proximadb::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
 // Temporarily disabled - OptimizedFormat has been removed from vector_operations_service
-// use crate::services::vector_operations_service::OptimizedFormat;
+// use crate::services::operations::vectors::OptimizedFormat;
 
 /// High-performance WAL writer with batching, caching, and background writes
 /// 

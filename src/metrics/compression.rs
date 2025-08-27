@@ -91,7 +91,7 @@ pub struct CompressionResult {
     pub compression_time: Duration,
     pub algorithm: String,
     pub level: i32,
-    pub data_type: CompressionDataType,
+    pub data_type: CompressionData,
 }
 
 /// Decompression operation result
@@ -104,7 +104,7 @@ pub struct DecompressionResult {
 
 /// Type of data being compressed
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CompressionDataType {
+pub enum CompressionData {
     Vector,
     Metadata,
     Index,
@@ -195,7 +195,7 @@ impl CompressionMetricsTracker {
             compression_time,
             algorithm: algorithm.to_string(),
             level,
-            data_type: CompressionDataType::Mixed,
+            data_type: CompressionData::Mixed,
         };
         
         self.record_compression(collection_id, result.clone());
@@ -392,13 +392,13 @@ impl CompressionMetricsTracker {
             // Update data type specific ratios
             let ratio = result.uncompressed_size as f32 / result.compressed_size.max(1) as f32;
             match result.data_type {
-                CompressionDataType::Vector => {
+                CompressionData::Vector => {
                     metrics.vector_compression_ratio = ratio;
                 }
-                CompressionDataType::Metadata => {
+                CompressionData::Metadata => {
                     metrics.metadata_compression_ratio = ratio;
                 }
-                CompressionDataType::Index => {
+                CompressionData::Index => {
                     metrics.index_compression_ratio = ratio;
                 }
                 _ => {}
