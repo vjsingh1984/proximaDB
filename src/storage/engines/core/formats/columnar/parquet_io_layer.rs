@@ -45,7 +45,7 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system  
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
-use crate::core::error::ProximaDBError;
+use crate::core::error::{ProximaDBError, StorageError};
 use crate::proto::proximadb::VectorRecord;
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024;  // 8MB max footer size
@@ -489,9 +489,10 @@ impl SharedParquetFormatReader {
     }
     
     /// Parse Parquet footer from raw bytes
-    fn parse_footer(&self, data: &[u8]) -> Result<ParquetMetaData, ProximaDBError> {
+    fn parse_footer(&self, _data: &[u8]) -> Result<ParquetMetaData, ProximaDBError> {
         // Use parquet crate to parse footer
-        Ok(ParquetMetaDataType::default()) // Placeholder
+        // For now, return a placeholder - real implementation would parse the actual footer
+        Err(ProximaDBError::Internal("Footer parsing not yet implemented".to_string()))
     }
     
     /// Check if statistics match filter
@@ -531,11 +532,8 @@ impl SharedParquetFormatReader {
     /// Get local footer with mmap
     async fn get_local_footer_with_mmap(&self, _file_path: &str) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
         // mmap footer for local files
-        Ok(Arc::new(ParquetFooterCache {
-            metadata: Arc::new(ParquetMetaDataType::default()),
-            raw_footer: Arc::new(Vec::new()),
-            last_access: Instant::now(),
-        }))
+        // For now, return an error - real implementation would use mmap
+        Err(ProximaDBError::Internal("Local footer mmap not yet implemented".to_string()))
     }
     
     /// Get statistics
@@ -625,7 +623,8 @@ impl LocalDiskCache {
         
         // Ensure parent directory exists
         if let Some(parent) = cache_file.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(e)))?;
         }
         
         // Serialize and write column data

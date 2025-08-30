@@ -7,324 +7,63 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use crate::compute::distance_computation::core::{DistanceCompute, DistanceMetric};
-
-/// Enhanced AVX2 implementation mimicking AVX-512 performance
-/// Uses aggressive unrolling and prefetching
-#[cfg(target_arch = "x86_64")]
-pub struct CosineAvx512;
-
-#[cfg(target_arch = "x86_64")]
-impl DistanceCompute for CosineAvx512 {
-    fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        debug_assert_eq!(a.len(), b.len());
-        unsafe {
-            // Process 32 elements at a time (4x AVX2 registers)
-            let mut dot_sum1 = _mm256_setzero_ps();
-            let mut dot_sum2 = _mm256_setzero_ps();
-            let mut dot_sum3 = _mm256_setzero_ps();
-            let mut dot_sum4 = _mm256_setzero_ps();
-            
-            let mut norm_a_sum1 = _mm256_setzero_ps();
-            let mut norm_a_sum2 = _mm256_setzero_ps();
-            let mut norm_a_sum3 = _mm256_setzero_ps();
-            let mut norm_a_sum4 = _mm256_setzero_ps();
-            
-            let mut norm_b_sum1 = _mm256_setzero_ps();
-            let mut norm_b_sum2 = _mm256_setzero_ps();
-            let mut norm_b_sum3 = _mm256_setzero_ps();
-            let mut norm_b_sum4 = _mm256_setzero_ps();
-
-            let chunks = a.len() / 32;
-            
-            for i in 0..chunks {
-                let offset = i * 32;
-                
-                // Load 32 elements (4 AVX2 vectors)
-                let a1 = _mm256_loadu_ps(a.as_ptr().add(offset));
-                let a2 = _mm256_loadu_ps(a.as_ptr().add(offset + 8));
-                let a3 = _mm256_loadu_ps(a.as_ptr().add(offset + 16));
-                let a4 = _mm256_loadu_ps(a.as_ptr().add(offset + 24));
-                
-                let b1 = _mm256_loadu_ps(b.as_ptr().add(offset));
-                let b2 = _mm256_loadu_ps(b.as_ptr().add(offset + 8));
-                let b3 = _mm256_loadu_ps(b.as_ptr().add(offset + 16));
-                let b4 = _mm256_loadu_ps(b.as_ptr().add(offset + 24));
-                
-                // Dot products
-                dot_sum1 = _mm256_fmadd_ps(a1, b1, dot_sum1);
-                dot_sum2 = _mm256_fmadd_ps(a2, b2, dot_sum2);
-                dot_sum3 = _mm256_fmadd_ps(a3, b3, dot_sum3);
-                dot_sum4 = _mm256_fmadd_ps(a4, b4, dot_sum4);
-                
-                // Norms
-                norm_a_sum1 = _mm256_fmadd_ps(a1, a1, norm_a_sum1);
-                norm_a_sum2 = _mm256_fmadd_ps(a2, a2, norm_a_sum2);
-                norm_a_sum3 = _mm256_fmadd_ps(a3, a3, norm_a_sum3);
-                norm_a_sum4 = _mm256_fmadd_ps(a4, a4, norm_a_sum4);
-                
-                norm_b_sum1 = _mm256_fmadd_ps(b1, b1, norm_b_sum1);
-                norm_b_sum2 = _mm256_fmadd_ps(b2, b2, norm_b_sum2);
-                norm_b_sum3 = _mm256_fmadd_ps(b3, b3, norm_b_sum3);
-                norm_b_sum4 = _mm256_fmadd_ps(b4, b4, norm_b_sum4);
-            }
-            
-            // Combine the 4 accumulators
-            let dot_sum = _mm256_add_ps(
-                _mm256_add_ps(dot_sum1, dot_sum2),
-                _mm256_add_ps(dot_sum3, dot_sum4)
-            );
-            let norm_a_sum = _mm256_add_ps(
-                _mm256_add_ps(norm_a_sum1, norm_a_sum2),
-                _mm256_add_ps(norm_a_sum3, norm_a_sum4)
-            );
-            let norm_b_sum = _mm256_add_ps(
-                _mm256_add_ps(norm_b_sum1, norm_b_sum2),
-                _mm256_add_ps(norm_b_sum3, norm_b_sum4)
-            );
-            
-            // Reduce to scalars
-            let dot = reduce_sum_ps_256(dot_sum);
-            let norm_a = reduce_sum_ps_256(norm_a_sum);
-            let norm_b = reduce_sum_ps_256(norm_b_sum);
-            
-            // Handle remainder
-            let mut dot_remainder = 0.0;
-            let mut norm_a_remainder = 0.0;
-            let mut norm_b_remainder = 0.0;
-            
-            for i in (chunks * 32)..a.len() {
-                dot_remainder += a[i] * b[i];
-                norm_a_remainder += a[i] * a[i];
-                norm_b_remainder += b[i] * b[i];
-            }
-            
-            let total_dot = dot + dot_remainder;
-            let total_norm_a = norm_a + norm_a_remainder;
-            let total_norm_b = norm_b + norm_b_remainder;
-            
-            // Handle zero vectors - return infinity as penalty distance
-            if total_norm_a == 0.0 || total_norm_b == 0.0 {
-                return f32::INFINITY; // Maximum possible distance for zero vectors
-            }
-            
-            1.0 - (total_dot / (total_norm_a.sqrt() * total_norm_b.sqrt()))
-        }
-    }
-
-    fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
-        vectors.iter().map(|v| self.distance(query, v)).collect()
-    }
-
-    fn is_similarity(&self) -> bool {
-        false
-    }
-
-    fn metric(&self) -> DistanceMetric {
-        DistanceMetric::Cosine
-    }
-}
-
-/// Enhanced AVX2 implementation of Euclidean distance
-#[cfg(target_arch = "x86_64")]
-pub struct EuclideanAvx512;
-
-#[cfg(target_arch = "x86_64")]
-impl DistanceCompute for EuclideanAvx512 {
-    fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        debug_assert_eq!(a.len(), b.len());
-        unsafe {
-            // Process 32 elements at a time
-            let mut sum1 = _mm256_setzero_ps();
-            let mut sum2 = _mm256_setzero_ps();
-            let mut sum3 = _mm256_setzero_ps();
-            let mut sum4 = _mm256_setzero_ps();
-            
-            let chunks = a.len() / 32;
-            
-            for i in 0..chunks {
-                let offset = i * 32;
-                
-                let a1 = _mm256_loadu_ps(a.as_ptr().add(offset));
-                let a2 = _mm256_loadu_ps(a.as_ptr().add(offset + 8));
-                let a3 = _mm256_loadu_ps(a.as_ptr().add(offset + 16));
-                let a4 = _mm256_loadu_ps(a.as_ptr().add(offset + 24));
-                
-                let b1 = _mm256_loadu_ps(b.as_ptr().add(offset));
-                let b2 = _mm256_loadu_ps(b.as_ptr().add(offset + 8));
-                let b3 = _mm256_loadu_ps(b.as_ptr().add(offset + 16));
-                let b4 = _mm256_loadu_ps(b.as_ptr().add(offset + 24));
-                
-                let diff1 = _mm256_sub_ps(a1, b1);
-                let diff2 = _mm256_sub_ps(a2, b2);
-                let diff3 = _mm256_sub_ps(a3, b3);
-                let diff4 = _mm256_sub_ps(a4, b4);
-                
-                sum1 = _mm256_fmadd_ps(diff1, diff1, sum1);
-                sum2 = _mm256_fmadd_ps(diff2, diff2, sum2);
-                sum3 = _mm256_fmadd_ps(diff3, diff3, sum3);
-                sum4 = _mm256_fmadd_ps(diff4, diff4, sum4);
-            }
-            
-            let sum = _mm256_add_ps(
-                _mm256_add_ps(sum1, sum2),
-                _mm256_add_ps(sum3, sum4)
-            );
-            
-            let mut result = reduce_sum_ps_256(sum);
-            
-            // Handle remainder
-            for i in (chunks * 32)..a.len() {
-                let diff = a[i] - b[i];
-                result += diff * diff;
-            }
-            
-            result.sqrt()
-        }
-    }
-
-    fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
-        vectors.iter().map(|v| self.distance(query, v)).collect()
-    }
-
-    fn is_similarity(&self) -> bool {
-        false
-    }
-
-    fn metric(&self) -> DistanceMetric {
-        DistanceMetric::Euclidean
-    }
-}
-
-/// Enhanced AVX2 implementation of dot product
-#[cfg(target_arch = "x86_64")]
-pub struct DotProductAvx512;
-
-#[cfg(target_arch = "x86_64")]
-impl DistanceCompute for DotProductAvx512 {
-    fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
-        debug_assert_eq!(a.len(), b.len());
-        unsafe {
-            let mut sum1 = _mm256_setzero_ps();
-            let mut sum2 = _mm256_setzero_ps();
-            let mut sum3 = _mm256_setzero_ps();
-            let mut sum4 = _mm256_setzero_ps();
-            
-            let chunks = a.len() / 32;
-            
-            for i in 0..chunks {
-                let offset = i * 32;
-                
-                let a1 = _mm256_loadu_ps(a.as_ptr().add(offset));
-                let a2 = _mm256_loadu_ps(a.as_ptr().add(offset + 8));
-                let a3 = _mm256_loadu_ps(a.as_ptr().add(offset + 16));
-                let a4 = _mm256_loadu_ps(a.as_ptr().add(offset + 24));
-                
-                let b1 = _mm256_loadu_ps(b.as_ptr().add(offset));
-                let b2 = _mm256_loadu_ps(b.as_ptr().add(offset + 8));
-                let b3 = _mm256_loadu_ps(b.as_ptr().add(offset + 16));
-                let b4 = _mm256_loadu_ps(b.as_ptr().add(offset + 24));
-                
-                sum1 = _mm256_fmadd_ps(a1, b1, sum1);
-                sum2 = _mm256_fmadd_ps(a2, b2, sum2);
-                sum3 = _mm256_fmadd_ps(a3, b3, sum3);
-                sum4 = _mm256_fmadd_ps(a4, b4, sum4);
-            }
-            
-            let sum = _mm256_add_ps(
-                _mm256_add_ps(sum1, sum2),
-                _mm256_add_ps(sum3, sum4)
-            );
-            
-            let mut result = reduce_sum_ps_256(sum);
-            
-            // Handle remainder
-            for i in (chunks * 32)..a.len() {
-                result += a[i] * b[i];
-            }
-            
-            -result // Negative because higher dot product = more similar
-        }
-    }
-
-    fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
-        vectors.iter().map(|v| self.distance(query, v)).collect()
-    }
-
-    fn is_similarity(&self) -> bool {
-        true
-    }
-
-    fn metric(&self) -> DistanceMetric {
-        DistanceMetric::DotProduct
-    }
-}
-
 /// Helper function to reduce a 256-bit vector to a scalar sum
 #[cfg(target_arch = "x86_64")]
 #[inline]
-unsafe fn reduce_sum_ps_256(v: __m256) -> f32 {
+pub unsafe fn reduce_sum_ps_256(v: __m256) -> f32 {
     let low = _mm256_extractf128_ps(v, 0);
     let high = _mm256_extractf128_ps(v, 1);
     let sum128 = _mm_add_ps(low, high);
     
-    let shuf = _mm_movehdup_ps(sum128);
+    // Horizontal add within 128-bit lanes
+    let shuf = _mm_shuffle_ps(sum128, sum128, 0x0E);
     let sums = _mm_add_ps(sum128, shuf);
-    let shuf = _mm_movehl_ps(sums, sums);
+    let shuf = _mm_shuffle_ps(sums, sums, 0x01);
     let sums = _mm_add_ps(sums, shuf);
+    
     _mm_cvtss_f32(sums)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-use tracing::{debug, error, info};
+/// Helper function to reduce a 256-bit vector to maximum value
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub unsafe fn reduce_max_ps_256(v: __m256) -> f32 {
+    let low = _mm256_extractf128_ps(v, 0);
+    let high = _mm256_extractf128_ps(v, 1);
+    let max128 = _mm_max_ps(low, high);
+    
+    // Horizontal max within 128-bit lanes
+    let shuf = _mm_shuffle_ps(max128, max128, 0x0E);
+    let maxs = _mm_max_ps(max128, shuf);
+    let shuf = _mm_shuffle_ps(maxs, maxs, 0x01);
+    let maxs = _mm_max_ps(maxs, shuf);
+    
+    _mm_cvtss_f32(maxs)
+}
 
-    #[test]
-    #[cfg(target_arch = "x86_64")]
-    fn test_cosine_avx512() {
-        use crate::core::hardware_capabilities::try_get_hardware_capabilities;
-        if let Some(caps) = try_get_hardware_capabilities() {
-            if !caps.cpu.features.avx2_support {
-                debug!("AVX2 not supported, skipping test");
-                return;
-            }
-        } else {
-            debug!("Hardware capabilities not initialized, skipping test");
-            return;
-        }
+/// Helper function to reduce a 256-bit vector to minimum value
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub unsafe fn reduce_min_ps_256(v: __m256) -> f32 {
+    let low = _mm256_extractf128_ps(v, 0);
+    let high = _mm256_extractf128_ps(v, 1);
+    let min128 = _mm_min_ps(low, high);
+    
+    // Horizontal min within 128-bit lanes
+    let shuf = _mm_shuffle_ps(min128, min128, 0x0E);
+    let mins = _mm_min_ps(min128, shuf);
+    let shuf = _mm_shuffle_ps(mins, mins, 0x01);
+    let mins = _mm_min_ps(mins, shuf);
+    
+    _mm_cvtss_f32(mins)
+}
 
-        let a = vec![1.0; 256];
-        let b = vec![0.5; 256];
-        
-        let calc = CosineAvx512;
-        let distance = calc.distance(&a, &b);
-        
-        // Verify result is reasonable
-        assert!(distance >= 0.0 && distance <= 2.0);
-    }
-
-    #[test]
-    #[cfg(target_arch = "x86_64")]
-    fn test_euclidean_avx512() {
-        use crate::core::hardware_capabilities::try_get_hardware_capabilities;
-        if let Some(caps) = try_get_hardware_capabilities() {
-            if !caps.cpu.features.avx2_support {
-                debug!("AVX2 not supported, skipping test");
-                return;
-            }
-        } else {
-            debug!("Hardware capabilities not initialized, skipping test");
-            return;
-        }
-
-        let a = vec![1.0; 64];
-        let b = vec![2.0; 64];
-        
-        let calc = EuclideanAvx512;
-        let distance = calc.distance(&a, &b);
-        
-        // sqrt(64 * 1^2) = 8.0
-        assert!((distance - 8.0).abs() < 1e-5);
-    }
+/// Prefetch data into cache
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub unsafe fn prefetch_vector(data: *const f32, offset: usize) {
+    _mm_prefetch(
+        data.add(offset) as *const i8,
+        _MM_HINT_T0
+    );
 }

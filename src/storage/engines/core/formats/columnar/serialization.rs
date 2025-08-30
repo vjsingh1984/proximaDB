@@ -417,6 +417,8 @@ impl ColumnarSerializer {
         
         let total_time = start_time.elapsed().as_secs_f64() * 1000.0;
         
+        let compression_ratio = compression_stats.compression_ratio;
+        
         let metadata = SerializationMetadata {
             record_count: records.len(),
             dimension: self.config.dimension,
@@ -432,7 +434,7 @@ impl ColumnarSerializer {
         };
         
         info!("Serialization completed in {:.2}ms, compression ratio: {:.2}x", 
-              total_time, compression_stats.compression_ratio);
+              total_time, compression_ratio);
         
         Ok(SerializationResult {
             fp32_array: Some(fp32_array),
@@ -570,18 +572,13 @@ impl ColumnarSerializer {
     ) -> Result<Vec<StorageQuantizedData>> {
         let mut quantized_data = Vec::with_capacity(vectors.len());
         
-        for (i, vector) in vectors.iter().enumerate() {
-            let record = VectorRecord {
-                id: format!("temp_{}", i),
-                vector: vector.to_vec(),
-                ..Default::default()
-            };
-            
-            let quantized = engine.quantize_single(&record.vector, &record.id).await
-                .context("Failed to quantize vector")?;
-            
-            quantized_data.push(quantized);
-        }
+        // Convert vector slices to owned vectors and create IDs
+        let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
+        let ids: Vec<String> = (0..vectors.len()).map(|i| format!("temp_{}", i)).collect();
+        
+        // Quantize all vectors at once
+        quantized_data = engine.quantize_batch(&owned_vectors, Some(&ids)).await
+            .context("Failed to quantize vectors")?;
         
         Ok(quantized_data)
     }

@@ -612,7 +612,9 @@ impl CommonColumnarOperations {
         let result = self.serializer.serialize_vectors(records, schema).await?;
         
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let bytes_processed = records.len() * records.first().map(|r| r.vector.len() * 4);
+        let bytes_processed = records.first()
+            .map(|r| records.len() * r.vector.len() * 4)
+            .unwrap_or(0);
         
         // Update metrics
         self.performance_monitor.record_serialization(
@@ -720,8 +722,14 @@ impl CommonColumnarOperations {
     
     /// Get performance metrics
     pub async fn get_performance_metrics(&self) -> Result<(OperationMetrics, ResourceMetrics)> {
-        let operation_metrics = self.performance_monitor.operation_metrics.read().await.clone();
-        let resource_metrics = self.performance_monitor.resource_metrics.read().await.clone();
+        let operation_metrics = {
+            let guard = self.performance_monitor.operation_metrics.read().await;
+            (*guard).clone()
+        };
+        let resource_metrics = {
+            let guard = self.performance_monitor.resource_metrics.read().await;
+            (*guard).clone()
+        };
         
         Ok((operation_metrics, resource_metrics))
     }

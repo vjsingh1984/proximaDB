@@ -328,9 +328,9 @@ impl UniversalCompressionAdapter {
         for algorithm in candidates {
             let key = &algorithm;
             let combined_score = 
-                data_score.get(key) * 0.4 +
-                perf_score.get(key) * 0.4 +
-                hw_score.get(key) * 0.2;
+                data_score.get(key).copied().unwrap_or(0.0) * 0.4 +
+                perf_score.get(key).copied().unwrap_or(0.0) * 0.4 +
+                hw_score.get(key).copied().unwrap_or(0.0) * 0.2;
             
             if combined_score > best_score {
                 best_score = combined_score;

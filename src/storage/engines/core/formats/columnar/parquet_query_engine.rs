@@ -1461,11 +1461,14 @@ impl UnifiedParquetReader {
                 let vectors = self.extract_vectors_from_batch(&batch)?;
                 for vector_record in vectors {
                     // Calculate similarity
+                    let distance_metric = params.distance_metric
+                        .as_ref()
+                        .unwrap_or(&DistanceMetric::Cosine);
                     let similarity_result = distance_compute.calculate_distance(
                         query_vector,
                         &vector_record.vector,
-                        params.distance_metric,
-                    )?;
+                        distance_metric,
+                    );
                     let similarity_score = similarity_result.normalized_score;
                     
                     // metadata_map is not used, so we can remove it

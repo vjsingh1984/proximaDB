@@ -1,4 +1,4 @@
-use crate::core::{String, StorageConfig, VectorId, VectorRecord};
+use crate::core::{String, SstConfig, StorageConfig, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -169,12 +169,13 @@ impl StorageEngine {
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Initialize compaction manager with default config if not provided
-        let sst_config = config.sst_config.clone().clone();
+        let sst_config = config.sst_config.clone().unwrap_or_else(|| SstConfig::default());
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
         
         // Create singleton SST storage instance
+        let sst_config_for_storage = config.sst_config.clone().unwrap_or_else(|| SstConfig::default());
         let _sst_storage = Arc::new(SstStorage::new(
-            config.sst_config.clone(),
+            sst_config_for_storage,
             filesystem.clone(),
             Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
         ).await?);

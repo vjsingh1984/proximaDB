@@ -222,11 +222,11 @@ impl ProgressiveSearchExecutor {
             SearchStage::BinaryFilter => ctx.binary_filter_selectivity(),
             SearchStage::Int8Ranking => ctx.metadata.quantization_config
                 .as_ref()
-                .and_then(|qc| qc.int8_ranking_selectivity)
+                .map(|qc| qc.int8_ranking_selectivity)
                 .unwrap_or(0.5),  // Default selectivity
             SearchStage::PqRanking => ctx.metadata.quantization_config
                 .as_ref()
-                .and_then(|qc| qc.pq_ranking_selectivity)
+                .map(|qc| qc.pq_ranking_selectivity)
                 .unwrap_or(0.2)
                 ,
             SearchStage::FullPrecision => 1.0,

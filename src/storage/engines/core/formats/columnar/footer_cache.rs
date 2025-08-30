@@ -587,7 +587,7 @@ impl ParquetFooterCache {
                 
                 // Implement cache warming logic here
                 // For now, just log statistics
-                let stats = cache.stats().await;
+                let stats = cache.stats.read().await;
                 debug!("Cache stats: hit_rate={:.2}%, size={}, prefetch_count={}", 
                        stats.hit_rate * 100.0, stats.cache_size, stats.prefetch_count);
             }

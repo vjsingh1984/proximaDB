@@ -363,7 +363,7 @@ impl ColumnarUtilities {
         Ok(ValidFileInfo {
             file_path: file_path.to_string(),
             size_bytes: file_info.size,
-            last_modified: file_info.modified,
+            last_modified: file_info.modified.unwrap_or_else(chrono::Utc::now),
             row_group_count: 5, // Placeholder
             vector_count: 10000, // Placeholder
         })
