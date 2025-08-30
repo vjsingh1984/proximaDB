@@ -35,6 +35,7 @@ pub struct MigrationConfig {
     pub collections: Vec<String>,
     
     /// Migration strategy
+    pub strategy: MigrationStrategy,
     
     /// Validation settings
     pub validation: ValidationConfig,

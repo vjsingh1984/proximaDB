@@ -1285,19 +1285,6 @@ impl UnifiedParquetReader {
         projected_indices
     }
 
-    fn resolve_column_indices_from_schema(
-        &self,
-        schema: &parquet::schema::types::SchemaDescriptor,
-        columns: &[String],
-    ) -> Vec<usize> {
-        let mut projected_indices = Vec::new();
-        for (index, field) in schema.columns().iter().enumerate() {
-            if columns.contains(&field.name().to_string()) {
-                projected_indices.push(index);
-            }
-        }
-        projected_indices
-    }
     
     /// Get optimization statistics
     pub async fn get_optimization_stats(&self) -> HashMap<String, serde_json::Value> {
@@ -1629,7 +1616,7 @@ impl UnifiedParquetReader {
     }
     
     /// Read vectors for similarity search with automatic strategy selection
-    pub async fn read_for_similarity_search(
+    pub async fn read_single_file_for_similarity_search(
         &self,
         file_path: &str,
         query_vector: &[f32],

@@ -646,7 +646,7 @@ impl StorageEngine {
                                     metadata.indexing_algorithm = "hnsw".to_string();
                                     metadata.vector_count = entries.len() as u64;
                                     metadata.total_size_bytes = entries.len() as u64 * record.vector.len() as u64 * 4;
-                                    metadata.created_at = chrono::Utc::now();
+                                    metadata.timestamp = chrono::Utc::now();
                                     metadata.updated_at = chrono::Utc::now();
                                         
                                         collections_metadata.push((collection_id.to_string(), metadata));
@@ -759,7 +759,7 @@ impl StorageEngine {
         // Get AXIS index statistics
         match self
             .axis_index_manager
-            .collection_stats(collection_id)
+            .get_collection_stats(collection_id)
             .await
         {
             Ok(stats) => {
