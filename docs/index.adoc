@@ -3,35 +3,30 @@
 :toclevels: 2
 :imagesdir: diagrams/images
 
-image::technical-architecture-abstract.svg[ProximaDB Architecture, width=900]
-
 [.lead]
-**Enterprise vector database with hierarchical SST architecture, unified compression, and zero-copy operations.**
+**High-performance vector database with sub-millisecond search at scale.**
 
-== Documentation Hub
-
-image::documentation-hub.svg[Documentation Learning Path, width=900, align=center]
+== Quick Links
 
 [cols="1,1,1", frame=none, grid=none]
 |===
-| **🚀 Get Started**
-link:user/getting_started.adoc[Installation & Setup] +
+| **Core Documentation**
+link:README.md[Documentation Home] +
+link:architecture.md[Architecture] +
+link:storage-engines.md[Storage Engines] +
+link:operations.md[Operations]
+
+| **Development**
+link:api/README.md[API Reference] +
+link:developer/README.md[Developer Guide] +
+link:optimization.md[Performance Tuning] +
+link:diagrams/architecture.mmd[Diagrams]
+
+| **User Guides**
+link:user/getting_started.adoc[Getting Started] +
 link:user/user_guide.adoc[User Guide] +
-link:user/api_reference.adoc[API Reference] +
-link:user/semantic_search_guide.adoc[Semantic Search]
-
-| **🔧 Developer Docs**
-link:developer/architecture.adoc[Architecture Overview] +
-link:developer/storage_engines.adoc[Storage Engines] +
-link:user/user_guide.adoc#storage-engine-selection[Engine Selection] +
-link:developer/technical_reference.adoc[Technical Reference] +
-link:developer/developer_guide.adoc[Contributing Guide]
-
-| **📊 Operations**
-link:admin/multi_disk_guide.adoc[Production Setup] +
-link:deployment_guide.adoc[Deployment Guide] +
-link:performance_reference.adoc[Performance Guide] +
-link:compression_guide.adoc[Compression Guide]
+link:user/tutorials/[Tutorials] +
+link:enhancements/[Future Work]
 |===
 
 == For Business Leaders

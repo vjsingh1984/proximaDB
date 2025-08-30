@@ -1,0 +1,177 @@
+# ProximaDB Architecture Diagrams
+
+## System Architecture
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        REST[REST Clients]
+        GRPC[gRPC Clients]
+        SDK[Python/Go/Java SDKs]
+    end
+    
+    subgraph "API Gateway"
+        RESTAPI[REST API :5678]
+        GRPCAPI[gRPC API :5679]
+        AUTH[Auth Middleware]
+    end
+    
+    subgraph "Service Layer"
+        VS[VectorOperationsService]
+        CS[CollectionService]
+        ES[EventLogService]
+    end
+    
+    subgraph "Storage Layer"
+        MT[MemTable]
+        subgraph "Storage Engines"
+            SST[SST Engine]
+            VIPER[VIPER Engine]
+            NOVA[NOVA Engine]
+        end
+    end
+    
+    subgraph "Persistence"
+        WAL[Write-Ahead Log]
+        META[Metadata Store]
+        FS[Filesystem/S3/Azure]
+    end
+    
+    REST & GRPC & SDK --> RESTAPI & GRPCAPI
+    RESTAPI & GRPCAPI --> AUTH
+    AUTH --> VS & CS & ES
+    VS & CS --> MT
+    MT --> SST & VIPER & NOVA
+    SST & VIPER & NOVA --> WAL & META
+    WAL & META --> FS
+```
+
+## Write Path Flow
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API Layer
+    participant S as Service Layer
+    participant M as MemTable
+    participant W as WAL
+    participant E as Storage Engine
+    
+    C->>A: Insert Vector Request
+    A->>S: Validate & Route
+    S->>W: Write to WAL
+    W-->>S: ACK
+    S->>M: Insert to MemTable
+    M-->>S: Success
+    S-->>A: Response
+    A-->>C: 200 OK
+    
+    Note over M,E: Background Flush
+    M->>E: Flush when threshold reached
+    E->>E: Compress & Index
+```
+
+## Search Path Flow
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as API Layer
+    participant Q as Query Optimizer
+    participant I as Index (AXIS)
+    participant S as Storage Engine
+    participant R as Result Merger
+    
+    C->>A: Search Request
+    A->>Q: Parse & Optimize
+    Q->>Q: Select Strategy
+    
+    alt Index Available
+        Q->>I: Query Index
+        I->>I: Find Candidates
+        I->>S: Fetch Vectors
+    else No Index
+        Q->>S: Scan Storage
+    end
+    
+    S->>R: Return Results
+    R->>R: Merge & Rank
+    R->>A: Top-K Results
+    A->>C: Response
+```
+
+## Storage Engine Selection
+```mermaid
+graph LR
+    W[Workload] --> D{Decision}
+    
+    D -->|OLTP| SST[SST Engine<br/>Row-based<br/>Fast writes]
+    D -->|OLAP| VIPER[VIPER Engine<br/>Columnar<br/>Compression]
+    D -->|Mixed| NOVA[NOVA Engine<br/>Hybrid<br/>Adaptive]
+    D -->|Stream| SWIFT[SWIFT Engine<br/>Hierarchical<br/>High throughput]
+    D -->|Edge| PRISM[PRISM Engine<br/>LSM-tree<br/>Low memory]
+```
+
+## Hardware Acceleration
+```mermaid
+graph TB
+    Q[Query] --> H{Hardware Detection}
+    
+    H -->|CPU| SIMD{SIMD Available?}
+    SIMD -->|AVX-512| AVX512[AVX-512 Kernel]
+    SIMD -->|AVX2| AVX2[AVX2 Kernel]
+    SIMD -->|NEON| NEON[ARM NEON Kernel]
+    SIMD -->|No| SCALAR[Scalar Fallback]
+    
+    H -->|GPU| GPU{GPU Type}
+    GPU -->|NVIDIA| CUDA[CUDA Kernel]
+    GPU -->|AMD| ROCM[ROCm Kernel]
+    GPU -->|Apple| MPS[Metal Kernel]
+```
+
+## Data Tiering
+```mermaid
+graph TB
+    subgraph "Hot Tier"
+        HOT[In-Memory<br/>< 1 hour old]
+    end
+    
+    subgraph "Warm Tier"
+        WARM[SSD Storage<br/>1 hour - 1 day]
+    end
+    
+    subgraph "Cold Tier"
+        COLD[Object Storage<br/>> 1 day old]
+    end
+    
+    HOT -->|Age| WARM
+    WARM -->|Age| COLD
+    COLD -.->|Access| WARM
+    WARM -.->|Access| HOT
+```
+
+## Deployment Options
+```mermaid
+graph LR
+    subgraph "Single Server"
+        S1[ProximaDB<br/>All-in-one]
+    end
+    
+    subgraph "High Availability"
+        LB[Load Balancer]
+        S2[ProximaDB Primary]
+        S3[ProximaDB Standby]
+        SHARED[Shared Storage<br/>S3/NFS]
+        
+        LB --> S2
+        LB -.-> S3
+        S2 --> SHARED
+        S3 --> SHARED
+    end
+    
+    subgraph "Distributed"
+        R[Router]
+        SH1[Shard 1<br/>Collections A-M]
+        SH2[Shard 2<br/>Collections N-Z]
+        
+        R --> SH1
+        R --> SH2
+    end
+```
