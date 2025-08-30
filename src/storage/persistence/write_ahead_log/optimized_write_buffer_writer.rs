@@ -166,12 +166,15 @@ impl OptimizedWriteBufferWriter {
             
             info!(
                 "📊 WAL writer worker {} config - batch_size: {}, timeout: {}ms, combining: {}",
-                worker_id, batch_size_threshold, batch_timeout_ms, enable_combining
+                worker_id, 
+                batch_size_threshold.unwrap_or(100), 
+                batch_timeout_ms.unwrap_or(100), 
+                enable_combining.unwrap_or(true)
             );
             
             // Batch accumulator with enhanced tracking
             let mut batch: HashMap<String, Vec<WalWriteRequest>> = HashMap::new();
-            let mut batch_timer = tokio::time::interval(Duration::from_millis(batch_timeout_ms));
+            let mut batch_timer = tokio::time::interval(Duration::from_millis(batch_timeout_ms.unwrap_or(100)));
             let mut last_flush_time = Instant::now();
             let mut total_vectors_in_batch = 0usize;
             let mut total_bytes_in_batch = 0usize;
@@ -187,7 +190,7 @@ impl OptimizedWriteBufferWriter {
                         total_bytes_in_batch += Self::estimate_request_size(&request);
                         
                         // Add to batch (with combining if enabled)
-                        let combined = if enable_combining {
+                        let combined = if enable_combining.unwrap_or(true) {
                             Self::add_with_combining(&mut batch, request)
                         } else {
                             batch.entry(collection_id).or_default().push(request);
@@ -202,11 +205,11 @@ impl OptimizedWriteBufferWriter {
                         // Check multiple flush conditions
                         if let Some(flush_reason) = Self::should_flush_batch(
                             &batch,
-                            batch_size_threshold,
+                            batch_size_threshold.unwrap_or(100),
                             total_vectors_in_batch,
                             total_bytes_in_batch,
                             last_flush_time,
-                            batch_timeout_ms
+                            batch_timeout_ms.unwrap_or(100)
                         ) {
                             debug!(
                                 "🚀 Worker {} triggering flush - reason: {:?}, collections: {}, vectors: {}, bytes: {}KB",

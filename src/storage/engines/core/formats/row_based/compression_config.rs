@@ -328,15 +328,12 @@ impl RowBasedCompressionConfig {
         
         // Context-specific decisions
         match context {
-            CompressionContext::VectorData => {
+            CompressionContext::Vector => {
                 // Check if vector compression is enabled based on hardware optimizations or quantization
                 self.vector_compression.quantization_aware || 
                 self.vector_compression.hardware_optimizations.use_hardware_acceleration
             }
-            CompressionContext::Metadata => {
-                self.metadata_compression.enabled
-            }
-            CompressionContext::BlockData => {
+            CompressionContext::Block => {
                 self.block_compression.per_block_compression
             }
             _ => true,

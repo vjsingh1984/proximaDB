@@ -55,7 +55,7 @@ pub enum ProximaDBError {
     Internal(String),
     
     #[error("IO error: {0}")]
-    Io(#[from] io::Error),
+    Io(String),
     
     #[error("Timeout: operation exceeded {0} seconds")]
     Timeout(u64),
@@ -102,6 +102,12 @@ pub enum StorageError {
 }
 
 // Custom implementation for io::Error conversion since it's not Clone/Serialize
+impl From<io::Error> for ProximaDBError {
+    fn from(err: io::Error) -> Self {
+        ProximaDBError::Io(err.to_string())
+    }
+}
+
 impl From<io::Error> for StorageError {
     fn from(err: io::Error) -> Self {
         StorageError::DiskIO(err.to_string())

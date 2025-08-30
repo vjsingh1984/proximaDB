@@ -489,7 +489,7 @@ impl ColumnarSerializer {
         let records = vectors.into_iter()
             .enumerate()
             .map(|(i, vector)| VectorRecord {
-                id: Some(format!("record_{}", i)), // Placeholder - would come from ID column
+                id: format!("record_{}", i), // Placeholder - would come from ID column
                 vector,
                 timestamp: chrono::Utc::now().timestamp() as u32,
                 ..Default::default()
@@ -572,7 +572,7 @@ impl ColumnarSerializer {
         
         for (i, vector) in vectors.iter().enumerate() {
             let record = VectorRecord {
-                id: Some(format!("temp_{}", i)),
+                id: format!("temp_{}", i),
                 vector: vector.to_vec(),
                 ..Default::default()
             };

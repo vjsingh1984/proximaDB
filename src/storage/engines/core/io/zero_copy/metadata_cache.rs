@@ -22,7 +22,7 @@ use super::MAGIC_BYTES;
 
 /// Fixed-size cache file header (bytemuck compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct CacheFileHeader {
     /// Magic bytes for file identification: b"PXMDCHV1"
     pub magic: [u8; 8],
@@ -485,10 +485,37 @@ impl ZeroCopyMetadataCache {
                 ProximaDBError::Internal(format!("Failed to create cache file: {}", e))
             })?;
 
-        // Write header
-        file.write_all(bytes_of(&header)).map_err(|e| {
-            ProximaDBError::Internal(format!("Failed to write cache header: {}", e))
+        // Write header manually (serialize each field)
+        file.write_all(&header.magic).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header magic: {}", e))
         })?;
+        file.write_all(&header.version.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header version: {}", e))
+        })?;
+        file.write_all(&header.engine_hash.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header engine_hash: {}", e))
+        })?;
+        file.write_all(&header.original_file_size.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header file_size: {}", e))
+        })?;
+        file.write_all(&header.metadata_size.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header metadata_size: {}", e))
+        })?;
+        file.write_all(&header.created_at.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header created_at: {}", e))
+        })?;
+        file.write_all(&header.file_path_hash.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header file_path_hash: {}", e))
+        })?;
+        file.write_all(&header.compression_flags.to_le_bytes()).map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to write cache header compression_flags: {}", e))
+        })?;
+        // Write reserved fields
+        for reserved_val in &header.reserved {
+            file.write_all(&reserved_val.to_le_bytes()).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to write cache header reserved: {}", e))
+            })?;
+        }
 
         // Write metadata payload
         file.write_all(&metadata_bytes).map_err(|e| {

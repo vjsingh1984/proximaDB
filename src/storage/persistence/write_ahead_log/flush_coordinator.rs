@@ -295,7 +295,7 @@ impl WALFlushCoordinator {
                 engines.keys().collect::<Vec<_>>()
             );
             engines
-                .get(&**engine_type)
+                .get(engine_type)
                 .ok_or_else(|| anyhow::anyhow!("Storage engine {} not registered", engine_type))?
                 .clone()
         };

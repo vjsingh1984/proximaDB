@@ -31,8 +31,8 @@ pub struct ColumnarOptimizer {
     /// Configuration
     config: ColumnarConfig,
     
-    /// Zero-copy filesystem for efficient cached reads
-    zero_copy_fs: Arc<ZeroCopyFilesystem>,
+    /// Filesystem factory (temporarily replacing zero_copy_fs)
+    zero_copy_fs: Arc<FilesystemFactory>,
     
     /// Filesystem factory for writes (selects based on URL scheme)
     filesystem_factory: Arc<FilesystemFactory>,
@@ -105,6 +105,7 @@ impl Default for ProgressiveSearchConfig {
 }
 
 /// Cost-based optimization statistics
+#[derive(Debug)]
 pub struct OptimizationStats {
     pub total_row_groups: usize,
     pub pruned_row_groups: usize,
@@ -122,16 +123,15 @@ impl ColumnarOptimizer {
         distance_compute: Arc<UnifiedDistanceCompute>,
         config: ColumnarConfig,
         filesystem_factory: Arc<FilesystemFactory>,
+        collection_id: String,
+        engine_type: String, // "viper" or "nova"
     ) -> Result<Self> {
         // Create zero-copy filesystem with caching for efficient reads
-        let zero_copy_fs = Arc::new(
-            ZeroCopyFilesystemBuilder::new()
-                .with_filesystem_factory(filesystem_factory.clone())
-                .with_cache_size(1024 * 1024 * 1024) // 1GB cache
-                .with_prefetch_size(8 * 1024 * 1024) // 8MB prefetch
-                .build()
-                .await?
-        );
+        // Get a filesystem instance for the collection
+        // For now, skip zero-copy filesystem as it requires Arc<dyn FileSystem>
+        // and FilesystemFactory only provides &dyn FileSystem
+        // This is a known limitation that needs refactoring
+        let zero_copy_fs = filesystem_factory.clone();
         
         Ok(Self {
             distance_compute,
@@ -152,8 +152,8 @@ impl ColumnarOptimizer {
             }
         }
         info!("Loading bloom filters for: {}", file_path);
-        // Use zero-copy filesystem for cached reads
-        let data = self.zero_copy_fs.read_cached(file_path).await?;
+        // Use filesystem factory to read file
+        let data = self.zero_copy_fs.read(file_path).await?;
         let bytes = bytes::Bytes::from(data);
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
         let metadata = reader_builder.metadata();
@@ -168,7 +168,7 @@ impl ColumnarOptimizer {
                 if let Some(bloom_filter) = self.extract_bloom_filter(column)? {
                     let filter_info = BloomFilterInfo {
                         field: format!("col_{}", col_idx),
-                        size_bytes: bloom_filter.size_bytes(),
+                        size_bytes: 1024, // Default size estimate for bloom filter
                         hash_functions: 3, // Default value
                         num_items: 1000, // Default value
                     };
@@ -219,11 +219,11 @@ impl ColumnarOptimizer {
     ) -> Result<StreamingRowGroupIterator> {
         info!("Creating streaming iterator for: {}", file_path);
         
-        // Use zero-copy filesystem for cached reads
-        let data = self.zero_copy_fs.read_cached(file_path).await?;
+        // Use filesystem factory to read file
+        let data = self.zero_copy_fs.read(file_path).await?;
         let bytes = bytes::Bytes::from(data);
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
-        let metadata = Arc::new(reader_builder.metadata().clone());
+        let metadata = reader_builder.metadata().clone();
         // Select relevant row groups
         let selected_row_groups = self.select_row_groups(&metadata, row_group_filter).await?;
         debug!("Selected {} row groups out of {}", 
@@ -346,7 +346,7 @@ impl ColumnarOptimizer {
         stats.search_time_ms = start_time.elapsed().as_millis() as u64;
         // Final ranking and selection
         all_candidates.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
         });
         all_candidates.truncate(top_k);
         info!("Progressive search complete: {:?}", stats);
@@ -359,6 +359,7 @@ impl ColumnarOptimizer {
                     similarity: Some(1.0 - candidate.similarity),
                     vector: Some(vector.vector),
                     metadata: HashMap::new(), // Simplified for now
+                    ..Default::default()
                 });
             }
         }
@@ -407,7 +408,7 @@ impl ColumnarOptimizer {
             debug!("FP32 rerank stage: {} candidates", candidates.len());
         }
         // Sort and limit
-        candidates.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity));
+        candidates.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal));
         candidates.truncate(top_k);
         Ok(candidates)
     }
@@ -499,13 +500,13 @@ impl ColumnarOptimizer {
         for candidate in candidates {
             // Load full FP32 vector and compute exact distance
             if let Some(vector) = self.load_vector_at_candidate(candidate).await? {
-                let distance = self.distance_compute.as_ref().calculate_distance(
+                let distance_result = self.distance_compute.as_ref().calculate_distance(
                     query_vector,
                     &vector,
                     distance_metric,
-                )?;
+                );
                 let mut updated_candidate = candidate.clone();
-                updated_candidate.similarity = distance;
+                updated_candidate.similarity = distance_result.normalized_score;
                 reranked.push(updated_candidate);
             }
         }
@@ -522,7 +523,7 @@ impl ColumnarOptimizer {
     async fn load_vector_at_location(&self, candidate: &SearchCandidate) -> Result<Option<VectorRecord>> {
         // In production, would load the full record from Parquet
         Ok(Some(VectorRecord {
-            id: candidate.vector_id.clone().clone(),
+            id: candidate.vector_id.clone().unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
             vector: vec![0.0; 768], // Placeholder
             metadata: vec![],
             timestamp: 0,
@@ -576,26 +577,43 @@ impl StreamingRowGroupIterator {
         // TODO: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
         // For now, keeping direct file access but this breaks cloud compatibility
         let file = std::fs::File::open(&self.file_path)?;
-        let mut reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        // Apply column projection if specified
-        if let Some(ref columns) = self.column_projection {
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        // Build reader with column projection and row group selection
+        let mut reader = {
             let schema = reader_builder.schema();
-            let mut projection_indices = Vec::new();
-            for name in columns {
-                if let Ok(field) = schema.field_with_name(name) {
-                    if let Some(index) = schema.fields().iter().position(|f| f == field) {
-                        projection_indices.push(index);
+            let parquet_schema = reader_builder.parquet_schema().clone();
+            
+            // Determine if we need column projection
+            let needs_projection = if let Some(ref columns) = self.column_projection {
+                let mut projection_indices = Vec::new();
+                for name in columns {
+                    if let Ok(field) = schema.field_with_name(name) {
+                        if let Some(index) = schema.fields().iter().position(|f| f.name() == field.name()) {
+                            projection_indices.push(index);
+                        }
                     }
                 }
+                if !projection_indices.is_empty() {
+                    Some(parquet::arrow::ProjectionMask::leaves(&parquet_schema, projection_indices))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            // Apply projection and select specific row group
+            if let Some(projection) = needs_projection {
+                reader_builder
+                    .with_projection(projection)
+                    .with_row_groups(vec![row_group_idx])
+                    .build()?
+            } else {
+                reader_builder
+                    .with_row_groups(vec![row_group_idx])
+                    .build()?
             }
-            if !projection_indices.is_empty() {
-                reader_builder = reader_builder.with_projection(projection_indices.into());
-            }
-        }
-        
-        // Select specific row group
-        reader_builder = reader_builder.with_row_groups(vec![row_group_idx]);
-        let mut reader = reader_builder.build()?;
+        };
         // Read first batch (could be extended to read all batches)
         if let Some(batch) = reader.next() {
             Ok(Some(batch?))

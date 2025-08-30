@@ -110,7 +110,7 @@ impl BackgroundMaintenanceManager {
         let engines = storage_engines.read().await;
         
         // Use the engine type from context instead of defaulting to VIPER
-        let engine = if let Some(engine) = engines.get(&**engine_name) {
+        let engine = if let Some(engine) = engines.get(engine_name) {
             info!("🏭 [COMPACTION] Using {} storage engine for collection {}", 
                   engine_name, context.collection_id);
             engine.clone()

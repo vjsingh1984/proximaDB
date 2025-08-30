@@ -44,7 +44,7 @@ impl SerializationFormat {
     
     /// Parse from string
     pub fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_deref() {
+        match s.to_lowercase().as_str() {
             "proto" | "protobuf" | "protocol-buffers" => Ok(Self::ProtocolBuffers),
             "bincode" => Ok(Self::Bincode),
             "avro" => Ok(Self::Avro),

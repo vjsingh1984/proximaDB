@@ -171,7 +171,8 @@ impl ParquetMetadataSerializer {
         let fs = self.filesystem.get_filesystem(file_path)?;
         
         // Read file size
-        let file_size = fs.get_file_size(file_path).await?;
+        let metadata = fs.metadata(file_path).await?;
+        let file_size = metadata.size;
         
         // Read footer from the end of file (Parquet format stores footer at end)
         let footer_size_bytes = 4; // Last 4 bytes contain footer size

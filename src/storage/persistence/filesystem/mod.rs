@@ -678,16 +678,16 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()> {
-        let opts = options.clone();
+        let temp_path_opt = options.as_ref().and_then(|o| o.temp_path.clone());
 
-        match opts.as_ref().and_then(|o| o.temp_path.as_ref()) {
+        match temp_path_opt {
             None => {
                 // Direct write (optimal for local filesystem)
-                self.write(final_path, data, opts).await
+                self.write(final_path, data, options).await
             }
             Some(temp_path_str) => {
                 // Atomic write-temp-rename (optimal for object stores)
-                let temp_path = std::path::Path::new(temp_path_str);
+                let temp_path = std::path::Path::new(&temp_path_str);
 
                 // Ensure temp directory exists
                 if let Some(temp_parent) = temp_path.parent() {
@@ -695,14 +695,14 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
                 }
 
                 // Write to temp location
-                let temp_opts = opts.map(|o| FileOptions {
+                let temp_opts = options.map(|o| FileOptions {
                     temp_path: None, // Prevent recursion
                     ..o
                 });
-                self.write(temp_path_str, data, Some(temp_opts)).await?;
+                self.write(&temp_path_str, data, temp_opts).await?;
 
                 // Atomic move (rename on same mount point)
-                self.move_file(temp_path_str, final_path).await
+                self.move_file(&temp_path_str, final_path).await
             }
         }
     }

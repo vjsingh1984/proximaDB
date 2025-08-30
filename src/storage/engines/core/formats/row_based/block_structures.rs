@@ -327,8 +327,7 @@ impl RowBasedDataBlock {
         // Calculate ID range
         let mut ids: Vec<String> = records
             .iter()
-            .filter_map(|r| r.id.as_ref())
-            .cloned()
+            .map(|r| r.id.clone())
             .collect();
         ids.sort();
         let id_range = if ids.is_empty() {
@@ -338,7 +337,7 @@ impl RowBasedDataBlock {
         };
         
         // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp).collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp as i64).collect();
         let timestamp_range = if timestamps.is_empty() {
             (0, 0)
         } else {
@@ -346,9 +345,12 @@ impl RowBasedDataBlock {
         };
         
         // Check for deletes (tombstone records)
-        let has_deletes = records.iter().any(|r| r.metadata.iter().any(|kv| 
-            kv.key == "_deleted" && kv.value.as_deref() == Some("true")
-        ));
+        let has_deletes = records.iter().any(|r| r.metadata.iter().any(|kv| {
+            kv.key == "_deleted" && matches!(
+                kv.value.as_ref(), 
+                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) if s == "true"
+            )
+        }));
         
         // Analyze vectors to choose optimal encoding
         let encoding_marker = Self::choose_optimal_encoding_marker(&records);
@@ -400,9 +402,7 @@ impl RowBasedDataBlock {
     
     /// Find record by ID
     pub fn find_record_by_id(&self, id: &str) -> Option<&VectorRecord> {
-        self.records.iter().find(|r| {
-            r.id.as_ref().map(|record_id| record_id == id)
-        })
+        self.records.iter().find(|r| r.id == id)
     }
     
     /// Check if block contains ID (using bloom filter if available)

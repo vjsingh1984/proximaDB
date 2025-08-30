@@ -185,8 +185,7 @@ impl CompactionAxisUpdater {
             );
 
             for vector in merged_vectors {
-                let vector_id = vector.id.as_ref()
-                    .ok_or_else(|| anyhow!("Vector missing ID during compaction_info"))?;
+                let vector_id = &vector.id;
 
                 // Remove old version first (if it exists)
                 let _ = index.remove(vector_id).await; // Ignore errors as it might not exist
@@ -217,7 +216,7 @@ impl CompactionAxisUpdater {
         }
 
         // Log update statistics
-        if !update_errors.is_none() {
+        if !update_errors.is_empty() {
             warn!(
                 "⚠️ AXIS Compaction: {} update errors occurred during compaction_info",
                 update_errors.len()

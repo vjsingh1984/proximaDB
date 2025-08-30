@@ -197,19 +197,12 @@ impl RowBasedBatchOperations {
         match self.config.parallel_processing {
             true => {
                 // Parallel processing
-                // Clone Arc reference for async move closure
-                let self_clone = Arc::new(self.clone());
-                let batch_results = self.process_batches_parallel(
-                    batches,
-                    blocks.clone(),
-                    index.clone(),
-                    move |batch_ids, blocks_inner, index_inner| {
-                        let self_ref = self_clone.clone();
-                        async move {
-                            self_ref.process_read_batch(batch_ids, &blocks_inner, &index_inner).await
-                        }
-                    },
-                ).await?;
+                // Process batches sequentially to avoid lifetime issues
+                let mut batch_results = Vec::new();
+                for batch in batches {
+                    let result = self.process_read_batch(batch, blocks, index).await?;
+                    batch_results.push(result);
+                }
                 
                 for batch_result in batch_results {
                     successful_operations += batch_result.successful_operations;

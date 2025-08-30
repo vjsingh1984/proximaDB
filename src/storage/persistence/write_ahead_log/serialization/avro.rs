@@ -108,7 +108,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                     None => Value::Union(0, Box::new(Value::Null)),
                 }));
                 
-                fields.push(("version".to_string(), Value::Int(v.version as i32)));
+                fields.push(("version".to_string(), Value::Int(v.version.unwrap_or(0) as i32)));
                 
                 Value::Record(fields)
             }).collect()
@@ -259,12 +259,12 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 ;
                             
                             // Convert seconds back to microseconds
-                            let timestamp_micros = timestamp_seconds * 1_000_000;
+                            let timestamp_micros = timestamp_seconds.unwrap_or(0) * 1_000_000;
 
                             result.push(VectorRecord {
-                                id,
-                                vector,
-                                metadata,
+                                id: id.unwrap_or_default(),
+                                vector: vector.unwrap_or_default(),
+                                metadata: metadata.unwrap_or_default(),
                                 timestamp: (timestamp_micros / 1_000_000) as u32,
                                 updated_at: Some((timestamp_micros / 1_000_000) as u32),
                                 expires_at: vector_record
@@ -288,6 +288,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                         _ => None,
                                     }),
                                 quantized_vector: None,
+                                source: None,
                             });
                         }
                     }

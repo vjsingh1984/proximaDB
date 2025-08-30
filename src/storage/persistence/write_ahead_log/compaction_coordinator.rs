@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Mutex};
 use tracing::{debug, info, warn};
+use crate::storage::traits::UnifiedStorageEngine;
 
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
 // use crate::storage::engines::impls::viper::ViperEngine;
@@ -43,7 +44,7 @@ pub struct CompactionCoordinator {
     sst_engine: Arc<SstStorage>,
     
     /// Compaction configuration
-    config: CompactionConfig,
+    config: Option<CompactionConfig>,
     
     /// Active compaction tracking
     active_compactions: Arc<Mutex<HashMap<String, CompactionTask>>>,
@@ -199,14 +200,18 @@ impl CompactionCoordinator {
         config: Option<CompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {
-        let config = config.clone();
+        let config_ref = config.as_ref();
         
-        info!(
-            "🔧 CompactionCoordinator: Initializing with config: max_files={}, max_size={}MB, max_flushes={}",
-            config.max_files_before_compaction,
-            config.max_size_before_compaction / (1024 * 1024),
-            config.max_flushes_before_compaction
-        );
+        if let Some(cfg) = config_ref {
+            info!(
+                "🔧 CompactionCoordinator: Initializing with config: max_files={}, max_size={}MB, max_flushes={}",
+                cfg.max_files_before_compaction,
+                cfg.max_size_before_compaction / (1024 * 1024),
+                cfg.max_flushes_before_compaction
+            );
+        } else {
+            info!("🔧 CompactionCoordinator: Initializing with default config");
+        }
         
         Self {
             collection_states: Arc::new(RwLock::new(HashMap::new())),
@@ -251,7 +256,7 @@ impl CompactionCoordinator {
     /// Handle flush completion - triggers compaction if needed
     /// This is called by WALFlushCoordinator after successful flush
     pub async fn handle_flush_completion(&self, flush_result: &FlushResult) -> Result<Option<CompactionResult>> {
-        if !self.config.enable_background_compaction {
+        if !self.config.as_ref().map(|c| c.enable_background_compaction).unwrap_or(false) {
             return Ok(None);
         }
         
@@ -320,11 +325,11 @@ impl CompactionCoordinator {
         if let Some(s) = state {
             if let Some(last_compaction) = s.last_compaction {
             let elapsed = Utc::now().signed_duration_since(last_compaction);
-            if elapsed.num_seconds() < self.config.min_compaction_interval_secs as i64 {
+            if elapsed.num_seconds() < self.config.as_ref().map(|c| c.min_compaction_interval_secs).unwrap_or(60) as i64 {
                 debug!(
                     "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
                     elapsed.num_seconds(),
-                    self.config.min_compaction_interval_secs
+                    self.config.as_ref().map(|c| c.min_compaction_interval_secs).unwrap_or(60)
                 );
                 return Ok(false);
             }
@@ -333,11 +338,11 @@ impl CompactionCoordinator {
         
         // Check active compaction limit
         let active_count = self.active_compactions.lock().await.len();
-        if active_count >= self.config.max_concurrent_compactions {
+        if active_count >= self.config.as_ref().map(|c| c.max_concurrent_compactions).unwrap_or(2) {
             debug!(
                 "🔧 CompactionCoordinator: Too many active compactions ({}/{})",
                 active_count,
-                self.config.max_concurrent_compactions
+                self.config.as_ref().map(|c| c.max_concurrent_compactions).unwrap_or(2)
             );
             return Ok(false);
         }
@@ -360,21 +365,21 @@ impl CompactionCoordinator {
         
         // Check thresholds
         let should_compact = if let Some(s) = state {
-            effective_file_count >= self.config.max_files_before_compaction ||
-            s.uncompacted_size_bytes >= self.config.max_size_before_compaction ||
-            s.flushes_since_compaction >= self.config.max_flushes_before_compaction
+            effective_file_count >= self.config.as_ref().map(|c| c.max_files_before_compaction).unwrap_or(10) ||
+            s.uncompacted_size_bytes >= self.config.as_ref().map(|c| c.max_size_before_compaction).unwrap_or(1024 * 1024 * 1024) ||
+            s.flushes_since_compaction >= self.config.as_ref().map(|c| c.max_flushes_before_compaction).unwrap_or(5)
         } else {
-            effective_file_count >= self.config.max_files_before_compaction
+            effective_file_count >= self.config.as_ref().map(|c| c.max_files_before_compaction).unwrap_or(10)
         };
         
         if should_compact {
             info!(
                 "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{} (actual={}), size={}MB/{}MB, flushes={}/{}",
                 collection_id,
-                state.as_ref().map(|s| s.files_needing_compaction).unwrap_or(0), self.config.max_files_before_compaction,
+                state.as_ref().map(|s| s.files_needing_compaction).unwrap_or(0), self.config.as_ref().map(|c| c.max_files_before_compaction).unwrap_or(10),
                 actual_file_count,
-                state.as_ref().map(|s| s.uncompacted_size_bytes).unwrap_or(0) / (1024 * 1024), self.config.max_size_before_compaction / (1024 * 1024),
-                state.as_ref().map(|s| s.flushes_since_compaction).unwrap_or(0), self.config.max_flushes_before_compaction
+                state.as_ref().map(|s| s.uncompacted_size_bytes).unwrap_or(0) / (1024 * 1024), self.config.as_ref().map(|c| c.max_size_before_compaction).unwrap_or(1024 * 1024 * 1024) / (1024 * 1024),
+                state.as_ref().map(|s| s.flushes_since_compaction).unwrap_or(0), self.config.as_ref().map(|c| c.max_flushes_before_compaction).unwrap_or(5)
             );
         } else if actual_file_count > 5 {
             debug!(
@@ -530,22 +535,32 @@ impl CompactionCoordinator {
     async fn execute_viper_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         debug!("🔧 CompactionCoordinator: Executing VIPER compaction for {}", collection_id);
         
-        // Use VIPER's consolidated compaction with vector tracking
-        match self.viper_engine.compact_collection(collection_id).await {
+        // Use VIPER's do_compact method through unified framework
+        let params = crate::storage::CompactionParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: false,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: Some(30000),
+            priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None,
+            estimated_input_size: 0,
+        };
+        match self.viper_engine.do_compact(&params).await {
             Ok(enhanced_result) => {
                 info!(
-                    "✅ VIPER compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
-                    enhanced_result.input_files, 
+                    "✅ VIPER compaction completed: {} entries processed, {} bytes written, {} entries removed",
+                    enhanced_result.entries_processed, 
                     enhanced_result.bytes_written,
                     enhanced_result.entries_removed
                 );
                 
-                // Return the CompactionResult directly - no need for intermediate type
+                // Convert storage::CompactionResult to local CompactionResult
                 Ok(CompactionResult {
                     success: true,
-                    collections_affected: vec![collection_id.to_string()],
+                    collections_affected: enhanced_result.collections_affected,
                     files_compacted: enhanced_result.input_files,
-                    bytes_reclaimed: enhanced_result.bytes_written,
+                    bytes_reclaimed: enhanced_result.bytes_written - enhanced_result.bytes_read,
                     duration_ms: 0,  // Will be filled by caller
                     completed_at: Utc::now(),
                     engine_type: "VIPER".to_string(),
@@ -562,25 +577,35 @@ impl CompactionCoordinator {
     async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         debug!("🔧 CompactionCoordinator: Executing LSM compaction for {}", collection_id);
         
-        // Use LSM's consolidated compaction with vector tracking
-        match self.sst_engine.compact_collection(collection_id, None).await {
+        // Use SST's do_compact method through unified framework
+        let params = crate::storage::CompactionParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: false,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: Some(30000),
+            priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None,
+            estimated_input_size: 0,
+        };
+        match self.sst_engine.do_compact(&params).await {
             Ok(enhanced_result) => {
                 info!(
-                    "✅ LSM compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
-                    enhanced_result.input_files, 
+                    "✅ LSM compaction completed: {} entries processed, {} bytes written, {} entries removed",
+                    enhanced_result.entries_processed, 
                     enhanced_result.bytes_written,
                     enhanced_result.entries_removed
                 );
                 
-                // Return the CompactionResult directly - no need for intermediate type
+                // Convert storage::CompactionResult to local CompactionResult
                 Ok(CompactionResult {
                     success: true,
-                    collections_affected: vec![collection_id.to_string()],
+                    collections_affected: enhanced_result.collections_affected,
                     files_compacted: enhanced_result.input_files,
-                    bytes_reclaimed: enhanced_result.bytes_written,
+                    bytes_reclaimed: enhanced_result.bytes_written - enhanced_result.bytes_read,
                     duration_ms: 0,  // Will be filled by caller
                     completed_at: Utc::now(),
-                    engine_type: "VIPER".to_string(),
+                    engine_type: "SST".to_string(),
                 })
             }
             Err(e) => {

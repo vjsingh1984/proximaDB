@@ -372,7 +372,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
 
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
-            wal_config.strategy_type = match strategy_type.as_deref() {
+            wal_config.strategy_type = match strategy_type.as_str() {
                 "Avro" => WriteBufferStrategyType::AvroBatch,
                 "Bincode" => WriteBufferStrategyType::BincodeBatch,
                 "AvroBatch" => WriteBufferStrategyType::AvroBatch,
@@ -384,7 +384,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
         }
 
         if let Some(memtable_type) = &core_config.memtable_type {
-            wal_config.memtable.memtable_type = match memtable_type.as_deref() {
+            wal_config.memtable.memtable_type = match memtable_type.as_str() {
                 "BTree" => MemTableType::BTree,
                 "HashMap" => MemTableType::HashMap,
                 "SkipList" => MemTableType::SkipList,
@@ -394,7 +394,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
         }
 
         if let Some(sync_mode) = &core_config.sync_mode {
-            wal_config.performance.sync_mode = match sync_mode.as_deref() {
+            wal_config.performance.sync_mode = match sync_mode.as_str() {
                 "Always" => SyncMode::Always,
                 "PerBatch" => SyncMode::PerBatch,
                 "Periodic" => SyncMode::Periodic,
@@ -490,13 +490,13 @@ impl WALConfig {
         CollectionEffectiveConfig {
             memory_flush_size_bytes: overrides
                 .and_then(|o| o.memory_flush_size_bytes)
-                ,
+                .unwrap_or(self.performance.memory_flush_size_bytes),
             disk_segment_size: overrides
                 .and_then(|o| o.disk_segment_size)
-                ,
+                .unwrap_or(self.performance.disk_segment_size),
             compression: overrides
                 .and_then(|o| o.compression.clone())
-                .or_else(|| self.compression.clone()),
+                .unwrap_or_else(|| self.compression.clone()),
             default_ttl_days: overrides.and_then(|o| o.default_ttl_days),
         }
     }

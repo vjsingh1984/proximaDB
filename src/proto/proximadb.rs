@@ -180,9 +180,8 @@ pub struct ExternalContent {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StructuredContent {
-    /// Arbitrary JSON structure - skipped in serialization
+    /// Arbitrary JSON structure
     #[prost(message, optional, tag = "1")]
-    #[serde(skip)]
     pub data: ::core::option::Option<::prost_types::Struct>,
     /// Schema version for evolution
     #[prost(string, tag = "2")]

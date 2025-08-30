@@ -282,14 +282,11 @@ impl UniversalSearchPipeline {
         
         for mut result in candidates {
             if let Some(ref vector) = result.vector {
-                let similarity_result = match self.distance_compute.as_ref().calculate_distance(
+                let similarity_result = self.distance_compute.as_ref().calculate_distance(
                     query_vector,
                     vector,
                     &config.distance_metric,
-                ) {
-                    Ok(dist) => dist,
-                    Err(_) => continue, // Skip this result if distance calculation fails
-                };
+                );
                 result.similarity = Some(similarity_result.raw_value);
             }
             reranked.push(result);
@@ -297,7 +294,7 @@ impl UniversalSearchPipeline {
         
         // Sort by distance
         reranked.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         Ok(reranked)
@@ -344,7 +341,7 @@ impl UniversalSearchPipeline {
         let binary_level = UnifiedQuantizationLevel {
             level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                 sign_based: true,
-                threshold: threshold,
+                threshold: Some(threshold),
             })),
         };
         
@@ -417,7 +414,16 @@ impl UniversalSearchPipeline {
             
             // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>
             let metadata_map = record.metadata.into_iter()
-                .map(|item| (item.key, serde_json::Value::String(item.value.clone())))
+                .filter_map(|item| {
+                    item.value.map(|v| {
+                        let json_value = match v {
+                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s),
+                            crate::proto::proximadb::metadata_item::Value::NumberValue(f) => serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0))),
+                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(b),
+                        };
+                        (item.key, json_value)
+                    })
+                })
                 .collect::<HashMap<String, serde_json::Value>>();
 
             results.push(crate::core::search::InternalSearchResult {
@@ -434,7 +440,7 @@ impl UniversalSearchPipeline {
         
         // Sort by score (higher score = better result)
         results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score)
+            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         results.truncate(top_k.min(results.len()));
@@ -511,7 +517,7 @@ impl ResultManager {
         _distance_metric: &DistanceMetric,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         results.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(results)
     }

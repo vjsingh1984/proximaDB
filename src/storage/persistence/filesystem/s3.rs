@@ -322,7 +322,7 @@ impl S3Client {
         // This is a simplified implementation for demonstration
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
 
         let mut request = self
@@ -389,7 +389,7 @@ impl S3Client {
     ) -> FsResult<()> {
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
         let options = options.clone();
 
@@ -560,7 +560,7 @@ impl FileSystem for S3FileSystem {
 
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
 
         let response = self
@@ -600,7 +600,7 @@ impl FileSystem for S3FileSystem {
 
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
 
         let response = self
@@ -619,20 +619,20 @@ impl FileSystem for S3FileSystem {
         if response.status().is_success() {
             let size = response
                 .headers()
-                .get(key)
+                .get("content-length")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 ;
 
             let etag = response
                 .headers()
-                .get(key)
+                .get("etag")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             let storage_class = response
                 .headers()
-                .get(key)
+                .get("x-amz-storage-class")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 

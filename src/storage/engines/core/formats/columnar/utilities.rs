@@ -239,7 +239,7 @@ impl ColumnarUtilities {
         
         for metadata in file_metadata {
             // Estimate sizes (in production, would read from file stats)
-            let estimated_uncompressed = metadata.num_vectors * metadata.dimension * 4; // float32
+            let estimated_uncompressed = metadata.num_vectors * (metadata.dimension as u64) * 4; // float32
             let estimated_compressed = (estimated_uncompressed as f32 * 0.3) as u64; // Estimate 30% compression
             
             total_uncompressed += estimated_uncompressed;
@@ -272,7 +272,7 @@ impl ColumnarUtilities {
             recommendations.push("Consider enabling more aggressive quantization".to_string());
         }
         
-        if quantization_usage.get("pq") < &(file_metadata.len() / 2) {
+        if quantization_usage.get("pq").copied().unwrap_or(0) < file_metadata.len() / 2 {
             recommendations.push("Enable PQ quantization for better compression".to_string());
         }
         
@@ -352,7 +352,7 @@ impl ColumnarUtilities {
         let fs = self.filesystem.get_filesystem(file_path)?;
         
         // Check if file exists and get metadata
-        let file_info = fs.info(file_path).await?;
+        let file_info = fs.metadata(file_path).await?;
         
         // For Parquet files, we would validate:
         // 1. File can be opened
@@ -363,7 +363,7 @@ impl ColumnarUtilities {
         Ok(ValidFileInfo {
             file_path: file_path.to_string(),
             size_bytes: file_info.size,
-            last_modified: file_info.last_modified,
+            last_modified: file_info.modified,
             row_group_count: 5, // Placeholder
             vector_count: 10000, // Placeholder
         })

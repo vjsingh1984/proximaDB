@@ -45,7 +45,7 @@ pub struct MmapVectorStorage {
 
 struct MmapHandle {
     path: PathBuf,
-    mmap: Mmap,
+    mmap: Arc<Mmap>,
     size: usize,
     vector_count: usize,
     dimension: usize,
@@ -104,9 +104,11 @@ impl MmapVectorStorage {
         let bytes_per_vector = dimension * std::mem::size_of::<f32>();
         let vector_count = file_size / bytes_per_vector;
         
+        let mmap_arc = Arc::new(mmap);
+        
         let handle = MmapHandle {
             path: path.to_path_buf(),
-            mmap: mmap.clone(),
+            mmap: mmap_arc.clone(),
             size: file_size,
             vector_count,
             dimension,
@@ -114,7 +116,7 @@ impl MmapVectorStorage {
         
         self.mappings.write().push(handle);
         
-        Ok(Arc::new(mmap))
+        Ok(mmap_arc)
     }
     
     /// Create a new memory-mapped file for writing vectors

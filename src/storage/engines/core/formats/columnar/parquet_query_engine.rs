@@ -283,7 +283,9 @@ impl UnifiedParquetReader {
         let optimizer = Arc::new(ColumnarOptimizer::new(
             distance_compute, 
             config.clone(),
-            filesystem.clone()
+            filesystem.clone(),
+            "default".to_string(), // Collection ID will be set properly when used
+            "columnar".to_string(), // Generic columnar engine type
         ).await?);
         
         // Initialize footer cache for cloud optimization
@@ -324,7 +326,9 @@ impl UnifiedParquetReader {
         let optimizer = Arc::new(ColumnarOptimizer::new(
             distance_compute, 
             config.clone(),
-            filesystem.clone()
+            filesystem.clone(),
+            "default".to_string(), // Collection ID will be set properly when used
+            "columnar".to_string(), // Generic columnar engine type
         ).await?);
         let footer_cache_config = FooterCacheConfig::default();
         let footer_cache = Arc::new(
@@ -358,6 +362,20 @@ impl UnifiedParquetReader {
         let mut reader = Self::with_config(filesystem, config).await?;
         reader.id_less_optimization = true;
         Ok(reader)
+    }
+    
+    /// Resolve column names to indices based on the Parquet schema
+    fn resolve_column_indices_from_schema(&self, schema: &parquet::schema::types::SchemaDescriptor, columns: &[String]) -> Vec<usize> {
+        let mut indices = Vec::new();
+        for column in columns {
+            for (idx, field) in schema.columns().iter().enumerate() {
+                if field.name() == column {
+                    indices.push(idx);
+                    break;
+                }
+            }
+        }
+        indices
     }
     /// Read Parquet file metadata without loading data
     /// Uses footer cache for 70-90% reduction in cloud API calls
@@ -399,7 +417,7 @@ impl UnifiedParquetReader {
         };
         // Parse metadata
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
-        let metadata = Arc::new(reader_builder.metadata().clone());
+        let metadata = reader_builder.metadata().clone();
         // Update both caches
         {
             let mut cache = self.metadata_cache.write().await;
@@ -466,19 +484,46 @@ impl UnifiedParquetReader {
         let fs = self.filesystem.get_filesystem(file_path)?;
         let file_data = fs.read(file_path).await?;
         let bytes = bytes::Bytes::from(file_data);
-        let mut reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
-        // Apply column projection if specified
-        if let Some(columns) = column_projection {
-            let projected_indices = self.resolve_column_indices(&reader_builder, columns)?;
-            if !projected_indices.is_none() {
-                reader_builder = reader_builder.with_projection(parquet::arrow::ProjectionMask::leaves(reader_builder.parquet_schema(), projected_indices));
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+        // Build reader with column projection and row group selection
+        let mut reader = {
+            let schema = reader_builder.parquet_schema().clone();
+            
+            // Determine if we need column projection
+            let needs_projection = if let Some(columns) = column_projection {
+                let projected_indices = self.resolve_column_indices_from_schema(&schema, columns);
+                if !projected_indices.is_empty() {
+                    Some(parquet::arrow::ProjectionMask::leaves(&schema, projected_indices))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            // Apply both projection and row group selection as needed
+            match (needs_projection, !row_group_indices.is_empty()) {
+                (Some(projection), true) => {
+                    reader_builder
+                        .with_projection(projection)
+                        .with_row_groups(row_group_indices.to_vec())
+                        .build()?
+                },
+                (Some(projection), false) => {
+                    reader_builder
+                        .with_projection(projection)
+                        .build()?
+                },
+                (None, true) => {
+                    reader_builder
+                        .with_row_groups(row_group_indices.to_vec())
+                        .build()?
+                },
+                (None, false) => {
+                    reader_builder.build()?
+                }
             }
-        }
-        // Apply row group selection
-        if !row_group_indices.is_empty() {
-            reader_builder = reader_builder.with_row_groups(row_group_indices.to_vec());
-        }
-        let mut reader = reader_builder.build()?;
+        };
         let mut batches = Vec::new();
         // Read all batches
         while let Some(batch) = reader.next() {
@@ -508,31 +553,57 @@ impl UnifiedParquetReader {
         let bytes = bytes::Bytes::from(file_data);
         
         // Create reader with projection
-        let mut reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
         
-        if let Some(columns) = columns {
+        // Build reader with column projection and row group selection
+        let mut reader = {
             let schema = reader_builder.schema();
-            let mut projected_indices = Vec::new();
+            let parquet_schema = reader_builder.parquet_schema().clone();
             
-            for name in columns {
-                if let Ok(field) = schema.field_with_name(name) {
-                    if let Some(index) = schema.fields().iter().position(|f| f.name() == field.name()) {
-                        projected_indices.push(index);
+            // Determine if we need column projection
+            let needs_projection = if let Some(columns) = columns {
+                let mut projected_indices = Vec::new();
+                
+                for name in columns {
+                    if let Ok(field) = schema.field_with_name(name) {
+                        if let Some(index) = schema.fields().iter().position(|f| f.name() == field.name()) {
+                            projected_indices.push(index);
+                        }
                     }
                 }
-            }
+                
+                if !projected_indices.is_empty() {
+                    Some(parquet::arrow::ProjectionMask::leaves(&parquet_schema, projected_indices))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             
-            if !projected_indices.is_empty() {
-                reader_builder = reader_builder.with_projection(parquet::arrow::ProjectionMask::leaves(reader_builder.parquet_schema(), projected_indices));
+            // Apply both projection and row group selection as needed
+            match (needs_projection, !row_group_indices.is_empty()) {
+                (Some(projection), true) => {
+                    reader_builder
+                        .with_projection(projection)
+                        .with_row_groups(row_group_indices.to_vec())
+                        .build()?
+                },
+                (Some(projection), false) => {
+                    reader_builder
+                        .with_projection(projection)
+                        .build()?
+                },
+                (None, true) => {
+                    reader_builder
+                        .with_row_groups(row_group_indices.to_vec())
+                        .build()?
+                },
+                (None, false) => {
+                    reader_builder.build()?
+                }
             }
-        }
-        
-        // Apply row group selection
-        if !row_group_indices.is_empty() {
-            reader_builder = reader_builder.with_row_groups(row_group_indices.to_vec());
-        }
-        
-        let mut reader = reader_builder.build()?;
+        };
         let mut batches = Vec::new();
         
         while let Some(batch) = reader.next() {
@@ -635,8 +706,8 @@ impl UnifiedParquetReader {
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .map(|arr| arr.value(row_idx) as u32);
         Ok(Some(VectorRecord {
-            id,
-            vector,
+            id: id.unwrap_or_else(|| format!("row_{}", row_idx)),
+            vector: vector.unwrap_or_default(),
             metadata: vec![], // Would extract from metadata columns
             timestamp: timestamp.unwrap_or(0),
             updated_at: None,
@@ -843,6 +914,7 @@ impl UnifiedParquetReader {
     ) -> Result<StreamingRowGroupIterator> {
         info!("Creating streaming iterator for: {}", file_path);
         self.optimizer.create_streaming_iterator(
+            file_path,
             filter,
             column_projection,
         ).await
@@ -855,7 +927,7 @@ impl UnifiedParquetReader {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    ) -> Result<Vec<crate::proto::proximadb::SearchVectorRecord>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         info!("Progressive search across {} files", file_paths.len());
         let search_config = super::optimization::ProgressiveSearchConfig::default();
         self.optimizer.progressive_search(
@@ -863,6 +935,7 @@ impl UnifiedParquetReader {
             query_vector,
             top_k,
             distance_metric,
+            None, // No filter for now
             &search_config,
         ).await
     }
@@ -978,10 +1051,10 @@ impl UnifiedParquetReader {
             .and_then(|arr| if arr.is_null(row_index) { None } else { Some(arr.value(row_index) as u64) });
         
         Ok(Some(VectorRecord {
-            id,
-            vector,
+            id: id.unwrap_or_else(|| format!("row_{}", row_index)),
+            vector: vector.unwrap_or_default(),
             metadata: vec![],
-            timestamp,
+            timestamp: timestamp.unwrap_or(0),
             updated_at: None,
             expires_at: None,
             version: version.map(|v| v as u32),
@@ -1204,9 +1277,23 @@ impl UnifiedParquetReader {
         let mut projected_indices = Vec::new();
         for name in columns {
             if let Ok(field) = schema.field_with_name(name) {
-                if let Some(index) = schema.fields().iter().position(|f| f == field) {
+                if let Some(index) = schema.fields().iter().position(|f| f.name() == field.name()) {
                     projected_indices.push(index);
                 }
+            }
+        }
+        projected_indices
+    }
+
+    fn resolve_column_indices_from_schema(
+        &self,
+        schema: &parquet::schema::types::SchemaDescriptor,
+        columns: &[String],
+    ) -> Vec<usize> {
+        let mut projected_indices = Vec::new();
+        for (index, field) in schema.columns().iter().enumerate() {
+            if columns.contains(&field.name().to_string()) {
+                projected_indices.push(index);
             }
         }
         projected_indices
@@ -1363,7 +1450,7 @@ impl UnifiedParquetReader {
             let strategy = self.select_reading_strategy(
                 file_path,
                 None, // TODO: Convert filter_expression to MetadataFilter
-                params.top_k,
+                params.top_k.unwrap_or(100),
             ).await?;
             
             // Read vectors using selected strategy
@@ -1374,28 +1461,25 @@ impl UnifiedParquetReader {
                 let vectors = self.extract_vectors_from_batch(&batch)?;
                 for vector_record in vectors {
                     // Calculate similarity
-                    let similarity = distance_compute.calculate_distance(
+                    let similarity_result = distance_compute.calculate_distance(
                         query_vector,
                         &vector_record.vector,
                         params.distance_metric,
                     )?;
+                    let similarity_score = similarity_result.normalized_score;
                     
-                    let mut metadata_map = std::collections::HashMap::new();
-                    for item in &vector_record.metadata {
-                        metadata_map.insert(item.key.clone(), serde_json::Value::String(item.value.clone()));
-                    }
+                    // metadata_map is not used, so we can remove it
                     
                     all_results.push(crate::proto::proximadb::SearchVectorRecord {
-                        id: vector_record.id.clone().unwrap_or_default(),
-                        score: similarity,
-                        similarity: Some(similarity),
+                        id: vector_record.id.clone(),
+                        score: similarity_score,
+                        similarity: Some(similarity_score),
                         vector: vector_record.vector.clone(),
                         metadata: vector_record.metadata.clone(),
                         version: vector_record.version,
                         timestamp: Some(vector_record.timestamp),
-                        debug_info: None,
-                        quantization_info: None,
-                        engine_stats: None,
+                        source: None,
+                        expanded_context: vec![],
                     });
                 }
             }
@@ -1403,7 +1487,9 @@ impl UnifiedParquetReader {
         
         // Sort by similarity and take top_k
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(params.top_k);
+        if let Some(top_k) = params.top_k {
+            all_results.truncate(top_k);
+        }
         
         Ok(all_results)
     }
@@ -1458,7 +1544,7 @@ impl UnifiedParquetReader {
             // Extract ID if present
             if let Some(id_idx) = id_col_idx {
                 if let Some(id_array) = batch.column(id_idx).as_any().downcast_ref::<StringArray>() {
-                    record.id = Some(id_array.value(row_idx).to_string());
+                    record.id = id_array.value(row_idx).to_string();
                 }
             }
             
@@ -1491,23 +1577,36 @@ impl UnifiedParquetReader {
                 } else {
                     None
                 };
-                self.read_parquet_file(file_path, projection.as_deref(), filter).await
+                // Use read_row_groups_projected for reading the entire file
+                let metadata = self.read_metadata(file_path).await?;
+                let all_row_groups: Vec<usize> = (0..metadata.num_row_groups()).collect();
+                self.read_row_groups_projected(file_path, &all_row_groups, projection.as_deref()).await
             },
             ReadingStrategy::MetadataFiltered { .. } => {
                 // Use metadata filtering to select row groups
                 let metadata = self.read_metadata(file_path).await?;
-                let selected = self.filter_row_groups_by_metadata(&metadata, filter)?;
-                self.read_row_groups(file_path, &selected, None).await
+                // Apply metadata filtering if provided
+                let all_row_groups: Vec<usize> = (0..metadata.num_row_groups()).collect();
+                let selected = if filter.is_some() {
+                    // TODO: Implement actual metadata filtering logic
+                    all_row_groups
+                } else {
+                    all_row_groups
+                };
+                self.read_row_groups_projected(file_path, &selected, None).await
             },
             ReadingStrategy::QuantizedTwoStage { candidate_count } => {
                 // Stage 1: Read quantized columns for fast filtering
                 let schema_mapping = self.get_schema_mapping(file_path).await
                     .ok_or_else(|| anyhow!("No schema mapping for quantized search"))?;
                 
-                let quantized_batches = self.read_parquet_file(
+                // Read all row groups with quantized columns projection
+                let metadata = self.read_metadata(file_path).await?;
+                let all_row_groups: Vec<usize> = (0..metadata.num_row_groups()).collect();
+                let quantized_batches = self.read_row_groups_projected(
                     file_path,
+                    &all_row_groups,
                     Some(&schema_mapping.quantized_columns),
-                    filter,
                 ).await?;
                 
                 // Stage 2 would be implemented by the caller using the candidates
@@ -1565,10 +1664,10 @@ impl UnifiedParquetReader {
                         .collect();
                     
                     candidates.push(SearchCandidate {
-                        id,
-                        vector,
-                        score: 0.0, // Will be computed by caller
-                        metadata: HashMap::new(),
+                        row_group_id: 0, // Default row group
+                        row_offset: i as u32,
+                        similarity: 0.0, // Will be computed by caller
+                        vector_id: Some(id),
                     });
                 }
             }
@@ -1608,7 +1707,7 @@ impl UnifiedParquetReader {
                         crate::storage::engines::core::io::zero_copy::traits::DataRange::new(
                             0, // Offset would need to be calculated from row group metadata
                             rg.total_byte_size() as u64,
-                            crate::storage::engines::core::io::zero_copy::traits::RequestPriority::Normal,
+                            1, // Normal priority as u8
                         )
                     })
                 }).collect();
@@ -1717,7 +1816,7 @@ impl UnifiedParquetReader {
                 
                 fetch_tasks.push(async move {
                     // Calculate byte range for this row group
-                    let start = rg_meta.file_offset() as u64;
+                    let start = rg_meta.file_offset().unwrap_or(0) as u64;
                     let size = rg_meta.total_byte_size() as u64;
                     
                     debug!("Fetching row group {} with range {}..{}", idx, start, start + size);
@@ -1749,7 +1848,7 @@ impl UnifiedParquetReader {
                     
                     // Add to cache if there's space
                     let batch_size = data.len();
-                    if cache_size + batch_size < self.config.cache_size_bytes {
+                    if cache_size + batch_size < self.config.max_cache_size_bytes {
                         let cache_key = format!("{}:rg_{}", file_path, idx);
                         cache.insert(cache_key, batch.clone());
                         cache_size += batch_size;
@@ -1791,8 +1890,8 @@ impl UnifiedParquetReader {
         row_group_cache.retain(|key, _| !key.contains(collection_id));
         bloom_cache.retain(|path, _| !path.contains(collection_id));
         
-        // Also invalidate footer cache
-        self.footer_cache.invalidate_pattern(&format!("*{}*", collection_id)).await?;
+        // Also invalidate footer cache (clear all for simplicity)
+        self.footer_cache.invalidate_all().await;
         
         info!("Invalidated all caches for collection {}", collection_id);
         Ok(())

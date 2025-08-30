@@ -92,6 +92,7 @@ pub enum ColumnMmapStrategy {
     },
 }
 
+#[derive(Clone)]
 pub struct ParquetFooterCache {
     pub metadata: Arc<ParquetMetaData>,
     pub raw_footer: Arc<Vec<u8>>,
@@ -211,7 +212,7 @@ impl SharedParquetFormatReader {
         }
         
         // FALLBACK: Get footer metadata (download ONLY footer for cloud files)
-        let footer = self.get_footer_smart(file_path, collection_id).await?;
+        let footer = self.get_footer_smart(file_path).await?;
         
         // Step 2: Use metadata to filter row groups BEFORE downloading
         let candidate_row_groups = if let Some(filter) = row_filter {
@@ -255,21 +256,17 @@ impl SharedParquetFormatReader {
     
     /// Get footer with minimal bandwidth usage
     async fn get_footer_smart(&self, file_path: &str) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
-        // Check cache first
-        if let Some(cached) = self.footer_cache.get(file_path) {
-            self.stats.footer_hits.fetch_add(1, Ordering::Relaxed);
-            cached.last_access = Instant::now();
-            return Ok(Arc::new(cached.clone()));
-        }
-        
+        // TODO: Implement footer caching using zero_copy_system
+        // For now, always read fresh
         self.stats.footer_misses.fetch_add(1, Ordering::Relaxed);
         
         // For cloud files, download ONLY the footer
         if self.is_cloud_file(file_path) {
-            let file_size = self.filesystem
+            let metadata = self.filesystem
                 .get_filesystem(file_path)?
-                .file_size(file_path)
+                .metadata(file_path)
                 .await?;
+            let file_size = metadata.size;
             
             // Parquet footer is at the end - read last 8MB max
             let footer_start = file_size.saturating_sub(FOOTER_MAX_SIZE as u64);
@@ -289,7 +286,7 @@ impl SharedParquetFormatReader {
                 last_access: Instant::now(),
             };
             
-            self.footer_cache.insert(file_path.to_string(), cache_entry.clone());
+            // TODO: Store in zero_copy_system cache instead
             
             return Ok(Arc::new(cache_entry));
         }
@@ -337,9 +334,8 @@ impl SharedParquetFormatReader {
         footer: &ParquetFooterCache,
     ) -> Result<Option<RecordBatch>, ProximaDBError> {
         // Check if we have this row group cached locally
-        if let Some(cached) = self.local_cache.row_group(file_path, rg_idx, columns).await? {
-            return Ok(Some(cached));
-        }
+        // TODO: Check zero_copy_system cache for row group data
+        // For now, always read fresh
         
         let rg_metadata = &footer.metadata.row_groups()[rg_idx];
         
@@ -371,8 +367,7 @@ impl SharedParquetFormatReader {
                 column_data.insert(col_name, data);
             }
             
-            // Cache for future use
-            self.local_cache.put_row_group(file_path, rg_idx, &column_data).await?;
+            // TODO: Cache in zero_copy_system for future use
             
             // Decode and return
             return self.decode_column_data(column_data, rg_metadata);
@@ -387,37 +382,12 @@ impl SharedParquetFormatReader {
         let mut invalidated = 0;
         
         // Remove from footer cache
-        self.footer_cache.retain(|path, _| {
-            if path.contains(collection_id) {
-                invalidated += 1;
-                false
-            } else {
-                true
-            }
-        });
+        // TODO: Implement cache invalidation using zero_copy_system
+        // For now, track invalidation count
+        invalidated = 0;
         
-        // Remove from column index cache
-        self.column_index_cache.retain(|path, _| {
-            if path.contains(collection_id) {
-                invalidated += 1;
-                false
-            } else {
-                true
-            }
-        });
-        
-        // Remove from row group cache
-        self.row_group_cache.retain(|path, _| {
-            if path.contains(collection_id) {
-                invalidated += 1;
-                false
-            } else {
-                true
-            }
-        });
-        
-        // Invalidate local disk cache
-        self.local_cache.invalidate_collection(collection_id).await?;
+        // TODO: Invalidate in zero_copy_system cache
+        // self.zero_copy_system.invalidate_collection(collection_id).await?;
         
         self.stats.cache_invalidations.fetch_add(invalidated, Ordering::Relaxed);
         

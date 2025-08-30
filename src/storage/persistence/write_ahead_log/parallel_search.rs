@@ -387,8 +387,13 @@ impl ParallelWALSearch {
         let mut map = std::collections::HashMap::new();
         
         for entry in &record.metadata {
-            if let Ok(value) = serde_json::from_str(&entry.value) {
-                map.insert(entry.key.clone(), value);
+            if let Some(value) = &entry.value {
+                let json_value = match value {
+                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))),
+                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                };
+                map.insert(entry.key.clone(), json_value);
             }
         }
         
@@ -454,8 +459,8 @@ impl EarlyTerminationTracker {
     /// Get final results
     pub fn get_top_k(self) -> Vec<SearchCandidate> {
         let mut candidates = Arc::try_unwrap(self.candidates)
-            .unwrap_or_else(|arc| arc.read().clone())
-            .into_inner();
+            .map(|rwlock| rwlock.into_inner())
+            .unwrap_or_else(|arc| arc.read().clone());
         
         candidates.sort_unstable_by(|a, b| {
             b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)

@@ -113,7 +113,7 @@ impl CollectionService {
         Ok(Self {
             metadata_backend,
             filesystem_factory,
-            index_config_cache: Arc::new(RwLock::new(HashMap::new())),
+            index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
         })
     }

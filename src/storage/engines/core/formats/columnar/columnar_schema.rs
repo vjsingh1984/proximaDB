@@ -55,7 +55,8 @@ impl ColumnarSchema {
         
         info!("Creating vector schema for collection: {} (dim: {})", collection_id, dimension);
         
-        let config = quantization;
+        let default_config = QuantizationConfig::default();
+        let config = quantization.unwrap_or(&default_config);
         let schema = self.build_schema(dimension, config, filterable_columns)?;
         
         // Cache the schema
@@ -339,7 +340,7 @@ impl ColumnarSchema {
         SchemaCacheStats {
             entry_count: cache.len(),
             oldest_entry: cache.values()
-                .map(|v| v.created_at)
+                .map(|v| v.timestamp)
                 .min(),
         }
     }
@@ -366,38 +367,38 @@ impl ColumnarSchema {
     ) -> Result<Arc<Schema>> {
         info!("Evolving schema for new requirements");
         
-        let mut fields = existing_schema.fields().clone();
+        let mut fields: Vec<Arc<Field>> = existing_schema.fields().iter().cloned().collect();
         
         // Add new quantization columns if requested
         if let Some(ref quant_config) = new_requirements.new_quantization {
             if quant_config.enable_binary && existing_schema.field_with_name("vector_binary").is_err() {
-                fields.push(Field::new(
+                fields.push(Arc::new(Field::new(
                     "vector_binary",
-                    DataType::FixedSizeBinary((new_requirements.dimension + 7) / 8),
+                    DataType::FixedSizeBinary(((new_requirements.dimension + 7) / 8) as i32),
                     true,
-                ));
+                )));
             }
             
             if quant_config.enable_int8 && existing_schema.field_with_name("vector_int8").is_err() {
                 fields.extend([
-                    Field::new(
+                    Arc::new(Field::new(
                         "vector_int8",
                         DataType::FixedSizeBinary(new_requirements.dimension as i32),
                         true,
-                    ),
-                    Field::new("int8_scale", DataType::Float32, true),
-                    Field::new("int8_zero_point", DataType::Int8, true),
+                    )),
+                    Arc::new(Field::new("int8_scale", DataType::Float32, true)),
+                    Arc::new(Field::new("int8_zero_point", DataType::Int8, true)),
                 ]);
             }
             
             if quant_config.enable_pq && existing_schema.field_with_name("vector_pq").is_err() {
                 fields.extend([
-                    Field::new(
+                    Arc::new(Field::new(
                         "vector_pq",
                         DataType::FixedSizeBinary(quant_config.pq_segments as i32),
                         true,
-                    ),
-                    Field::new("pq_codebook_id", DataType::Utf8, true),
+                    )),
+                    Arc::new(Field::new("pq_codebook_id", DataType::Utf8, true)),
                 ]);
             }
         }
@@ -406,7 +407,7 @@ impl ColumnarSchema {
         for column in &new_requirements.new_filterable_columns {
             if existing_schema.field_with_name(&column.name).is_err() {
                 let field = self.create_filterable_field(column)?;
-                fields.push(field);
+                fields.push(Arc::new(field));
             }
         }
         

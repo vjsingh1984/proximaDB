@@ -431,7 +431,21 @@ impl ProgressiveSearchExecutor {
                 score: distance,
                 vector: Some(record.vector),
                 metadata: record.metadata.into_iter()
-                    .map(|item| (item.key, serde_json::Value::String(item.string_value.clone())))
+                    .map(|item| {
+                        let value = match item.value {
+                            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                                serde_json::Value::String(s)
+                            },
+                            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                                serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0)))
+                            },
+                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                                serde_json::Value::Bool(b)
+                            },
+                            None => serde_json::Value::Null,
+                        };
+                        (item.key, value)
+                    })
                     .collect(),
                 ..Default::default()
             });

@@ -116,12 +116,16 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             storage_locations: vec![StorageLocation::default()],
-            metadata_backend: MetadataBackendConfig::default(),
-            write_buffer: WriteBufferConfig::default(),
-            compaction: CompactionConfig::default(),
-            assignment: AssignmentConfig::default(),
-            filesystem_optimization: None,
-            default_engine: "sst".to_string(),
+            metadata_url: "file://./metadata".to_string(),
+            assignment_config: AssignmentConfig::default(),
+            wal_config: WriteBufferUserConfig::default(),
+            mmap_enabled: true,
+            sst_config: Some(SstConfig::default()),
+            viper_config: Some(ViperConfig::default()),
+            cache_size_mb: 512,
+            bloom_filter_config: Some(BloomFilterConfig::default()),
+            compaction_config: CompactionConfig::default(),
+            filesystem_config: FilesystemOptimizationConfig::default(),
         }
     }
 }
@@ -187,6 +191,16 @@ fn default_weight() -> u32 {
     1
 }
 
+impl Default for StorageLocation {
+    fn default() -> Self {
+        Self {
+            url: "file://./data".to_string(),
+            weight: 1,
+            tags: vec!["local".to_string()],
+        }
+    }
+}
+
 /// Assignment configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssignmentConfig {
@@ -230,6 +244,18 @@ pub struct MetadataBackendConfig {
     /// Performance settings
     pub cache_size_mb: Option<u64>,
     pub flush_interval_secs: Option<u64>,
+}
+
+impl Default for MetadataBackendConfig {
+    fn default() -> Self {
+        Self {
+            backend_type: "filestore".to_string(),
+            storage_url: "file://./metadata".to_string(),
+            cloud_config: None,
+            cache_size_mb: Some(256),
+            flush_interval_secs: Some(60),
+        }
+    }
 }
 
 /// Cloud storage configuration
@@ -694,6 +720,18 @@ pub struct ConsensusConfig {
     pub snapshot_threshold: u64,
 }
 
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        Self {
+            node_id: None,
+            cluster_peers: Vec::new(),
+            election_timeout_ms: 5000,
+            heartbeat_interval_ms: 1000,
+            snapshot_threshold: 10000,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
     pub grpc_port: u16,
@@ -729,6 +767,22 @@ fn default_compression_algorithm() -> String {
 
 fn default_compression_level_api() -> i32 {
     6
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            grpc_port: 5679,
+            rest_port: 5678,
+            max_request_size_mb: 100,
+            timeout_seconds: 60,
+            enable_tls: Some(false),
+            rest_compression: false,
+            grpc_compression: false,
+            compression_algorithm: "gzip".to_string(),
+            compression_level: 6,
+        }
+    }
 }
 
 /// WAL storage configuration supporting multiple directories and cloud storage
@@ -857,4 +911,11 @@ pub struct MonitoringConfig {
     pub log_level: String,
 }
 
-// Removed duplicate - Default implementation is at line 89
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            metrics_enabled: true,
+            log_level: "info".to_string(),
+        }
+    }
+}

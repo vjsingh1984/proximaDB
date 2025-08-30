@@ -99,7 +99,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(&full_url)
-                .clone()
+                .ok()
+                .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::info!(
@@ -141,12 +142,13 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
             let _collection_id = {
-                let path_parts: Vec<&str> = cloud_url.split('/').last()
-                    
-                    .split('_')
-                    .collect();
-                if path_parts.len() >= 4 && path_parts[0] == "write" && path_parts[1] == "buffer" && path_parts[2] == "batch" {
-                    path_parts[3].to_string()
+                if let Some(filename) = cloud_url.split('/').last() {
+                    let path_parts: Vec<&str> = filename.split('_').collect();
+                    if path_parts.len() >= 4 && path_parts[0] == "write" && path_parts[1] == "buffer" && path_parts[2] == "batch" {
+                        path_parts[3].to_string()
+                    } else {
+                        "unknown".to_string()
+                    }
                 } else {
                     "unknown".to_string()
                 }
@@ -165,7 +167,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_url)
-                .clone()
+                .ok()
+                .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::info!(
@@ -279,7 +282,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 let current_time = chrono::Utc::now().timestamp() as u32;
                 let is_expired = wal_record.expires_at
                     .map(|expires| expires < current_time)
-                    ;
+                    .unwrap_or(false);
                 
                 if !is_expired {
                     return Ok(Some(wal_record));
@@ -324,7 +327,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 collection_id,
                 query_vector,
                 k,
-                unified_metric,
+                unified_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
                 None, // No metadata filters
                 true, // Include vectors
                 true, // Include metadata
@@ -336,24 +339,15 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 .map(|search_result| {
                     // Create VectorRecord from SearchResult
                     let vector_record = VectorRecord {
-                        id: search_result.vector_id,
+                        id: search_result.id.clone(),
                         vector: search_result.vector.clone(),
-                        metadata: search_result.metadata.into_iter()
-                            .map(|(key, value)| crate::proto::proximadb::MetadataItem {
-                                key,
-                                value: Some(match value {
-                                    serde_json::Value::String(s) => crate::proto::proximadb::metadata_item::Value::StringValue(s),
-                                    serde_json::Value::Number(n) => crate::proto::proximadb::metadata_item::Value::NumberValue(n.as_f64()),
-                                    serde_json::Value::Bool(b) => crate::proto::proximadb::metadata_item::Value::BoolValue(b),
-                                    _ => crate::proto::proximadb::metadata_item::Value::StringValue("null".to_string()),
-                                })
-                            })
-                            .collect(),
-                        timestamp: search_result.timestamp,
+                        metadata: search_result.metadata.clone(),
+                        timestamp: search_result.timestamp.unwrap_or(0),
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
                         quantized_vector: None,
+                        source: None,
                     };
                     (search_result.id, search_result.score, vector_record)
                 })
@@ -469,8 +463,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // For now, use a default path structure
             let base_location = "file:///data";
             let wal_dir = format!("{}/{}/write_ahead_log/logs", base_location, collection_id);
-            let sequence_start = sequences.first().copied();
-            let sequence_end = sequences.last().copied();
+            let sequence_start = sequences.first().copied().unwrap_or(0);
+            let sequence_end = sequences.last().copied().unwrap_or(0);
             let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
             
             // Get filesystem for this storage URL
@@ -658,7 +652,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_base_url)
-                .clone()
+                .ok()
+                .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::debug!(
@@ -696,7 +691,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             
             // Log detailed information for monitoring
             let bucket = fs.extract_bucket_from_url(cloud_url)
-                .clone()
+                .ok()
+                .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
             
             tracing::info!("🗑️ CLOUD_DELETE: Deleted batch from {} [bucket: {}]", cloud_url, bucket);
@@ -733,7 +729,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 Ok(_) => {
                     // Log detailed information for monitoring
                     let bucket = fs.extract_bucket_from_url(cloud_base_url)
-                        .clone()
+                        .ok()
+                        .flatten()
                         .unwrap_or_else(|| "unknown".to_string());
                     
                     tracing::debug!("✅ CLOUD_HEALTH: Cloud storage accessible at {} [bucket: {}]", cloud_base_url, bucket);
@@ -756,7 +753,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn delete_vector(&self, collection_id: &str, vector_id: &VectorId) -> Result<u64> {
         // Create a tombstone vector record for deletion
         let tombstone = VectorRecord {
-            id: Some(vector_id.clone()),
+            id: vector_id.clone(),
             vector: vec![], // Empty vector for tombstone
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
@@ -765,6 +762,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             version: None, // None for tombstone
             // rank removed -  None,
             quantized_vector: None,
+            source: None,
             
         };
 
@@ -781,7 +779,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         };
 
         let sequences = self.write_native_batch(batch, collection_id).await?;
-        Ok(sequences.into_iter().next())
+        Ok(sequences.into_iter().next().unwrap_or(0))
     }
 
     /// Flush collections using batch operations

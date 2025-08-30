@@ -193,7 +193,7 @@ impl WALOperation {
     pub fn extract_vector_record(&self) -> Result<VectorRecord, anyhow::Error> {
         // Proto-first architecture: payload format determines deserialization
         if self.operation_type == "upsert_batch" || self.operation_type == "delete_batch" {
-            match self.payload_format.as_deref() {
+            match self.payload_format.as_str() {
                 "proto" => {
                     // Deserialize from proto bytes
                     use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
@@ -1301,7 +1301,7 @@ impl WriteAheadLogManager {
         if let Ok(records) = proto_serializer.deserialize_batch(payload) {
             // Use the modern batch API with sync option
             if immediate_sync {
-                self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone().unwrap_or_else(|| String::new()), r)).collect(), true).await
+                self.insert_batch_with_sync(collection_id.to_string(), records.into_iter().map(|r| (r.id.clone(), r)).collect(), true).await
                     .map(|sequences| sequences.into_iter().next().unwrap_or(0))
             } else {
                 self.insert_vectors(collection_id.to_string(), records).await
@@ -1392,7 +1392,15 @@ impl WriteAheadLogManager {
     /// Get WAL behavior wrapper for direct batch access (optimization for search)
     /// Returns the wrapper that provides access to unflushed batches in memory
     pub fn get_wal_behavior_wrapper(&self) -> Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper> {
-        self.shared_wal_behavior.get_or_init(&self.config.memtable)
+        // Convert MemTableConfig to MemtableConfig
+        let memtable_config = crate::storage::memtable::core::MemtableConfig {
+            max_size_bytes: self.config.memtable.global_memory_limit,
+            flush_threshold_bytes: self.config.memtable.global_memory_limit / 2,
+            enable_mvcc: self.config.enable_mvcc,
+            mvcc_cleanup_interval_secs: self.config.performance.mvcc_cleanup_interval_secs,
+            max_versions_per_key: self.config.memtable.mvcc_versions_retained,
+        };
+        self.shared_wal_behavior.get_or_init(&memtable_config)
     }
 
     // 🎯 MODERN BATCH API (Recommended)
@@ -1521,6 +1529,7 @@ impl WriteAheadLogManager {
                 expires_at: None,
                 quantized_vector: None,
                 source: None,
+                updated_at: None,
             };
             (r.id, r.score, record)
         }).collect())
@@ -1708,14 +1717,14 @@ impl WriteAheadLogManager {
                     | ComparisonOperator::Contains 
                     | ComparisonOperator::StartsWith 
                     | ComparisonOperator::EndsWith => {
-                        if let Some(str_value) = value.as_deref() {
+                        if let Some(str_value) = value.as_str() {
                             conditions.push((field.clone(), str_value.to_string()));
                         }
                     }
                     _ => {
                         // For other operators (>, <, etc.), we still include the field
                         // The bloom filter will help eliminate batches that don't have the field at all
-                        if let Some(str_value) = value.as_deref() {
+                        if let Some(str_value) = value.as_str() {
                             conditions.push((field.clone(), str_value.to_string()));
                         }
                     }
@@ -1763,7 +1772,11 @@ impl WriteAheadLogManager {
                             .clone();
                         
                         // Compare based on operator
-                        return self.compare_values(&metadata_value, operator, value);
+                        if let Some(metadata_str) = metadata_value {
+                            return self.compare_values(&metadata_str, operator, value);
+                        } else {
+                            return false;
+                        }
                     }
                 }
                 // Field not found, consider it a non-match
@@ -1792,10 +1805,18 @@ impl WriteAheadLogManager {
         
         match operator {
             ComparisonOperator::Equals => {
-                left == right.as_deref()
+                if let serde_json::Value::String(right_str) = right {
+                    left == right_str
+                } else {
+                    false
+                }
             }
             ComparisonOperator::NotEquals => {
-                left != right.as_deref()
+                if let serde_json::Value::String(right_str) = right {
+                    left != right_str
+                } else {
+                    true
+                }
             }
             ComparisonOperator::GreaterThan => {
                 if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
@@ -1826,13 +1847,25 @@ impl WriteAheadLogManager {
                 }
             }
             ComparisonOperator::Contains => {
-                left.contains(right.as_deref())
+                if let serde_json::Value::String(right_str) = right {
+                    left.contains(right_str.as_str())
+                } else {
+                    false
+                }
             }
             ComparisonOperator::StartsWith => {
-                left.starts_with(right.as_deref())
+                if let serde_json::Value::String(right_str) = right {
+                    left.starts_with(right_str.as_str())
+                } else {
+                    false
+                }
             }
             ComparisonOperator::EndsWith => {
-                left.ends_with(right.as_deref())
+                if let serde_json::Value::String(right_str) = right {
+                    left.ends_with(right_str.as_str())
+                } else {
+                    false
+                }
             }
             _ => false, // Other operators not implemented yet
         }
@@ -1846,17 +1879,16 @@ impl WriteAheadLogManager {
         metadata
             .iter()
             .filter_map(|item| {
-                let value = item.value.as_ref().map(|v| match v {
+                let value = item.value.as_ref().and_then(|v| match v {
                     crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
-                        serde_json::Value::String(s.clone())
+                        Some(serde_json::Value::String(s.clone()))
                     }
                     crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            
                     }
                     crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
-                        serde_json::Value::Bool(*b)
+                        Some(serde_json::Value::Bool(*b))
                     }
                 })?;
                 
@@ -2028,10 +2060,23 @@ impl WriteAheadLogManager {
         
         // For now, just use the strategy's force_sync (which uses SimpleAtomicSync)
         // TODO: Re-enable advanced atomic sync once basic recovery is working  
-        // Force sync is not directly available on the shared WAL behavior
-        // Instead, we need to flush the collection which will sync to disk
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&self.config.memtable);
-        wal_behavior.flush_collection(collection_id).await?;
+        // Force sync is achieved by flushing all vectors which will trigger disk writes
+        // Convert MemTableConfig to MemtableConfig for get_or_init
+        let memtable_config = crate::storage::memtable::core::MemtableConfig {
+            max_size_bytes: self.config.memtable.global_memory_limit,
+            flush_threshold_bytes: self.config.memtable.global_memory_limit / 2,
+            enable_mvcc: self.config.enable_mvcc,
+            mvcc_cleanup_interval_secs: self.config.performance.mvcc_cleanup_interval_secs,
+            max_versions_per_key: self.config.memtable.mvcc_versions_retained,
+        };
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        
+        // Get collection vectors and flush them
+        let collection_vectors = wal_behavior.get_collection_vectors(&collection_id.to_string()).await?;
+        if !collection_vectors.is_empty() {
+            // Trigger flush by calling flush_all_vectors which will write to disk
+            let _ = wal_behavior.flush_all_vectors().await?;
+        }
         debug!("Force sync delegated to strategy for collection '{}'", collection_id);
         
         Ok(())

@@ -257,7 +257,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             let distance_result = distance_compute.calculate_distance(
                 query_vector,
                 &vector.vector,
-                &metric,
+                metric,
             );
             // Use empty string for vectors without IDs
             let id = vector.id.clone().clone();
@@ -266,7 +266,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         }
         
         // Sort by distance (ascending) and take top k
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1));
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(k);
         
         Ok(results)
@@ -394,8 +394,8 @@ impl WALBatchStrategy for AvroSerializationStrategy {
     }
 
     async fn get_stats(&self) -> Result<WALStats> {
-        let memtable_stats = self.memtable_manager.stats().await?;
-        let disk_stats = self.disk_manager.stats().await?;
+        let memtable_stats = self.memtable_manager.get_stats().await?;
+        let disk_stats = self.disk_manager.get_stats().await?;
         
         Ok(WALStats {
             total_entries: memtable_stats.total_vectors_added,
