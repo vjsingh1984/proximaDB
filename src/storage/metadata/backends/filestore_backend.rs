@@ -483,13 +483,13 @@ impl FilestoreMetadataBackend {
         
         // Parse JSON operation log
         let op_json: serde_json::Value = serde_json::from_slice(&data)?;
-        let sequence = op_json["sequence"].as_u64();
-        let op_type_str = op_json["operation_type"].as_deref();
+        let sequence = op_json["sequence"].as_u64().unwrap_or(0);
+        let op_type_str = op_json["operation_type"].as_str();
         
         let max_sequence = sequence;
         
         match op_type_str {
-            "Create" | "Update" => {
+            Some("Create") | Some("Update") => {
                 if let Some(collection_data) = op_json["collection_data"].as_array() {
                     // Decode protobuf bytes from JSON array
                     let collection_bytes: Vec<u8> = collection_data.iter()
@@ -499,11 +499,12 @@ impl FilestoreMetadataBackend {
                     self.index.upsert_collection(record);
                 }
             }
-            "Delete" => {
+            Some("Delete") => {
                 // collection_id is the name, need to get UUID first
-                let collection_id = op_json["collection_id"].as_deref();
-                if let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
-                    self.index.remove_collection(&uuid);
+                if let Some(collection_id) = op_json["collection_id"].as_str() {
+                    if let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
+                        self.index.remove_collection(&uuid);
+                    }
                 }
             }
             _ => {
@@ -758,7 +759,7 @@ impl FilestoreMetadataBackend {
         info!("🔄 Found {} operation files at restart, creating checkpoint", op_count);
         
         // Create snapshot manager if not already present
-        if self.snapshot_manager.lock().await.is_empty() {
+        if self.snapshot_manager.lock().await.is_none() {
             let manager = SnapshotManager::new(
                 self.config.snapshot_threshold,
                 self.config.keep_snapshots,
@@ -864,7 +865,7 @@ impl FilestoreMetadataBackend {
         info!("🗑️ Deleting collection: {}", collection_id);
         
         // Check if collection exists
-        if self.index.get_by_name(collection_id).is_empty() {
+        if self.index.get_by_name(collection_id).is_none() {
             return Err(anyhow::anyhow!("Collection '{}' not found", collection_id));
         }
         
@@ -896,7 +897,7 @@ impl FilestoreMetadataBackend {
             sequence: self.next_sequence(),
             timestamp: chrono::Utc::now().timestamp(),
             operation_type: OperationType::Update,
-            collection_id: record.config.as_ref().map(|c| c.name.clone()).clone(),
+            collection_id: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| "unknown".to_string()),
             collection_data: Some(record.clone()),
         };
         
@@ -1263,7 +1264,7 @@ impl FilestoreMetadataBackend {
         
         // Scan all entries in primary memtable
         for entry in self.index.list_all() {
-            if entry.config.as_ref().map(|c| c.name.as_deref()) == name {
+            if entry.config.as_ref().map(|c| c.name.as_str()) == Some(name) {
                 let elapsed = start.elapsed();
                 warn!("🔧 Fallback scan found '{}' in {:?}, repairing secondary index", name, elapsed);
                 

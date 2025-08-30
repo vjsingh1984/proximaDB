@@ -8,7 +8,7 @@ use bytemuck::{Pod, Zeroable, bytes_of, from_bytes};
 use serde::{Serialize, Deserialize};
 use tracing::{debug, trace};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::io::zero_copy::traits::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange, QueryType
@@ -705,7 +705,7 @@ mod tests {
 
         // Test serialization
         let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection").unwrap();
-        assert!(!serialized.is_empty());
+        assert!(!serialized.is_none());
 
         // Test deserialization
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
@@ -734,7 +734,7 @@ mod tests {
         let ranges = serializer.get_required_ranges(metadata.as_ref(), &query_context);
         if let Some(ranges) = ranges {
             // Should not need all columns for metadata filtering
-            assert!(!ranges.is_empty());
+            assert!(!ranges.is_none());
             // Should be more selective than full file
         }
     }

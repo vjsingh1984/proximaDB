@@ -213,7 +213,7 @@ impl ParallelRecoverySystem {
                 .get_collections_at_location(&location)
                 .await?;
             
-            if !collections.is_empty() {
+            if !collections.is_none() {
                 collections_by_disk.insert(disk_id, collections);
             }
         }

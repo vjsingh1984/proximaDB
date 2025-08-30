@@ -122,7 +122,8 @@ impl SstMetadataSerializer {
         let fs = self.filesystem.get_filesystem(file_path)?;
         
         // Read footer to get file structure
-        let file_size = fs.get_file_size(file_path).await?;
+        let metadata = fs.metadata(file_path).await?;
+        let file_size = metadata.size;
         let footer_size = 1024; // SST footer is typically small
         let footer_data = fs.read_range(
             file_path, 
@@ -437,6 +438,14 @@ impl MetadataSerializer for SstMetadataSerializer {
 }
 
 impl EngineMetadata for SstMetadata {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
+    fn clone_box(&self) -> Box<dyn EngineMetadata> {
+        Box::new(self.clone())
+    }
+    
     fn file_size(&self) -> u64 {
         self.global.file_size
     }

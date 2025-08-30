@@ -174,7 +174,7 @@ async fn test_concurrent_flush_operations() -> Result<()> {
                 .await?
                 .next_entry()
                 .await?
-                .is_empty()
+                .is_none()
     );
 
     Ok(())

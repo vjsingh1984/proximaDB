@@ -38,13 +38,13 @@ use crate::proto::proximadb::SearchVectorRecord;
 use crate::proto::proximadb::{
     OperationMetrics, IndexConfig, QuantizationConfig, CompressionConfig,
     CollectionConfig, IndexingAlgorithm, IndexUpdateMode, StorageEngine,
-    DistanceMetric, FilterableData, StorageConfig,
+    DistanceMetric, FilterableDataType, StorageConfig,
     ParquetWriterSettings, FooterCacheSettings, HybridWriterSettings,
     SstEngineSettings, ViperEngineSettings, NovaEngineSettings,
     HnswConfig, IvfConfig, FlatConfig, PqConfig, AnnoyConfig, LshConfig,
     FilterableColumnSpec, AccessPattern, DataDensity,
     CollectionRequest, CollectionOperation, VectorRecord, VectorBatchRequest,
-    Collection as ProtoCollection, RandomProjection
+    Collection as ProtoCollection, RandomProjectionType
 };
 
 /// Shared application state for REST handlers
@@ -120,14 +120,14 @@ impl CollectionConfigJson {
             storage_engine: self.storage_engine.as_deref()
                 .and_then(|s| conversions::parse_storage_engine(s).ok())
                 .unwrap_or(crate::proto::proximadb::StorageEngine::Viper) as i32,
-            filterable_columns: self.filterable_columns.clone().clone(),
-            index_configs: self.index_configs.clone().clone(),
+            filterable_columns: self.filterable_columns.clone().unwrap_or_default(),
+            index_configs: self.index_configs.clone().unwrap_or_default(),
             quantization: self.quantization.clone(),
             storage_config: self.storage_config.clone(),
             primary_index: self.primary_index.clone(),
             auto_index_selection: self.auto_index_selection,
             description: self.description.clone(),
-            tags: self.tags.clone().clone(),
+            tags: self.tags.clone().unwrap_or_default(),
             owner: self.owner.clone(),
             embedding_models: None,  // Default to None for embedding models
         };
@@ -555,14 +555,14 @@ pub struct SearchQuery {
 }
 
 /// Metadata filter
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub operator: String, // "and", "or", "not"
 }
 
 /// Filter condition
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FilterCondition {
     pub field_name: String,
     pub operation: String, // "equals", "greater_than", "less_than", "in", etc.
@@ -781,15 +781,18 @@ pub async fn collection_operation(
     let proto_request = crate::proto::proximadb::CollectionRequest {
         operation: conversions::parse_collection_operation(&request.operation)
             .map_err(|_| StatusCode::BAD_REQUEST)? as i32,
-        collection: request.collection_id.clone(),
-        config: request.config.as_ref().map(|c| conversions::build_collection_config(
-            c.name.clone().clone(),
-            c.dimension.unwrap_or(0),
+        collection_id: request.collection_id.clone(),
+        collection_config: request.config.as_ref().and_then(|c| conversions::build_collection_config(
+            c.name.clone(),
+            c.dimension as u32,
             c.distance_metric.clone(),
             c.storage_engine.clone(),
-            c.indexing_algorithm.clone(),
-            None,
-        ).ok()).flatten(),
+            None, // indexing_algorithm - removed from config
+            None, // metadata
+        ).ok()),
+        query_params: std::collections::HashMap::new(),
+        options: std::collections::HashMap::new(),
+        migration_config: std::collections::HashMap::new(),
     };
     
     // Delegate to unified handlers
@@ -804,7 +807,7 @@ pub async fn collection_operation(
     // Convert proto response to REST response
     let response = CollectionResponse {
         success: proto_response.success,
-        operation: conversions::collection_operation_to_string(proto_response.operation),
+        operation: conversions::collection_operation_to_string(proto_response.operation).to_string(),
         collection: proto_response.collection.map(|c| convert_from_proto_collection(c)),
         collections: if proto_response.collections.is_empty() { 
             None 
@@ -828,7 +831,7 @@ pub async fn vector_batch(
     Json(mut request_json): Json<serde_json::Value>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
     // Debug log the incoming request
-    tracing::debug!("vector_batch received JSON: {}", serde_json::to_string_pretty(&request_json).clone());
+    tracing::debug!("vector_batch received JSON: {}", serde_json::to_string_pretty(&request_json).unwrap_or_else(|_| "invalid json".to_string()));
     
     // Handle flexible metadata format before conversion
     if let Some(vectors) = request_json.get_mut("vectors").and_then(|v| v.as_array_mut()) {
@@ -855,7 +858,7 @@ pub async fn vector_batch(
     }
     
     // Deserialize the modified JSON into our request type
-    let request: VectorBatchRequest = serde_json::from_value(request_json)
+    let request: RestVectorBatchRequest = serde_json::from_value(request_json)
         .map_err(|e| {
             tracing::error!("Failed to deserialize vector batch request: {:?}", e);
             StatusCode::BAD_REQUEST
@@ -866,19 +869,19 @@ pub async fn vector_batch(
         collection_id: request.collection_id.clone(),
         vectors: request.vectors.into_iter().map(|v| {
             crate::proto::proximadb::VectorRecord {
-                id: v.id,
+                expires_at: None,
+                quantized_vector: None,
+                source: None,
+                id: v.id.unwrap_or_default(),
                 vector: v.vector.clone(),
-                metadata: v.metadata.map(conversions::convert_metadata_to_proto).clone(),
-                timestamp: v.timestamp.unwrap_or(0),
-                version: v.version,
+                metadata: v.metadata.map(|m| conversions::convert_metadata_to_proto(serde_json::Map::from_iter(m.into_iter()))).unwrap_or_default(),
+                timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32,
+                version: None,
+                updated_at: None,
             }
         }).collect(),
-        operation: request.operation.as_ref().map(|op| match op.as_str() {
-            "upsert" | "insert" => 0,
-            "update" => 1,
-            "delete" => 2,
-            _ => 0,
-        }).unwrap_or(0),
+        batch_timeout_ms: request.batch_timeout_ms,
+        request_id: request.request_id,
     };
     
     // Delegate to unified handlers
@@ -903,7 +906,7 @@ pub async fn vector_batch(
     
     let response = VectorOperationResponse {
         success: proto_response.success,
-        operation: conversions::vector_operation_to_string(proto_response.operation),
+        operation: conversions::vector_operation_to_string(proto_response.operation).to_string(),
         metrics: RestOperationMetrics {
             total_processed: metrics.total_processed,
             successful_count: metrics.successful_count,
@@ -928,13 +931,15 @@ pub async fn vector_search(
     Json(request): Json<VectorSearchRequest>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
     // Convert REST request to proto request directly
+    // Use the first query if available
+    let first_query = request.queries.first();
     let proto_request = conversions::build_vector_search_request(
         request.collection_id.clone(),
-        request.vector.clone(),
-        request.top_k.unwrap_or(10),
-        request.metadata_filter.clone(),
-        request.include_vector.unwrap_or(false),
-        request.include_metadata.unwrap_or(true),
+        first_query.map(|q| q.vector.clone()).unwrap_or_default(),
+        request.top_k as u32,
+        None, // TODO: Convert MetadataFilter to serde_json::Map
+        request.include_fields.as_ref().map(|f| f.vector).unwrap_or(false),
+        request.include_fields.as_ref().map(|f| f.metadata).unwrap_or(true),
     );
     
     // Delegate to unified handlers
@@ -1268,17 +1273,17 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
             bucket_width: c.bucket_width,
             binary_vectors: c.binary_vectors,
             max_candidates: c.max_candidates,
-            projection: match c.projection.as_ref().map(|s: &String| s.as_str()) {
-                Some("binary") => RandomProjection::Binary as i32,
-                Some("sparse") => RandomProjection::Sparse as i32,
-                _ => RandomProjection::Gaussian as i32,
+            projection: match c.projection.as_str() {
+                "binary" => RandomProjectionType::Binary as i32,
+                "sparse" => RandomProjectionType::Sparse as i32,
+                _ => RandomProjectionType::Gaussian as i32,
             },
         }),
         build_concurrency: config.build_concurrency,
         memory_limit_mb: config.memory_limit_mb,
         checkpoint_interval_ms: config.checkpoint_interval_ms,
         is_primary: config.is_primary.unwrap_or(false),
-        use_cases: config.use_cases.clone(),
+        use_cases: config.use_cases.clone().unwrap_or_default(),
         selectivity_threshold: config.selectivity_threshold,
         use_quantization: None,  // Will inherit from collection by default
         quantization_override: None,  // No quantization override by default
@@ -1392,8 +1397,8 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
             binary_vectors: c.binary_vectors,
             max_candidates: c.max_candidates,
             projection: match c.projection {
-                x if x == RandomProjection::Binary as i32 => "binary",
-                x if x == RandomProjection::Sparse as i32 => "sparse",
+                x if x == RandomProjectionType::Binary as i32 => "binary",
+                x if x == RandomProjectionType::Sparse as i32 => "sparse",
                 _ => "gaussian",
             }.to_string(),
         }),
@@ -1605,7 +1610,24 @@ fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
     
     Collection {
         id: proto.id,
-        config: CollectionConfigJson::from_proto(&config),
+        config: config.map(|c| CollectionConfigJson::from_proto(&c)).unwrap_or_else(|| {
+            // Create a minimal default config if none exists
+            CollectionConfigJson {
+                name: String::new(),
+                dimension: 0,
+                distance_metric: None,
+                storage_engine: None,
+                filterable_columns: None,
+                index_configs: None,
+                quantization: None,
+                storage_config: None,
+                primary_index: None,
+                auto_index_selection: None,
+                description: None,
+                tags: None,
+                owner: None,
+            }
+        }),
         stats: CollectionStats {
             vector_count: proto.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
             index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
@@ -1638,17 +1660,17 @@ pub async fn list_collections(
     let collection_responses: Vec<CollectionInfo> = collections
         .into_iter()
         .map(|c| {
-            let config = c.config.clone();
+            let config = c.config.as_ref();
             let stats = c.stats.as_ref();
             
             CollectionInfo {
                 id: c.id,
-                name: config.name,
-                dimension: config.dimension,
-                metric: match config.distance_metric {
-                    x if x == DistanceMetric::Cosine as i32 => "cosine",
-                    x if x == DistanceMetric::Euclidean as i32 => "euclidean",
-                    x if x == DistanceMetric::DotProduct as i32 => "dot_product",
+                name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
+                dimension: config.map(|cfg| cfg.dimension).unwrap_or(0),
+                metric: match config.and_then(|cfg| Some(cfg.distance_metric)) {
+                    Some(x) if x == DistanceMetric::Cosine as i32 => "cosine",
+                    Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
+                    Some(x) if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
                 }.to_string(),
                 timestamp: c.created_at,
@@ -1688,17 +1710,17 @@ pub async fn collection(
     
     match collection {
         Some(c) => {
-            let config = c.config.clone();
+            let config = c.config.as_ref();
             let stats = c.stats.as_ref();
             
             let collection_info = CollectionInfo {
                 id: c.id,
-                name: config.name,
-                dimension: config.dimension,
-                metric: match config.distance_metric {
-                    x if x == DistanceMetric::Cosine as i32 => "cosine",
-                    x if x == DistanceMetric::Euclidean as i32 => "euclidean",
-                    x if x == DistanceMetric::DotProduct as i32 => "dot_product",
+                name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
+                dimension: config.map(|cfg| cfg.dimension).unwrap_or(0),
+                metric: match config.and_then(|cfg| Some(cfg.distance_metric)) {
+                    Some(x) if x == DistanceMetric::Cosine as i32 => "cosine",
+                    Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
+                    Some(x) if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
                 }.to_string(),
                 timestamp: c.created_at,

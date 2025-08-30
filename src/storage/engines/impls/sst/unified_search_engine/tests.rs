@@ -271,7 +271,7 @@ mod unified_search_engine_tests {
         context.storage_info.file_count = 15; // More than 10 to trigger hint
         
         let hints = engine.optimization_hints(&context).await;
-        assert!(!hints.is_empty());
+        assert!(!hints.is_none());
         
         // Should suggest metadata filtering for collections with many files
         let has_metadata_hint = hints.iter().any(|hint| {
@@ -509,7 +509,7 @@ mod helper_methods_tests {
         assert!(files.is_ok());
         
         let file_list = files.unwrap();
-        assert!(!file_list.is_empty());
+        assert!(!file_list.is_none());
         assert!(file_list.iter().any(|f| f.contains_hash("level0")));
         assert!(file_list.iter().any(|f| f.contains_hash("level1")));
     }
@@ -796,7 +796,7 @@ mod integration_tests {
         
         // Test optimization hints
         let hints = engine.optimization_hints(&context).await;
-        assert!(!hints.is_empty());
+        assert!(!hints.is_none());
         
         // Test cost estimation
         let cost = engine.estimate_cost(&context, &params).await;

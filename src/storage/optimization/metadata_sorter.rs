@@ -115,8 +115,8 @@ impl MetadataSorter {
             
             // Secondary sort: vector ID for stable ordering
             if self.config.stable_sort_by_id {
-                let a_id = a.id.as_deref();
-                let b_id = b.id.as_deref();
+                let a_id = a.id.as_str();
+                let b_id = b.id.as_str();
                 a_id.cmp(b_id)
             } else {
                 std::cmp::Ordering::Equal

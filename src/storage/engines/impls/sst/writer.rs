@@ -776,7 +776,7 @@ impl SstableWriter {
         // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
             index_entries.push(IndexEntry {
-                key: first_record.id.clone().unwrap_or_else(|| "unknown".to_string()),
+                key: if first_record.id.is_empty() { "unknown".to_string() } else { first_record.id.clone() },
                 offset: 0, // Will be calculated during read
                 size: block_size,
                 block_id,

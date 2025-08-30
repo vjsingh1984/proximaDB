@@ -626,7 +626,7 @@ mod tests {
         let columns = builder.build().unwrap();
         let arrays = columns.to_arrow_arrays().unwrap();
         
-        assert!(!arrays.is_empty());
+        assert!(!arrays.is_none());
         assert_eq!(arrays[0].0, "vector_binary");
     }
 }

@@ -419,7 +419,7 @@ async fn test_basic_compaction() {
         }
     }
     
-    if all_parquet_files.is_empty() {
+    if all_parquet_files.is_none() {
         debug!("  ❌ No parquet files found in data directory!");
         
         // Check ___temp directory

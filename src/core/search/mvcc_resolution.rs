@@ -51,8 +51,9 @@ impl MvccResolver {
         let mut append_only_records = Vec::new();
         
         for record in records {
-            if let Some(id) = &record.id {
-                if id.is_empty() || id == "null" || id == "none" || id.trim().is_empty() {
+            let id = &record.id;
+            if !id.is_empty() {
+                if id == "null" || id == "none" || id.trim().is_empty() {
                     // Treat as append-only
                     append_only_records.push(record);
                 } else {
@@ -375,7 +376,7 @@ mod tests {
         for record in &resolved {
             match &record.id {
                 None => append_only_count += 1,
-                Some(id) if id.is_empty() || id == "null" || id.trim().is_empty() => append_only_count += 1,
+                Some(id) if id.is_none() || id == "null" || id.trim().is_none() => append_only_count += 1,
                 Some(_) => versioned_count += 1,
             }
         }

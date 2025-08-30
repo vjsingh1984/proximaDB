@@ -308,7 +308,7 @@ impl AccessPatternMetricsCollector {
         self.correlation_tracker.file_correlations
             .get(file_key)
             .map(|entry| entry.clone())
-            .clone()
+            .unwrap_or_default()
     }
     
     /// Export metrics for unified framework

@@ -274,7 +274,7 @@ impl S3FileSystem {
                     "No default bucket configured for relative S3 paths".to_string(),
                 ))
             }
-        } else if path.contains_hash('/') {
+        } else if path.contains('/') {
             // Extract bucket from path
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             Ok((parts[0].to_string(), parts[1].to_string()))
@@ -403,19 +403,28 @@ impl S3Client {
             .body(data.to_vec());
 
         // Add storage class if specified
-        if let Some(storage_class) = options.storage_class {
-            request = request.header("x-amz-storage-class", storage_class);
+        if let Some(ref opts) = options {
+            if let Some(ref storage_class) = opts.storage_class {
+                request = request.header("x-amz-storage-class", storage_class.as_str());
+            } else {
+                request = request.header(
+                    "x-amz-storage-class",
+                    self.config.default_storage_class.as_str(),
+                );
+            }
         } else {
             request = request.header(
                 "x-amz-storage-class",
-                self.config.default_storage_class.as_deref(),
+                self.config.default_storage_class.as_str(),
             );
         }
 
         // Add metadata if specified
-        if let Some(metadata) = options.metadata {
-            for (key, value) in metadata {
-                request = request.header(format!("x-amz-meta-{}", key), value);
+        if let Some(ref opts) = options {
+            if let Some(ref metadata) = opts.metadata {
+                for (key, value) in metadata {
+                    request = request.header(format!("x-amz-meta-{}", key), value);
+                }
             }
         }
 
@@ -629,7 +638,7 @@ impl FileSystem for S3FileSystem {
 
             Ok(FileMetadata {
                 path: format!("s3://{}/{}", bucket, key),
-                size,
+                size: size.unwrap_or(0),
                 created: None,  // S3 doesn't provide creation time in HEAD response
                 modified: None, // Would need to parse Last-Modified header
                 is_directory: false, // S3 objects are always files

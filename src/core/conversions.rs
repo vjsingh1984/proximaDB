@@ -79,7 +79,7 @@ pub fn parse_storage_engine(engine: &str) -> Result<StorageEngine> {
         "viper" => Ok(StorageEngine::Viper),
         "nova" => Ok(StorageEngine::Nova),
         "swift" => Ok(StorageEngine::Swift),
-        "prism" => Ok(StorageEngine::Prism),
+        // Note: Prism engine was removed from proto definition
         _ => Err(anyhow::anyhow!("Invalid storage engine: {}", engine)),
     }
 }
@@ -119,7 +119,6 @@ pub fn storage_engine_to_string(engine: i32) -> &'static str {
         Some(StorageEngine::Viper) => "viper",
         Some(StorageEngine::Nova) => "nova",
         Some(StorageEngine::Swift) => "swift",
-        Some(StorageEngine::Prism) => "prism",
         _ => "unknown",
     }
 }
@@ -154,8 +153,8 @@ impl From<InternalSearchResult> for SearchVectorRecord {
     fn from(native: InternalSearchResult) -> Self {
         SearchVectorRecord {
             id: native.id,
-            vector: native.vector.clone(),
-            metadata: convert_metadata_to_proto(native.metadata),
+            vector: native.vector.clone().unwrap_or_default(),
+            metadata: convert_metadata_to_proto(serde_json::Map::from_iter(native.metadata.into_iter())),
             score: native.score,
             similarity: native.similarity,
             version: native.version,
@@ -170,8 +169,8 @@ impl From<&InternalSearchResult> for SearchVectorRecord {
     fn from(native: &InternalSearchResult) -> Self {
         SearchVectorRecord {
             id: native.id.clone(),
-            vector: native.vector.clone().clone(),
-            metadata: convert_metadata_to_proto(native.metadata.clone()),
+            vector: native.vector.clone().unwrap_or_default(),
+            metadata: convert_metadata_to_proto(serde_json::Map::from_iter(native.metadata.clone().into_iter())),
             score: native.score,
             similarity: native.similarity,
             version: native.version,
@@ -261,25 +260,8 @@ pub fn convert_metadata_from_proto(items: Vec<MetadataItem>) -> serde_json::Map<
                 crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
                     serde_json::Value::Bool(b)
                 },
-                crate::proto::proximadb::metadata_item::Value::ListValue(list) => {
-                    // Convert list of metadata items recursively
-                    let values: Vec<serde_json::Value> = list.values.into_iter()
-                        .filter_map(|item| item.value)
-                        .map(|v| match v {
-                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s),
-                            crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
-                                serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0)))
-                            },
-                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(b),
-                            _ => serde_json::Value::Null,
-                        })
-                        .collect();
-                    serde_json::Value::Array(values)
-                },
-                crate::proto::proximadb::metadata_item::Value::MapValue(map_value) => {
-                    // Recursively convert map values
-                    convert_metadata_from_proto(map_value.entries).into()
-                },
+                // Note: ListValue and MapValue were removed from proto
+                // Arrays and objects can be stored as JSON strings if needed
             };
             map.insert(item.key, json_value);
         }
@@ -302,7 +284,7 @@ pub fn build_collection_config(
 ) -> Result<CollectionConfig> {
     let config = CollectionConfig {
         name: name.clone(),
-        dimension,
+        dimension: dimension as i32,
         distance_metric: distance_metric
             .map(|m| parse_distance_metric(&m))
             .transpose()?
@@ -311,16 +293,25 @@ pub fn build_collection_config(
         storage_engine: storage_engine
             .map(|e| parse_storage_engine(&e))
             .transpose()?
-            .map(|e| e as i32),
-        indexing_config: indexing_algorithm
+            .map(|e| e as i32)
+            .unwrap_or(StorageEngine::Viper as i32),
+        storage_config: None,
+        index_configs: indexing_algorithm
             .map(|a| parse_indexing_algorithm(&a))
             .transpose()?
-            .map(|algo| crate::proto::proximadb::IndexConfig {
+            .map(|algo| vec![crate::proto::proximadb::IndexConfig {
                 algorithm: algo as i32,
                 ..Default::default()
-            }),
-        metadata: metadata.map(|m| convert_metadata_to_proto(m)).clone(),
-        ..Default::default()
+            }])
+            .unwrap_or_default(),
+        filterable_columns: vec![],
+        quantization: None,
+        primary_index: None,
+        auto_index_selection: None,
+        embedding_models: None,
+        description: None,
+        tags: vec![],
+        owner: None
     };
     Ok(config)
 }
@@ -340,23 +331,62 @@ pub fn build_vector_search_request(
 ) -> VectorSearchRequest {
     let query = SearchQuery {
         vector,
-        metadata_filter: metadata_filter.map(|_f| {
-            // TODO: Implement proper metadata filter conversion
-            crate::proto::proximadb::MetadataFilter::default()
+        id: None,
+        metadata_filter: metadata_filter.map(|f| {
+            // Convert JSON map to MetadataFilter with filter conditions
+            let mut conditions = Vec::new();
+            
+            // Convert each key-value pair to a filter condition
+            for (key, value) in f {
+                let metadata_value = match value {
+                    serde_json::Value::String(s) => {
+                        crate::proto::proximadb::MetadataValue {
+                            value: Some(crate::proto::proximadb::metadata_value::Value::StringValue(s))
+                        }
+                    },
+                    serde_json::Value::Number(n) => {
+                        crate::proto::proximadb::MetadataValue {
+                            value: Some(crate::proto::proximadb::metadata_value::Value::DoubleValue(n.as_f64().unwrap_or(0.0)))
+                        }
+                    },
+                    serde_json::Value::Bool(b) => {
+                        crate::proto::proximadb::MetadataValue {
+                            value: Some(crate::proto::proximadb::metadata_value::Value::BoolValue(b))
+                        }
+                    },
+                    _ => continue, // Skip complex types for now
+                };
+                
+                let condition = crate::proto::proximadb::FilterCondition {
+                    field_name: key,
+                    operation: crate::proto::proximadb::FilterOperation::Equals as i32,
+                    value: Some(metadata_value),
+                };
+                conditions.push(condition);
+            }
+            
+            crate::proto::proximadb::MetadataFilter {
+                conditions,
+                operator: crate::proto::proximadb::FilterOperator::And as i32,
+            }
         }),
     };
     
     VectorSearchRequest {
         collection_id,
         queries: vec![query],
-        top_k,
-        search_params: Some(SearchParams::default()),
+        top_k: top_k as i32,
+        distance_metric_override: None,
+        search_params: None,
         include_fields: Some(crate::proto::proximadb::IncludeFields {
             vector: include_vector,
             metadata: include_metadata,
             score: true,
-            version: false,
+            rank: false,
+            source: false,
+            source_options: None,
         }),
+        search_optimization: Some(SearchParams::default()),
     }
 }
 

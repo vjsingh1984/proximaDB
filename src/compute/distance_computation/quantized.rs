@@ -1169,7 +1169,7 @@ mod tests {
         
         assert!(result.quality_estimate >= 0.9);
         if let ComputationMethod::ProgressiveRefinement { stages } = result.method {
-            assert!(!stages.is_empty());
+            assert!(!stages.is_none());
         } else {
             panic!("Expected progressive refinement method");
         }

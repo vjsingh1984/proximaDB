@@ -596,7 +596,7 @@ impl Flush {
             let values = filterable_arrays.get(&filterable_column.name).unwrap();
             
             let arrow_array: Arc<dyn Array> = {
-                use crate::proto::proximadb::FilterableData;
+                use crate::proto::proximadb::FilterableDataType;
                 match FilterableDataType::try_from(filterable_column.data_type) {
                     Ok(FilterableDataType::FilterableString) => {
                         let string_values: Vec<Option<String>> = values.iter()
@@ -1159,7 +1159,7 @@ impl Flush {
             .map(|config| config.filterable_columns.clone())
             .clone();
         
-        if filterable_columns.is_empty() {
+        if filterable_columns.is_none() {
             // No filterable columns, sort by vector ID for consistent ordering
             let mut sorted_records = records.to_vec();
             sorted_records.sort_by(|a, b| {

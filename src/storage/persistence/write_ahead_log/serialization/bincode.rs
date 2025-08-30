@@ -66,7 +66,7 @@ mod tests {
         // Serialize
         let serialized = serializer.serialize_batch(&vectors)
             .expect("Failed to serialize batch");
-        assert!(!serialized.is_empty());
+        assert!(!serialized.is_none());
         
         // Deserialize
         let deserialized = serializer.deserialize_batch(&serialized)

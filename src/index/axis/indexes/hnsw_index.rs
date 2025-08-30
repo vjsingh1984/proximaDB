@@ -438,7 +438,7 @@ impl AxisVectorIndex for AxisHnswIndex {
         let start = std::time::Instant::now();
         
         // USING UTILS: Get internal node ID from mapping
-        let internal_node_id = match self.id_mapping.get_internal(id) {
+        let internal_node_id = match self.id_mapping.internal(id) {
             Some(node_id) => node_id,
             None => {
                 self.stats.record_success(start.elapsed().as_micros() as u64);

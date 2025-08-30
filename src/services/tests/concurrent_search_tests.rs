@@ -165,7 +165,7 @@ mod tests {
                 // 3. Search indexes OR storage (not both if indexes exist)
                 // 4. Merge results
                 
-                if phases.is_empty() {
+                if phases.is_none() {
                     return false;
                 }
                 

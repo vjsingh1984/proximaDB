@@ -161,20 +161,20 @@ impl SqlEngine {
     
     /// Get query cache statistics
     pub fn cache_stats(&self) -> String {
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         let stats = cache.stats();
         stats.summary()
     }
     
     /// Clear query cache
     pub fn clear_cache(&self) {
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         cache.clear();
     }
     
     /// Get cache utilization summary
     pub fn cache_utilization_summary(&self) -> String {
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         let stats = cache.stats();
         format!(
             "Unified Query Cache: {:.1}% hit rate, {} entries, {:.1}KB mem", 
@@ -186,7 +186,109 @@ impl SqlEngine {
     
     /// Invalidate cache entries for a specific collection
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         cache.invalidate_collection(collection_id);
     }
+}
+// Temporary stub types and functions for query cache
+// TODO: Properly implement query cache functionality
+
+use std::collections::HashMap;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct QueryCacheKey {
+    pub query: String,
+    pub collection_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedQueryResult {
+    pub result: Vec<u8>,
+    pub timestamp: u64,
+}
+
+pub struct QueryCache {
+    cache: Mutex<HashMap<QueryCacheKey, CachedQueryResult>>,
+}
+
+impl QueryCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn stats(&self) -> CacheStats {
+        CacheStats {
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.cache.lock().unwrap().len()
+    }
+
+    pub fn get_total_memory_usage(&self) -> usize {
+        0 // Stub implementation
+    }
+
+    pub fn clear(&self) {
+        self.cache.lock().unwrap().clear();
+    }
+
+    pub fn invalidate_collection(&self, _collection_id: &str) {
+        // Stub implementation
+    }
+
+    pub fn enable(&self) {
+        // Stub implementation
+    }
+
+    pub fn disable(&self) {
+        // Stub implementation
+    }
+}
+
+pub struct CacheStats {
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl CacheStats {
+    pub fn summary(&self) -> String {
+        format!("Hits: {}, Misses: {}", self.hits, self.misses)
+    }
+
+    pub fn hit_ratio(&self) -> f64 {
+        if self.hits + self.misses == 0 {
+            0.0
+        } else {
+            self.hits as f64 / (self.hits + self.misses) as f64 * 100.0
+        }
+    }
+}
+
+static GLOBAL_QUERY_CACHE: Lazy<QueryCache> = Lazy::new(|| QueryCache::new());
+
+/// Get the global query cache instance
+pub fn global_query_cache() -> &'static QueryCache {
+    &GLOBAL_QUERY_CACHE
+}
+
+/// Cache a query result
+pub fn cache_query_result(key: QueryCacheKey, result: Vec<u8>) {
+    let mut cache = GLOBAL_QUERY_CACHE.cache.lock().unwrap();
+    cache.insert(key, CachedQueryResult {
+        result,
+        timestamp: 0, // Stub timestamp
+    });
+}
+
+/// Get a cached query result
+pub fn get_cached_query_result(key: &QueryCacheKey) -> Option<CachedQueryResult> {
+    let cache = GLOBAL_QUERY_CACHE.cache.lock().unwrap();
+    cache.get(key).cloned()
 }

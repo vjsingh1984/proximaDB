@@ -300,7 +300,7 @@ mod tests {
         // Test initial state
         assert_eq!(transaction.state, TransactionState::Active);
         assert_eq!(transaction.isolation_level, isolation_level);
-        assert!(transaction.operations.is_empty());
+        assert!(transaction.operations.is_none());
         assert!(!transaction.is_expired()); // Should not be expired immediately
         
         // Test timeout calculation
@@ -495,7 +495,7 @@ mod tests {
         let result = store.collection("nonexistent").await
             .expect("Get collection should not fail");
         
-        assert!(result.is_empty());
+        assert!(result.is_none());
     }
 
     #[tokio::test]
@@ -614,7 +614,7 @@ mod tests {
         let system_metadata = store.get_system_metadata().await
             .expect("Failed to get system metadata_info");
         
-        assert!(!system_metadata.node_id.is_empty());
+        assert!(!system_metadata.node_id.is_none());
         
         // Should update system metadata (currently no-op)
         store.update_system_metadata(system_metadata).await
@@ -631,7 +631,7 @@ mod tests {
         
         assert_eq!(stats.total_collections, 0); // No collections yet
         assert!(stats.cache_hit_rate >= 0.0);
-        assert!(!stats.storage_backend.is_empty());
+        assert!(!stats.storage_backend.is_none());
     }
 
     #[tokio::test]
@@ -702,6 +702,6 @@ mod tests {
         assert_eq!(tx1, tx2);
         
         let tx_str = format!("{}", tx1);
-        assert!(!tx_str.is_empty());
+        assert!(!tx_str.is_none());
     }
 }

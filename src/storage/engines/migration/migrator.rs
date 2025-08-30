@@ -586,6 +586,6 @@ mod tests {
         
         // In-place migration should have high data loss risk
         assert!(matches!(risk.data_loss_risk, RiskLevel::High));
-        assert!(!risk.mitigation_strategies.is_empty());
+        assert!(!risk.mitigation_strategies.is_none());
     }
 }

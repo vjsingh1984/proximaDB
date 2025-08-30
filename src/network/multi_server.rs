@@ -394,7 +394,7 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = Arc::new(
             crate::storage::engines::impls::sst::SstStorage::new(
-                storage_config.sst_config.clone().clone(),
+                storage_config.sst_config.clone().unwrap_or_default(),
                 filesystem_factory.clone(),
                 Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
             ).await?
@@ -484,7 +484,7 @@ impl SharedServices {
                     description: None,
                     tags: vec![],
                     owner: None,
-                    embedding_models: vec![], // No embedding models for imported collections
+                    embedding_models: None, // No embedding models for imported collections
                 };
 
                 let proto_collection = crate::proto::proximadb::Collection {

@@ -470,7 +470,7 @@ impl UnifiedParquetReader {
         // Apply column projection if specified
         if let Some(columns) = column_projection {
             let projected_indices = self.resolve_column_indices(&reader_builder, columns)?;
-            if !projected_indices.is_empty() {
+            if !projected_indices.is_none() {
                 reader_builder = reader_builder.with_projection(parquet::arrow::ProjectionMask::leaves(reader_builder.parquet_schema(), projected_indices));
             }
         }
@@ -855,7 +855,7 @@ impl UnifiedParquetReader {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchVectorRecord>> {
         info!("Progressive search across {} files", file_paths.len());
         let search_config = super::optimization::ProgressiveSearchConfig::default();
         self.optimizer.progressive_search(
@@ -915,7 +915,7 @@ impl UnifiedParquetReader {
     /// Ensure ID index is built for the file
     async fn ensure_id_index_built(&self, file_path: &str) -> Result<()> {
         let mut index_guard = self.id_index.write().await;
-        if index_guard.is_empty() {
+        if index_guard.is_none() {
             info!("Building ID index for file: {}", file_path);
             let mut index = crate::storage::engines::core::formats::columnar::id_index::ColumnarIdIndex::new(
                 file_path.to_string()
@@ -1338,7 +1338,7 @@ impl UnifiedParquetReader {
         &self,
         params: &crate::core::search::SearchParams,
         collection_context: &CollectionContext,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb::SearchVectorRecord>> {
         debug!("📖 UnifiedParquetReader::search_vectors called");
         debug!("📖 Collection context: files={}, filterable_columns={:?}", 
                collection_context.file_paths.len(), collection_context.filterable_columns);
@@ -1385,20 +1385,17 @@ impl UnifiedParquetReader {
                         metadata_map.insert(item.key.clone(), serde_json::Value::String(item.value.clone()));
                     }
                     
-                    all_results.push(crate::proto::proximadb::SearchResult {
-                        id: vector_record.id.clone().clone(),
-                        vector_id: vector_record.id.clone(),
+                    all_results.push(crate::proto::proximadb::SearchVectorRecord {
+                        id: vector_record.id.clone().unwrap_or_default(),
                         score: similarity,
                         similarity: Some(similarity),
-                        vector: Some(vector_record.vector.clone()),
-                        metadata: metadata_map,
-                        debug_info: None,
-                        version: Some(vector_record.version),
+                        vector: vector_record.vector.clone(),
+                        metadata: vector_record.metadata.clone(),
+                        version: vector_record.version,
                         timestamp: Some(vector_record.timestamp),
-                        semantic_similarity: None,
+                        debug_info: None,
                         quantization_info: None,
                         engine_stats: None,
-                        index_path: None,
                     });
                 }
             }

@@ -345,7 +345,7 @@ pub async fn prefetch_row_groups(
     row_group_ids: Vec<usize>,
     cache: Option<RowGroupCache>,
 ) -> Result<()> {
-    if cache.is_empty() {
+    if cache.is_none() {
         return Ok(());
     }
     let cache = cache.unwrap();

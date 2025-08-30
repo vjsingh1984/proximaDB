@@ -436,7 +436,7 @@ impl ProximaDb for ProximaDbGrpcService {
                         storage_engine: 0, // 0 means don't update
                         storage_config: None,
                         description: description.flatten(), // Flatten Option<Option<String>> to Option<String>
-                        tags: tags.clone(),
+                        tags: tags.clone().unwrap_or_default(),
                         owner: owner.flatten(), // Flatten Option<Option<String>> to Option<String>
                         filterable_columns: vec![],
                         index_configs: vec![],
@@ -509,7 +509,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 let uuid_result = self
                     .collection_service
-                    .get_uuid(collection_name)
+                    .uuid(collection_name)
                     .await
                     .map_err(|e| {
                         Status::internal(format!("Failed to get collection UUID: {}", e))
@@ -1138,7 +1138,7 @@ impl ProximaDb for ProximaDbGrpcService {
         // Debug: Log the actual search results structure
         debug!(
             "🔍 Raw search results JSON: {}",
-            serde_json::to_string_pretty(&search_results).clone()
+            serde_json::to_string_pretty(&search_results).unwrap_or_else(|_| "Error serializing".to_string())
         );
 
         // Convert results to gRPC format
@@ -1164,7 +1164,7 @@ impl ProximaDb for ProximaDbGrpcService {
                                 .filter_map(|x| x.as_f64().map(|f| f as f32))
                                 .collect()
                         })
-                        .clone()
+                        .unwrap_or_default()
                 } else {
                     vec![]
                 },
@@ -1172,32 +1172,32 @@ impl ProximaDb for ProximaDbGrpcService {
                     result
                         .get("metadata")
                         .and_then(|m| m.as_object())
-                            .map(|obj| {
-                                obj.iter()
-                                    .map(|(k, v)| {
-                                        let metadata_value = match v {
-                                            serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
-                                            serde_json::Value::Number(n) => {
-                                                if let Some(f) = n.as_f64() {
-                                                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
-                                                } else {
-                                                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
-                                                }
-                                            },
-                                            serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
-                                            _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
-                                        };
-                                        crate::proto::proximadb::MetadataItem {
-                                            key: k.clone(),
-                                            value: metadata_value,
-                                        }
-                                    })
-                                    .collect()
-                            })
-                            .clone()
-                    } else {
-                        vec![]
-                    },
+                        .map(|obj| {
+                            obj.iter()
+                                .map(|(k, v)| {
+                                    let metadata_value = match v {
+                                        serde_json::Value::String(s) => Some(crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())),
+                                        serde_json::Value::Number(n) => {
+                                            if let Some(f) = n.as_f64() {
+                                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f))
+                                            } else {
+                                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(n.to_string()))
+                                            }
+                                        },
+                                        serde_json::Value::Bool(b) => Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b)),
+                                        _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string())),
+                                    };
+                                    crate::proto::proximadb::MetadataItem {
+                                        key: k.clone(),
+                                        value: metadata_value,
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    vec![]
+                },
                 version: result.get("version").and_then(|v| v.as_u64()).map(|v| v as u32),
                 timestamp: result.get("timestamp").and_then(|v| v.as_u64()).map(|v| v as u32),
                 source: None,  // Source content not available in JSON

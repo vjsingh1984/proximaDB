@@ -46,13 +46,13 @@ impl From<&Collection> for CollectionLookupResult {
     fn from(record: &Collection) -> Self {
         Self {
             uuid: record.id.clone(),
-            name: record.config.as_ref().map(|c| c.name.clone()).clone(),
-            dimension: record.config.as_ref().map(|c| c.dimension),
+            name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| "unknown".to_string()),
+            dimension: record.config.as_ref().map(|c| c.dimension).unwrap_or(0),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record.config.as_ref().and_then(|c| c.primary_index.clone()).unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
-            vector_count: record.stats.as_ref().map(|s| s.vector_count),
-            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes),
+            vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
+            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
             timestamp: record.created_at,
             updated_at: record.updated_at,
         }
@@ -137,14 +137,16 @@ impl MetadataMemoryIndexes {
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)
-        if let Some(old_record) = self.uuid_to_record.get(uuid) {
+        if let Some(old_record) = self.uuid_to_record.get(&uuid) {
             self.remove_from_secondary_indexes(&old_record.value())
                 .await;
         }
 
         // Primary indexes - O(1) operations
         self.uuid_to_record.insert(uuid.clone(), record_arc);
-        self.name_to_uuid.insert(name.clone(), uuid.clone());
+        if let Some(name) = name {
+            self.name_to_uuid.insert(name, uuid.clone());
+        }
 
         // Secondary indexes
         self.insert_into_secondary_indexes(&record).await;
@@ -162,8 +164,9 @@ impl MetadataMemoryIndexes {
     pub async fn remove_collection(&self, uuid: &str) {
         if let Some((_, record)) = self.uuid_to_record.remove(uuid) {
             // Remove from name index
-            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
-            self.name_to_uuid.remove(&name);
+            if let Some(config) = record.config.as_ref() {
+                self.name_to_uuid.remove(&config.name);
+            }
 
             // Remove from secondary indexes
             self.remove_from_secondary_indexes(&record).await;
@@ -203,7 +206,7 @@ impl MetadataMemoryIndexes {
 
         let result = if let Some(uuid) = self.name_to_uuid.get(name) {
             self.uuid_to_record
-                .get(uuid)
+                .get(uuid.value())
                 .map(|entry| entry.value().clone())
         } else {
             None
@@ -377,11 +380,12 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Store full names only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
-            prefix_index
-                .entry(name)
-                .or_insert_with(Vec::new)
-                .push(record.id.clone());
+            if let Some(config) = record.config.as_ref() {
+                prefix_index
+                    .entry(config.name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(record.id.clone());
+            }
         }
 
         // Tag index
@@ -423,11 +427,12 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Remove full name only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
-            if let Some(uuids) = prefix_index.get_mut(&name) {
-                uuids.retain(|uuid| uuid != &record.id);
-                if uuids.is_empty() {
-                    prefix_index.remove(&name);
+            if let Some(config) = record.config.as_ref() {
+                if let Some(uuids) = prefix_index.get_mut(&config.name) {
+                    uuids.retain(|uuid| uuid != &record.id);
+                    if uuids.is_empty() {
+                        prefix_index.remove(&config.name);
+                    }
                 }
             }
         }

@@ -118,7 +118,7 @@ impl CompactionAxisUpdater {
             collection_id
         );
 
-        let _deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_deref()).collect();
+        let _deleted_set: HashSet<&str> = deleted_vector_ids.iter().map(|s| s.as_str()).collect();
         let mut removal_errors = Vec::new();
 
         for (index_name, index) in indexes {
@@ -192,7 +192,7 @@ impl CompactionAxisUpdater {
                 let _ = index.remove(vector_id).await; // Ignore errors as it might not exist
 
                 // Add updated version
-                match index.add(vector_id.clone(), Arc::new(vector.clone())).await {
+                match index.add(vector_id.clone(), vector.vector.clone()).await {
                     Ok(_) => {
                         debug!("Updated vector {} in index {}", vector_id, index_name);
                     }
@@ -217,7 +217,7 @@ impl CompactionAxisUpdater {
         }
 
         // Log update statistics
-        if !update_errors.is_empty() {
+        if !update_errors.is_none() {
             warn!(
                 "⚠️ AXIS Compaction: {} update errors occurred during compaction_info",
                 update_errors.len()

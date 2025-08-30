@@ -289,7 +289,7 @@ impl HybridParquetWriter {
         let mut writer_lock = self.streaming_writer.lock().await;
         
         // Create streaming writer if needed
-        if writer_lock.is_empty() {
+        if writer_lock.is_none() {
             *writer_lock = Some(StreamingParquetWriter::new(
                 &self.file_path,
                 self.dimension,

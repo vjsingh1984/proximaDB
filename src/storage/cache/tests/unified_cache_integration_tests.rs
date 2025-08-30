@@ -339,7 +339,7 @@ mod unified_search_cache_tests {
         index_cache.invalidate("sst_index_invalidate.sstable").await;
         
         // Verify invalidation
-        assert!(index_cache.get_sstable_index("invalidate.sstable").await.is_empty());
+        assert!(index_cache.get_sstable_index("invalidate.sstable").await.is_none());
     }
     
     #[tokio::test]
@@ -376,7 +376,7 @@ mod unified_search_cache_tests {
         
         // Due to LRU eviction, old entries might be gone
         // This behavior depends on the actual cache implementation
-        assert!(recent_block.is_some() || first_block.is_empty());
+        assert!(recent_block.is_some() || first_block.is_none());
     }
 }
 

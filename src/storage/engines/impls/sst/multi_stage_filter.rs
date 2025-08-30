@@ -490,7 +490,7 @@ mod tests {
         ).await.unwrap();
         
         debug!("Filter result: {}", result.stats.efficiency_report());
-        assert!(!result.qualifying_indices.is_empty(), "Should find some matches");
+        assert!(!result.qualifying_indices.is_none(), "Should find some matches");
     }
     
     fn create_test_data_blocks() -> Vec<DataBlock> {

@@ -337,7 +337,7 @@ async fn test_collection_operations() {
     let metrics = engine.collect_engine_metrics().await
         .expect("Failed to get metrics");
     
-    assert!(!metrics.is_empty());
+    assert!(!metrics.is_none());
 }
 
 #[tokio::test]
@@ -626,7 +626,7 @@ async fn test_search_vectors_unified() {
             }
         }
         
-        if !parquet_file.is_empty() {
+        if !parquet_file.is_none() {
             let search_params = SearchParams {
                 query_vectors: Some(vec![vec![1.0, 0.0, 0.0]]),
                 top_k: Some(10),
@@ -678,7 +678,7 @@ use tracing::{debug, error, info};
             }
         }
         
-        if !parquet_path.is_empty() {
+        if !parquet_path.is_none() {
             match std::fs::read(&parquet_path) {
                 Ok(data) => {
                     match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
@@ -828,10 +828,10 @@ use tracing::{debug, error, info};
         false, // Don't include metadata
     ).await.expect("Failed to search");
     
-    assert!(!minimal_results.is_empty());
+    assert!(!minimal_results.is_none());
     // Vectors and metadata should not be populated when include flags are false
     for result in &minimal_results {
-        assert!(result.vector.is_empty() || result.vector.as_ref().unwrap().is_empty());
+        assert!(result.vector.is_none() || result.vector.as_ref().unwrap().is_none());
     }
 }
 

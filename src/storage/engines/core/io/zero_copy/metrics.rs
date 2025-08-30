@@ -837,7 +837,7 @@ mod tests {
         collector.record_cache_hit();
         
         let recommendations = collector.generate_recommendations();
-        assert!(!recommendations.is_empty());
+        assert!(!recommendations.is_none());
         
         // Should have cache optimization recommendation due to low hit rate
         let cache_rec = recommendations.iter()

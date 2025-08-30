@@ -706,7 +706,7 @@ mod tests {
             let op = DeltaOperation::AddVectors {
                 vectors: vec![(format!("vec_{}", i), vec![0.1; 128])],
             };
-            assert!(manager.add_delta(op).is_empty());
+            assert!(manager.add_delta(op).is_none());
         }
         
         assert_eq!(manager.get_deltas().len(), 3);

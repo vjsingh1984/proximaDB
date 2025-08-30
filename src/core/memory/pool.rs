@@ -409,7 +409,7 @@ impl VectorMemoryPool {
         config: &crate::core::serialization::VectorSerializationConfig,
     ) -> Result<Vec<u8>> {
         let mut pooled_buffer = self.serialization_buffers.acquire();
-        let buffer = pooled_buffer.get_mut();
+        let buffer = &mut *pooled_buffer;
         
         // Clear the buffer and estimate total size to minimize reallocations
         buffer.clear();
@@ -503,20 +503,20 @@ impl VectorMemoryPool {
     /// Get a f32 buffer from the pool
     pub fn f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
         let mut item = self.vector_buffers.acquire();
-        item.get_mut().clear();
-        item.get_mut().reserve(capacity);
+        (&mut *item).clear();
+        (&mut *item).reserve(capacity);
         item
     }
     
     /// Get peak memory usage across all pools
     pub fn peak_usage(&self) -> usize {
-        let stats = self.get_comprehensive_stats();
+        let stats = self.comprehensive_stats();
         stats.total_peak_memory_bytes()
     }
     
     /// Get memory efficiency across all pools
     pub fn efficiency(&self) -> f32 {
-        let stats = self.get_comprehensive_stats();
+        let stats = self.comprehensive_stats();
         stats.overall_efficiency()
     }
     
@@ -641,10 +641,10 @@ mod tests {
         let pool = Pool::new(config, || Vec::<u8>::with_capacity(1024));
         
         // Test acquisition
-        let item1 = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+        let item1 = pool.acquire();
         assert_eq!(item1.capacity(), 1024);
         
-        let item2 = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+        let item2 = pool.acquire();
         assert_eq!(item2.capacity(), 1024);
         
         // Check stats
@@ -661,12 +661,12 @@ mod tests {
             |buf| buf.clear(),
         );
         
-        let mut item = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+        let mut item = pool.acquire();
         item.push(99);
         drop(item);
         
         // Next acquisition should get a clean buffer
-        let item = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+        let item = pool.acquire();
         assert!(item.is_empty());
     }
 
@@ -701,7 +701,7 @@ mod tests {
         
         // Generate some activity
         for _ in 0..10 {
-            let _item = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+            let _item = pool.acquire();
         }
         
         let stats = pool.stats();
@@ -735,7 +735,7 @@ mod tests {
         let initial_stats = pool.stats();
         
         {
-            let mut item = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+            let mut item = pool.acquire();
             assert_eq!(item[0], 42);
             item.push(100);
         } // item dropped here
@@ -752,7 +752,7 @@ mod tests {
             let pool = pool.clone();
             thread::spawn(move || {
                 for _ in 0..100 {
-                    let _item = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
+                    let _item = pool.acquire();
                     thread::sleep(Duration::from_micros(1));
                 }
             })

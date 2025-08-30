@@ -11,10 +11,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::index::axis::{
-    AxisConfig, CollectionAnalyzer, MigrationDecision,
+    AxisConfig, CollectionAnalyzer,
     management::strategy::{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
     types::{Data, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy},
 };
+use super::migration_engine::{MigrationDecision, MigrationComplexity};
 
 
 /// Engine for analyzing collections and recommending optimal indexing strategies
@@ -326,12 +327,12 @@ impl AdaptiveIndexEngine {
             .await?;
 
         // Check against threshold
-        if improvement < self.config.migration_config.improvement_threshold {
+        if improvement < self.config.migration_config.improvement_threshold as f64 {
             return Ok(MigrationDecision::Stay {
                 reason: format!(
                     "Improvement ({:.2}%) below threshold ({:.2}%)",
                     improvement * 100.0,
-                    self.config.migration_config.improvement_threshold * 100.0
+                    self.config.migration_config.improvement_threshold as f64 * 100.0
                 ),
             });
         }
@@ -358,11 +359,20 @@ impl AdaptiveIndexEngine {
         let mut history = self.decision_history.write().await;
         history.push(decision);
 
+        // Convert complexity score to MigrationComplexity enum
+        let migration_complexity = if complexity < 0.3 {
+            MigrationComplexity::Low
+        } else if complexity < 0.7 {
+            MigrationComplexity::Medium
+        } else {
+            MigrationComplexity::High
+        };
+
         Ok(MigrationDecision::Migrate {
             from: current_strategy,
             to: optimal_strategy,
-            estimated_improvement: improvement,
-            migration_complexity: complexity,
+            estimated_improvement: improvement as f32,
+            complexity: migration_complexity,
             estimated_duration: duration,
         })
     }

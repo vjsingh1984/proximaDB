@@ -21,15 +21,15 @@ use tracing::{debug, error, info};
         let metrics = CollectionMetrics::default();
         
         // Verify default values
-        assert!(metrics.collection_id.is_empty());
+        assert!(metrics.collection_id.is_none());
         assert_eq!(metrics.vector_count, 0);
         assert_eq!(metrics.dimension, 0);
         assert_eq!(metrics.total_inserts, 0);
         assert_eq!(metrics.total_searches, 0);
         assert_eq!(metrics.avg_insert_latency_us, 0.0);
         assert_eq!(metrics.sparsity_ratio, 0.0);
-        assert!(metrics.filterable_column_stats.is_empty());
-        assert!(metrics.available_indexes.is_empty());
+        assert!(metrics.filterable_column_stats.is_none());
+        assert!(metrics.available_indexes.is_none());
         assert_eq!(metrics.cache_hit_ratio, 0.0);
         
         info!("✅ CollectionMetrics defaults test passed");

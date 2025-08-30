@@ -1,6 +1,184 @@
-// =============================================================================
-// ORGANIZED STORAGE MODULE STRUCTURE
-// =============================================================================
+//! # Storage Module - Persistence and Data Management Layer
+//!
+//! This module provides ProximaDB's sophisticated storage subsystem with multiple
+//! storage engines, write-ahead logging, metadata management, and advanced caching.
+//! It implements a layered architecture for durability, performance, and flexibility.
+//!
+//! ## Role in ProximaDB Architecture
+//!
+//! The storage layer manages all data persistence:
+//! ```text
+//! Services Layer
+//!       ↓
+//! ┌─────────────────────────────────────────────┐
+//! │            Storage Subsystem                 │
+//! ├─────────────────────────────────────────────┤
+//! │  WAL → MemTable → Storage Engine → Disk     │
+//! │   ↓       ↓           ↓             ↓       │
+//! │ EventLog Cache   Compaction    Filesystem   │
+//! └─────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Core Components
+//!
+//! ### 1. **Storage Engines** (`engines/`)
+//! Six specialized engines for different workloads:
+//! - **SST**: Row-based for OLTP, real-time queries
+//! - **VIPER**: Columnar Parquet for analytics
+//! - **NOVA**: Hybrid quantized columnar
+//! - **SWIFT**: High-speed hierarchical blocks
+//! - **PRISM**: Tree-based with FastLanes
+//! - **RAPTOR**: Matrix-optimized with adaptive PXK
+//!
+//! ### 2. **Write-Ahead Log** (`persistence/write_ahead_log/`)
+//! Durability and recovery system:
+//! - Append-only log for all operations
+//! - Configurable sync modes (immediate, batch)
+//! - Recovery from crashes
+//! - Compaction coordination
+//!
+//! ### 3. **MemTable** (`memtable/`)
+//! In-memory write buffer:
+//! - Lock-free concurrent writes
+//! - Automatic flushing to storage
+//! - Multiple implementations (SkipList, BTree, ART)
+//! - WAL integration for durability
+//!
+//! ### 4. **Metadata Store** (`metadata/`)
+//! Collection and system metadata:
+//! - Atomic metadata operations
+//! - Cloud backend support (S3, Azure, GCS)
+//! - Schema management
+//! - Index configurations
+//!
+//! ### 5. **Cache System** (`cache/`)
+//! Multi-level caching infrastructure:
+//! - Query result cache
+//! - Metadata cache
+//! - Block cache for storage engines
+//! - Adaptive eviction policies
+//!
+//! ### 6. **Transaction Coordinator** (`transaction_coordinator.rs`)
+//! Atomic operations across components:
+//! - Two-phase commit protocol
+//! - Lock-free coordination with DashMap
+//! - Rollback on failures
+//! - Staging area management
+//!
+//! ## Storage Flow
+//!
+//! ### Write Path
+//! ```text
+//! Insert Request
+//!       ↓
+//! Write to WAL (durability)
+//!       ↓
+//! Insert to MemTable (fast access)
+//!       ↓
+//! Return to client
+//!       ↓
+//! Background: Flush to Storage Engine
+//!       ↓
+//! Background: Compaction
+//! ```
+//!
+//! ### Read Path
+//! ```text
+//! Query Request
+//!       ↓
+//! Check Cache
+//!       ↓
+//! Search MemTable (recent data)
+//!       ↓
+//! Search Storage Engine (persistent data)
+//!       ↓
+//! Merge Results
+//!       ↓
+//! Update Cache
+//! ```
+//!
+//! ## Key Features
+//!
+//! ### Strategy Pattern
+//! All engines implement `UnifiedStorageEngine` trait:
+//! ```rust
+//! trait UnifiedStorageEngine {
+//!     async fn insert(&self, records: Vec<VectorRecord>) -> Result<InsertResult>;
+//!     async fn search(&self, query: SearchQuery) -> Result<SearchResult>;
+//!     async fn flush(&self, params: FlushParameters) -> Result<FlushResult>;
+//!     async fn compact(&self, params: CompactionParameters) -> Result<CompactionResult>;
+//! }
+//! ```
+//!
+//! ### Lock-Free Concurrency
+//! Using DashMap for concurrent access:
+//! - No global locks
+//! - Sharded internal structure
+//! - Wait-free reads
+//! - Low contention writes
+//!
+//! ### Cloud-Native Storage
+//! Filesystem abstraction supports:
+//! - Local filesystem
+//! - Amazon S3
+//! - Azure Blob Storage
+//! - Google Cloud Storage
+//! - HDFS
+//!
+//! ## Configuration
+//!
+//! ```toml
+//! [storage]
+//! default_engine = "sst"  # or "viper", "nova", etc.
+//! data_directory = "/data/proximadb"
+//! 
+//! # WAL configuration
+//! [storage.wal]
+//! enabled = true
+//! sync_mode = "batch"  # or "immediate"
+//! batch_size = 100
+//! flush_interval_ms = 1000
+//! 
+//! # MemTable configuration
+//! [storage.memtable]
+//! type = "skiplist"  # or "btree", "art"
+//! max_size_mb = 256
+//! flush_threshold = 0.8
+//! 
+//! # Compaction settings
+//! [storage.compaction]
+//! strategy = "leveled"  # or "tiered", "unified"
+//! max_background_jobs = 2
+//! target_file_size_mb = 128
+//! ```
+//!
+//! ## Performance Characteristics
+//!
+//! - **Write Latency**: < 1ms (memtable)
+//! - **Flush Throughput**: 500MB/sec
+//! - **Compaction Speed**: 200MB/sec
+//! - **Recovery Time**: < 10s for 1GB WAL
+//! - **Cache Hit Rate**: 80-95%
+//!
+//! ## Module Organization
+//!
+//! - **`builder.rs`**: Storage system builder pattern
+//! - **`traits.rs`**: Core storage traits
+//! - **`types.rs`**: Common type definitions  
+//! - **`validation.rs`**: Configuration validation
+//! - **`engine.rs`**: Main storage engine implementation
+//! - **`optimization.rs`**: Storage optimization utilities
+//! - **`strategy.rs`**: Collection lifecycle strategies
+//! - **`common/`**: Shared utilities and helpers
+//!
+//! ## Error Handling
+//!
+//! Unified error types for storage operations:
+//! - `StorageError::DiskIO` - I/O failures
+//! - `StorageError::WAL` - Write-ahead log errors
+//! - `StorageError::Corruption` - Data corruption detected
+//! - `StorageError::OutOfSpace` - Disk space exhausted
+//! - `StorageError::Configuration` - Invalid configuration
 
 pub mod builder;
 pub mod traits;

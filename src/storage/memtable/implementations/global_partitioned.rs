@@ -36,6 +36,7 @@ struct CollectionPartition {
     batch_count: usize,
     last_flush_sequence: u64,
     timestamp: std::time::SystemTime,
+    created_at: std::time::SystemTime,
 }
 
 impl CollectionPartition {
@@ -48,6 +49,7 @@ impl CollectionPartition {
             batch_count: 0,
             last_flush_sequence: 0,
             timestamp: std::time::SystemTime::now(),
+            created_at: std::time::SystemTime::now(),
         }
     }
 
@@ -60,7 +62,7 @@ impl CollectionPartition {
         let vector_count = batch.vector_records.len();
 
         // Create bloom filter for this batch
-        if batch.metadata_bloom_filter.is_empty() {
+        if batch.metadata_bloom_filter.is_none() {
             match batch.create_bloom_filter() {
                 Ok(_) => {
                     tracing::debug!("✅ Created bloom filter for batch {} with {} vectors", batch_id, vector_count);
@@ -73,8 +75,8 @@ impl CollectionPartition {
 
         // Update vector ID index for fast lookups
         for vector_record in batch.vector_records.iter() {
-            if !vector_record.id.as_deref().is_empty() {
-                self.vector_id_index.insert(vector_record.id.as_deref().to_string(), batch_id.clone());
+            if !vector_record.id.is_empty() {
+                self.vector_id_index.insert(vector_record.id.clone(), batch_id.clone());
             }
         }
 
@@ -102,7 +104,7 @@ impl CollectionPartition {
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
-                if !vector_record.id.as_deref().is_empty() && vector_record.id.as_deref().unwrap_or("") == vector_id {
+                if !vector_record.id.is_empty() && vector_record.id == vector_id {
                     let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                     let version = vector_record.version;
                     
@@ -135,7 +137,7 @@ impl CollectionPartition {
                 .map(|expires| expires < current_time_secs)
                 ;
             
-            if is_expired {
+            if is_expired.unwrap_or(false) {
                 tracing::debug!("🗑️ Vector {} found but expired (tombstone)", vector_id);
                 return None; // Logically deleted
             }
@@ -162,8 +164,8 @@ impl CollectionPartition {
             if let Some(batch) = self.wal_batches.remove(&batch_id) {
                 // Remove vector IDs from index
                 for vector_record in batch.vector_records.iter() {
-                    if !vector_record.id.as_deref().is_empty() {
-                        self.vector_id_index.remove(vector_record.id.as_deref());
+                    if !vector_record.id.is_empty() {
+                        self.vector_id_index.remove(&vector_record.id);
                     }
                 }
                 
@@ -199,8 +201,8 @@ impl CollectionPartition {
                 let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
-                if !vector_record.id.as_deref().is_empty() {
-                    let vector_id = vector_record.id.as_deref();
+                if !vector_record.id.is_empty() {
+                    let vector_id = &vector_record.id;
                     // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, existing_seq, existing_version)) => {
@@ -217,7 +219,7 @@ impl CollectionPartition {
                     
                     if is_newer {
                         id_to_latest.insert(
-                            vector_record.id.as_deref().to_string(),
+                            vector_record.id.clone(),
                             (vector_record.clone(), sequence, version)
                         );
                     }
@@ -228,7 +230,7 @@ impl CollectionPartition {
                         .map(|expires| expires < current_time_secs)
                         ;
                     
-                    if !is_expired {
+                    if !is_expired.unwrap_or(false) {
                         vectors_without_id.push(vector_record.clone());
                     }
                 }
@@ -244,7 +246,7 @@ impl CollectionPartition {
                 .map(|expires| expires < current_time_secs)
                 ;
             
-            if !is_expired {
+            if !is_expired.unwrap_or(false) {
                 vectors.push(record);
             }
         }
@@ -308,8 +310,8 @@ impl CollectionPartition {
                 let sequence = wal_batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 let version = vector_record.version;
                 
-                if !vector_record.id.as_deref().is_empty() {
-                    let vector_id = vector_record.id.as_deref();
+                if !vector_record.id.is_empty() {
+                    let vector_id = &vector_record.id;
                     // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, _, existing_seq, existing_version)) => {
@@ -327,12 +329,12 @@ impl CollectionPartition {
                     if is_newer {
                         let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
                         id_to_latest.insert(
-                            vector_record.id.as_deref().to_string(),
+                            vector_record.id.clone(),
                             (score, vector_record.clone(), sequence, version)
                         );
                         
                         tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={:?}", 
-                                       vector_record.id.as_deref(), sequence, version);
+                                       &vector_record.id, sequence, version);
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
@@ -341,7 +343,7 @@ impl CollectionPartition {
                         .map(|expires| expires < current_time_secs)
                         ;
                     
-                    if !is_expired {
+                    if !is_expired.unwrap_or(false) {
                         let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
                         results_without_id.push((score, vector_record.clone()));
                     }
@@ -360,7 +362,7 @@ impl CollectionPartition {
                 .map(|expires| expires < current_time_secs)
                 ;
             
-            if is_expired {
+            if is_expired.unwrap_or(false) {
                 tracing::debug!("🗑️ Filtering out expired latest version for ID {}", id);
                 filtered_count += 1;
             } else {
@@ -535,7 +537,7 @@ impl GlobalPartitionedMemtable {
             );
 
             // Sort by rank_value (lower = better) and limit to k
-            results.sort_by(|a, b| a.0.rank_value.partial_cmp(&b.0.rank_value));
+            results.sort_by(|a, b| a.0.rank_value.partial_cmp(&b.0.rank_value).unwrap_or(std::cmp::Ordering::Equal));
             results.truncate(k);
 
             tracing::debug!("📊 GLOBAL_PARTITIONED_SEARCH: Found {} results in collection {} (partition has {} vectors) using {:?}", 
@@ -704,12 +706,14 @@ impl GlobalPartitionedMemtable {
             // Secondary: Efficiency score (highest first)
             let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score)
                 ;
-            if efficiency_cmp != std::cmp::Ordering::Equal {
-                return efficiency_cmp;
+            if let Some(cmp) = efficiency_cmp {
+                if cmp != std::cmp::Ordering::Equal {
+                    return cmp;
+                }
             }
             
             // Tertiary: Age score (oldest first)
-            a.age_score.partial_cmp(&b.age_score)
+            a.age_score.partial_cmp(&b.age_score).unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Select collections until we meet reduction target or max_collections limit
@@ -717,7 +721,7 @@ impl GlobalPartitionedMemtable {
         let mut total_reduction = 0;
         let max_to_select = max_collections;
 
-        for collection_info in collection_infos.into_iter().take(max_to_select) {
+        for collection_info in collection_infos.into_iter().take(max_to_select.unwrap_or(usize::MAX)) {
             selected_collections.push(collection_info.clone());
             total_reduction += collection_info.total_size;
             
@@ -782,7 +786,7 @@ impl GlobalPartitionedMemtable {
 
         // Sort small collections by age (oldest first) to handle long-lived small collections
         small_collections.sort_by(|a, b| {
-            a.age_score.partial_cmp(&b.age_score)
+            a.age_score.partial_cmp(&b.age_score).unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let small_collections_count = small_collections.len();
@@ -890,8 +894,8 @@ impl GlobalPartitionedMemtable {
                 
                 // Remove from vector index
                 for vector_record in removed_batch.vector_records.iter() {
-                    if let Some(ref id) = vector_record.id {
-                        partition.vector_id_index.remove(id);
+                    if !vector_record.id.is_empty() {
+                        partition.vector_id_index.remove(&vector_record.id);
                     }
                 }
                 
@@ -958,6 +962,20 @@ impl GlobalPartitionedMemtable {
             .map(|(id, partition)| (id.clone(), (partition.vector_count, partition.total_size)))
             .collect()
     }
+
+    /// Get stats for a specific collection
+    pub async fn stats(&self, collection_id: &str) -> (usize, usize) {
+        let collections = self.collections.read().await;
+        collections.get(collection_id)
+            .map(|partition| (partition.vector_count, partition.total_size))
+            .unwrap_or((0, 0))
+    }
+
+    /// List all collection IDs
+    pub async fn list_collections(&self) -> Result<Vec<String>> {
+        let collections = self.collections.read().await;
+        Ok(collections.keys().cloned().collect())
+    }
 }
 
 
@@ -1010,7 +1028,7 @@ fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batc
 /// Higher score = older collection (should be flushed sooner)
 fn calculate_age_score(timestamp: std::time::SystemTime) -> f64 {
     let now = std::time::SystemTime::now();
-    let age_duration = now.duration_since(timestamp).clone();
+    let age_duration = now.duration_since(timestamp).unwrap_or_else(|_| std::time::Duration::from_secs(0));
     
     // Age in minutes (higher = older)
     let age_minutes = age_duration.as_secs() as f64 / 60.0;

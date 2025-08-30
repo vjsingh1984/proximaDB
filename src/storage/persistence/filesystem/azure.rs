@@ -241,7 +241,7 @@ impl AzureFileSystem {
                     "No default container configured for relative Azure paths".to_string(),
                 ))
             }
-        } else if path.contains_hash('/') {
+        } else if path.contains('/') {
             // Extract container from path
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             Ok((parts[0].to_string(), parts[1].to_string()))
@@ -301,7 +301,7 @@ impl AzureClient {
 
         let mut request = self
             .http_client
-            .get(key)
+            .get("Location")
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -394,17 +394,21 @@ impl AzureClient {
             .body(data.to_vec());
 
         // Add blob tier if specified
-        if let Some(storage_class) = options.storage_class {
-            request = request.header("x-ms-access-tier", storage_class);
-        } else {
-            request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_deref());
-        }
-
-        // Add metadata if specified
-        if let Some(metadata) = options.metadata {
-            for (key, value) in metadata {
-                request = request.header(format!("x-ms-meta-{}", key), value);
+        if let Some(ref opts) = options {
+            if let Some(ref storage_class) = opts.storage_class {
+                request = request.header("x-ms-access-tier", storage_class);
+            } else {
+                request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_str());
             }
+            
+            // Add metadata if specified
+            if let Some(ref metadata) = opts.metadata {
+                for (key, value) in metadata {
+                    request = request.header(format!("x-ms-meta-{}", key), value);
+                }
+            }
+        } else {
+            request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_str());
         }
 
         let response = request
@@ -548,26 +552,26 @@ impl FileSystem for AzureFileSystem {
         if response.status().is_success() {
             let size = response
                 .headers()
-                .get(key)
+                .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
                 ;
 
             let etag = response
                 .headers()
-                .get(key)
+                .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             let blob_tier = response
                 .headers()
-                .get(key)
+                .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             Ok(FileMetadata {
                 path: format!("adls://{}/{}", container, blob_path),
-                size,
+                size: size.unwrap_or(0),
                 created: None,       // Would need to parse x-ms-creation-time header
                 modified: None,      // Would need to parse Last-Modified header
                 is_directory: false, // Azure blobs are always files
@@ -760,13 +764,13 @@ impl AzureCredentialProvider for ServicePrincipalProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse Azure token: {}", e)))?;
 
         let access_token = token_json["access_token"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("access_token not found in Azure response".to_string())
             })?
             .to_string();
 
-        let expires_in = token_json["expires_in"].as_u64();
+        let expires_in = token_json["expires_in"].as_u64().unwrap_or(3600);
         let expiration = Some(Instant::now() + Duration::from_secs(expires_in));
 
         Ok(AzureCredentials {

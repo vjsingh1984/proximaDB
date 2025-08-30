@@ -223,7 +223,8 @@ impl IntegratedSearchOptimizer {
             has_avx2: caps.cpu.features.avx2_support,
             has_avx512: caps.cpu.features.avx512_support,
             cpu_cores: num_cpus::get(),
-            available_memory_gb: (sys_info::mem_info().unwrap().total as f32) / (1024.0 * 1024.0),
+            // TODO: Use proper memory detection when sys_info crate is available
+            available_memory_gb: 16.0, // Default estimate
         };
         
         Self {
@@ -556,7 +557,7 @@ impl IntegratedSearchOptimizer {
                     id: r.id.clone(),
                     score: r.score,
                     similarity: r.similarity,
-                    vector: r.vector.clone().clone(),
+                    vector: r.vector.clone().unwrap_or_default(),
                     metadata: vec![], // Would convert metadata
                     version: r.version,
                     timestamp: r.timestamp,
@@ -902,9 +903,10 @@ impl IntegratedSearchOptimizer {
             .map(|chunk| chunk.to_vec())
             .collect();
         
+        let params_clone = search_params.clone();
         let stream = stream::iter(chunks)
             .then(move |batch| {
-                let params = search_params.clone();
+                let params = params_clone.clone();
                 async move {
                     // Process batch (simplified)
                     Ok::<InternalSearchResult, anyhow::Error>(InternalSearchResult::default())

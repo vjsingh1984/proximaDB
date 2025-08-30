@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tracing::{trace, debug, info};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use super::traits::{DataRange, QueryContext, QueryType, FileAccessRequest, RequestPriority};
 use super::config::{
     DownloadOptimizerConfig, SizeBasedThresholds, NetworkAdjustments, 

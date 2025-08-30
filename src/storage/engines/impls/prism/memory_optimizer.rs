@@ -2,7 +2,7 @@
 // Maximizes in-memory caching and minimizes I/O for read-heavy workloads
 
 use std::collections::{HashMap, BTreeMap};
-use std::sync::Arc;
+use crate::storage::persistence::filesystem::FileSystem;use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use anyhow::Result;
@@ -248,7 +248,7 @@ impl MemoryOptimizedStorage {
         
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            results.push(self.get_vector(id).await?);
+            results.push(self.vector(id).await?);
         }
         
         Ok(results)

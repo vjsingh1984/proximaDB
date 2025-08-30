@@ -1026,7 +1026,7 @@ mod tests {
         
         // Verify deletion
         let after_delete = backend.collection_metadata("test_collection").await.unwrap();
-        assert!(after_delete.is_empty());
+        assert!(after_delete.is_none());
     }
     
     #[tokio::test]

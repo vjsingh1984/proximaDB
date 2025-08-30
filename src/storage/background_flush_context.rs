@@ -200,7 +200,7 @@ impl BackgroundFlushContext {
             id: self.collection_id.clone(),
             config: Some(config),
             stats: Some(stats),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             storage_assignment: Some(storage_assignment),
         }

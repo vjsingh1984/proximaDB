@@ -84,7 +84,7 @@ async fn test_sstable_format_with_bloom_filter() {
     
     // Test retrieving a vector
     debug!("\nTesting vector retrieval...");
-    match reader.get_vector(&file_url, "vec_005").await {
+    match reader.vector(&file_url, "vec_005").await {
         Ok(Some(vector)) => {
             debug!("✓ Found vector: {:?}", vector.id);
             assert_eq!(vector.id, Some("vec_005".to_string()));

@@ -110,7 +110,7 @@ impl BackgroundMaintenanceManager {
         let engines = storage_engines.read().await;
         
         // Use the engine type from context instead of defaulting to VIPER
-        let engine = if let Some(engine) = engines.get(&engine_name) {
+        let engine = if let Some(engine) = engines.get(&**engine_name) {
             info!("🏭 [COMPACTION] Using {} storage engine for collection {}", 
                   engine_name, context.collection_id);
             engine.clone()
@@ -216,7 +216,7 @@ impl BackgroundMaintenanceManager {
     /// Get collection status
     pub async fn get_collection_status(&self, collection_id: &str) -> BackgroundTaskStatus {
         let status_map = self.collection_status.read().await;
-        status_map.get(collection_id).cloned()
+        status_map.get(collection_id).cloned().unwrap_or(BackgroundTaskStatus::Idle)
     }
 
     /// Get background maintenance statistics

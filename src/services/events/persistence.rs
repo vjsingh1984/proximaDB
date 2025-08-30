@@ -16,6 +16,7 @@ use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use tracing::{debug, info, warn, error};
 
 use crate::index::axis::eventlog::{IndexEvent, EventType, StorageEngineType};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence
 pub struct EventLogWAL {
@@ -30,6 +31,9 @@ pub struct EventLogWAL {
     
     /// Current file size
     current_size: u64,
+    
+    /// Filesystem factory for cloud storage support
+    filesystem_factory: Arc<FilesystemFactory>,
 }
 
 /// Serializable event for persistence
@@ -47,7 +51,7 @@ struct PersistentEvent {
 
 impl EventLogWAL {
     /// Create new EventLog WAL
-    pub async fn new(wal_dir: impl AsRef<Path>) -> Result<Self> {
+    pub async fn new(wal_dir: impl AsRef<Path>, filesystem_factory: Arc<FilesystemFactory>) -> Result<Self> {
         let wal_dir = wal_dir.as_ref().to_path_buf();
         
         // Create WAL directory if it doesn't exist
@@ -68,6 +72,7 @@ impl EventLogWAL {
             current_file,
             max_file_size: 100 * 1024 * 1024, // 100MB per file
             current_size,
+            filesystem_factory,
         })
     }
     
@@ -160,7 +165,7 @@ impl EventLogWAL {
             if !path.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| n.starts_with("eventlog_wal_"))
-                
+                .unwrap_or(false)
             {
                 continue;
             }
@@ -186,13 +191,15 @@ impl EventLogWAL {
     ) -> Result<Vec<IndexEvent>> {
         let mut events = Vec::new();
         // Use filesystem API for cloud compatibility
-        let filesystem = self.filesystem_factory.get_filesystem(path.to_str().unwrap_or("")).await?;
-        let buffer = filesystem.read(path.to_str().unwrap_or("")).await?;
+        let filesystem = self.filesystem_factory.get_filesystem(path.to_str().unwrap_or(""))?;
+        let path_str = path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path: {:?}", path))?;
+        let buffer = filesystem.read(path_str).await?;
         
         let mut cursor = 0;
         while cursor + 4 <= buffer.len() {
             // Read length prefix
-            let len_bytes: [u8; 4] = buffer[cursor..cursor + 4].try_into().unwrap();
+            let len_bytes: [u8; 4] = buffer[cursor..cursor + 4].try_into()
+                .map_err(|_| anyhow::anyhow!("Failed to read event length at position {}", cursor))?;
             let len = u32::from_le_bytes(len_bytes) as usize;
             cursor += 4;
             
@@ -205,7 +212,7 @@ impl EventLogWAL {
             match bincode::deserialize::<PersistentEvent>(&buffer[cursor..cursor + len]) {
                 Ok(persistent_event) => {
                     // Only include if not acknowledged
-                    if !acknowledged_ids.contains_hash(&persistent_event.event.event_id) {
+                    if !acknowledged_ids.contains(&persistent_event.event.event_id) {
                         events.push(persistent_event.event);
                     }
                 }
@@ -259,7 +266,7 @@ impl EventLogWAL {
             if path.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| n.starts_with("eventlog_wal_"))
-                
+                .unwrap_or(false)
             {
                 fs::remove_file(&path).await?;
             }

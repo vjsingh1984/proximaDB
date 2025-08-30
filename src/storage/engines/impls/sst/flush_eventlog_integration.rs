@@ -157,14 +157,14 @@ mod tests {
     fn test_flush_handler_creation() {
         let handler = SstFlushHandler::new();
         // Handler should work even without EventLog service
-        assert!(handler.event_log.is_empty() || handler.event_log.is_some());
+        assert!(handler.event_log.is_none() || handler.event_log.is_some());
     }
     
     #[tokio::test]
     async fn test_can_compact_without_service() {
         let handler = SstFlushHandler::new();
         // Without EventLog service, compaction should be allowed
-        if handler.event_log.is_empty() {
+        if handler.event_log.is_none() {
             assert!(handler.can_compact_files("test", &["file1.sstable".to_string()]).await);
         }
     }

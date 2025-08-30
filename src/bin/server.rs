@@ -14,7 +14,128 @@
  * limitations under the License.
  */
 
-//! ProximaDB Server - Main server binary for the ProximaDB vector database
+//! # ProximaDB Server - Production-Ready Vector Database Server
+//!
+//! This is the main server binary for ProximaDB, providing a complete vector database
+//! server with REST and gRPC APIs, automatic hardware detection, and cloud-native storage.
+//! The server handles concurrent requests, manages storage engines, and coordinates all
+//! subsystems for high-performance vector similarity search.
+//!
+//! ## Server Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │         ProximaDB Server                 │
+//! ├─────────────────────────────────────────┤
+//! │  REST API (5678) │ gRPC API (5679)      │
+//! ├─────────────────────────────────────────┤
+//! │         Service Layer                    │
+//! │  Collections │ Operations │ Search      │
+//! ├─────────────────────────────────────────┤
+//! │         Storage Layer                    │
+//! │  WAL │ MemTable │ Engines │ Cache       │
+//! ├─────────────────────────────────────────┤
+//! │         Compute Layer                    │
+//! │  SIMD │ GPU │ Quantization              │
+//! └─────────────────────────────────────────┘
+//! ```
+//!
+//! ## Key Features
+//!
+//! - **Dual Protocol**: REST and gRPC servers run concurrently
+//! - **Auto-Configuration**: Hardware detection and optimization
+//! - **Cloud Storage**: S3, Azure, GCS support out of the box
+//! - **Hot Reload**: Configuration changes without restart
+//! - **Graceful Shutdown**: Clean termination with data persistence
+//!
+//! ## Command Line Options
+//!
+//! ```bash
+//! proximadb-server [OPTIONS]
+//! 
+//! Options:
+//!   -c, --config <PATH>      Configuration file [default: config/config.toml]
+//!   -d, --data-dir <PATH>    Data directory override
+//!   -p, --port <PORT>        REST API port override
+//!   --node-id <ID>           Node identifier for clustering
+//!   -l, --log-level <LEVEL>  Log level (error, warn, info, debug, trace)
+//!   -h, --help               Print help information
+//! ```
+//!
+//! ## Configuration
+//!
+//! The server is configured via TOML file with these sections:
+//! - `[server]`: Core server settings (ports, data directory)
+//! - `[storage]`: Storage engine configuration
+//! - `[compute]`: Hardware acceleration settings
+//! - `[network]`: API server configuration
+//! - `[monitoring]`: Metrics and logging
+//!
+//! ## Startup Sequence
+//!
+//! 1. **Parse Arguments**: Process command line options
+//! 2. **Load Configuration**: Read and validate TOML config
+//! 3. **Initialize Logging**: Setup file and console logging
+//! 4. **Detect Hardware**: Identify CPU/GPU capabilities
+//! 5. **Create Directories**: Ensure data directories exist
+//! 6. **Initialize Storage**: Start WAL and storage engines
+//! 7. **Start Services**: Initialize service layer
+//! 8. **Launch Servers**: Start REST and gRPC servers
+//! 9. **Health Check**: Verify system is operational
+//!
+//! ## Directory Structure
+//!
+//! ```
+//! /data/proximadb/
+//! ├── wal/           # Write-ahead log files
+//! ├── metadata/      # Collection metadata
+//! │   ├── current/   # Active metadata
+//! │   ├── archive/   # Historical metadata
+//! │   └── __staging/ # Atomic write staging
+//! ├── collections/   # Per-collection data
+//! │   └── {name}/    # Collection-specific files
+//! └── log/           # Server logs
+//!     └── proximadb.log
+//! ```
+//!
+//! ## Environment Variables
+//!
+//! - `RUST_LOG`: Override log level (highest priority)
+//! - `PROXIMADB_CONFIG`: Alternative config file path
+//! - `PROXIMADB_DATA_DIR`: Override data directory
+//! - `PROXIMADB_PORT`: Override REST API port
+//!
+//! ## Signals and Shutdown
+//!
+//! - **SIGTERM/SIGINT**: Graceful shutdown with data flush
+//! - **SIGHUP**: Reload configuration (where supported)
+//! - **SIGUSR1**: Dump metrics to log
+//! - **SIGUSR2**: Trigger manual compaction
+//!
+//! ## Health Monitoring
+//!
+//! - REST: `GET http://localhost:5678/health`
+//! - gRPC: Health service on port 5679
+//! - Metrics: `GET http://localhost:5678/metrics`
+//!
+//! ## Production Deployment
+//!
+//! ```bash
+//! # Docker deployment (recommended)
+//! docker run -d \\
+//!   -p 5678:5678 -p 5679:5679 \\
+//!   -v /data:/data \\
+//!   -v /config:/config \\
+//!   proximadb/proximadb:latest \\
+//!   --config /config/production.toml
+//! 
+//! # Systemd service
+//! sudo systemctl start proximadb
+//! sudo systemctl enable proximadb
+//! 
+//! # Kubernetes
+//! kubectl apply -f proximadb-deployment.yaml
+//! ```
 
 use clap::Parser;
 use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
@@ -138,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .or_else(|_| args.log_level.clone().ok_or(()))
         .unwrap_or_else(|_| {
             // If config has a log level, use it, otherwise default to info
-            if config.monitoring.log_level.is_empty() || config.monitoring.log_level == "debug" || config.monitoring.log_level == "trace" {
+            if config.monitoring.log_level.is_none() || config.monitoring.log_level == "debug" || config.monitoring.log_level == "trace" {
                 // Override debug/trace with info for production
                 "info".to_string()
             } else {

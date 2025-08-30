@@ -2,19 +2,17 @@
 // Implements UnifiedStorageEngine trait for integration with ProximaDB
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
+use crate::storage::engines::core::ops::{UniversallyOptimized, UniversalPerformanceOptimizer, UniversalOptimizationStrategy};
+use crate::core::search::StorageTier;use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 // Universal performance optimization imports
-use crate::storage::engines::core::ops::performance_optimization::{
-    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
-    UniversalIOConfig, UniversallyOptimized
-};
+use crate::storage::engines::core::ops::performance_optimization::UniversalIOConfig;
 // VectorMemoryPool now managed by universal optimizer
-use crate::storage::persistence::filesystem::StorageTier;
+// StorageTier already imported from crate::core::search
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::core::VectorRecord;
@@ -635,20 +633,17 @@ impl UnifiedStorageEngine for SwiftEngine {
                     metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
                 };
                 
-                crate::proto::proximadb::SearchResult {
-                    id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
-                    vector_id: Some(record.id.unwrap_or_else(|| format!("unknown_{}", idx))),
+                crate::proto::proximadb::SearchVectorRecord {
+                    id: if record.id.is_empty() { format!("unknown_{}", idx) } else { record.id.clone() },
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
-                    vector: Some(record.vector),
-                    metadata: Some(record.metadata.into_iter().map(|m| (m.key, serde_json::Value::String(format!("{:?}", m.value)))).collect()),
-                    debug_info: None,
+                    vector: record.vector,
+                    metadata: record.metadata,
                     version: record.version,
-                    timestamp: None,
-                    semantic_similarity: Some(similarity_result),
+                    timestamp: record.timestamp,
+                    debug_info: None,
                     quantization_info: None,
                     engine_stats: None,
-                    index_path: None,
                 }
             })
             .collect();
@@ -830,7 +825,7 @@ impl SwiftEngine {
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         tracing::warn!("🔄 SWIFT: Falling back to direct search implementation");
         
         // Use the existing search implementation
@@ -860,8 +855,8 @@ impl SwiftEngine {
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
         
-        // Convert to core SearchResult format
-        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results.into_iter()
+        // Convert to InternalSearchResult format natively
+        let search_results: Vec<crate::core::search::InternalSearchResult> = all_results.into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
                 let similarity_result = crate::compute::distance_computation::SimilarityResult {
@@ -871,20 +866,45 @@ impl SwiftEngine {
                     metric: distance_metric,
                 };
                 
-                crate::proto::proximadb::SearchResult {
-                    id: record.id.unwrap_or_else(|| format!("unknown_{}", idx)),
-                    vector_id: Some(record.id.unwrap_or_else(|| format!("unknown_{}", idx))),
+                // Convert metadata from proto to internal format
+                let metadata: std::collections::HashMap<String, serde_json::Value> = record.metadata
+                    .iter()
+                    .map(|item| {
+                        let value = match &item.value {
+                            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
+                                serde_json::Value::String(s.clone()),
+                            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                                serde_json::json!(n),
+                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
+                                serde_json::Value::Bool(*b),
+                            None => serde_json::Value::Null,
+                        };
+                        (item.key.clone(), value)
+                    })
+                    .collect();
+                
+                crate::core::search::InternalSearchResult {
+                    id: if record.id.is_empty() { format!("unknown_{}", idx) } else { record.id.clone() },
+                    vector_id: Some(record.id.clone()),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
-                    vector: Some(record.vector),
-                    metadata: Some(record.metadata.into_iter().map(|m| (m.key, serde_json::Value::String(format!("{:?}", m.value)))).collect()),
+                    distance: Some(distance),
+                    vector: Some(record.vector.clone()),
+                    metadata,
+                    version: Some(record.version),
+                    timestamp: record.timestamp,
+                    collection_id: Some(collection_id.to_string()),
+                    engine: Some("swift".to_string()),
+                    shard_id: None,
+                    partition_key: None,
+                    namespace: None,
+                    labels: std::collections::HashMap::new(),
+                    explanation: None,
                     debug_info: None,
-                    version: record.version,
-                    timestamp: None,
-                    semantic_similarity: Some(similarity_result),
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
+                    highlights: Vec::new(),
+                    facets: std::collections::HashMap::new(),
+                    aggregations: std::collections::HashMap::new(),
+                    related_items: Vec::new(),
                 }
             })
             .collect();

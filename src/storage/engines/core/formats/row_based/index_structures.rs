@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::core::bloom::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig};
+use crate::core::bloom::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig, BloomFilterBuilder};
 use super::block_structures::{BlockLocation, RowBasedDataBlock};
 
 /// Row-based ID indexing with multiple strategies
@@ -25,7 +25,9 @@ pub struct RowBasedIdIndex {
     /// Hierarchical levels
     hierarchical_levels: Vec<HierarchicalLevel>,
     
-    /// Bloom filters for existence checks
+    /// Bloom filter builders for existence checks (built during construction)
+    bloom_filter_builders: Vec<BloomFilterBuilder>,
+    /// Final bloom filters (created after construction)
     bloom_filters: Vec<SstableBloomFilter>,
     
     /// Index statistics
@@ -277,12 +279,20 @@ pub enum AccessType {
 impl RowBasedIdIndex {
     /// Create a new ID index with specified type
     pub fn new(index_type: Index, config: IndexConfiguration) -> Self {
+        // Create bloom filter builders
+        let mut bloom_filter_builders = Vec::new();
+        if config.enable_bloom_filters {
+            let bloom_config = SstBloomConfig::default();
+            bloom_filter_builders.push(BloomFilterBuilder::new(bloom_config));
+        }
+        
         let mut index = Self {
             index_type: index_type.clone(),
             btree_index: BTreeMap::new(),
             hash_index: HashMap::new(),
             dense_index: None,
             hierarchical_levels: Vec::new(),
+            bloom_filter_builders,
             bloom_filters: Vec::new(),
             statistics: IndexStatistics::default(),
             config,
@@ -304,11 +314,40 @@ impl RowBasedIdIndex {
         index
     }
     
+    /// Build final bloom filters from builders (call after all insertions)
+    pub fn finalize_bloom_filters(&mut self) -> Result<()> {
+        // Move builders out and build final filters
+        let builders = std::mem::take(&mut self.bloom_filter_builders);
+        
+        for builder in builders {
+            // Build the strategy
+            let strategy = builder.build();
+            
+            // Serialize the strategy to get the data
+            let serialized = strategy.serialize()?;
+            
+            // Create SstableBloomFilter with the serialized data
+            // Using default config and empty metadata filter for now
+            let bloom_config = SstBloomConfig::default();
+            let stats = crate::core::bloom::BloomFilterStats::default();
+            let sstable_bloom = SstableBloomFilter::new(
+                bloom_config,
+                serialized,
+                Vec::new(), // Empty metadata filter data
+                stats,
+            );
+            
+            self.bloom_filters.push(sstable_bloom);
+        }
+        
+        Ok(())
+    }
+    
     /// Insert an entry into the index
     pub async fn insert(&mut self, key: String, location: BlockLocation) -> Result<()> {
-        // Update bloom filters
-        for bloom in &mut self.bloom_filters {
-            bloom.insert(key.as_bytes());
+        // Update bloom filter builders
+        for builder in &mut self.bloom_filter_builders {
+            builder.add(key.as_bytes());
         }
         
         // Insert into appropriate index structures
@@ -341,7 +380,10 @@ impl RowBasedIdIndex {
     pub async fn lookup(&self, key: &str) -> Option<BlockLocation> {
         // Quick bloom filter check
         if !self.bloom_filters.is_empty() {
-            let exists = self.bloom_filters.iter().any(|bloom| bloom.contains(key.as_bytes()));
+            // Check if any bloom filter might contain the key
+            let exists = self.bloom_filters.iter().any(|bloom| {
+                bloom.might_contain_key(key).unwrap_or(true) // Conservative: assume it exists on error
+            });
             if !exists {
                 return None;
             }
@@ -452,7 +494,7 @@ impl RowBasedIdIndex {
         // Start from root and navigate down
         for level in self.hierarchical_levels.iter().rev() {
             if let Some(ref bloom) = level.bloom_filter {
-                if !bloom.contains(key.as_bytes()) {
+                if !bloom.might_contain_key(key).unwrap_or(true) {
                     continue;
                 }
             }

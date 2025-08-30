@@ -81,9 +81,9 @@ impl FilesystemKey {
                 let bucket = parsed.host_str();
                 let prefix = parsed.path().trim_start_matches('/');
                 if prefix.is_empty() {
-                    bucket.to_string()
+                    bucket.unwrap_or("").to_string()
                 } else {
-                    format!("{}/{}", bucket, prefix)
+                    format!("{}/{}", bucket.unwrap_or(""), prefix)
                 }
             }
             "adls" => {
@@ -91,7 +91,7 @@ impl FilesystemKey {
                 let host = parsed.host_str();
                 let path_parts: Vec<&str> =
                     parsed.path().trim_start_matches('/').split('/').collect();
-                format!("{}/{}", host, path_parts.join("/"))
+                format!("{}/{}", host.unwrap_or(""), path_parts.join("/"))
             }
             _ => parsed.path().to_string(),
         };

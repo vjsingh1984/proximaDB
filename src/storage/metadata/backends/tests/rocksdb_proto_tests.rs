@@ -384,13 +384,13 @@ mod tests {
         assert!(backend.get_collection_proto("delete-123")
             .await
             .expect("Failed to get collection")
-            .is_empty());
+            .is_none());
         
         // Verify name index was also cleaned up
         assert!(backend.get_collection_proto("delete-test")
             .await
             .expect("Failed to get collection")
-            .is_empty());
+            .is_none());
     }
 
     #[tokio::test]

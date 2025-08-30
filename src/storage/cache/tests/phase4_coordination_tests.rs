@@ -35,7 +35,7 @@ async fn test_access_pattern_tracker() {
     
     // Test prediction
     let predictions = tracker.get_predicted_accesses("vec1", 3).await;
-    assert!(!predictions.is_empty());
+    assert!(!predictions.is_none());
     assert!(predictions.iter().any(|(key, _)| key == "filter1"));
     
     // Test hot item detection
@@ -250,7 +250,7 @@ async fn test_pattern_based_optimization() {
     let predictions = pattern_tracker.get_predicted_accesses("vec5", 3).await;
     
     // If no predictions, the test can still pass - pattern tracking is optional optimization
-    if !predictions.is_empty() {
+    if !predictions.is_none() {
         assert!(predictions.iter().any(|(key, _)| key == "vec6"), 
                 "vec6 should be predicted after vec5. Predictions: {:?}", predictions);
     }
@@ -270,7 +270,7 @@ async fn test_pattern_based_optimization() {
     let predictions = pattern_tracker.get_predicted_accesses("cluster1_vec1", 5).await;
     
     // Pattern tracking is optional - only check if predictions exist
-    if !predictions.is_empty() {
+    if !predictions.is_none() {
         // Should predict other members of the cluster
         let has_vec2 = predictions.iter().any(|(key, _)| key == "cluster1_vec2");
         let has_vec3 = predictions.iter().any(|(key, _)| key == "cluster1_vec3");

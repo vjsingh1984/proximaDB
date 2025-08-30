@@ -430,7 +430,7 @@ mod tests {
         assert_eq!(merged.priority, 255);
         
         // Test non-mergeable
-        assert!(range1.try_merge(&range3).is_empty());
+        assert!(range1.try_merge(&range3).is_none());
     }
     
     #[test]

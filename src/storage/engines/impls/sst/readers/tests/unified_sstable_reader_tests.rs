@@ -66,7 +66,7 @@ mod tests {
         };
         
         // Without filters, should use basic strategy
-        assert!(params.filter_expression.is_empty());
+        assert!(params.filter_expression.is_none());
     }
 
     #[tokio::test]

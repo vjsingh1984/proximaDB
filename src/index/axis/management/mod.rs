@@ -22,4 +22,4 @@ pub use adaptive_engine::{
 pub use analyzer::CollectionAnalyzer;
 pub use monitor::{AxisMonitor, MonitoringMetrics};
 pub use strategy::{IndexStrategy, StrategySelector, StrategyRecommendation};
-pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationPhase};
+pub use migration_engine::{IndexMigrationEngine, MigrationPlan, MigrationPhase, MigrationDecision, MigrationComplexity};

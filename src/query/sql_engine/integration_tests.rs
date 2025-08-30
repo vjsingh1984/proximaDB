@@ -26,7 +26,7 @@
 mod tests {
     use crate::query::sql_engine::{
         get_global_pool, parse_sql_global, parse_vector_simd,
-        get_global_query_cache, QueryCacheKey, cache_query_result, get_cached_query_result
+        global_query_cache, QueryCacheKey, cache_query_result, get_cached_query_result
     };
     use std::sync::Arc;
     use std::thread;
@@ -149,7 +149,7 @@ use tracing::{debug, error, info};
     fn test_query_result_caching() {
         debug!("🧪 Testing query result caching integration...");
         
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         let initial_stats = cache.stats();
         let initial_hits = initial_stats.hits.load(Ordering::Relaxed);
         let initial_misses = initial_stats.misses.load(Ordering::Relaxed);
@@ -177,7 +177,7 @@ use tracing::{debug, error, info};
         // Test cache miss
         let miss_key = QueryCacheKey::new("SELECT * FROM nonexistent", "collection_x", None);
         let miss_result = get_cached_query_result(&miss_key);
-        assert!(miss_result.is_empty(), "Expected cache miss for nonexistent query");
+        assert!(miss_result.is_none(), "Expected cache miss for nonexistent query");
         
         // Check statistics
         let final_stats = cache.stats();
@@ -199,8 +199,8 @@ use tracing::{debug, error, info};
         // collection_1 queries should now miss
         let key1 = QueryCacheKey::new("SELECT * FROM products", "collection_1", None);
         let key3 = QueryCacheKey::new("SELECT vector FROM docs", "collection_1", None);
-        assert!(get_cached_query_result(&key1).is_empty(), "collection_1 should be invalidated");
-        assert!(get_cached_query_result(&key3).is_empty(), "collection_1 should be invalidated");
+        assert!(get_cached_query_result(&key1).is_none(), "collection_1 should be invalidated");
+        assert!(get_cached_query_result(&key3).is_none(), "collection_1 should be invalidated");
         
         // collection_2 should still be cached
         let key2 = QueryCacheKey::new("SELECT id FROM users", "collection_2", None);
@@ -348,7 +348,7 @@ use tracing::{debug, error, info};
         debug!("  Parser Pool - Created: {}, Reused: {}, Pool Size: {}, Peak: {}", 
                created, reused, pool_size, peak);
         
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         let cache_stats = cache.stats();
         debug!("  Query Cache - {}", cache_stats.summary());
         
@@ -369,7 +369,7 @@ use tracing::{debug, error, info};
     fn test_memory_efficiency() {
         debug!("🧪 Testing memory efficiency of SQL engine components...");
         
-        let initial_cache_memory = get_global_query_cache().get_total_memory_usage();
+        let initial_cache_memory = global_query_cache().get_total_memory_usage();
         
         // Generate load with many different queries
         let start = Instant::now();
@@ -390,7 +390,7 @@ use tracing::{debug, error, info};
         }
         
         let elapsed = start.elapsed();
-        let final_cache_memory = get_global_query_cache().get_total_memory_usage();
+        let final_cache_memory = global_query_cache().get_total_memory_usage();
         
         info!("✅ Processed 500 operations in {:?}", elapsed);
         debug!("📊 Memory usage - Initial: {}KB, Final: {}KB, Delta: {}KB",
@@ -403,7 +403,7 @@ use tracing::{debug, error, info};
         let pool_stats = pool.stats();
         let (created, reused, pool_size, _) = pool_stats.stats();
         
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         let cache_size = cache.size();
         
         debug!("📊 Resource Usage Summary:");
@@ -515,7 +515,7 @@ use tracing::{debug, error, info};
         let pool_stats = pool.stats();
         let (created, reused, _, _) = pool_stats.stats();
         
-        let cache = get_global_query_cache();
+        let cache = global_query_cache();
         let cache_stats = cache.stats();
         
         debug!("📊 Final Performance Statistics:");

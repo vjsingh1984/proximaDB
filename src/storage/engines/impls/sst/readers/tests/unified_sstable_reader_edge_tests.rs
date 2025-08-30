@@ -848,7 +848,7 @@ mod edge_tests {
         
         for tombstone in &tombstones {
             assert!(tombstone/* REMOVED: is_tombstone field no longer exists */);
-            assert!(tombstone.vector.is_empty());
+            assert!(tombstone.vector.is_none());
         }
     }
 
@@ -873,7 +873,7 @@ mod edge_tests {
         // Test might_match_metadata functionality
         for (field, value) in test_values {
             // This would be implemented in the actual bloom filter
-            assert!(field.len() > 0 || field.is_empty());
+            assert!(field.len() > 0 || field.is_none());
             assert!(value.len() >= 0);
         }
     }
@@ -969,7 +969,7 @@ mod edge_tests {
         stats.insert("bool_field".to_string(), (0.0f64, 1.0f64, 50usize, 2usize));
         
         for (field, (min, max, null_count, distinct_count)) in &stats {
-            assert!(!field.is_empty());
+            assert!(!field.is_none());
             match field.as_deref() {
                 "numeric_field" => {
                     let (min_val, max_val, null_cnt, distinct_cnt) = (min, max, null_count, distinct_count);

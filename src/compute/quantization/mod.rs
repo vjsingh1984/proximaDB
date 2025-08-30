@@ -8,6 +8,7 @@ pub mod unified;
 pub mod storage_engine;
 pub mod smart_defaults;
 pub mod hardware_accelerated;
+pub mod compile_time;
 
 pub use unified::{
     UnifiedQuantizationLevel, QuantizationLevel,

@@ -103,7 +103,7 @@ mod tests {
         };
         
         // With quantized columns, should use two-stage strategy
-        assert!(!context.quantization_columns.is_empty());
+        assert!(!context.quantization_columns.is_none());
     }
 
     // Filter Expression Tests
@@ -229,7 +229,7 @@ mod tests {
     }
 
     fn coalesce_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-        if ranges.is_empty() {
+        if ranges.is_none() {
             return ranges;
         }
         
@@ -330,7 +330,7 @@ use tracing::{debug, error, info};
             vector_builder.append(true);
             
             // Add metadata
-            if !record.metadata.is_empty() {
+            if !record.metadata.is_none() {
                 let struct_builder = extra_meta_builder.values();
                 for meta_item in &record.metadata {
                     struct_builder.field_builder::<StringBuilder>(0).unwrap().append_value(&meta_item.key);

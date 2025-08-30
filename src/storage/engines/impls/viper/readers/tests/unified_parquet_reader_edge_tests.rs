@@ -379,7 +379,7 @@ mod edge_tests {
         
         for context in cloud_contexts {
             assert!(context.is_cloud_storage);
-            assert!(!context.file_paths.is_empty());
+            assert!(!context.file_paths.is_none());
         }
     }
 
@@ -461,7 +461,7 @@ mod edge_tests {
 
     // Helper function for range coalescing
     fn coalesce_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-        if ranges.is_empty() {
+        if ranges.is_none() {
             return ranges;
         }
         

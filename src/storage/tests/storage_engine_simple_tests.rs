@@ -58,7 +58,7 @@ async fn test_storage_engine_creation() {
     
     // Test configuration access
     let config = storage_engine.get_config();
-    assert!(!config.storage_locations.is_empty());
+    assert!(!config.storage_locations.is_none());
     
     // Test distance compute access
     let distance_compute = storage_engine.distance_compute();
@@ -132,7 +132,7 @@ async fn test_batch_write_empty_vectors() {
     assert!(result.is_ok(), "Batch write should succeed with empty vector list");
     
     let inserted_ids = result.unwrap();
-    assert!(inserted_ids.is_empty(), "Should return empty ID list");
+    assert!(inserted_ids.is_none(), "Should return empty ID list");
 }
 
 #[tokio::test]
@@ -185,7 +185,7 @@ async fn test_get_all_vectors_empty_collection() {
     assert!(result.is_ok(), "Get all vectors should not fail");
     
     let vectors = result.unwrap();
-    assert!(vectors.is_empty(), "Should return empty vector list for empty collection");
+    assert!(vectors.is_none(), "Should return empty vector list for empty collection");
 }
 
 #[tokio::test]
@@ -206,7 +206,7 @@ async fn test_recovered_collections_metadata_empty() {
     assert!(result.is_ok(), "Should successfully get recovered collections");
     
     let collections = result.unwrap();
-    assert!(collections.is_empty(), "Should return empty collections for new storage");
+    assert!(collections.is_none(), "Should return empty collections for new storage");
 }
 
 #[tokio::test]

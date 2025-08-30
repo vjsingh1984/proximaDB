@@ -98,10 +98,8 @@ impl ParallelWALSearch {
         let results = sorted_candidates
             .into_iter()
             .enumerate()
-            .map(|(rank, candidate)| {
-                let mut result = candidate.to_search_result();
-                result.rank = Some((rank + 1) as u16);
-                result
+            .map(|(_rank, candidate)| {
+                candidate.to_search_result()
             })
             .collect();
         
@@ -127,7 +125,7 @@ impl ParallelWALSearch {
         include_metadata: bool,
     ) -> Vec<SearchCandidate> {
         // Use SIMD-optimized distance computation when available
-        let use_simd = self.hardware.has_avx2() || self.hardware.has_sse();
+        let use_simd = self.hardware.cpu.features.avx2_support || self.hardware.cpu.features.sse42_support;
         
         batch.vector_records
             .par_iter()
@@ -176,7 +174,7 @@ impl ParallelWALSearch {
     fn cosine_similarity_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
         
-        if !self.hardware.has_avx2() {
+        if !self.hardware.cpu.features.avx2_support {
             return self.cosine_similarity_scalar(a, b);
         }
         
@@ -252,7 +250,7 @@ impl ParallelWALSearch {
     fn euclidean_distance_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
         
-        if !self.hardware.has_avx2() {
+        if !self.hardware.cpu.features.avx2_support {
             return self.euclidean_distance_scalar(a, b);
         }
         
@@ -307,7 +305,7 @@ impl ParallelWALSearch {
     fn dot_product_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
         
-        if !self.hardware.has_avx2() {
+        if !self.hardware.cpu.features.avx2_support {
             return self.dot_product_scalar(a, b);
         }
         

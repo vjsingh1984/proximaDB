@@ -77,7 +77,9 @@ impl UnifiedCollectionIndex {
     pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
+        let name = record.config.as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
 
         // Atomic operation: insert into both maps
         let record_arc = Arc::new(record);
@@ -99,7 +101,9 @@ impl UnifiedCollectionIndex {
         // Remove from primary store first to get the record
         if let Some((_, record)) = self.collections.remove(uuid) {
             // Remove from secondary index
-            self.name_to_uuid.remove(&record.config.as_ref().map(|c| c.name.clone()).clone());
+            if let Some(config) = record.config.as_ref() {
+                self.name_to_uuid.remove(&config.name);
+            }
 
             // Update metrics
             let elapsed = start.elapsed().as_nanos() as u64;
@@ -229,6 +233,11 @@ impl UnifiedCollectionIndex {
     /// Get performance metrics
     pub fn get_metrics(&self) -> IndexPerformanceMetrics {
         self.metrics.read().clone()
+    }
+    
+    /// Get metrics (alias for get_metrics)
+    pub fn metrics(&self) -> IndexPerformanceMetrics {
+        self.get_metrics()
     }
 
     /// Estimate memory usage for monitoring

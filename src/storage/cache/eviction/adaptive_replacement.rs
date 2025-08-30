@@ -97,11 +97,11 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
         drop(locations);
         
         match location {
-            CacheLocation::T1 => {
+            Some(CacheLocation::T1) => {
                 // Move from T1 to T2 (promote to frequent)
                 self.move_to_t2(key);
             }
-            CacheLocation::T2 => {
+            Some(CacheLocation::T2) => {
                 // Move to front of T2
                 let mut t2 = self.t2.write().unwrap();
                 if let Some(pos) = t2.iter().position(|k| k == key) {
@@ -109,7 +109,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                     t2.push_front(key.clone());
                 }
             }
-            CacheLocation::B1 => {
+            Some(CacheLocation::B1) => {
                 // Ghost hit in B1: increase p (favor recency)
                 let b2_len = self.b2.read().unwrap().len();
                 let b1_len = self.b1.read().unwrap().len();
@@ -120,7 +120,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                 };
                 self.adapt(delta);
             }
-            CacheLocation::B2 => {
+            Some(CacheLocation::B2) => {
                 // Ghost hit in B2: decrease p (favor frequency)
                 let b1_len = self.b1.read().unwrap().len();
                 let b2_len = self.b2.read().unwrap().len();
@@ -131,7 +131,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                 };
                 self.adapt(delta);
             }
-            CacheLocation::NotInCache => {}
+            Some(CacheLocation::NotInCache) | None => {}
         }
         
         let mut stats = self.stats.write().unwrap();
@@ -152,7 +152,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
         let location = locations.get(key).copied();
         
         match location {
-            CacheLocation::T1 => {
+            Some(CacheLocation::T1) => {
                 let mut t1 = self.t1.write().unwrap();
                 let mut b1 = self.b1.write().unwrap();
                 
@@ -163,7 +163,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                     locations.insert(key.clone(), CacheLocation::B1);
                 }
             }
-            CacheLocation::T2 => {
+            Some(CacheLocation::T2) => {
                 let mut t2 = self.t2.write().unwrap();
                 let mut b2 = self.b2.write().unwrap();
                 

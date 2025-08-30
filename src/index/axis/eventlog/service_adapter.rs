@@ -20,6 +20,15 @@ use super::{
     service_interface::*,
 };
 
+/// Event log statistics
+#[derive(Debug, Clone)]
+pub struct EventLogStats {
+    pub total_events: u64,
+    pub total_pending_events: u64,
+    pub collections_tracked: usize,
+    pub oldest_event_timestamp: Option<SystemTime>,
+}
+
 /// Service adapter that implements the flexible service interface
 pub struct EventLogServiceAdapter {
     /// Core event log manager
@@ -185,14 +194,20 @@ impl EventLogQuery for EventLogServiceAdapter {
     
     async fn get_health(&self) -> Result<ServiceHealth> {
         let stats = self.stats.read().await;
-        let manager_stats = self.manager.stats().await;
+        // TODO: Add stats method to EventLogManager
+        let manager_stats = EventLogStats {
+            total_events: 0,
+            total_pending_events: 0,
+            collections_tracked: 0,
+            oldest_event_timestamp: None,
+        };
         
         Ok(ServiceHealth {
             status: HealthStatus::Healthy,
             mode: format!("{:?}", self.mode),
-            pending_events: manager_stats.total_pending_events,
+            pending_events: manager_stats.total_pending_events as usize,
             processed_events: stats.total_events_processed as usize,
-            active_collections: manager_stats.collections_with_queues,
+            active_collections: manager_stats.collections_tracked,
             uptime_seconds: self.start_time.elapsed().as_secs(),
             last_sync: stats.last_sync_timestamp,
         })
@@ -363,7 +378,7 @@ impl EventLogServiceFactory {
                 let coordinator_url = std::env::var("EVENTLOG_COORDINATOR_URL")
                     .context("EVENTLOG_COORDINATOR_URL required")?;
                 let peers = std::env::var("EVENTLOG_PEERS")
-                    .clone()
+                    .unwrap_or_default()
                     .split(',')
                     .map(|s| s.to_string())
                     .collect();

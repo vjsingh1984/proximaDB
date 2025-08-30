@@ -98,7 +98,7 @@ impl ConfigValidator {
             // Convert URL to path for local file systems
             let data_dir_path = if data_dir_url.starts_with("file://") {
                 std::path::PathBuf::from(
-                    data_dir_url.strip_prefix("file://"),
+                    data_dir_url.strip_prefix("file://").unwrap_or(data_dir_url),
                 )
             } else if data_dir_url.contains("://") {
                 // For cloud URLs, skip local filesystem validation
@@ -206,25 +206,25 @@ impl ConfigValidator {
                     }
                 }
                 "s3" => {
-                    if parsed.host().is_empty() {
+                    if parsed.host().is_none() {
                         bail!("S3 URL must specify a bucket name");
                     }
                 }
                 "adls" | "abfs" => {
-                    if parsed.host().is_empty() {
+                    if parsed.host().is_none() {
                         bail!("Azure URL must specify an account/container");
                     }
                 }
                 "gcs" => {
-                    if parsed.host().is_empty() {
+                    if parsed.host().is_none() {
                         bail!("GCS URL must specify a bucket name");
                     }
                 }
                 "hdfs" => {
-                    if parsed.host().is_empty() {
+                    if parsed.host().is_none() {
                         bail!("HDFS URL must specify a namenode host");
                     }
-                    if parsed.port().is_empty() {
+                    if parsed.port().is_none() {
                         bail!("HDFS URL should specify a port (typically 9000 or 8020)");
                     }
                 }
@@ -429,6 +429,6 @@ mod tests {
         let recommendations = ConfigValidator::generate_recommendations(&config);
 
         // Should provide some recommendations for default config
-        assert!(!recommendations.is_empty() || recommendations.is_empty()); // Either is fine
+        assert!(!recommendations.is_none() || recommendations.is_none()); // Either is fine
     }
 }

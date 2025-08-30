@@ -323,7 +323,7 @@ impl SstManifest {
         let mut current_max_key = String::new();
         
         for file in files {
-            if current_group.is_empty() || file.min_key <= current_max_key {
+            if current_group.is_none() || file.min_key <= current_max_key {
                 // File overlaps with current group
                 if file.max_key > current_max_key {
                     current_max_key = file.max_key.clone();

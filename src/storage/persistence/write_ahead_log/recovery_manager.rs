@@ -213,8 +213,8 @@ impl RecoveryManager {
             stats.recovery_errors = recovery_errors;
         }
         
-        let stats = self.stats().await?;
-        let pool_stats = thread_pool.stats().await;
+        let stats = self.stats.read().await.clone();
+        let pool_stats = thread_pool.get_stats().await;
         
         info!(
             "✅ Parallel WAL recovery completed: {} collections, {} vectors, {} errors (peak {} threads, {}ms)",

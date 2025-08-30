@@ -385,7 +385,7 @@ impl AxisEventLogConsumer {
         
         // Get index configuration for the collection
         let index_config = self.axis_manager
-            .get_native_index_config(&event.collection_id)
+            .native_index_config(&event.collection_id)
             .await
             .unwrap_or_else(|e| {
                 warn!("[AXIS Consumer] Failed to get index config for {}: {}, using defaults", event.collection_id, e);
@@ -736,12 +736,13 @@ impl AxisEventLogConsumer {
                                     e
                                 })?;
                             
+                            let record_count = result.records.len();
                             all_records.extend(result.records);
                             
                             let file_duration = file_start.elapsed();
                             debug!(
                                 "[AXIS Consumer] Read {} records from {} in {:.2}ms",
-                                result.records.len(),
+                                record_count,
                                 file_path,
                                 file_duration.as_secs_f64() * 1000.0
                             );
@@ -872,7 +873,7 @@ impl AxisEventLogConsumer {
                                         
                                         // Create VectorRecord
                                         let record = VectorRecord {
-                                            id: id.clone(), // Use empty string if no ID
+                                            id: id.clone().unwrap_or_default(), // Use empty string if no ID
                                             vector,
                                             quantized_vector: Some(quantized_vector),
                                             metadata: Vec::new(), // TODO: Extract metadata columns
@@ -948,14 +949,14 @@ impl AxisEventLogConsumer {
                             let io_config = ZeroCopyIOConfig::default();
                             let io_system = Arc::new(ZeroCopyIOSystem::new(
                                 io_config,
-                                fs_factory,
+                                fs_factory.clone(),
                                 vec![] // Empty metadata serializers for now
                             ).await?);
                             
                             // Create zero-copy filesystem
                             let zero_copy_fs = Arc::new(ZeroCopyFilesystem::new(
                                 local_fs,
-                                io_system,
+                                io_system.clone(),
                                 collection_id.to_string(),
                                 "raptor".to_string()
                             ));
@@ -1308,6 +1309,7 @@ pub async fn start_axis_consumer(
     axis_manager: Arc<AxisManager>,
     filesystem_factory: Arc<FilesystemFactory>,
     collection_cache: Arc<DashMap<String, Arc<Collection>>>,
+    cache_orchestrator: Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<()> {
     let config = ConsumerConfig::default();
@@ -1318,6 +1320,7 @@ pub async fn start_axis_consumer(
         axis_manager,
         filesystem_factory,
         collection_cache,
+        cache_orchestrator,
         shutdown,
     );
     

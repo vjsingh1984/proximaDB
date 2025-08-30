@@ -243,7 +243,7 @@ impl IntegratedSearchOptimizer {
                     })
                     .collect()
             })
-            .clone();
+            .unwrap_or_else(Vec::new);
         
         // Analyze storage characteristics
         let storage_info = self.analyze_storage_info(collection_id).await?;

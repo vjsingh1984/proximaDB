@@ -47,9 +47,9 @@ mod tests {
 
     #[test]
     fn test_version_constants() {
-        assert!(!PROXIMADB_VERSION.is_empty());
-        assert!(!PROXIMADB_NAME.is_empty());
-        assert!(!PROXIMADB_DESCRIPTION.is_empty());
+        assert!(!PROXIMADB_VERSION.is_none());
+        assert!(!PROXIMADB_NAME.is_none());
+        assert!(!PROXIMADB_DESCRIPTION.is_none());
     }
 
     #[test]

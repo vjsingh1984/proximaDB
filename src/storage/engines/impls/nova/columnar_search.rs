@@ -459,7 +459,7 @@ impl NovaColumnarSearch {
         debug!("Binary filter stage: max_candidates={}", max_candidates);
         
         // Check if binary column exists
-        if nova_file.quantized_columns.binary_column.is_empty() {
+        if nova_file.quantized_columns.binary_column.is_none() {
             return Ok(Vec::new());
         }
         
@@ -512,7 +512,7 @@ impl NovaColumnarSearch {
     ) -> Result<Vec<SearchCandidate>> {
         debug!("INT8 filter stage: input={}, max={}", candidates.len(), max_candidates);
         
-        if nova_file.quantized_columns.int8_column.is_empty() {
+        if nova_file.quantized_columns.int8_column.is_none() {
             return Ok(candidates.to_vec());
         }
         
@@ -576,7 +576,7 @@ impl NovaColumnarSearch {
     ) -> Result<Vec<SearchCandidate>> {
         debug!("PQ filter stage: input={}, max={}", candidates.len(), max_candidates);
         
-        if nova_file.quantized_columns.pq_column.is_empty() {
+        if nova_file.quantized_columns.pq_column.is_none() {
             return Ok(candidates.to_vec());
         }
         

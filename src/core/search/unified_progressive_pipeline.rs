@@ -629,14 +629,14 @@ impl UnifiedProgressiveSearchPipeline {
                 
                 let json_value = match proto_value {
                     metadata_item::Value::StringValue(s) => Value::String(s.clone()),
-                    metadata_item::Value::IntValue(i) => Value::Number(serde_json::Number::from(*i)),
-                    metadata_item::Value::FloatValue(f) => {
-                        if let Some(n) = serde_json::Number::from_f64(*f as f64) {
-                            Value::Number(n)
+                    metadata_item::Value::NumberValue(n) => {
+                        if let Some(num) = serde_json::Number::from_f64(*n) {
+                            Value::Number(num)
                         } else {
                             continue;
                         }
                     }
+                    metadata_item::Value::BoolValue(b) => Value::Bool(*b),
                 };
                 map.insert(entry.key.clone(), json_value);
             }
@@ -669,12 +669,9 @@ impl UnifiedProgressiveSearchPipeline {
                 vector: Some(candidate.record.vector.clone()),
                 metadata: self.convert_metadata(&candidate.record),
                 debug_info: Some(crate::core::search::SearchDebugInfo {
-                    computation_time_ms: 0.0,
-                    stage_timings: vec![],
-                    vectors_compared: candidate.refined_count as u64,
-                    early_termination: false,
-                    cache_hits: 0,
-                    cache_misses: 0,
+                    algorithm: "progressive".to_string(),
+                    candidates_evaluated: candidate.refined_count as u32,
+                    processing_time_us: 0,
                 }),
                 semantic_similarity: None,
                 quantization_info: None,
@@ -682,6 +679,10 @@ impl UnifiedProgressiveSearchPipeline {
                 index_path: None,
                 timestamp: Some(candidate.record.timestamp),
                 version: candidate.record.version,
+                expanded_context: vec![],
+                expires_at: None,
+                source: None,
+                updated_at: None,
             })
             .collect()
     }

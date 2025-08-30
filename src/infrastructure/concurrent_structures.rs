@@ -635,7 +635,7 @@ mod tests {
         let storage = ConcurrentStorage::new();
         
         // Test insert
-        assert!(storage.insert("key1", "value1").unwrap().is_empty());
+        assert!(storage.insert("key1", "value1").unwrap().is_none());
         assert_eq!(storage.len(), 1);
         
         // Test get with metrics

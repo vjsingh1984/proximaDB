@@ -191,7 +191,7 @@ mod tests {
     fn test_auth_config_default() {
         let config = AuthConfig::default();
         assert!(!config.enabled);
-        assert!(config.api_keys.is_empty());
+        assert!(config.api_keys.is_none());
         assert!(!config.require_auth_for_health);
     }
 }

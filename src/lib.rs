@@ -16,12 +16,62 @@
 
 // SIMD optimization features (using stable AVX2 instead of unstable AVX-512)
 
+// Enforce error handling best practices
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::panic)]
+#![warn(clippy::unimplemented)]
+#![warn(clippy::todo)]
+
 //! # ProximaDB - Cloud-Native Vector Database
 //!
 //! **proximity at scale**
 //!
 //! ProximaDB is a high-performance, cloud-native vector database engineered for AI-first applications.
 //! Built from the ground up for serverless deployment, intelligent data tiering, and global scale.
+//!
+//! ## Architecture Overview
+//!
+//! ProximaDB follows a modular, layered architecture optimized for vector similarity search:
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                    Client Applications                       │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                  API Layer (REST + gRPC)                     │
+//! │                    [api_handlers module]                     │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                     Service Layer                            │
+//! │            [services module - business logic]                │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │    Index Layer          │         Compute Layer              │
+//! │   [AXIS engine]         │    [SIMD/GPU acceleration]         │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                     Storage Layer                            │
+//! │    [WAL + Memtable]  →  [Storage Engines]  →  [Filesystem]  │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Module Organization
+//!
+//! - **`api`**: Protocol definitions and API contracts
+//! - **`api_handlers`**: Unified REST/gRPC request handlers with zero-copy proto-first design
+//! - **`core`**: Core types, errors, configuration, and foundational components
+//! - **`compute`**: Vector computation, distance metrics, quantization, and hardware acceleration
+//! - **`index`**: AXIS indexing engine with multiple algorithm support (HNSW, IVF, LSH, etc.)
+//! - **`services`**: Business logic layer for collections, search, and vector operations
+//! - **`storage`**: Multi-tiered storage with WAL, memtable, and pluggable storage engines
+//! - **`network`**: Server implementation with REST and gRPC support
+//! - **`infrastructure`**: Shared infrastructure components and utilities
+//! - **`metrics`**: Comprehensive metrics collection and monitoring
+//!
+//! ## Key Design Principles
+//!
+//! 1. **Proto-First Architecture**: Native protocol buffer flow without intermediate conversions
+//! 2. **Zero-Copy Operations**: Minimize data copying throughout the pipeline
+//! 3. **Hardware Adaptive**: Automatic detection and use of SIMD/GPU capabilities
+//! 4. **Cloud-Native Storage**: Seamless integration with S3, Azure Blob, GCS
+//! 5. **Pluggable Storage Engines**: Support for different workload patterns (SST, VIPER, NOVA, etc.)
 //!
 //! ## Key Features
 //!
@@ -32,13 +82,26 @@
 //! - **Global Distribution**: Multi-region with data residency
 //! - **Enterprise Ready**: RBAC, audit logs, compliance
 
+/// REST and gRPC API definitions and protocol contracts
 pub mod api;
-pub mod infrastructure;  // Shared infrastructure components
+
+/// Shared infrastructure components for cross-cutting concerns
+pub mod infrastructure;
+
+/// High-performance compute layer with SIMD/GPU acceleration for vector operations
 pub mod compute;
+
 // pub mod consensus;  // Disabled - requires raft dependency
+
+/// Core types, errors, configuration, and foundational components
 pub mod core;
+
 // pub mod distributed;  // Temporarily disabled for single-node optimization
+
+/// Unified API handlers for REST and gRPC with proto-first zero-copy design
 pub mod api_handlers;
+
+/// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
 pub mod metrics;
@@ -61,7 +124,7 @@ pub mod version;
 // }
 
 // Re-export commonly used types from core
-pub use core::{Config, VectorRecord, error::Error};
+pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

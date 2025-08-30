@@ -1704,7 +1704,7 @@ mod tests {
         
         // Test debug formatting for backends  
         let display_str = format!("{}", backend);
-        assert!(!display_str.is_empty());
+        assert!(!display_str.is_none());
     }
 
 
@@ -1931,14 +1931,14 @@ mod tests {
         
         // Test available backends method
         let backends = compute.available_backends();
-        assert!(!backends.is_empty());
+        assert!(!backends.is_none());
         
         // Test preferred backend
         let preferred = compute.preferred_backend();
         
         // Test debug formatting for backends
         let display_str = format!("{}", preferred);
-        assert!(!display_str.is_empty());
+        assert!(!display_str.is_none());
     }
 
     #[test] 
@@ -1952,7 +1952,7 @@ mod tests {
         // Should be one of the known capabilities
         // (can't assert specific values since it depends on runtime platform)
         let display_str = format!("{:?}", capability);
-        assert!(!display_str.is_empty());
+        assert!(!display_str.is_none());
     }
 
     #[test]

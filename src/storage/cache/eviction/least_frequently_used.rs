@@ -26,7 +26,7 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
         let mut freq_lists = self.frequency_lists.write().unwrap();
         let mut min_freq = self.min_frequency.write().unwrap();
         
-        let old_freq = freq_map.get(key).copied();
+        let old_freq = freq_map.get(key).copied().unwrap_or(0);
         let new_freq = if increment { old_freq + 1 } else { 1 };
         
         // Remove from old frequency list
@@ -36,7 +36,7 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
                 if keys.is_empty() {
                     freq_lists.remove(&old_freq);
                     if *min_freq == old_freq {
-                        *min_freq = freq_lists.keys().next().copied();
+                        *min_freq = freq_lists.keys().next().copied().unwrap_or(0);
                     }
                 }
             }
@@ -50,7 +50,7 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
         
         freq_map.insert(key.clone(), new_freq);
         
-        // Update minimum frequency
+        // Update minimum frequency (min_freq is now usize not K)
         if new_freq < *min_freq || *min_freq == 0 {
             *min_freq = new_freq;
         }

@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_optimization_plan() {
         let plan = get_optimization_plan();
-        assert!(!plan.is_empty());
+        assert!(!plan.is_none());
         
         // Verify all optimizations reduce frequency (except real-time tasks)
         for opt in &plan {

@@ -182,7 +182,7 @@ impl StreamingCompactor {
         
         for (file_index, input_file) in input_files.iter().enumerate() {
             // Get file size for statistics
-            let file_url = if input_file.contains_hash("://") {
+            let file_url = if input_file.contains("://") {
                 input_file.clone()
             } else {
                 format!("file://{}", input_file)

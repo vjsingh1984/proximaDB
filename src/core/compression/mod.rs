@@ -1,15 +1,197 @@
-//! Unified compression module for ProximaDB
-//! 
-//! This module provides a centralized implementation of all compression algorithms
-//! used throughout the system, eliminating duplication between:
-//! - Core serialization (vector-level compression)
-//! - SST block compression (custom block format)
-//! - VIPER Parquet compression (Arrow WriterProperties)
+//! # Compression Module - Multi-Algorithm Adaptive Compression
 //!
-//! Key Design:
-//! - SST: Custom compression with format markers
-//! - VIPER: Uses Arrow Parquet's built-in compression via WriterProperties
-//! - Core: Vector serialization with headers
+//! This module provides ProximaDB's unified compression infrastructure supporting
+//! 14 different compression algorithms with context-aware selection. It eliminates
+//! code duplication across storage engines while providing optimal compression for
+//! different data types and access patterns.
+//!
+//! ## Compression Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────┐
+//! │      Unified Compression Layer           │
+//! ├─────────────────────────────────────────┤
+//! │ Algorithm Selection │ Context Analysis   │
+//! ├─────────────────────────────────────────┤
+//! │ LZ4 │ Snappy │ ZSTD │ Gzip │ Brotli    │
+//! │ XZ  │ Bzip2  │ Deflate │ LZO │ More... │
+//! └─────────────────────────────────────────┘
+//!           ↓              ↓              ↓
+//!     SST Engine    VIPER Engine    Core Serial
+//! ```
+//!
+//! ## Supported Algorithms
+//!
+//! | Algorithm | Speed | Ratio | Use Case |
+//! |-----------|-------|-------|----------|
+//! | **None** | ∞ | 1.0x | No compression |
+//! | **LZ4** | ★★★★★ | 2.0x | Real-time, low latency |
+//! | **Snappy** | ★★★★☆ | 2.2x | Balanced speed/ratio |
+//! | **ZSTD** | ★★★☆☆ | 3.5x | Best general purpose |
+//! | **Gzip** | ★★☆☆☆ | 3.0x | Wide compatibility |
+//! | **Brotli** | ★★☆☆☆ | 4.0x | Web/text data |
+//! | **XZ** | ★☆☆☆☆ | 5.0x | Maximum compression |
+//! | **Bzip2** | ★☆☆☆☆ | 4.5x | Legacy support |
+//! | **Deflate** | ★★☆☆☆ | 3.0x | ZIP compatibility |
+//! | **LZO** | ★★★★☆ | 2.1x | Fast decompression |
+//! | **LZMA** | ★☆☆☆☆ | 5.5x | High compression |
+//! | **Zlib** | ★★☆☆☆ | 3.0x | Standard compression |
+//! | **LZ4_HC** | ★★★☆☆ | 2.5x | Better LZ4 ratio |
+//! | **ZSTD_Dict** | ★★★☆☆ | 4.0x | With dictionary |
+//!
+//! ## Context-Aware Selection
+//!
+//! The module automatically selects optimal compression:
+//!
+//! ### By Data Type
+//! - **Vectors**: LZ4 or Snappy (fast access)
+//! - **Metadata**: ZSTD (good ratio, fast decode)
+//! - **Indexes**: None or LZ4 (minimal overhead)
+//! - **Logs**: Gzip or Brotli (high compression)
+//!
+//! ### By Access Pattern
+//! - **Hot Data**: LZ4 or None (< 1ms latency)
+//! - **Warm Data**: Snappy or ZSTD (balanced)
+//! - **Cold Data**: XZ or LZMA (maximum ratio)
+//! - **Streaming**: LZ4 or Snappy (low memory)
+//!
+//! ### By Storage Engine
+//! - **SST**: Custom format with markers
+//! - **VIPER**: Parquet native compression
+//! - **NOVA**: Quantization + light compression
+//! - **SWIFT**: Block-level compression
+//!
+//! ## Compression Strategies
+//!
+//! ### 1. **No Compression**
+//! For already compressed or small data:
+//! ```rust
+//! if data.len() < 1024 || is_compressed(&data) {
+//!     return CompressionAlgorithm::None;
+//! }
+//! ```
+//!
+//! ### 2. **Mixed Compression**
+//! Different algorithms per data type:
+//! ```rust
+//! let strategy = MixedCompressionStrategy {
+//!     vectors: CompressionAlgorithm::LZ4,
+//!     metadata: CompressionAlgorithm::ZSTD,
+//!     indexes: CompressionAlgorithm::None,
+//! };
+//! ```
+//!
+//! ### 3. **Adaptive Compression**
+//! Adjust based on compression ratio:
+//! ```rust
+//! let ratio = compressed_size as f64 / original_size as f64;
+//! if ratio > 0.9 {
+//!     // Poor compression, switch to faster algorithm
+//!     switch_to(CompressionAlgorithm::LZ4);
+//! }
+//! ```
+//!
+//! ### 4. **Dictionary Compression**
+//! For repetitive data patterns:
+//! ```rust
+//! let dict = train_dictionary(&sample_data);
+//! let compressed = zstd_compress_with_dict(&data, &dict);
+//! ```
+//!
+//! ## Performance Characteristics
+//!
+//! ### Compression Speed (MB/sec)
+//! - **LZ4**: 500+ MB/s
+//! - **Snappy**: 400+ MB/s  
+//! - **ZSTD**: 200+ MB/s
+//! - **Gzip**: 50+ MB/s
+//! - **XZ**: 10+ MB/s
+//!
+//! ### Decompression Speed (MB/sec)
+//! - **LZ4**: 2000+ MB/s
+//! - **Snappy**: 1500+ MB/s
+//! - **ZSTD**: 800+ MB/s
+//! - **Gzip**: 200+ MB/s
+//! - **XZ**: 50+ MB/s
+//!
+//! ## Configuration
+//!
+//! ```toml
+//! [compression]
+//! # Default algorithm
+//! default = "zstd"
+//! 
+//! # Per-type configuration
+//! [compression.vectors]
+//! algorithm = "lz4"
+//! level = 1  # Fast mode
+//! 
+//! [compression.metadata]
+//! algorithm = "zstd"
+//! level = 3  # Balanced
+//! 
+//! [compression.indexes]
+//! algorithm = "none"  # No compression
+//! 
+//! # Adaptive settings
+//! [compression.adaptive]
+//! enabled = true
+//! min_size = 1024  # Don't compress < 1KB
+//! sample_size = 10000  # Sample for ratio testing
+//! ratio_threshold = 0.9  # Switch if ratio > 0.9
+//! ```
+//!
+//! ## Usage Examples
+//!
+//! ### Basic Compression
+//! ```rust
+//! use proximadb::compression::{compress, decompress, CompressionAlgorithm};
+//! 
+//! let data = vec![1, 2, 3, 4, 5];
+//! let compressed = compress(&data, CompressionAlgorithm::ZSTD)?;
+//! let decompressed = decompress(&compressed, CompressionAlgorithm::ZSTD)?;
+//! assert_eq!(data, decompressed);
+//! ```
+//!
+//! ### Context-Aware Compression
+//! ```rust
+//! use proximadb::compression::CompressionContext;
+//! 
+//! let ctx = CompressionContext::new()
+//!     .with_data_type(DataType::Vector)
+//!     .with_access_pattern(AccessPattern::Hot)
+//!     .with_size_hint(1024 * 1024);
+//! 
+//! let algorithm = ctx.select_algorithm();
+//! let compressed = compress_with_context(&data, ctx)?;
+//! ```
+//!
+//! ### Streaming Compression
+//! ```rust
+//! use proximadb::compression::StreamingCompressor;
+//! 
+//! let mut compressor = StreamingCompressor::new(CompressionAlgorithm::LZ4);
+//! compressor.write(&chunk1)?;
+//! compressor.write(&chunk2)?;
+//! let compressed = compressor.finish()?;
+//! ```
+//!
+//! ## Format Markers
+//!
+//! Each compressed block includes a header:
+//! ```
+//! [Magic: 4 bytes][Algorithm: 1 byte][Level: 1 byte][Size: 4 bytes][Data...]
+//! ```
+//!
+//! This allows automatic algorithm detection during decompression.
+//!
+//! ## Best Practices
+//!
+//! 1. **Profile First**: Measure compression ratios and speeds
+//! 2. **Consider Access Patterns**: Hot data needs fast decompression
+//! 3. **Batch Compression**: Amortize overhead with larger blocks
+//! 4. **Use Dictionaries**: For repetitive data patterns
+//! 5. **Monitor CPU Usage**: Balance compression vs CPU cost
 
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;

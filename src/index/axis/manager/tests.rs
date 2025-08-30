@@ -121,7 +121,7 @@ mod construction_tests {
         let manager = result.unwrap();
         
         // Verify initialization
-        assert!(manager.collection_service.is_empty()); // Initially none
+        assert!(manager.collection_service.is_none()); // Initially none
         
         // Check metrics are initialized
         let metrics = manager.metrics.read().await;
@@ -133,11 +133,11 @@ mod construction_tests {
         
         // Check collections strategies are empty
         let strategies = manager.collection_strategies.read().await;
-        assert!(strategies.is_empty());
+        assert!(strategies.is_none());
         
         // Check active migrations are empty
         let migrations = manager.active_migrations.read().await;
-        assert!(migrations.is_empty());
+        assert!(migrations.is_none());
     }
     
     #[tokio::test]
@@ -149,7 +149,7 @@ mod construction_tests {
         // Note: We can't actually test this due to type constraints, but we can verify the concept
         
         // Initially should be None
-        assert!(manager.collection_service.is_empty());
+        assert!(manager.collection_service.is_none());
         
         // After setting, should be Some (conceptually)
         // manager.set_collection_service(mock_service);
@@ -168,7 +168,7 @@ mod index_config_tests {
         let manager = AxisManager::new(config).await.unwrap();
         
         // Should return default config when no service is set
-        let result = manager.get_native_index_config("test_collection").await;
+        let result = manager.native_index_config("test_collection").await;
         assert!(result.is_ok());
         
         let index_config = result.unwrap();
@@ -332,7 +332,7 @@ mod strategy_tests {
         assert!(result.is_ok());
         
         let strategy = result.unwrap();
-        assert!(!strategy.indexes.is_empty());
+        assert!(!strategy.indexes.is_none());
     }
     
     #[tokio::test]
@@ -383,7 +383,7 @@ mod search_tests {
         assert!(result.is_ok());
         
         let search_results = result.unwrap();
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
         assert!(search_results.len() <= 3); // Should respect k limit
     }
     
@@ -416,7 +416,7 @@ mod search_tests {
         
         let search_results = result.unwrap();
         // Should find the vector that matches the filter
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
     }
     
     #[tokio::test]
@@ -436,7 +436,7 @@ mod search_tests {
         assert!(result.is_ok());
         
         let search_results = result.unwrap();
-        assert!(search_results.is_empty()); // Should return empty results
+        assert!(search_results.is_none()); // Should return empty results
     }
     
     #[tokio::test]
@@ -466,7 +466,7 @@ mod search_tests {
         assert!(result.is_ok());
         
         let search_results = result.unwrap();
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
     }
 }
 
@@ -578,7 +578,7 @@ mod migration_tests {
         assert!(result.is_ok());
         
         let status = result.unwrap();
-        assert!(status.is_empty());
+        assert!(status.is_none());
     }
 }
 
@@ -724,7 +724,7 @@ mod integration_tests {
         };
         
         let search_results = manager.search(&query).await.unwrap();
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
         
         // Check metrics
         let metrics = manager.metrics().await;

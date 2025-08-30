@@ -142,7 +142,7 @@ mod tests {
         
         assert!(result2.is_ok());
         let parsed2 = result2.unwrap();
-        assert!(parsed2.vector_query.is_empty());
+        assert!(parsed2.vector_query.is_none());
     }
     
     #[test]

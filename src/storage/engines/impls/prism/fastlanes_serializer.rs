@@ -269,7 +269,7 @@ impl PrismFastLanesSerializer {
                 for q in quantized_data {
                     if let Some(primary) = q.primary {
                         // Use unified engine's dequantization
-                        let vector = self.quantization_engine.dequantize(&primary)?;
+                        let vector = self.quantization_engine.dequantize(&primary).await?;
                         vectors.push(vector);
                     } else {
                         // Fallback to zero vector
@@ -301,9 +301,9 @@ impl PrismFastLanesSerializer {
             offset += 2;
             
             let id = if id_len > 0 {
-                Some(String::from_utf8_lossy(&data[offset..offset + id_len]).to_string())
+                String::from_utf8_lossy(&data[offset..offset + id_len]).to_string()
             } else {
-                None
+                String::new()
             };
             if id_len > 0 {
                 offset += id_len;

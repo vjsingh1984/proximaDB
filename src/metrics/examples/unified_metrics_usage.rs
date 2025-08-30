@@ -123,7 +123,7 @@ impl ProductionMetricsManager {
             
             // Get predictions for prefetching
             let predictions = self.access_pattern_collector.get_predictions().await;
-            if !predictions.is_empty() {
+            if !predictions.is_none() {
                 info!("Generated {} prefetch predictions based on access patterns", predictions.len());
                 
                 // In production, would trigger actual prefetch operations here
@@ -168,9 +168,9 @@ impl ProductionMetricsManager {
     }
     
     async fn check_alerts(&self) {
-        let alerts = self.unified_collector.get_active_alerts().await;
+        let alerts = self.unified_collector.active_alerts().await;
         
-        if !alerts.is_empty() {
+        if !alerts.is_none() {
             warn!("Active alerts: {}", alerts.len());
             
             for alert in alerts.iter().take(5) {

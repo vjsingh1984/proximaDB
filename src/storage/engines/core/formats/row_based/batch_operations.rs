@@ -197,12 +197,17 @@ impl RowBasedBatchOperations {
         match self.config.parallel_processing {
             true => {
                 // Parallel processing
+                // Clone Arc reference for async move closure
+                let self_clone = Arc::new(self.clone());
                 let batch_results = self.process_batches_parallel(
                     batches,
-                    blocks,
-                    index,
-                    |batch_ids, blocks, index| async move {
-                        self.process_read_batch(batch_ids, blocks, index).await
+                    blocks.clone(),
+                    index.clone(),
+                    move |batch_ids, blocks_inner, index_inner| {
+                        let self_ref = self_clone.clone();
+                        async move {
+                            self_ref.process_read_batch(batch_ids, &blocks_inner, &index_inner).await
+                        }
                     },
                 ).await?;
                 
@@ -235,14 +240,14 @@ impl RowBasedBatchOperations {
             partial_results: all_results,
             throughput_ops_per_second: throughput,
             memory_usage_peak: {
-                let stats = self.memory_pool.get_comprehensive_stats();
+                let stats = self.memory_pool.comprehensive_stats();
                 (stats.serialization.peak_size + stats.vector.peak_size + 
-                stats.compression.peak_size + stats.metadata.peak_size) as u64
+                stats.compression.peak_size + stats.metadata.peak_size) as usize
             },
             cache_hit_rate: 0.0, // Would be calculated from actual cache usage
             cpu_usage_percent: 0.0, // Would be measured
             memory_efficiency: {
-                let stats = self.memory_pool.get_comprehensive_stats();
+                let stats = self.memory_pool.comprehensive_stats();
                 let total_hits = stats.serialization.cache_hits + stats.vector.cache_hits +
                                 stats.compression.cache_hits + stats.metadata.cache_hits;
                 let total_acquisitions = stats.serialization.total_acquisitions + 
@@ -532,8 +537,8 @@ impl RowBasedBatchOperations {
         optimal_size
     }
     
-    /// Process batches in parallel
-    async fn process_batches_parallel<F, Fut, T>(
+    /// Process batches in parallel (using concurrent futures, not spawned tasks)
+    async fn process_batches_parallel<F, Fut>(
         &self,
         batches: Vec<Vec<String>>,
         blocks: &[RowBasedDataBlock],
@@ -544,22 +549,22 @@ impl RowBasedBatchOperations {
         F: Fn(Vec<String>, &[RowBasedDataBlock], &RowBasedIdIndex) -> Fut,
         Fut: std::future::Future<Output = Result<BatchResult>>,
     {
-        let mut handles = Vec::new();
+        use futures::future::join_all;
         
-        for batch in batches {
-            let handle = tokio::spawn(processor(batch, blocks, index));
-            handles.push(handle);
+        let futures: Vec<_> = batches
+            .into_iter()
+            .map(|batch| processor(batch, blocks, index))
+            .collect();
+        
+        let results = join_all(futures).await;
+        
+        // Collect results, propagating errors
+        let mut batch_results = Vec::new();
+        for result in results {
+            batch_results.push(result?);
         }
         
-        let mut results = Vec::new();
-        for handle in handles {
-            match handle.await? {
-                Ok(result) => results.push(result),
-                Err(e) => return Err(e),
-            }
-        }
-        
-        Ok(results)
+        Ok(batch_results)
     }
     
     /// Process a single read batch
@@ -579,8 +584,7 @@ impl RowBasedBatchOperations {
             
             match index.lookup(id).await {
                 Some(location) => {
-                    let key = &location.block_id;
-                    if let Some(block) = blocks.get(key) {
+                    if let Some(block) = blocks.get(location.block_id as usize) {
                         if let Some(record) = block.get_record(location.record_offset as usize) {
                             successful_operations += 1;
                             partial_results.push(PartialResult {

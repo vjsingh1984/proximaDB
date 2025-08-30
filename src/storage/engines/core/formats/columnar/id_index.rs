@@ -184,7 +184,7 @@ impl ColumnarIdIndex {
                 };
                 
                 let mut map = self.id_to_location.write().await;
-                if map.insert(id, location).is_empty() {
+                if map.insert(id, location).is_none() {
                     self.unique_ids.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 self.total_ids.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

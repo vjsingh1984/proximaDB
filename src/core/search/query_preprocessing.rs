@@ -9,10 +9,11 @@ use std::sync::Arc;
 use lru::LruCache;
 use parking_lot::RwLock;
 use tracing::{debug, trace};
-use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
+use crate::compute::quantization::unified::{UnifiedQuantizationLevel, UnifiedQuantizationEngine};
 use crate::compute::quantization::types::QuantizationLevel;
 use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb::QuantizationConfig;
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use std::num::NonZeroUsize;
@@ -52,8 +53,8 @@ pub struct QueryPreprocessor {
     /// LRU cache for preprocessed queries
     cache: Arc<RwLock<LruCache<u64, Arc<QueryVectorCache>>>>,
     
-    /// Quantization engine
-    quantization_engine: Arc<StorageQuantizationEngine>,
+    /// Quantization engine (optional until properly initialized)
+    quantization_engine: Option<Arc<StorageQuantizationEngine>>,
     
     /// Hardware capabilities for SIMD
     hardware: Arc<HardwareCapabilities>,
@@ -75,9 +76,24 @@ impl QueryPreprocessor {
     pub fn new(cache_size: usize) -> Self {
         let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(100).unwrap());
         
+        // Initialize quantization engine with default configuration
+        // Create required components for quantization engine
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+        let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            codebook_store,
+        ));
+        
+        let quantization_engine = Some(Arc::new(StorageQuantizationEngine::new(
+            unified_engine,
+            distance_compute,
+            StorageQuantizationConfig::default(),
+        )));
+        
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
-            quantization_engine: Arc::new(StorageQuantizationEngine::new()),
+            quantization_engine,
             hardware: get_hardware_capabilities(),
             stats: Arc::new(RwLock::new(CacheStats::default())),
         }
@@ -155,9 +171,9 @@ impl QueryPreprocessor {
         self.stats.write().simd_operations += 1;
         
         // Use hardware-accelerated normalization if available
-        if self.hardware.has_avx2() {
+        if self.hardware.cpu.features.avx2_support {
             Arc::new(self.normalize_avx2(vector))
-        } else if self.hardware.has_sse() {
+        } else if self.hardware.cpu.features.sse42_support {
             Arc::new(self.normalize_sse(vector))
         } else {
             Arc::new(self.normalize_scalar(vector))
@@ -305,9 +321,10 @@ impl QueryPreprocessor {
         
         // Quantize based on configuration
         if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Binary(_)))) {
-            if let Ok(quantized) = self.quantization_engine
-                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
-                .await
+            if let Some(engine) = &self.quantization_engine {
+                if let Ok(quantized) = engine
+                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
+                    .await
             {
                 if let Some(storage_data) = quantized.into_iter().next() {
                     if let Some(primary) = storage_data.primary {
@@ -315,11 +332,13 @@ impl QueryPreprocessor {
                     }
                 }
             }
+            }
         }
         
         if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Scalar(_)))) {
-            if let Ok(quantized) = self.quantization_engine
-                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
+            if let Some(engine) = &self.quantization_engine {
+                if let Ok(quantized) = engine
+                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
                 .await
             {
                 if let Some(storage_data) = quantized.into_iter().next() {
@@ -328,11 +347,13 @@ impl QueryPreprocessor {
                     }
                 }
             }
+            }
         }
         
         if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4)) {
-            if let Ok(quantized) = self.quantization_engine
-                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq4)
+            if let Some(engine) = &self.quantization_engine {
+                if let Ok(quantized) = engine
+                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq4)
                 .await
             {
                 if let Some(storage_data) = quantized.into_iter().next() {
@@ -341,11 +362,13 @@ impl QueryPreprocessor {
                     }
                 }
             }
+            }
         }
         
         if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 8)) {
-            if let Ok(quantized) = self.quantization_engine
-                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq8)
+            if let Some(engine) = &self.quantization_engine {
+                if let Ok(quantized) = engine
+                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq8)
                 .await
             {
                 if let Some(storage_data) = quantized.into_iter().next() {
@@ -353,6 +376,7 @@ impl QueryPreprocessor {
                         pq8 = Some(Arc::new(primary.data));
                     }
                 }
+            }
             }
         }
         
@@ -369,8 +393,17 @@ impl QueryPreprocessor {
         
         // If custom levels are provided, convert them
         if !config.custom_levels.is_empty() {
-            // TODO: Convert proto QuantizationLevel to UnifiedQuantizationLevel
-            // For now, return default levels based on strategy
+            // Convert proto QuantizationLevel struct to UnifiedQuantizationLevel
+            return config.custom_levels.iter().filter_map(|proto_level| {
+                // Map proto level_id to unified quantization level constants
+                match proto_level.level_id.as_str() {
+                    "binary" => Some(UnifiedQuantizationLevel::Binary),
+                    "int8" => Some(UnifiedQuantizationLevel::Int8),
+                    "pq4" => Some(UnifiedQuantizationLevel::Pq4),
+                    "pq8" => Some(UnifiedQuantizationLevel::Pq8),
+                    _ => None,
+                }
+            }).collect();
         }
         
         // Otherwise, use strategy to determine levels

@@ -174,7 +174,7 @@ mod tests {
         
         // Verify invalidated
         assert!(!metadata_cache.has_parquet_metadata("temp.parquet").await);
-        assert!(metadata_cache.get_parquet_schema("temp.parquet").await.is_empty());
+        assert!(metadata_cache.get_parquet_schema("temp.parquet").await.is_none());
     }
     
     #[tokio::test]
@@ -232,6 +232,6 @@ mod tests {
         
         // Can't guarantee specific eviction behavior without knowing implementation details
         // But we can verify the cache still works
-        assert!(recent.is_some() || small_cache.get_parquet_schema("file_0.parquet").await.is_empty());
+        assert!(recent.is_some() || small_cache.get_parquet_schema("file_0.parquet").await.is_none());
     }
 }

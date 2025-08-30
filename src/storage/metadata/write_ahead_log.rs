@@ -219,7 +219,8 @@ impl MetadataWriteAheadLog {
         let batch_records = vec![vector_record];
 
         // Write to write buffer using modern batch architecture through WALBehaviorWrapper
-        if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
+        {
+            let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
             // Create WALVectorBatch for the metadata
             let batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
                 batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
@@ -230,8 +231,6 @@ impl MetadataWriteAheadLog {
             metadata_bloom_filter: None,
             };
             let _sequence = behavior_wrapper.add_vector_batch(&collection_id, batch).await?;
-        } else {
-            return Err(anyhow::anyhow!("Write buffer behavior wrapper not available"));
         }
 
         // Update cache if enabled
@@ -257,6 +256,14 @@ impl MetadataWriteAheadLog {
         }
 
         Ok(())
+    }
+
+    /// Get collection metadata (alias for get_collection)
+    pub async fn collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<VersionedCollectionMetadata>> {
+        self.get_collection(collection_id).await
     }
 
     /// Get collection metadata
@@ -298,11 +305,8 @@ impl MetadataWriteAheadLog {
 
         // Search in write buffer using modern vector_by_id through WALBehaviorWrapper
         let vector_id = format!("metadata_{}", collection_id);
-        let vector_record = if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            behavior_wrapper.vector_by_id(collection_id, &vector_id).await?
-        } else {
-            None
-        };
+        let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
+        let vector_record = behavior_wrapper.vector_by_id(collection_id, &vector_id).await?;
 
         if let Some(record) = vector_record {
             let metadata = self.vector_record_to_metadata(&record)?;
@@ -363,15 +367,14 @@ impl MetadataWriteAheadLog {
         tracing::warn!("⚠️ Cache empty and full write buffer scan not implemented - collections will be loaded on-demand");
 
         // Try to get stats to see if there's any data using modern interface
-        if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.stats().await {
-                let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
-                if total_entries > 0 {
-                    tracing::info!(
-                        "📊 Write buffer contains {} entries - metadata will be loaded when accessed",
-                        total_entries
-                    );
-                }
+        let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
+        if let Ok(stats_map) = behavior_wrapper.stats().await {
+            let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
+            if total_entries > 0 {
+                tracing::info!(
+                    "📊 Write buffer contains {} entries - metadata will be loaded when accessed",
+                    total_entries
+                );
             }
         }
 
@@ -383,12 +386,9 @@ impl MetadataWriteAheadLog {
         tracing::info!("🔄 Recovering collection metadata from write buffer...");
 
         // Call write buffer strategy recover to load from disk using modern interface
-        let recovered_entries = if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.stats().await {
-                stats_map.values().map(|s| s.total_entries).sum()
-            } else {
-                0
-            }
+        let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
+        let recovered_entries = if let Ok(stats_map) = behavior_wrapper.stats().await {
+            stats_map.values().map(|s| s.total_entries).sum()
         } else {
             0
         };
@@ -403,29 +403,28 @@ impl MetadataWriteAheadLog {
         let mut recovered_collections = 0;
 
         // Get write buffer statistics to see what collections exist using modern interface
-        if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.stats().await {
-                let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
-                let collections_count = stats_map.len();
-                tracing::info!(
-                    "📊 Write buffer stats: {} total entries, {} collections",
-                    total_entries,
-                    collections_count
-                );
+        let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
+        if let Ok(stats_map) = behavior_wrapper.stats().await {
+            let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
+            let collections_count = stats_map.len();
+            tracing::info!(
+                "📊 Write buffer stats: {} total entries, {} collections",
+                total_entries,
+                collections_count
+            );
 
-                // Try to enumerate collections by looking at write buffer entries
-                // Since we store metadata with vector_id = "metadata_{collection_id}"
-                // we can scan for these entries and rebuild our cache
-                if let Ok(collection_ids) = self.get_all_collection_ids().await {
-                    for collection_id in collection_ids {
-                        if let Ok(Some(metadata)) = self.collection(&collection_id).await {
-                            tracing::debug!(
-                                "📦 Recovered collection: {} ({})",
-                                metadata.name,
-                                collection_id
-                            );
-                            recovered_collections += 1;
-                        }
+            // Try to enumerate collections by looking at write buffer entries
+            // Since we store metadata with vector_id = "metadata_{collection_id}"
+            // we can scan for these entries and rebuild our cache
+            if let Ok(collection_ids) = self.get_all_collection_ids().await {
+                for collection_id in collection_ids {
+                    if let Ok(Some(metadata)) = self.collection(&collection_id).await {
+                        tracing::debug!(
+                            "📦 Recovered collection: {} ({})",
+                            metadata.name,
+                            collection_id
+                        );
+                        recovered_collections += 1;
                     }
                 }
             }
@@ -449,24 +448,21 @@ impl MetadataWriteAheadLog {
         }
 
         // Get stats to find collections using modern interface
-        if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
-            if let Ok(stats_map) = behavior_wrapper.stats().await {
-                // Extract collection IDs from write buffer stats
-                let collection_ids: Vec<String> = stats_map.keys().cloned().collect();
-                
-                let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
-                let collections_count = stats_map.len();
-                
-                tracing::debug!(
-                    "📊 Write buffer has {} total entries across {} collections",
-                    total_entries,
-                    collections_count
-                );
+        let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
+        if let Ok(stats_map) = behavior_wrapper.stats().await {
+            // Extract collection IDs from write buffer stats
+            let collection_ids: Vec<String> = stats_map.keys().cloned().collect();
+            
+            let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
+            let collections_count = stats_map.len();
+            
+            tracing::debug!(
+                "📊 Write buffer has {} total entries across {} collections",
+                total_entries,
+                collections_count
+            );
 
-                Ok(collection_ids)
-            } else {
-                Ok(Vec::new())
-            }
+            Ok(collection_ids)
         } else {
             Ok(Vec::new())
         }
@@ -499,7 +495,8 @@ impl MetadataWriteAheadLog {
 
             // Write delete record to write buffer using modern batch architecture through WALBehaviorWrapper
             let delete_batch_records = vec![delete_record];
-            if let Some(behavior_wrapper) = self.write_buffer_strategy.get_wal_behavior_wrapper() {
+            {
+                let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
                 // Create WALVectorBatch for the delete
                 let vector_count = delete_batch_records.len() as u64;
                 let _end_sequence = if vector_count > 0 { 2 + vector_count - 1 } else { 2 };
@@ -512,8 +509,6 @@ impl MetadataWriteAheadLog {
             metadata_bloom_filter: None,
                 };
                 let _sequence = behavior_wrapper.add_vector_batch(collection_id, delete_batch).await?;
-            } else {
-                return Err(anyhow::anyhow!("Write buffer behavior wrapper not available for delete"));
             }
 
             // Remove from cache
@@ -567,7 +562,7 @@ impl MetadataWriteAheadLog {
             }
 
             metadata.timestamp = Utc::now().timestamp() as u32;
-            metadata.version = Some(metadata.version + 1);
+            metadata.version = Some(metadata.version.unwrap_or(0) + 1);
 
             // Save updated metadata
             self.upsert_collection(metadata).await?;
@@ -589,6 +584,11 @@ impl MetadataWriteAheadLog {
     pub async fn get_stats(&self) -> Result<MetadataStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
+    }
+    
+    /// Get metadata statistics (alias for get_stats)
+    pub async fn stats(&self) -> Result<MetadataStats> {
+        self.get_stats().await
     }
 
     /// Convert metadata to vector record for write buffer storage

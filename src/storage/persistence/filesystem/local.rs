@@ -117,7 +117,7 @@ impl LocalFileSystem {
                     while remaining.starts_with("../") {
                         if let Some(parent) = current.parent() {
                             current = parent.to_path_buf();
-                            remaining = remaining.strip_prefix("../");
+                            remaining = remaining.strip_prefix("../").unwrap_or(remaining);
                         } else {
                             // Can't go up further, just use what we have
                             break;
@@ -134,7 +134,7 @@ impl LocalFileSystem {
                     }
                 } else if path_str.starts_with("./") {
                     // Replace ./ with the base directory
-                    let clean_path = path_str.strip_prefix("./");
+                    let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
                     resolved_path = PathBuf::from(fallback_base).join(clean_path);
                 } else if path_str == "." {
                     // Just current directory
@@ -308,7 +308,7 @@ impl FileSystem for LocalFileSystem {
         let options = options.clone();
 
         // Create parent directories if requested
-        if options.create_dirs {
+        if options.as_ref().map(|o| o.create_dirs).unwrap_or(false) {
             if let Some(parent) = resolved_path.parent() {
                 fs::create_dir_all(parent)
                     .await
@@ -319,7 +319,7 @@ impl FileSystem for LocalFileSystem {
         }
 
         // Check if file exists and handle overwrite option
-        if !options.overwrite && resolved_path.exists() {
+        if !options.as_ref().map(|o| o.overwrite).unwrap_or(true) && resolved_path.exists() {
             return Err(FilesystemError::AlreadyExists(
                 resolved_path.display().to_string(),
             ));
@@ -469,7 +469,7 @@ impl FileSystem for LocalFileSystem {
             }
             Err(e) => {
                 // Get current position for debugging
-                let current_pos = file.stream_position().await;
+                let current_pos = file.stream_position().await.unwrap_or(0);
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
                     path, offset, bytes_to_read, current_pos, file_size, e
@@ -521,7 +521,7 @@ impl FileSystem for LocalFileSystem {
             let name = entry_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                
+                .unwrap_or("unknown")
                 .to_string();
 
             let metadata = entry.metadata().await.map_err(FilesystemError::Io)?;

@@ -496,7 +496,7 @@ impl OptimizedWriteBufferWriter {
         let uuid_short = &uuid::Uuid::new_v4().to_string()[..8];
         let wal_filename = format!(
             "wal_{}_{:010}_{:010}_{}.{}",
-            timestamp, min_seq, max_seq, uuid_short, file_extension
+            timestamp, min_seq.unwrap_or(0), max_seq.unwrap_or(0), uuid_short, file_extension
         );
         let wal_file_path = format!("{}/{}", assignment.logs_dir, wal_filename);
         
@@ -518,8 +518,8 @@ impl OptimizedWriteBufferWriter {
             vectors.len(),
             serialized_data.len(),
             wal_filename,
-            min_seq,
-            max_seq
+            min_seq.unwrap_or(0),
+            max_seq.unwrap_or(0)
         );
         
         Ok(wal_file_path)

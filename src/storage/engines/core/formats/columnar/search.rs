@@ -133,7 +133,7 @@ impl SearchableFile for ParquetFile {
     }
     
     fn might_contain(&self, filter: &Option<FilterExpression>) -> bool {
-        if filter.is_empty() {
+        if filter.is_none() {
             return true;
         }
         

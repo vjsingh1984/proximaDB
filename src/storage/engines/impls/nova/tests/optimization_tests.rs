@@ -340,8 +340,8 @@ mod streaming_search_tests {
         
         assert_eq!(plan.parallelism_level, 4);
         assert_eq!(plan.memory_budget_per_stage, 64 * 1024 * 1024);
-        assert!(plan.selected_superblocks.is_empty());
-        assert!(plan.row_group_order.is_empty());
+        assert!(plan.selected_superblocks.is_none());
+        assert!(plan.row_group_order.is_none());
     }
 
     #[test]

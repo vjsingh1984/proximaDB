@@ -66,7 +66,7 @@ async fn test_filter_bitmap_cache_roaring() {
     // Test filter decomposition
     let complex_filter = "(age > 25 AND category = 'electronics') OR status = 'active'";
     let decomposed = cache.decompose_filter(complex_filter).await;
-    assert!(!decomposed.is_empty());
+    assert!(!decomposed.is_none());
     
     // Test incremental updates
     let mut update_bitmap = RoaringBitmap::new();

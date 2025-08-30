@@ -249,7 +249,7 @@ impl CacheMonitoringDashboard {
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
         let metrics = CacheMetricsSnapshot {
-            overall_hit_rate: cache_metrics.hit_rate_percent(),
+            overall_hit_rate: cache_metrics.hit_rate() * 100.0,
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L1),

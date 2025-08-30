@@ -670,7 +670,7 @@ mod tests {
         
         assert!(prediction.access_probability < 0.5);
         assert!(prediction.confidence < 0.5);
-        assert!(prediction.predicted_query_type.is_empty());
+        assert!(prediction.predicted_query_type.is_none());
     }
 
     #[test]

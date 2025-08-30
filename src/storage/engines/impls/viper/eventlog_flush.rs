@@ -139,3 +139,6 @@ impl Default for ViperFlushNotifier {
         Self::new()
     }
 }
+
+/// Alias for consistency with other engines
+pub type ViperFlushHandler = ViperFlushNotifier;

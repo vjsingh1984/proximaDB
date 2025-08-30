@@ -330,7 +330,7 @@ use tracing::{debug, error, info};
         
         // Verify storage engine was called
         let engine_calls = mock_engine.get_operation_calls().await;
-        assert!(!engine_calls.is_empty(), "Storage engine should have been called");
+        assert!(!engine_calls.is_none(), "Storage engine should have been called");
         assert!(engine_calls.iter().any(|call| call.starts_with("flush:")));
         
         debug!("📊 FlushCoordinator metrics: {} flushes, last duration: {}ms", 
@@ -394,7 +394,7 @@ use tracing::{debug, error, info};
         
         // Verify storage engine was called
         let engine_calls = mock_engine.get_operation_calls().await;
-        assert!(!engine_calls.is_empty(), "Storage engine should have been called");
+        assert!(!engine_calls.is_none(), "Storage engine should have been called");
         assert!(engine_calls.iter().any(|call| call.starts_with("compact:")));
         
         debug!("📊 BackgroundManager metrics: {} compactions, last duration: {}ms", 

@@ -258,7 +258,7 @@ impl ColumnarOptimizer {
         row_group: &RowGroupMetaData,
         filter: Option<&MetadataFilter>,
     ) -> Result<bool> {
-        if filter.is_empty() {
+        if filter.is_none() {
             return Ok(true);
         }
         

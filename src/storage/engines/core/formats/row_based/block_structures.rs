@@ -777,6 +777,6 @@ mod tests {
         );
         
         assert!(block.find_record_by_id("test_id").is_some());
-        assert!(block.find_record_by_id("non_existent").is_empty());
+        assert!(block.find_record_by_id("non_existent").is_none());
     }
 }

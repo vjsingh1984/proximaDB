@@ -62,9 +62,9 @@ async fn test_monitoring_dashboard() {
     let state = dashboard.get_dashboard_state().await;
     
     // Verify state components
-    assert!(!state.active_alerts.is_empty() || state.active_alerts.is_empty());
-    assert!(!state.cache_status.is_empty());
-    assert!(!state.optimization_suggestions.is_empty() || state.optimization_suggestions.is_empty());
+    assert!(!state.active_alerts.is_none() || state.active_alerts.is_none());
+    assert!(!state.cache_status.is_none());
+    assert!(!state.optimization_suggestions.is_none() || state.optimization_suggestions.is_none());
     
     // Check cache status
     assert!(state.cache_status.contains_key("vector_data"));
@@ -144,8 +144,8 @@ async fn test_alert_management() {
     
     // alert_manager.check_alerts(&metrics, &thresholds).await;
     // 
-    // let alerts = alert_manager.get_active_alerts().await;
-    // assert!(!alerts.is_empty());
+    // let alerts = alert_manager.active_alerts().await;
+    // assert!(!alerts.is_none());
     // 
     // // Check for low hit rate alert
     // assert!(alerts.iter().any(|a| a.id == "low_hit_rate"));

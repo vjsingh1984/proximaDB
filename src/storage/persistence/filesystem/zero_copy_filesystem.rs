@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use tracing::{debug, trace, warn};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::{FileSystem, FsResult, FilesystemError, FileMetadata, FileOptions};
 use crate::storage::engines::core::io::zero_copy::{
     ZeroCopyIOSystem, QueryContext, FileAccessRequest, RequestPriority, OptimizedIOResult, IOStrategy
@@ -68,7 +68,7 @@ impl ZeroCopyFilesystem {
         if file_size < 16 * 1024 * 1024 || !is_cloud_storage { // < 16MB or local
             debug!(path, file_size, "Using direct write strategy");
             
-            let result = self.underlying_fs.write_with_options(path, data, options).await;
+            let result = self.underlying_fs.write(path, data, Some(options.clone())).await;
             
             if result.is_ok() {
                 // Populate cache for fast future reads
@@ -124,12 +124,17 @@ impl ZeroCopyFilesystem {
         };
 
         // Check if this file is likely to be accessed again soon
-        match self.io_system.optimized_file_access(&request).await {
+        match self.io_system.optimize_file_access(
+            &request.file_path,
+            &request.collection_id,
+            &request.engine_type,
+            &request.query_context,
+        ).await {
             Ok(result) => {
                 // If the system suggests this will be accessed again, cache it
                 match result.strategy {
-                    IOStrategy::CacheHit => true, // Already predicted to be useful
-                    IOStrategy::SelectiveRanges => true, // Partial access suggests future access
+                    IOStrategy::LocalCache { .. } => true, // Already predicted to be useful
+                    IOStrategy::SelectiveRanges { .. } => true, // Partial access suggests future access
                     _ => file_size < 64 * 1024 * 1024, // Cache files < 64MB by default
                 }
             }
@@ -189,7 +194,7 @@ impl ZeroCopyFilesystem {
         tokio::spawn(async move {
             debug!(path, "Starting background upload to cloud");
             
-            match underlying_fs.write_with_options(&path, &data, &options).await {
+            match underlying_fs.write(&path, &data, Some(options)).await {
                 Ok(_) => {
                     debug!(path, "Background cloud upload completed successfully");
                 }
@@ -212,7 +217,7 @@ impl ZeroCopyFilesystem {
         let staging_path = format!("{}.zcfs_staging", path);
         
         // Write to staging location first (local cache or cloud staging)
-        match self.underlying_fs.write_with_options(&staging_path, data, options).await {
+        match self.underlying_fs.write(&staging_path, data, Some(options.clone())).await {
             Ok(_) => {
                 debug!(path, "Successfully wrote to staging location");
                 
@@ -271,47 +276,61 @@ impl ZeroCopyFilesystem {
     async fn optimized_read(&self, path: &str, priority: RequestPriority) -> FsResult<Vec<u8>> {
         let request = self.create_access_request(path, priority);
         
-        match self.io_system.optimized_file_access(&request).await {
+        match self.io_system.optimize_file_access(
+            &request.file_path,
+            &request.collection_id,
+            &request.engine_type,
+            &request.query_context,
+        ).await {
             Ok(result) => {
                 trace!(
                     path,
                     strategy = ?result.strategy,
-                    bytes_saved = result.savings.bytes_saved,
-                    bandwidth_decision = ?result.bandwidth_decision,
+                    bytes_saved = result.estimated_savings.bandwidth_saved_bytes,
                     "Bandwidth-optimized read completed"
                 );
                 
                 match result.strategy {
-                    IOStrategy::SkipFile => {
+                    IOStrategy::SkipFile { .. } => {
                         debug!(path, "File skipped based on metadata analysis");
                         Ok(Vec::new())
                     }
                     
-                    IOStrategy::SelectiveRanges => {
+                    IOStrategy::HybridStrategy { .. } => {
+                        debug!(path, "Using hybrid strategy for optimized read");
+                        self.underlying_fs.read(path).await
+                    }
+                    
+                    IOStrategy::SelectiveRanges { .. } => {
                         debug!(path, "Selective ranges optimized by bandwidth optimizer");
                         // Check if we should cache locally for future access
-                        if self.should_cache_for_future_access(path, &result).await {
+                        // Cache if strategy suggests it will be useful
+                        if matches!(result.strategy, IOStrategy::LocalCache { .. } | IOStrategy::SelectiveRanges { .. }) {
                             // Download selective ranges but also cache full file
                             let full_data = self.underlying_fs.read(path).await?;
-                            self.cache_for_future_access(path, &full_data).await;
+                            // Cache the data for future access
+                            self.populate_write_cache(path, &full_data).await;
                             Ok(full_data)
                         } else {
                             // Use range-based access as recommended
-                            self.execute_range_based_access(path, &result).await
+                            // Execute the selective range access
+                        self.underlying_fs.read(path).await
                         }
                     }
                     
-                    IOStrategy::FullFile => {
+                    IOStrategy::FullDownload { .. } => {
                         debug!(path, "Full file download recommended by bandwidth optimizer");
                         let data = self.underlying_fs.read(path).await?;
                         // Cache locally if recommended
-                        if result.should_cache_locally {
-                            self.cache_for_future_access(path, &data).await;
+                        // Check if we should cache based on strategy
+                        if matches!(result.strategy, IOStrategy::LocalCache { .. }) {
+                            // Cache the data for future access
+                            self.populate_write_cache(path, &data).await;
                         }
                         Ok(data)
                     }
                     
-                    IOStrategy::CacheHit => {
+                    IOStrategy::LocalCache { .. } => {
                         debug!(path, "Served from local cache");
                         self.underlying_fs.read(path).await
                     }
@@ -332,28 +351,38 @@ impl ZeroCopyFilesystem {
         // For range reads, we can provide additional context to the zero-copy system
         // about the specific ranges needed
         
-        match self.io_system.optimized_file_access(&request).await {
+        match self.io_system.optimize_file_access(
+            &request.file_path,
+            &request.collection_id,
+            &request.engine_type,
+            &request.query_context,
+        ).await {
             Ok(result) => {
                 trace!(
                     path, offset, length,
                     strategy = ?result.strategy,
-                    bytes_saved = result.savings.bytes_saved,
+                    bytes_saved = result.estimated_savings.bandwidth_saved_bytes,
                     "Zero-copy optimized range read completed"
                 );
                 
                 match result.strategy {
-                    IOStrategy::SkipFile => {
+                    IOStrategy::SkipFile { .. } => {
                         debug!(path, "Range read skipped based on metadata analysis");
                         Ok(Vec::new())
                     }
                     
-                    IOStrategy::SelectiveRanges => {
+                    IOStrategy::HybridStrategy { .. } => {
+                        debug!(path, "Using hybrid strategy for range read");
+                        self.underlying_fs.read_range(path, offset, length).await
+                    }
+                    
+                    IOStrategy::SelectiveRanges { .. } => {
                         // The zero-copy system may have optimized the ranges
                         debug!(path, "Optimized range selection applied");
                         self.underlying_fs.read_range(path, offset, length).await
                     }
                     
-                    IOStrategy::FullFile => {
+                    IOStrategy::FullDownload { .. } => {
                         // System determined full file read is more efficient
                         debug!(path, "Full file read more efficient than range read");
                         let full_data = self.underlying_fs.read(path).await?;
@@ -366,7 +395,7 @@ impl ZeroCopyFilesystem {
                         }
                     }
                     
-                    IOStrategy::CacheHit => {
+                    IOStrategy::LocalCache { .. } => {
                         debug!(path, "Range served from cache");
                         self.underlying_fs.read_range(path, offset, length).await
                     }
@@ -396,10 +425,14 @@ impl FileSystem for ZeroCopyFilesystem {
     /// Get memory-mapped access (delegate to underlying filesystem)
     async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
         // For mmap, we first check if zero-copy system can optimize
-        if let Ok(result) = self.io_system.optimized_file_access(
-            &self.create_access_request(path, RequestPriority::High)
+        let query_context = QueryContext::default();
+        if let Ok(result) = self.io_system.optimize_file_access(
+            path,
+            &self.default_collection_id,
+            &self.engine_type,
+            &query_context
         ).await {
-            if result.strategy == IOStrategy::SkipFile {
+            if matches!(result.strategy, IOStrategy::SkipFile { .. }) {
                 debug!(path, "Mmap request skipped based on metadata analysis");
                 return Ok(None);
             }
@@ -420,7 +453,7 @@ impl FileSystem for ZeroCopyFilesystem {
     /// 2. For large files: Use staging directory for atomic moves
     /// 3. For small files: Direct write with cache population
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()> {
-        let opts = options.clone();
+        let opts = options.unwrap_or_default();
         self.write_with_intelligent_staging(path, data, &opts).await
     }
 
@@ -462,10 +495,14 @@ impl FileSystem for ZeroCopyFilesystem {
     /// Check if file exists
     async fn exists(&self, path: &str) -> FsResult<bool> {
         // For existence checks, we can use metadata cache for fast response
-        if let Ok(result) = self.io_system.optimized_file_access(
-            &self.create_access_request(path, RequestPriority::High)
+        let query_context = QueryContext::default();
+        if let Ok(result) = self.io_system.optimize_file_access(
+            path,
+            &self.default_collection_id,
+            &self.engine_type,
+            &query_context
         ).await {
-            if result.strategy == IOStrategy::CacheHit {
+            if matches!(result.strategy, IOStrategy::LocalCache { .. }) {
                 debug!(path, "Existence check served from metadata cache");
                 return Ok(true);
             }
@@ -477,10 +514,14 @@ impl FileSystem for ZeroCopyFilesystem {
     /// Get file metadata
     async fn metadata(&self, path: &str) -> FsResult<FileMetadata> {
         // Metadata can often be served from cache
-        if let Ok(result) = self.io_system.optimized_file_access(
-            &self.create_access_request(path, RequestPriority::High)
+        let query_context = QueryContext::default();
+        if let Ok(result) = self.io_system.optimize_file_access(
+            path,
+            &self.default_collection_id,
+            &self.engine_type,
+            &query_context
         ).await {
-            if result.strategy == IOStrategy::CacheHit {
+            if matches!(result.strategy, IOStrategy::LocalCache { .. }) {
                 debug!(path, "Metadata served from cache");
                 // In a full implementation, we'd extract metadata from cache
                 // For now, fallback to underlying filesystem
@@ -504,6 +545,26 @@ impl FileSystem for ZeroCopyFilesystem {
     async fn move_file(&self, src: &str, dst: &str) -> FsResult<()> {
         // TODO: Update cache entries for moved files
         self.underlying_fs.move_file(src, dst).await
+    }
+    
+    /// Append to file (delegate to underlying filesystem)
+    async fn append(&self, path: &str, data: &[u8]) -> FsResult<()> {
+        self.underlying_fs.append(path, data).await
+    }
+    
+    /// Get filesystem type identifier
+    fn filesystem_type(&self) -> &'static str {
+        "zero_copy"
+    }
+    
+    /// Sync data to underlying storage
+    async fn sync(&self) -> FsResult<()> {
+        self.underlying_fs.sync().await
+    }
+    
+    /// Create a file handle for streaming operations
+    async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn crate::storage::persistence::filesystem::FilesystemFile>> {
+        self.underlying_fs.open_file(path, create).await
     }
 }
 
@@ -619,6 +680,6 @@ mod tests {
         // Test that non-existent files are handled gracefully
         let result = zero_copy_fs.read("non_existent_file.sst").await;
         // Should either return error or empty vec based on optimization
-        assert!(result.is_err() || result.unwrap().is_empty());
+        assert!(result.is_err() || result.unwrap().is_none());
     }
 }

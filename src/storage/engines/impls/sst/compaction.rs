@@ -689,7 +689,7 @@ impl Compaction {
             let record_id = record.id.as_ref().clone();
             
             // For append-only vectors (empty IDs), keep all records
-            if record_id.is_empty() || record_id.starts_with("__append_only_") {
+            if record_id.is_none() || record_id.starts_with("__append_only_") {
                 merged_vector_records.push(record);
             } else if record_id != last_id {
                 // New ID, add it
@@ -782,7 +782,7 @@ impl Compaction {
             let vector_id = vector.id.as_deref().unwrap_or("").to_string();
             
             // Handle append-only vectors (empty/null IDs) specially
-            let key = if vector_id.is_empty() {
+            let key = if vector_id.is_none() {
                 // For append-only vectors, use sequence number as unique key
                 let append_only_key = format!("__append_only_seq_{}", seq);
                 info!("🔍 UNIFIED: Append-only vector at sequence {}, using key='{}'", seq, append_only_key);
@@ -1130,7 +1130,7 @@ impl Compaction {
         let data_blocks_bytes = &file_data[offset..];
         debug!("Reading {} bytes of data blocks from {}", data_blocks_bytes.len(), file_path);
         
-        if data_blocks_bytes.is_empty() {
+        if data_blocks_bytes.is_none() {
             warn!("No data blocks found in SST file: {}", file_path);
             return Ok(BTreeMap::new());
         }

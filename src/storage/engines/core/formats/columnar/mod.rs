@@ -509,9 +509,9 @@ impl ColumnarFactory {
         enable_id_less_optimization: bool,
     ) -> Result<UnifiedParquetReader> {
         if enable_id_less_optimization {
-            Ok(UnifiedParquetReader::with_id_less_mode(filesystem, config))
+            Ok(UnifiedParquetReader::with_id_less_mode(filesystem, config).await?)
         } else {
-            Ok(UnifiedParquetReader::with_config(filesystem, config))
+            Ok(UnifiedParquetReader::with_config(filesystem, config).await?)
         }
     }
     

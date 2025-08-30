@@ -268,6 +268,10 @@ impl VectorRecord {
             index_path: None,
             version: self.version.map(|v| v as u32),
             timestamp: Some(self.timestamp as u32),
+            expanded_context: Vec::new(),
+            expires_at: None,
+            source: None,
+            updated_at: None,
         }
     }
 
@@ -768,7 +772,7 @@ impl CollectionResponse {
 
     /// Set the single collection result
     pub fn with_collection(mut self, collection: crate::proto::proximadb::Collection) -> Self {
-        self.collection_id = Some(collection);
+        self.collection = Some(collection);
         self.affected_count = 1;
         self
     }

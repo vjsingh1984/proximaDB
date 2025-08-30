@@ -41,8 +41,8 @@ impl CacheValue for VectorRecord {
         // Assume each metadata item is ~50 bytes on average
         let metadata_size = self.metadata.len() * 50;
         
-        // Add size of id string if present
-        let id_size = self.id.as_ref().map_or(0, |s| s.len());
+        // Add size of id string
+        let id_size = self.id.len();
         
         // Total: vector data + metadata + id + struct overhead
         vector_size + metadata_size + id_size + 64
@@ -333,7 +333,7 @@ impl VectorStore {
         let mut uncompressed_size = 0usize;
         
         for item in &record.metadata {
-            match item.key.as_deref() {
+            match item.key.as_str() {
                 "compressed_block" => {
                     if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) = &item.value {
                         compressed_data = BASE64.decode(data).ok();
@@ -341,7 +341,7 @@ impl VectorStore {
                 }
                 "compression_type" => {
                     if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(ctype)) = &item.value {
-                        compression_type = match ctype.as_deref() {
+                        compression_type = match ctype.as_str() {
                             "Zstd" => CompressionType::Zstd,
                             "Lz4" => CompressionType::Lz4,
                             "Snappy" => CompressionType::Snappy,

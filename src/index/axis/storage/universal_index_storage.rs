@@ -28,7 +28,7 @@
 use anyhow::{anyhow, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
-use crate::core::errors::core_error::ProximaDBError;
+use crate::core::error::{ProximaDBError, StorageError};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -345,12 +345,14 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         zero_copy_config,
                         filesystem.clone(),
                         vec![],
-                    ).await.map_err(|e| ProximaDBError::Storage(format!("Failed to create zero-copy system: {}", e)))?
+                    ).await.map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(
+                        std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create zero-copy system: {}", e))
+                    )))?
                 );
                 let reader = UnifiedSstableReader::new(filesystem, zero_copy_system, self.collection_id.clone());
                 // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes
                 // We need to handle this differently
-                if let Some(_vector_record) = reader.get_vector(&file_path.to_string_lossy(), id).await? {
+                if let Some(_vector_record) = reader.vector(&file_path.to_string_lossy(), id).await? {
                     // For now, we can't directly deserialize since we get a VectorRecord
                     // This would need a different storage approach
                     debug!("Found record {} in SST but cannot deserialize generic type T from VectorRecord", id);
@@ -423,6 +425,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         match self.storage_engine {
             StorageEngine::SST => {
                 let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
+                azure: None,
+                gcs: None,
+                hdfs: None,
+                s3: None,
                     default_fs: Some("file://".to_string()),
                     local: None,
                     global_options: Default::default(),

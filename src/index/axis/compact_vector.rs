@@ -84,6 +84,7 @@ pub struct CompactVector {
 
 impl CompactVector {
     const QUANT_HEADER_SIZE: usize = 1;  // Only for quantized vectors
+    const HEADER_SIZE: usize = 1;  // Minimum header size
     
     /// Create from FP32 vector - no header needed!
     pub fn new_fp32(id: &str, vector: &[f32]) -> Result<Self> {
@@ -139,11 +140,11 @@ impl CompactVector {
             // For quantized vectors, calculate based on method and dimension
             let method = self.quantization_method();
             match method {
-                0 => dimension,                    // INT8: 1 byte per dimension
-                1 => dimension,                    // PQ8: 1 byte per dimension
-                2 => (dimension * 4 + 7) / 8,      // PQ4: 4 bits per dimension
-                3 => (dimension + 7) / 8,          // Binary: 1 bit per dimension
-                _ => dimension,                    // Default to 1 byte per dimension
+                Some(0) => dimension,                    // INT8: 1 byte per dimension
+                Some(1) => dimension,                    // PQ8: 1 byte per dimension
+                Some(2) => (dimension * 4 + 7) / 8,      // PQ4: 4 bits per dimension
+                Some(3) => (dimension + 7) / 8,          // Binary: 1 bit per dimension
+                _ => dimension,                          // Default to 1 byte per dimension
             }
         } else {
             dimension * std::mem::size_of::<f32>()
@@ -198,7 +199,10 @@ impl CompactVector {
         if data.len() < Self::HEADER_SIZE {
             return Err(anyhow!("Data too small for CompactVector header"));
         }
-        Ok(Self { data })
+        Ok(Self { 
+            data,
+            is_quantized: false,  // Default to non-quantized
+        })
     }
 }
 
@@ -256,7 +260,12 @@ impl CompactVectorCollection {
     }
     
     pub fn by_index(&self, index: usize) -> Option<&CompactVector> {
-        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */
+        self.vectors.get(index)
+    }
+    
+    /// Get vector by ID
+    pub fn get_by_id(&self, id: &str) -> Option<&CompactVector> {
+        self.id_index.get(id).and_then(|idx| self.vectors.get(*idx))
     }
     
     /// Get vector as FP32 using stored dimension
@@ -266,7 +275,7 @@ impl CompactVectorCollection {
     
     /// Get vector ID using stored dimension
     pub fn vector_id(&self, index: usize) -> Option<&str> {
-        self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */.map(|v| v.id(self.dimension))
+        self.vectors.get(index).map(|v| v.id(self.dimension))
     }
     
     pub fn len(&self) -> usize {

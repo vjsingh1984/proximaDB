@@ -15,7 +15,7 @@ use super::bandwidth_optimizer::{BandwidthOptimizer, DownloadStrategy, Optimized
 use super::access_tracker::{AccessPatternTracker, AccessEvent};
 use super::metrics::SystemPerformanceMetrics;
 use super::traits::{
-    MetadataSerializer, QueryContext, FileAccessRequest, RequestPriority
+    MetadataSerializer, QueryContext, FileAccessRequest, RequestPriority, DataRange
 };
 use super::config::ZeroCopyIOConfig;
 
@@ -221,7 +221,7 @@ impl ZeroCopyIOSystem {
         // Store serializers in a HashMap for engine-type based lookup
         let mut serializer_map = HashMap::new();
         for serializer in serializers {
-            let engine_type = serializer.engine_type();
+            let engine_type = serializer.engine_id();
             serializer_map.insert(engine_type.to_string(), Arc::from(serializer));
         }
 
@@ -340,11 +340,22 @@ impl ZeroCopyIOSystem {
         }
 
         // Step 2: Get required data ranges (selective ranges from metadata)
-        let required_ranges = self.metadata_cache.get_selective_ranges(
+        let range_tuples = self.metadata_cache.get_selective_ranges(
             file_path,
             collection_id,
             engine_type,
         ).await.unwrap_or_else(|| vec![(0, u64::MAX)]); // Full file if no selective ranges
+        
+        // Convert to DataRange format
+        let required_ranges = if range_tuples.is_empty() || (range_tuples.len() == 1 && range_tuples[0].1 == u64::MAX) {
+            None // Full file
+        } else {
+            Some(range_tuples.into_iter().map(|(offset, end)| DataRange {
+                offset,
+                length: end.saturating_sub(offset),
+                priority: 128, // Medium priority
+            }).collect())
+        };
 
         // Step 3: Get file size (would need filesystem integration)
         let file_size = 0u64; // Placeholder - would get from filesystem
@@ -858,7 +869,10 @@ impl ZeroCopyIOSystem {
         // Load metadata from file using the appropriate serializer
         if let Some(serializer) = self.serializers.get(engine_type) {
             // Load metadata from filesystem
-            let file_data = self.filesystem.read_bytes(file_path, 0, 4096).await?; // Read header
+            let actual_fs = self.filesystem.get_filesystem(file_path)
+                .map_err(|e| ProximaDBError::Internal(format!("Failed to get filesystem: {}", e)))?;
+            let file_data = actual_fs.read_range(file_path, 0, 4096).await
+                .map_err(|e| ProximaDBError::Internal(format!("Failed to read file: {}", e)))?; // Read header
             
             // Parse metadata using serializer
             let engine_metadata = serializer.deserialize_metadata(&file_data)
@@ -881,7 +895,7 @@ impl ZeroCopyIOSystem {
                 collection_id,
                 engine_type,
                 fs_metadata,
-            ).await?;
+            ).await.map_err(|e| ProximaDBError::Internal(format!("Failed to cache metadata: {}", e)))?;
             
             debug!(
                 file_path,
@@ -942,6 +956,6 @@ mod tests {
 
         assert_eq!(operation.operation_type, OperationType::DownloadFile);
         assert_eq!(operation.target, "/path/to/file.sst");
-        assert!(operation.dependencies.is_empty());
+        assert!(operation.dependencies.is_none());
     }
 }

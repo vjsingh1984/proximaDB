@@ -310,12 +310,15 @@ impl CompactionCoordinator {
         let state = states.get(collection_id);
         
         // Don't trigger if already in progress
-        if state.compaction_in_progress {
-            return Ok(false);
+        if let Some(s) = state {
+            if s.compaction_in_progress {
+                return Ok(false);
+            }
         }
         
         // Check time constraint
-        if let Some(last_compaction) = state.last_compaction {
+        if let Some(s) = state {
+            if let Some(last_compaction) = s.last_compaction {
             let elapsed = Utc::now().signed_duration_since(last_compaction);
             if elapsed.num_seconds() < self.config.min_compaction_interval_secs as i64 {
                 debug!(
@@ -325,6 +328,7 @@ impl CompactionCoordinator {
                 );
                 return Ok(false);
             }
+        }
         }
         
         // Check active compaction limit
@@ -339,9 +343,10 @@ impl CompactionCoordinator {
         }
         
         // Also check actual file count in storage (not just tracked state)
+        let preferred_engine = state.as_ref().map(|s| s.preferred_engine.as_str()).unwrap_or("viper");
         let actual_file_count = match self.discover_existing_files_for_collection(
             collection_id, 
-            &state.preferred_engine
+            &preferred_engine
         ).await {
             Ok(files) => files.len(),
             Err(e) => {
@@ -351,22 +356,25 @@ impl CompactionCoordinator {
         };
         
         // Use the maximum of tracked state and actual file count
-        let effective_file_count = state.files_needing_compaction.max(actual_file_count);
+        let effective_file_count = state.as_ref().map(|s| s.files_needing_compaction).unwrap_or(0).max(actual_file_count);
         
         // Check thresholds
-        let should_compact = 
+        let should_compact = if let Some(s) = state {
             effective_file_count >= self.config.max_files_before_compaction ||
-            state.uncompacted_size_bytes >= self.config.max_size_before_compaction ||
-            state.flushes_since_compaction >= self.config.max_flushes_before_compaction;
+            s.uncompacted_size_bytes >= self.config.max_size_before_compaction ||
+            s.flushes_since_compaction >= self.config.max_flushes_before_compaction
+        } else {
+            effective_file_count >= self.config.max_files_before_compaction
+        };
         
         if should_compact {
             info!(
                 "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{} (actual={}), size={}MB/{}MB, flushes={}/{}",
                 collection_id,
-                state.files_needing_compaction, self.config.max_files_before_compaction,
+                state.as_ref().map(|s| s.files_needing_compaction).unwrap_or(0), self.config.max_files_before_compaction,
                 actual_file_count,
-                state.uncompacted_size_bytes / (1024 * 1024), self.config.max_size_before_compaction / (1024 * 1024),
-                state.flushes_since_compaction, self.config.max_flushes_before_compaction
+                state.as_ref().map(|s| s.uncompacted_size_bytes).unwrap_or(0) / (1024 * 1024), self.config.max_size_before_compaction / (1024 * 1024),
+                state.as_ref().map(|s| s.flushes_since_compaction).unwrap_or(0), self.config.max_flushes_before_compaction
             );
         } else if actual_file_count > 5 {
             debug!(
@@ -523,7 +531,7 @@ impl CompactionCoordinator {
         debug!("🔧 CompactionCoordinator: Executing VIPER compaction for {}", collection_id);
         
         // Use VIPER's consolidated compaction with vector tracking
-        match self.viper_engine.compact_collection(collection_id, None).await {
+        match self.viper_engine.compact_collection(collection_id).await {
             Ok(enhanced_result) => {
                 info!(
                     "✅ VIPER compaction completed: {} files compacted, {} bytes reclaimed, {} vectors deleted",
@@ -662,7 +670,7 @@ impl CompactionCoordinator {
         
         info!(
             "🔧 CompactionCoordinator: Manual compaction triggered for collection {} using {}",
-            collection_id, engine
+            collection_id, engine.unwrap_or("default")
         );
         
         self.trigger_background_compaction(collection_id).await
@@ -671,7 +679,7 @@ impl CompactionCoordinator {
     /// Check collection compaction status and trigger if needed
     pub async fn check_and_compact(&self, collection_id: &str) -> Result<Option<CompactionResult>> {
         // Initialize collection state if not exists
-        if self.get_collection_state(collection_id).await.is_empty() {
+        if self.get_collection_state(collection_id).await.is_none() {
             self.initialize_collection(collection_id, "VIPER").await?;
         }
         

@@ -27,7 +27,7 @@ mod tests {
         
         // Check basic info fields
         assert!(matches!(info.backend, ComputeBackend::CpuSIMD(_)));
-        assert!(!info.device_name.is_empty());
+        assert!(!info.device_name.is_none());
         assert!(info.memory_total > 0);
         assert!(info.memory_free > 0);
         assert!(info.memory_free <= info.memory_total);
@@ -276,19 +276,19 @@ mod tests {
         
         // All batch operations should handle empty inputs gracefully
         let dot_result = accelerator.batch_dot_product(&empty_queries, &empty_vectors).await.unwrap();
-        assert!(dot_result.is_empty());
+        assert!(dot_result.is_none());
         
         let cosine_result = accelerator.batch_cosine_similarity(&empty_queries, &empty_vectors).await.unwrap();
-        assert!(cosine_result.is_empty());
+        assert!(cosine_result.is_none());
         
         let euclidean_result = accelerator.batch_euclidean_distance(&empty_queries, &empty_vectors).await.unwrap();
-        assert!(euclidean_result.is_empty());
+        assert!(euclidean_result.is_none());
         
         let normalize_result = accelerator.normalize_vectors(&empty_vectors).await.unwrap();
-        assert!(normalize_result.is_empty());
+        assert!(normalize_result.is_none());
         
         let matrix_result = accelerator.matrix_multiply(&empty_queries, &empty_vectors).await.unwrap();
-        assert!(matrix_result.is_empty());
+        assert!(matrix_result.is_none());
     }
     
     // 🔴 UNUSED TEST - HardwareInfo struct doesn't exist (hardware module commented out)

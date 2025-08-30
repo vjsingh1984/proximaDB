@@ -499,7 +499,7 @@ mod tests {
 
         let matrix = builder.build_p2_matrix(&vectors, 3).unwrap();
         assert_eq!(matrix.num_vectors, 3);
-        assert!(!matrix.distances.is_empty());
+        assert!(!matrix.distances.is_none());
         assert!(matrix.compressed_size > 0);
     }
 
@@ -524,7 +524,7 @@ mod tests {
 
         let matrix = builder.build_k2_matrix(&centroids, 2).unwrap();
         assert_eq!(matrix.num_centroids, 3);
-        assert!(!matrix.compressed_data.is_empty());
+        assert!(!matrix.compressed_data.is_none());
         assert_eq!(matrix.lookup_table.len(), 3);
     }
 

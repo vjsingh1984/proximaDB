@@ -486,7 +486,7 @@ mod tests {
             
             let decoder = FastLanesDecoder::new(scheme);
             let decoded = decoder.decode_f32(&block.data).expect("Should decode mixed blocks");
-            assert!(!decoded.is_empty(), "Decoded data should not be empty");
+            assert!(!decoded.is_none(), "Decoded data should not be empty");
         }
     }
     

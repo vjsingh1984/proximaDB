@@ -92,6 +92,20 @@ pub struct CustomQuantization {
     pub config: std::collections::HashMap<String, String>,
 }
 
+impl std::hash::Hash for CustomQuantization {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.type_id.hash(state);
+        self.bits_per_element.hash(state);
+        // Hash the config map in a deterministic way
+        let mut sorted_config: Vec<_> = self.config.iter().collect();
+        sorted_config.sort_by_key(|(k, _)| k.as_str());
+        for (k, v) in sorted_config {
+            k.hash(state);
+            v.hash(state);
+        }
+    }
+}
+
 impl UnifiedQuantizationLevel {
     /// Common quantization level constants for easy access
     pub const Binary: Self = Self {

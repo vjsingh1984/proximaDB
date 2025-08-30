@@ -442,16 +442,16 @@ mod tests {
         // Test insert
         assert!(store.insert("test1".to_string(), vector.clone()).is_ok());
         assert_eq!(store.len(), 1);
-        assert!(!store.is_empty());
+        assert!(!store.is_none());
 
         // Test get
         assert!(store.get(key).is_some());
-        assert!(store.get(key).is_empty());
+        assert!(store.get(key).is_none());
 
         // Test remove
         assert!(store.remove("test1").is_some());
         assert_eq!(store.len(), 0);
-        assert!(store.is_empty());
+        assert!(store.is_none());
     }
 
     #[test]

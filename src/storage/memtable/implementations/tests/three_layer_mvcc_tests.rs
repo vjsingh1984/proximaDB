@@ -105,7 +105,7 @@ async fn test_three_layer_search_consistency_basic() {
 
     // Verify logical delete is respected (should return None)
     let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
-    assert!(result.is_empty(), "Vector should be logically deleted");
+    assert!(result.is_none(), "Vector should be logically deleted");
 
     // Verify search also respects logical delete
     let search_results = memtable
@@ -172,7 +172,7 @@ async fn test_get_before_delete_update_consistency() {
 
     // Verify delete is successful
     let result = memtable.vector_by_id(collection_id, vector_id).await.unwrap();
-    assert!(result.is_empty(), "Vector should be deleted after tombstone");
+    assert!(result.is_none(), "Vector should be deleted after tombstone");
 }
 
 #[tokio::test]
@@ -264,7 +264,7 @@ async fn test_expired_records_vs_active_records() {
 
     // Expired vector should not be found
     let expired_result = memtable.vector_by_id(collection_id, "expired_vector").await.unwrap();
-    assert!(expired_result.is_empty());
+    assert!(expired_result.is_none());
 
     // Search should only return active vector
     let search_results = memtable
@@ -361,7 +361,7 @@ async fn test_multi_collection_mvcc_isolation() {
 
     // Collection A should not find the vector (deleted)
     let result_a = memtable.vector_by_id(collection_a, vector_id).await.unwrap();
-    assert!(result_a.is_empty());
+    assert!(result_a.is_none());
 
     // Collection B should still find the vector (not deleted)
     let result_b = memtable.vector_by_id(collection_b, vector_id).await.unwrap();

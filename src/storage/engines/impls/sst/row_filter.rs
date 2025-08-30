@@ -392,7 +392,7 @@ mod tests {
         
         let indices = evaluator.filter_vector_records_fast(&records, &filter).unwrap();
         
-        assert!(!indices.is_empty(), "Should find some matching records");
+        assert!(!indices.is_none(), "Should find some matching records");
         debug!("SST Row Filter found {} matches out of {} records", indices.len(), records.len());
     }
     
@@ -424,7 +424,7 @@ mod tests {
         
         let indices = evaluator.evaluate_parallel_filters(&records, &filter).await.unwrap();
         
-        assert!(!indices.is_empty(), "Should find some matching records");
+        assert!(!indices.is_none(), "Should find some matching records");
         debug!("Parallel filter found {} matches", indices.len());
     }
     

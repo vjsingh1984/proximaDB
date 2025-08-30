@@ -310,7 +310,7 @@ use tracing::{debug, error, info};
         
         // Verify metrics are gone
         let retrieved_after_cleanup = store.collection_metrics("cleanup_test_collection").await.unwrap();
-        assert!(retrieved_after_cleanup.is_empty(), "Metrics should be cleaned up");
+        assert!(retrieved_after_cleanup.is_none(), "Metrics should be cleaned up");
         
         info!("✅ Metrics cleanup test passed");
     }

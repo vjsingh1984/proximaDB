@@ -83,7 +83,7 @@ impl IdIndex {
     pub fn insert(&self, id: String, location: BlockLocation) -> Result<()> {
         // Update direct mapping
         let mut map = self.id_to_location.write().unwrap();
-        let is_new = map.insert(id.clone(), location.clone()).is_empty();
+        let is_new = map.insert(id.clone(), location.clone()).is_none();
         
         if is_new {
             self.unique_ids.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

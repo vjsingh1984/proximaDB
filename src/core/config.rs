@@ -4,6 +4,7 @@ use tracing::info;
 use crate::network::NetworkConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     pub storage: StorageConfig,
@@ -85,7 +86,48 @@ impl Default for HardwareConfig {
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            server: ServerConfig::default(),
+            storage: StorageConfig::default(),
+            consensus: ConsensusConfig::default(),
+            api: ApiConfig::default(),
+            monitoring: MonitoringConfig::default(),
+            network: None,
+            tls: None,
+            hardware: Some(HardwareConfig::default()),
+        }
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            node_id: "node-1".to_string(),
+            bind_address: "127.0.0.1".to_string(),
+            port: 5678,
+            data_dir: PathBuf::from("./data"),
+        }
+    }
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            storage_locations: vec![StorageLocation::default()],
+            metadata_backend: MetadataBackendConfig::default(),
+            write_buffer: WriteBufferConfig::default(),
+            compaction: CompactionConfig::default(),
+            assignment: AssignmentConfig::default(),
+            filesystem_optimization: None,
+            default_engine: "sst".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ServerConfig {
     pub node_id: String,
     pub bind_address: String,
@@ -94,6 +136,7 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
@@ -319,35 +362,7 @@ impl StorageConfig {
     }
 }
 
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            storage_locations: vec![
-                StorageLocation {
-                    url: "file:///data/proximadb/disk1".to_string(),
-                    weight: 1,
-                    tags: vec!["local".to_string()],
-                },
-                StorageLocation {
-                    url: "file:///data/proximadb/disk2".to_string(),
-                    weight: 1,
-                    tags: vec!["local".to_string()],
-                },
-            ],
-            metadata_url: "file:///data/proximadb/disk1/metadata_info".to_string(),
-            assignment_config: AssignmentConfig::default(),
-            wal_config: WriteBufferUserConfig::default(),
-            mmap_enabled: true,
-            sst_config: Some(SstConfig::default()),
-            viper_config: Some(ViperConfig::default()),
-            cache_size_mb: 2048,
-            // Use unified bloom filter config
-            bloom_filter_config: Some(BloomFilterConfig::default()),
-            compaction_config: CompactionConfig::default(),
-            filesystem_config: FilesystemOptimizationConfig::default(),
-        }
-    }
-}
+// Default implementation moved to line 115
 
 /// User-facing write buffer configuration (from TOML files)
 /// This is the simple configuration that users specify in their config files.
@@ -842,41 +857,4 @@ pub struct MonitoringConfig {
     pub log_level: String,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig {
-                node_id: "proximadb-node-1".to_string(),
-                bind_address: "0.0.0.0".to_string(),
-                port: 5678,
-                data_dir: PathBuf::from("/data/proximadb/1"),
-            },
-            storage: StorageConfig::default(),
-            consensus: ConsensusConfig {
-                node_id: Some(1),
-                cluster_peers: vec![],
-                election_timeout_ms: 5000,
-                heartbeat_interval_ms: 1000,
-                snapshot_threshold: 1000,
-            },
-            api: ApiConfig {
-                grpc_port: 5679,
-                rest_port: 5678,
-                max_request_size_mb: 64,
-                timeout_seconds: 30,
-                enable_tls: Some(false),
-                rest_compression: false,         // All defaults false as requested
-                grpc_compression: false,         // All defaults false as requested
-                compression_algorithm: "gzip".to_string(),
-                compression_level: 6,
-            },
-            monitoring: MonitoringConfig {
-                metrics_enabled: true,
-                log_level: "info".to_string(),
-            },
-            network: Some(NetworkConfig::default()),
-            tls: None,
-            hardware: Some(HardwareConfig::default()),
-        }
-    }
-}
+// Removed duplicate - Default implementation is at line 89

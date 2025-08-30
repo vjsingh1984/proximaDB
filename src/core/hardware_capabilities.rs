@@ -338,7 +338,7 @@ impl HardwareCapabilities {
             // For non-x86 architectures
             #[cfg(target_os = "macos")]
             {
-                ("Apple", "Apple Silicon".to_string())
+                ("Apple".to_string(), "Apple Silicon".to_string())
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -949,6 +949,53 @@ pub fn try_get_hardware_capabilities() -> Option<Arc<HardwareCapabilities>> {
 }
 
 /// Get hardware capabilities (for backward compatibility)
+impl Default for CpuCapabilities {
+    fn default() -> Self {
+        Self {
+            physical_cores: 1,
+            logical_cores: 1,
+            vendor: "Unknown".to_string(),
+            model_name: "Unknown".to_string(),
+            simd: SimdCapabilities::default(),
+            features: CpuFeatures::default(),
+        }
+    }
+}
+
+impl Default for GpuCapabilities {
+    fn default() -> Self {
+        Self {
+            backend: GpuBackend::None,
+            devices: Vec::new(),
+            primary_device: None,
+            total_memory: 0,
+            cuda_compute_capability: None,
+        }
+    }
+}
+
+impl Default for MemoryInfo {
+    fn default() -> Self {
+        Self {
+            total_memory: 8 * 1024 * 1024 * 1024, // 8GB default
+            available_memory: 4 * 1024 * 1024 * 1024, // 4GB default
+            recommended_cache_size: 1024 * 1024 * 1024, // 1GB
+        }
+    }
+}
+
+impl Default for HardwareCapabilities {
+    fn default() -> Self {
+        Self {
+            cpu: CpuCapabilities::default(),
+            gpu: GpuCapabilities::default(),
+            memory: MemoryInfo::default(),
+            config: HardwareConfig::default(),
+            detected_at: std::time::Instant::now(),
+        }
+    }
+}
+
 pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
     try_get_hardware_capabilities()
         .unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
@@ -997,7 +1044,8 @@ impl HardwareQuery {
     /// Used by RAPTOR engine for hardware-aware parameter selection
     pub fn l3_cache_size(&self) -> Option<usize> {
         // Return actual L3 cache size from hardware detection
-        Some(self.cpu.features.cache_sizes.l3)
+        try_get_hardware_capabilities()
+            .map(|caps| caps.cpu.features.cache_sizes.l3)
     }
 }
 
@@ -1014,7 +1062,7 @@ mod tests {
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
-        assert!(!caps.cpu.vendor.is_empty());
+        assert!(!caps.cpu.vendor.is_none());
         
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0);

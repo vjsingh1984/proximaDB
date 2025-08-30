@@ -458,7 +458,7 @@ mod tests {
             None, // No metrics updater in test
         ).await.unwrap();
         
-        assert!(!compaction_result.is_empty());
+        assert!(!compaction_result.is_none());
         
         // Step 6: Verify both operations used the same context without additional service calls
         let flush_calls = viper_engine.get_flush_calls().await;

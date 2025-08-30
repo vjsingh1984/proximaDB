@@ -931,6 +931,20 @@ where
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTier>,
     ) -> Result<Self> {
+        // Initialize storage based on active structure
+        let (index_storage, cache_storage) = match active_structure {
+            HybridStructure::IndexMode(_) => {
+                (Some(DashMap::with_capacity(1000)), None)
+            },
+            HybridStructure::CacheMode(_) => {
+                let cache = MokaCache::builder()
+                    .max_capacity(10000)
+                    .time_to_live(Duration::from_secs(300))
+                    .build();
+                (None, Some(cache))
+            },
+        };
+        
         Ok(Self {
             collection_id,
             active_structure: RwLock::new(active_structure),
@@ -939,8 +953,8 @@ where
             tier_manager,
             metrics: AtomicMetrics::new(),
             workload_metrics: RwLock::new(WorkloadMetrics::new(WorkloadPattern::Mixed)),
-            index_storage: None,
-            cache_storage: None,
+            index_storage,
+            cache_storage,
         })
     }
 }
@@ -1090,7 +1104,7 @@ where
         let start = Instant::now();
         
         // Get existing value before insertion
-        let old_value = self.storage.get(key).await;
+        let old_value = self.storage.get(&key).await;
         
         // Insert into Moka cache
         self.storage.insert(key.clone(), value.clone()).await;
@@ -1227,36 +1241,95 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
-    async fn insert(&self, _key: K, _value: V) -> Result<Option<V>> {
-        unimplemented!("HybridBackend implementation pending")
+    async fn insert(&self, key: K, value: V) -> Result<Option<V>> {
+        let start = Instant::now();
+        
+        // Use the active storage based on current mode
+        let result = if let Some(ref index) = self.index_storage {
+            Ok(index.insert(key, value))
+        } else if let Some(ref cache) = self.cache_storage {
+            cache.insert(key, value).await;
+            Ok(None)
+        } else {
+            Err(anyhow!("No active storage backend"))
+        };
+        
+        self.metrics.record_operation("insert", start.elapsed());
+        result
     }
 
-    async fn get(&self, _key: &K) -> Option<V> {
-        unimplemented!("HybridBackend implementation pending")
+    async fn get(&self, key: &K) -> Option<V> {
+        let start = Instant::now();
+        
+        let result = if let Some(ref index) = self.index_storage {
+            index.get(key).map(|r| r.clone())
+        } else if let Some(ref cache) = self.cache_storage {
+            cache.get(key).await
+        } else {
+            None
+        };
+        
+        self.metrics.record_operation("get", start.elapsed());
+        result
     }
 
-    async fn remove(&self, _key: &K) -> Option<V> {
-        unimplemented!("HybridBackend implementation pending")
+    async fn remove(&self, key: &K) -> Option<V> {
+        let start = Instant::now();
+        
+        let result = if let Some(ref index) = self.index_storage {
+            index.remove(key).map(|(_, v)| v)
+        } else if let Some(ref cache) = self.cache_storage {
+            cache.remove(key).await
+        } else {
+            None
+        };
+        
+        self.metrics.record_operation("remove", start.elapsed());
+        result
     }
 
-    async fn contains(&self, _key: &K) -> bool {
-        unimplemented!("HybridBackend implementation pending")
+    async fn contains(&self, key: &K) -> bool {
+        if let Some(ref index) = self.index_storage {
+            index.contains_key(key)
+        } else if let Some(ref cache) = self.cache_storage {
+            cache.contains_key(key)
+        } else {
+            false
+        }
     }
 
     async fn len(&self) -> usize {
-        unimplemented!("HybridBackend implementation pending")
+        if let Some(ref index) = self.index_storage {
+            index.len()
+        } else if let Some(ref cache) = self.cache_storage {
+            cache.entry_count() as usize
+        } else {
+            0
+        }
     }
 
     async fn is_empty(&self) -> bool {
-        unimplemented!("HybridBackend implementation pending")
+        self.len().await == 0
     }
 
     async fn keys(&self) -> Vec<K> {
-        unimplemented!("HybridBackend implementation pending")
+        if let Some(ref index) = self.index_storage {
+            index.iter().map(|entry| entry.key().clone()).collect()
+        } else if let Some(ref cache) = self.cache_storage {
+            // Cache doesn't support iteration, return empty
+            Vec::new()
+        } else {
+            Vec::new()
+        }
     }
 
     async fn clear(&self) {
-        unimplemented!("CacheBackend implementation pending")
+        if let Some(ref index) = self.index_storage {
+            index.clear();
+        } else if let Some(ref cache) = self.cache_storage {
+            cache.invalidate_all();
+        }
+        // Note: AtomicMetrics doesn't have a reset method, metrics will continue accumulating
     }
 
     async fn metrics(&self) -> MetricsSnapshot {
@@ -1303,10 +1376,10 @@ mod tests {
         assert!(backend.contains(&"key2".to_string()).await);
         assert!(!backend.contains(&"key1".to_string()).await);
         assert_eq!(backend.len().await, 1);
-        assert!(!backend.is_empty().await);
+        assert!(!backend.is_none().await);
         
         backend.clear().await;
-        assert!(backend.is_empty().await);
+        assert!(backend.is_none().await);
         */
     }
     

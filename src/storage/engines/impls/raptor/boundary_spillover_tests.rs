@@ -129,7 +129,7 @@ mod tests {
         println!("Expanded centroids: {:?}", expanded);
         
         // Verify we found boundary centroids
-        assert!(!expanded.is_empty() || primary.len() >= 3, 
+        assert!(!expanded.is_none() || primary.len() >= 3, 
                 "Should have either expanded centroids or sufficient primary ones");
     }
 

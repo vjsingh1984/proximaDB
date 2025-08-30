@@ -19,11 +19,25 @@ use crate::index::axis::{
 // Type aliases and structs for compatibility
 pub type MigrationEngine = IndexMigrationEngine;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum MigrationComplexity {
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone)]
-pub struct MigrationDecision {
-    pub should_migrate: bool,
-    pub target_strategy: Option<IndexSelectionStrategy>,
-    pub reason: String,
+pub enum MigrationDecision {
+    Migrate {
+        from: IndexSelectionStrategy,
+        to: IndexSelectionStrategy,
+        estimated_improvement: f32,
+        estimated_duration: Duration,
+        complexity: MigrationComplexity,
+    },
+    Stay {
+        reason: String,
+    },
 }
 
 

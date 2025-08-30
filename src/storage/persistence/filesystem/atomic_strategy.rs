@@ -242,12 +242,14 @@ impl SameMountTempExecutor {
             .ok_or_else(|| FilesystemError::InvalidPath("Invalid filename".to_string()))?;
 
         // Create temp directory path in same mount
-        let temp_dir = parent.join(&self.temp_suffix);
+        let temp_dir = parent
+            .ok_or_else(|| FilesystemError::InvalidPath("No parent directory".to_string()))?
+            .join(&self.temp_suffix);
 
         // Generate unique temp filename with timestamp and process ID
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .clone()
+            .unwrap_or_default()
             .as_millis();
         let pid = std::process::id();
         let temp_filename = format!(
@@ -397,7 +399,7 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
         // Generate local temp file
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .clone()
+            .unwrap_or_default()
             .as_millis();
         let pid = std::process::id();
         let temp_filename = format!("proximadb_{}_{}.tmp", timestamp, pid);

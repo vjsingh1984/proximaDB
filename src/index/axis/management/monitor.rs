@@ -389,7 +389,7 @@ impl PerformanceMonitor {
 
     /// Get active alerts
     pub async fn get_active_alerts(&self) -> Vec<Alert> {
-        self.alert_manager.get_active_alerts().await
+        self.alert_manager.active_alerts.read().await.values().cloned().collect()
     }
 
     /// Subscribe to monitoring events

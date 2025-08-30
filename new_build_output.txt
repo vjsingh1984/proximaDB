@@ -1,0 +1,85 @@
+   Compiling proximadb v0.1.4 (/Users/vijaysingh/code/proximaDB)
+warning: unused macro definition: `is_x86_feature_detected`
+ --> src/compute/distance_computation/platform/distance_arm64_patch.rs:7:14
+  |
+7 | macro_rules! is_x86_feature_detected {
+  |              ^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_macros)]` on by default
+
+warning: unused import: `distance_arm64_patch::*`
+  --> src/compute/distance_computation/platform/mod.rs:17:9
+   |
+17 | pub use distance_arm64_patch::*;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused import: `serde_json::json`
+  --> src/core/conversions.rs:26:5
+   |
+26 | use serde_json::json;
+   |     ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `CollectionRequest`, `Collection`, `VectorBatchRequest`, and `VectorRecord`
+  --> src/core/conversions.rs:30:5
+   |
+30 |     Collection, CollectionConfig, CollectionRequest, CollectionOperation,
+   |     ^^^^^^^^^^                    ^^^^^^^^^^^^^^^^^
+31 |     VectorRecord, VectorBatchRequest, VectorOperation,
+   |     ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `FilterExpression`
+  --> src/core/search/smart_execution_strategy.rs:15:41
+   |
+15 | use crate::core::search::{SearchParams, FilterExpression};
+   |                                         ^^^^^^^^^^^^^^^^
+
+warning: unused import: `Collection`
+  --> src/core/search/smart_execution_strategy.rs:16:51
+   |
+16 | use crate::proto::proximadb::{QuantizationConfig, Collection};
+   |                                                   ^^^^^^^^^^
+
+warning: unused import: `trace`
+  --> src/core/search/integrated_search_optimization.rs:14:28
+   |
+14 | use tracing::{debug, info, trace, warn};
+   |                            ^^^^^
+
+warning: unused import: `MmapOptions`
+  --> src/core/search/integrated_search_optimization.rs:16:21
+   |
+16 | use memmap2::{Mmap, MmapOptions};
+   |                     ^^^^^^^^^^^
+
+warning: unused imports: `SearchScenario` and `StageSizes`
+  --> src/core/search/integrated_search_optimization.rs:25:57
+   |
+25 |     progressive_quantization::{ProgressiveSearchConfig, StageSizes, SearchScenario},
+   |                                                         ^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+warning: unused imports: `Collection` and `QuantizationConfig`
+  --> src/core/search/integrated_search_optimization.rs:32:45
+   |
+32 | use crate::proto::proximadb::{VectorRecord, Collection, QuantizationConfig};
+   |                                             ^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `UnifiedStorageEngine`
+  --> src/core/search/integrated_search_optimization.rs:35:51
+   |
+35 | use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+   |                                                   ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::services::collection::manager::CollectionService`
+  --> src/core/search/integrated_search_optimization.rs:36:5
+   |
+36 | use crate::services::collection::manager::CollectionService;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Value`
+   --> src/core/search/mod.rs:688:73
+    |
+688 |         use crate::query::sql_engine::parser::{Condition, ComparisonOp, Value};
+    |                                                                         ^^^^^
+

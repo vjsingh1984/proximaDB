@@ -685,7 +685,7 @@ async fn test_return_vectors_flag() -> Result<()> {
     
     // Verify vectors are included
     for vector in &result_with_vectors.vectors {
-        assert!(!vector.vector.is_empty());
+        assert!(!vector.vector.is_none());
     }
     
     // Test with return_vectors = false

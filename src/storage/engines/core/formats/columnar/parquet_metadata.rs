@@ -12,7 +12,7 @@ use crate::storage::engines::core::io::zero_copy::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 
 /// Parquet Footer metadata (fixed size, bytemuck-compatible)
 #[repr(C)]
@@ -621,6 +621,14 @@ impl MetadataSerializer for ParquetMetadataSerializer {
 }
 
 impl EngineMetadata for ParquetMetadata {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
+    fn clone_box(&self) -> Box<dyn EngineMetadata> {
+        Box::new(self.clone())
+    }
+    
     fn file_size(&self) -> u64 {
         self.footer.file_size
     }

@@ -189,9 +189,9 @@ use tracing::{debug, error, info, warn};
     #[test]
     fn test_strategy_comparison() {
         let comparison = WALBatchFactory::compare_strategies();
-        assert!(!comparison.avro_advantages.is_empty());
-        assert!(!comparison.bincode_advantages.is_empty());
-        assert!(!comparison.proto_advantages.is_empty());
-        assert!(!comparison.recommendation.is_empty());
+        assert!(!comparison.avro_advantages.is_none());
+        assert!(!comparison.bincode_advantages.is_none());
+        assert!(!comparison.proto_advantages.is_none());
+        assert!(!comparison.recommendation.is_none());
     }
 }

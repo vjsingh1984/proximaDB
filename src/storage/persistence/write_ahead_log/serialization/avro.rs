@@ -60,10 +60,13 @@ impl super::VectorBatchSerializer for AvroSerializer {
                 let mut fields = vec![];
                 
                 // Add fields in the order they appear in the schema
-                fields.push(("id".to_string(), match &v.id {
-                    Some(id) => Value::Union(1, Box::new(Value::String(id.clone()))),
-                    None => Value::Union(0, Box::new(Value::Null)),
-                }));
+                fields.push(("id".to_string(), 
+                    if v.id.is_empty() {
+                        Value::Union(0, Box::new(Value::Null))
+                    } else {
+                        Value::Union(1, Box::new(Value::String(v.id.clone())))
+                    }
+                ));
                 
                 // Collection ID is managed externally, use empty string
                 fields.push(("collection_id".to_string(), Value::String(String::new())));
@@ -332,7 +335,7 @@ mod tests {
         // Serialize
         let serialized = serializer.serialize_batch(&vectors)
             .expect("Failed to serialize batch");
-        assert!(!serialized.is_empty());
+        assert!(!serialized.is_none());
         
         // Deserialize
         let deserialized = serializer.deserialize_batch(&serialized)

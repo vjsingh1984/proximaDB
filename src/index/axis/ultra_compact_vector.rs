@@ -255,7 +255,7 @@ impl UltraCompactCollection {
     }
     
     pub fn is_empty(&self) -> bool {
-        self.vectors.is_empty()
+        self.vectors.is_none()
     }
     
     /// Total memory usage in bytes
@@ -265,7 +265,7 @@ impl UltraCompactCollection {
     
     /// Average bytes per vector (including ID)
     pub fn avg_bytes_per_vector(&self) -> f64 {
-        if self.is_empty() {
+        if self.is_none() {
             0.0
         } else {
             self.memory_usage() as f64 / self.len() as f64

@@ -103,7 +103,7 @@ mod tests {
         // Serialize
         let serialized = serializer.serialize_batch(&vectors)
             .expect("Failed to serialize batch");
-        assert!(!serialized.is_empty());
+        assert!(!serialized.is_none());
         
         // Deserialize
         let deserialized = serializer.deserialize_batch(&serialized)
@@ -123,7 +123,7 @@ mod tests {
         let deserialized = serializer.deserialize_batch(&serialized)
             .expect("Failed to deserialize empty batch");
         
-        assert!(deserialized.is_empty());
+        assert!(deserialized.is_none());
     }
     
     #[test]

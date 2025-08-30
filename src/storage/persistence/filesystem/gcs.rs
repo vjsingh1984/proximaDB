@@ -233,7 +233,7 @@ impl GcsFileSystem {
                     "No default bucket configured for relative GCS paths".to_string(),
                 ))
             }
-        } else if path.contains_hash('/') {
+        } else if path.contains('/') {
             // Extract bucket from path
             let parts: Vec<&str> = path.splitn(2, '/').collect();
             tracing::trace!("✅ Extracted bucket: {} and object: {}", parts[0], parts[1]);
@@ -292,7 +292,7 @@ impl GcsClient {
 
         let mut request = self
             .http_client
-            .get(key)
+            .get("Location")
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -379,20 +379,27 @@ impl GcsClient {
             .body(data.to_vec());
 
         // Add storage class if specified
-        if let Some(storage_class) = options.storage_class {
-            request = request.header("x-goog-storage-class", storage_class);
+        if let Some(ref opts) = options {
+            if let Some(ref storage_class) = opts.storage_class {
+                request = request.header("x-goog-storage-class", storage_class);
+            } else {
+                request = request.header(
+                    "x-goog-storage-class",
+                    self.config.default_storage_class.as_str(),
+                );
+            }
+
+            // Add metadata if specified
+            if let Some(ref metadata) = opts.metadata {
+                for (key, value) in metadata {
+                    request = request.header(format!("x-goog-meta-{}", key), value);
+                }
+            }
         } else {
             request = request.header(
                 "x-goog-storage-class",
-                self.config.default_storage_class.as_deref(),
+                self.config.default_storage_class.as_str(),
             );
-        }
-
-        // Add metadata if specified
-        if let Some(metadata) = options.metadata {
-            for (key, value) in metadata {
-                request = request.header(format!("x-goog-meta-{}", key), value);
-            }
         }
 
         let response = request.send().await.map_err(|e| {
@@ -557,7 +564,7 @@ impl FileSystem for GcsFileSystem {
         let response = self
             .client
             .http_client
-            .get(key)
+            .get("Location")
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -576,20 +583,20 @@ impl FileSystem for GcsFileSystem {
                 .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
             let size = metadata_json["size"]
-                .as_deref()
+                .as_str()
                 .and_then(|s| s.parse::<u64>().ok())
                 ;
 
-            let etag = metadata_json["etag"].as_deref().map(|s| s.to_string());
+            let etag = metadata_json["etag"].as_str().map(|s| s.to_string());
             let storage_class = metadata_json["storageClass"]
-                .as_deref()
+                .as_str()
                 .map(|s| s.to_string());
 
-            tracing::debug!("✅ GCS metadata retrieved: {} bytes", size);
+            tracing::debug!("✅ GCS metadata retrieved: {} bytes", size.unwrap_or(0));
 
             Ok(FileMetadata {
                 path: format!("gs://{}/{}", bucket, object_path),
-                size,
+                size: size.unwrap_or(0),
                 created: None,       // Would need to parse timeCreated field
                 modified: None,      // Would need to parse updated field
                 is_directory: false, // GCS objects are always files

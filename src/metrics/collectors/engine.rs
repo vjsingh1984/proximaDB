@@ -381,7 +381,7 @@ mod tests {
         // Test comparison
         let comparison = collector.compare_engines().await;
         assert!(comparison.winner.is_some());
-        assert!(!comparison.recommendations.is_empty());
+        assert!(!comparison.recommendations.is_none());
     }
     
     #[tokio::test]

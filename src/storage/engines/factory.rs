@@ -2,7 +2,7 @@
 // Creates the appropriate storage engine based on configuration
 
 use anyhow::{anyhow, Result};
-use std::sync::Arc;
+use crate::storage::engines::impls::{raptor, prism};use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
@@ -143,11 +143,11 @@ impl StorageEngineFactory {
     pub async fn create_raptor(
         collection_id: String,
         base_path: String,
-        config: Option<super::raptor::RaptorConfig>,
+        config: Option<raptor::RaptorConfig>,
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) storage engine");
         
-        let config = config.unwrap_or_else(super::raptor::RaptorConfig::default);
+        let config = config.unwrap_or_else(raptor::RaptorConfig::default);
         // Create shared cache for RAPTOR
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
         let cache = Arc::new(CrossCacheOrchestrator::new());
@@ -160,7 +160,7 @@ impl StorageEngineFactory {
         info!("Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine");
         
         // Use default configuration for now
-        let config = super::prism::config::Config::default();
+        let config = prism::config::Config::default();
         
         // TODO: This needs to be updated when the PRISM engine constructor is fixed
         // For now, return an error indicating PRISM needs additional setup
@@ -172,7 +172,7 @@ impl StorageEngineFactory {
         info!("Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine");
         
         // Use default configuration
-        let config = super::prism::config::Config::default();
+        let config = prism::config::Config::default();
         
         // Create PRISM engine with async initialization
         let engine = PrismEngine::new(config).await?;

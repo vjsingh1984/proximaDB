@@ -313,7 +313,7 @@ fn display_results_summary(results: &HashMap<String, EngineBenchmarkResults>) {
         }
         
         // Show progressive search performance
-        if !engine_results.progressive_search_stats.is_empty() {
+        if !engine_results.progressive_search_stats.is_none() {
             println!("\n  Progressive Search Performance:");
             for (level, stats) in &engine_results.progressive_search_stats {
                 println!("    {:?}: {:.2}ms (±{:.2}ms, p95: {:.2}ms)",
@@ -326,7 +326,7 @@ fn display_results_summary(results: &HashMap<String, EngineBenchmarkResults>) {
         }
         
         // Show optimal configurations
-        if !engine_results.optimal_configs.is_empty() {
+        if !engine_results.optimal_configs.is_none() {
             println!("\n  Optimal Configurations:");
             for (key, value) in &engine_results.optimal_configs {
                 println!("    {}: {}", key, value);

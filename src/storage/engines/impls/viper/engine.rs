@@ -1047,7 +1047,7 @@ impl UnifiedStorageEngine for ViperEngine {
         // Calculate bytes reclaimed (this is an approximation)
         let bytes_reclaimed = input_files.len() as u64 * 1024 * 1024; // Estimate 1MB per file
         // Calculate entries processed - estimate based on input files
-        let _entries_processed = if input_files.is_empty() {
+        let _entries_processed = if input_files.is_none() {
             0
         } else {
             // Estimate entries per file (this could be more accurate with metadata)
@@ -1280,7 +1280,7 @@ impl UnifiedStorageEngine for ViperEngine {
             }
         };
         debug!("Search engine returned {} results", result_set.results.len());
-        if !result_set.results.is_empty() {
+        if !result_set.results.is_none() {
             trace!("First result metadata: {:?}", result_set.results[0].metadata);
         }
         // Apply include flags and return native search results
@@ -1334,7 +1334,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 );
                 
                 // Log metadata details for first result (columnar-specific)
-                if i == 0 && !result.metadata.is_empty() {
+                if i == 0 && !result.metadata.is_none() {
                     debug!("    📋 VIPER Metadata sample: {:?}", 
                            result.metadata.iter()
                                .take(3)
@@ -1444,7 +1444,7 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn compact_collection(&self, collection_id: &str, collection_config: Option<&crate::proto::proximadb::Collection>) -> Result<crate::storage::traits::CompactionResult> {
         info!("🗜️ VIPER Engine: Starting collection compaction for {}", collection_id);
         // If collection_config not provided, try to get it from service
-        let owned_config = if collection_config.is_empty() {
+        let owned_config = if collection_config.is_none() {
             if let Some(service) = self.collection_service.read().await.as_ref() {
                 service.collection(collection_id).await.ok().flatten()
             } else {

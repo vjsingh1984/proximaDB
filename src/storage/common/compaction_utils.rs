@@ -16,7 +16,8 @@ use tracing::{debug, info};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::common::compaction_orchestrator::{GenericFileMetadata, TieredFileRegistry};
 use crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler;
-// use crate::storage::engines::impls::viper::ViperFlushHandler;  // TODO: Fix import issue
+use crate::storage::engines::impls::viper::eventlog_flush::ViperFlushHandler;
+use super::flush_handler_trait::{FlushHandler, FlushHandlerFactory};
 use crate::core::config::CompactionConfig;
 
 /// Storage engine type for EventLog filtering
@@ -24,6 +25,62 @@ use crate::core::config::CompactionConfig;
 pub enum StorageEngineType {
     SST,
     VIPER,
+    NOVA,
+    SWIFT,
+    PRISM,
+    RAPTOR,
+}
+
+impl std::fmt::Display for StorageEngineType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageEngineType::SST => write!(f, "SST"),
+            StorageEngineType::VIPER => write!(f, "VIPER"),
+            StorageEngineType::NOVA => write!(f, "NOVA"),
+            StorageEngineType::SWIFT => write!(f, "SWIFT"),
+            StorageEngineType::PRISM => write!(f, "PRISM"),
+            StorageEngineType::RAPTOR => write!(f, "RAPTOR"),
+        }
+    }
+}
+
+impl StorageEngineType {
+    /// Convert from proto StorageEngine enum
+    pub fn from_proto(engine: i32) -> Self {
+        use crate::proto::proximadb::StorageEngine;
+        match StorageEngine::from_i32(engine) {
+            Some(StorageEngine::Sst) => StorageEngineType::SST,
+            Some(StorageEngine::Viper) => StorageEngineType::VIPER,
+            Some(StorageEngine::Nova) => StorageEngineType::NOVA,
+            Some(StorageEngine::Swift) => StorageEngineType::SWIFT,
+            _ => StorageEngineType::VIPER, // Default to VIPER
+        }
+    }
+    
+    /// Convert from string representation
+    pub fn from_str(s: &str) -> Self {
+        match s.to_uppercase().as_str() {
+            "SST" => StorageEngineType::SST,
+            "VIPER" => StorageEngineType::VIPER,
+            "NOVA" => StorageEngineType::NOVA,
+            "SWIFT" => StorageEngineType::SWIFT,
+            "PRISM" => StorageEngineType::PRISM,
+            "RAPTOR" => StorageEngineType::RAPTOR,
+            _ => StorageEngineType::VIPER, // Default to VIPER
+        }
+    }
+    
+    /// Get file extension for this engine type
+    pub fn file_extension(&self) -> &str {
+        match self {
+            StorageEngineType::SST => ".sst",
+            StorageEngineType::VIPER => ".parquet",
+            StorageEngineType::NOVA => ".nova",
+            StorageEngineType::SWIFT => ".swift",
+            StorageEngineType::PRISM => ".prism",
+            StorageEngineType::RAPTOR => ".raptor",
+        }
+    }
 }
 
 /// Result of file discovery with EventLog filtering
@@ -94,21 +151,10 @@ impl CompactionFileDiscovery {
                 total_files += 1;
                 let file_path = file_meta.path.clone();
                 
-                // Check if file can be compacted
-                let can_compact_result = match engine_type {
-                    StorageEngineType::SST => {
-                        let handler = SstFlushHandler::new();
-                        handler.can_compact_files(collection_id, &[file_path.clone()]).await
-                    }
-                    StorageEngineType::VIPER => {
-                        // TODO: Fix ViperFlushHandler import
-                        // let handler = ViperFlushHandler::new();
-                        // handler.can_compact_files(collection_id, &[file_path.clone()]).await
-                        Ok(true) // Temporary stub
-                    }
-                };
-                
-                let can_compact = can_compact_result;
+                // Check if file can be compacted using unified handler
+                let handler = FlushHandlerFactory::create(engine_type);
+                let can_compact = handler.can_compact_files(collection_id, &[file_path.clone()]).await
+                    .unwrap_or(false);
                 
                 if can_compact {
                     level_compactable.push(file_meta);
@@ -196,7 +242,7 @@ impl CompactionFileDiscovery {
         filtered_files.compactable_files
             .get(&level)
             .map(|files| files.iter().map(|f| f.path.clone()).collect())
-            .clone()
+            .unwrap_or_default()
     }
 }
 
@@ -216,8 +262,8 @@ impl CompactionTaskBuilder {
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Option<CompactionTaskInfo>> {
         debug!(
-            "🔍 UNIFIED COMPACTION: Checking compaction for {} collection {} in {}",
-            engine_type.as_deref(), collection_id, data_directory
+            "🔍 UNIFIED COMPACTION: Checking compaction for {:?} collection {} in {}",
+            engine_type, collection_id, data_directory
         );
         
         // Use unified file discovery with EventLog filtering
@@ -230,13 +276,13 @@ impl CompactionTaskBuilder {
         ).await?;
         
         // Determine thresholds based on strategy
-        let should_compact_l0 = match config.strategy.as_deref() {
+        let should_compact_l0 = match config.strategy.as_str() {
             "count" => file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold),
             "size" => {
                 // Calculate total size at L0
                 let l0_total_size_mb = filtered_files.compactable_files.get(&0)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                    ;
+                    .unwrap_or(0);
                 l0_total_size_mb >= config.l0_size_threshold_mb
             }
             "hybrid" | _ => {
@@ -244,7 +290,7 @@ impl CompactionTaskBuilder {
                 let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold);
                 let l0_total_size_mb = filtered_files.compactable_files.get(&0)
                     .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                    ;
+                    .unwrap_or(0);
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
                 count_triggered || size_triggered
             }
@@ -256,7 +302,7 @@ impl CompactionTaskBuilder {
             
             info!(
                 "✅ {} COMPACTION: Triggering with {} compactable files for collection {} (excluded {} pending files)",
-                engine_type.as_deref(),
+                engine_type,
                 compactable_files.len(),
                 collection_id,
                 filtered_files.pending_count
@@ -279,19 +325,19 @@ impl CompactionTaskBuilder {
             let level_file_threshold = (config.l0_file_threshold as f64 * config.level_multiplier.powi(level as i32)) as usize;
             let level_size_threshold_mb = (config.l0_size_threshold_mb as f64 * config.level_multiplier.powi(level as i32)) as usize;
             
-            let should_compact = match config.strategy.as_deref() {
+            let should_compact = match config.strategy.as_str() {
                 "count" => file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold),
                 "size" => {
                     let level_total_size_mb = filtered_files.compactable_files.get(&level)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                        ;
+                        .unwrap_or(0);
                     level_total_size_mb >= level_size_threshold_mb
                 }
                 "hybrid" | _ => {
                     let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold);
                     let level_total_size_mb = filtered_files.compactable_files.get(&level)
                         .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
-                        ;
+                        .unwrap_or(0);
                     let size_triggered = level_total_size_mb >= level_size_threshold_mb;
                     count_triggered || size_triggered
                 }
@@ -302,7 +348,7 @@ impl CompactionTaskBuilder {
                 
                 info!(
                     "✅ {} COMPACTION: Level {} triggering with {} files for collection {}",
-                    engine_type.as_deref(), level, compactable_files.len(), collection_id
+                    engine_type, level, compactable_files.len(), collection_id
                 );
                 
                 return Ok(Some(CompactionTaskInfo {
@@ -320,7 +366,7 @@ impl CompactionTaskBuilder {
         if filtered_files.pending_count > 0 {
             debug!(
                 "⏸️ {} COMPACTION: Not enough compactable files for collection {} ({} ready, {} pending AXIS)",
-                engine_type.as_deref(),
+                engine_type,
                 collection_id,
                 filtered_files.compactable_count,
                 filtered_files.pending_count
@@ -328,7 +374,7 @@ impl CompactionTaskBuilder {
         } else {
             debug!(
                 "📋 {} COMPACTION: No compaction needed for collection {} ({} total files)",
-                engine_type.as_deref(),
+                engine_type,
                 collection_id,
                 filtered_files.total_files
             );
@@ -364,7 +410,7 @@ impl CompactionTaskBuilder {
         if all_files.is_empty() && filtered_files.pending_count > 0 {
             info!(
                 "⏸️ {} COMPACTION: All {} files are pending AXIS processing for collection {}",
-                engine_type.as_deref(),
+                engine_type,
                 filtered_files.pending_count,
                 collection_id
             );
@@ -387,10 +433,15 @@ pub struct CompactionTaskInfo {
 }
 
 impl StorageEngineType {
-    fn as_str(&self) -> &str {
+    /// Get string representation
+    pub fn as_str(&self) -> &str {
         match self {
             StorageEngineType::SST => "SST",
             StorageEngineType::VIPER => "VIPER",
+            StorageEngineType::NOVA => "NOVA",
+            StorageEngineType::SWIFT => "SWIFT",
+            StorageEngineType::PRISM => "PRISM",
+            StorageEngineType::RAPTOR => "RAPTOR",
         }
     }
 }

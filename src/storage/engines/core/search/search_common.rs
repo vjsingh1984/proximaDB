@@ -218,7 +218,7 @@ impl UniversalSearchPipeline {
         files: Vec<F>,
         filter: &Option<FilterExpression>,
     ) -> Result<Vec<F>> {
-        if filter.is_empty() {
+        if filter.is_none() {
             return Ok(files);
         }
         
@@ -466,7 +466,7 @@ impl FilterProcessor {
     ) -> bool {
         // Apply filter to metadata
         // This is a simplified implementation
-        if metadata.is_empty() {
+        if metadata.is_none() {
             return false;
         }
         

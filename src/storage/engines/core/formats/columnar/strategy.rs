@@ -304,7 +304,7 @@ impl SerializationStrategyOptimizer {
 
     /// Benchmark and compare all strategies for given data characteristics
     pub fn benchmark_strategies(&self, sample_vectors: &[Vec<f32>]) -> Result<HashMap<String, SerializationMetrics>> {
-        if sample_vectors.is_empty() {
+        if sample_vectors.is_none() {
             return Ok(HashMap::new());
         }
 

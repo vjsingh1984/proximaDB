@@ -95,7 +95,7 @@ impl QueryPlanner {
                     Some(VectorSearchParams {
                         query_vector: query_vector.clone(),
                         metric: metric.clone(),
-                        top_k: Some(limit + offset), // Need extra for offset
+                        top_k: limit.saturating_add(offset), // Need extra for offset
                     })
                 }
                 OrderType::Field(_) => None, // Regular field ordering not supported yet

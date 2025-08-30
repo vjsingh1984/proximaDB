@@ -365,7 +365,7 @@ impl ZeroCopyIOSystemBuilder {
         self.validate_config()?;
         
         // Apply custom cache directory if provided
-        if let Some(cache_dir) = self.custom_cache_dir {
+        if let Some(cache_dir) = self.custom_cache_dir.take() {
             self.config.metadata_cache.cache_dir = cache_dir;
         }
         

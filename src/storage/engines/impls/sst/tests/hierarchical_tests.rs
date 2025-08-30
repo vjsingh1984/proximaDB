@@ -146,8 +146,8 @@ mod tests {
         assert!(block.metadata_stats.record_count > 0);
         
         // Verify hierarchical metadata is present
-        assert!(!block.metadata_stats.min_key.is_empty());
-        assert!(!block.metadata_stats.max_key.is_empty());
+        assert!(!block.metadata_stats.min_key.is_none());
+        assert!(!block.metadata_stats.max_key.is_none());
         assert!(block.metadata_stats.min_timestamp > 0);
         assert!(block.metadata_stats.max_timestamp >= block.metadata_stats.min_timestamp);
     }
@@ -208,8 +208,8 @@ mod tests {
                     
                     // Verify hierarchical metadata
                     assert!(block.metadata_stats.record_count > 0);
-                    assert!(!block.metadata_stats.min_key.is_empty());
-                    assert!(!block.metadata_stats.max_key.is_empty());
+                    assert!(!block.metadata_stats.min_key.is_none());
+                    assert!(!block.metadata_stats.max_key.is_none());
                 }
                 Err(_) => break, // No more blocks
             }
@@ -366,8 +366,8 @@ mod tests {
                     
                     // Verify block has proper hierarchical metadata
                     assert!(block.metadata_stats.record_count > 0);
-                    assert!(!block.metadata_stats.min_key.is_empty());
-                    assert!(!block.metadata_stats.max_key.is_empty());
+                    assert!(!block.metadata_stats.min_key.is_none());
+                    assert!(!block.metadata_stats.max_key.is_none());
                     
                     // Verify block ID matches
                     assert_eq!(block.block_id, block_id as u32);

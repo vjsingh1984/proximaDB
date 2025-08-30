@@ -67,6 +67,9 @@
 //!    - Cache-friendly compressed representations
 
 use anyhow::{Result, anyhow};
+use crate::storage::engines::core::ops::{UniversallyOptimized, UniversalPerformanceOptimizer, UniversalOptimizationStrategy};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::search::StorageTier;
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -83,6 +86,7 @@ use crate::storage::traits::{
     UnifiedStorageEngine, StorageEngineStrategy, FlushParameters, FlushResult,
     CompactionParameters, CompactionResult,
 };
+use crate::storage::engines::core::search::progressive_search::SearchStage;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::services::collection::manager::CollectionService;
 use crate::storage::engines::universal::{
@@ -317,6 +321,12 @@ impl PrismEngine {
             use crate::storage::engines::core::io::zero_copy::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = crate::storage::engines::core::io::zero_copy::QueryContext {
+                    collection_context: None,
+                    distance_threshold: None,
+                    id_lookups: HashMap::new(),
+                    query_plan: None,
+                    search_stage: SearchStage::Initial,
+                    tiering_hints: vec![],
                 estimated_result_size: top_k as u64,
                 concurrent_queries: Some(1),
                 metadata_filters: vec![],
@@ -351,6 +361,12 @@ impl PrismEngine {
             use crate::storage::engines::core::io::zero_copy::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = QueryContext {
+                    collection_context: None,
+                    distance_threshold: None,
+                    id_lookups: HashMap::new(),
+                    query_plan: None,
+                    search_stage: SearchStage::Initial,
+                    tiering_hints: vec![],
                 query_type: QueryType::FullScan,
                 priority: RequestPriority::Background,
                 estimated_result_size: 1000000, // Large result set for compaction

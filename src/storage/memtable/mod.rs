@@ -430,7 +430,7 @@ impl BenchmarkReport {
             .max_by(|a, b| {
                 a.ops_per_second
                     .partial_cmp(&b.ops_per_second)
-                    
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|r| r.memtable_type);
 
@@ -440,7 +440,7 @@ impl BenchmarkReport {
             .max_by(|a, b| {
                 a.ops_per_second
                     .partial_cmp(&b.ops_per_second)
-                    
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|r| r.memtable_type);
 
@@ -450,7 +450,7 @@ impl BenchmarkReport {
             .max_by(|a, b| {
                 a.ops_per_second
                     .partial_cmp(&b.ops_per_second)
-                    
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|r| r.memtable_type);
 

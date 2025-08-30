@@ -148,7 +148,7 @@ impl HdfsClient {
             .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
         // Ensure NameNode URL has proper WebHDFS prefix
-        let base_url = if config.namenode_url.contains_hash("/webhdfs/v1") {
+        let base_url = if config.namenode_url.contains("/webhdfs/v1") {
             config.namenode_url.clone()
         } else {
             format!("{}/webhdfs/v1", config.namenode_url.trim_end_matches('/'))
@@ -170,7 +170,7 @@ impl HdfsClient {
             self.base_url, self.config.user
         );
 
-        let response = self.http_client.get(key).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS connectivity test failed: {}", e);
             FilesystemError::Network(format!("HDFS connectivity test failed: {}", e))
         })?;
@@ -198,7 +198,7 @@ impl HdfsClient {
 
         tracing::debug!("📥 Reading HDFS file: {}", url);
 
-        let response = self.http_client.get(key).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS read request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -241,7 +241,7 @@ impl HdfsClient {
             self.config.user,
             self.config.block_size,
             self.config.replication,
-            options.overwrite
+            options.as_ref().map(|o| o.overwrite).unwrap_or(true)
         );
 
         tracing::debug!("📤 Creating HDFS file: {} ({} bytes)", path, data.len());
@@ -258,7 +258,7 @@ impl HdfsClient {
 
         if create_response.status().as_u16() == 307 {
             // Step 2: Follow redirect to DataNode
-            if let Some(location) = create_response.headers().get(key) {
+            if let Some(location) = create_response.headers().get("Location") {
                 let datanode_url = location.to_str().map_err(|e| {
                     FilesystemError::Network(format!("Invalid location header: {}", e))
                 })?;
@@ -324,7 +324,7 @@ impl HdfsClient {
 
         if append_response.status().as_u16() == 307 {
             // Step 2: Follow redirect to DataNode
-            if let Some(location) = append_response.headers().get(key) {
+            if let Some(location) = append_response.headers().get("Location") {
                 let datanode_url = location.to_str().map_err(|e| {
                     FilesystemError::Network(format!("Invalid location header: {}", e))
                 })?;
@@ -406,7 +406,7 @@ impl HdfsClient {
 
         tracing::debug!("📊 Getting HDFS file status: {}", path);
 
-        let response = self.http_client.get(key).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS status request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -441,7 +441,7 @@ impl HdfsClient {
 
         tracing::debug!("📋 Listing HDFS directory: {}", path);
 
-        let response = self.http_client.get(key).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS list request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -454,7 +454,7 @@ impl HdfsClient {
 
             let file_statuses = list_json["FileStatuses"]["FileStatus"]
                 .as_array()
-                
+                .ok_or_else(|| FilesystemError::Network("Invalid HDFS response format".to_string()))?
                 .clone();
 
             tracing::debug!(
@@ -551,8 +551,8 @@ impl FileSystem for HdfsFileSystem {
         let file_status = &status_json["FileStatus"];
 
         let size = file_status["length"].as_u64();
-        let is_directory = file_status["type"].as_deref() == Some("DIRECTORY");
-        let path_suffix = file_status["pathSuffix"].as_deref();
+        let is_directory = file_status["type"].as_str() == Some("DIRECTORY");
+        let path_suffix = file_status["pathSuffix"].as_str();
 
         // Convert HDFS timestamps (milliseconds since epoch)
         let modification_time = file_status["modificationTime"]
@@ -562,17 +562,17 @@ impl FileSystem for HdfsFileSystem {
             .as_u64()
             .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts as i64));
 
-        let permissions = file_status["permission"].as_deref().map(|s| s.to_string());
+        let permissions = file_status["permission"].as_str().map(|s| s.to_string());
 
         tracing::debug!(
             "✅ HDFS metadata retrieved: {} bytes, dir: {}",
-            size,
+            size.unwrap_or(0),
             is_directory
         );
 
         Ok(FileMetadata {
             path: format!("hdfs://{}", normalized_path),
-            size,
+            size: size.unwrap_or(0),
             created: None, // HDFS doesn't track creation time
             modified: modification_time,
             is_directory,
@@ -590,15 +590,15 @@ impl FileSystem for HdfsFileSystem {
         let mut entries = Vec::new();
 
         for status in file_statuses {
-            let name = status["pathSuffix"].as_deref().to_string();
+            let name = status["pathSuffix"].as_str().unwrap_or("").to_string();
             let size = status["length"].as_u64();
-            let is_directory = status["type"].as_deref() == Some("DIRECTORY");
+            let is_directory = status["type"].as_str() == Some("DIRECTORY");
 
             let modification_time = status["modificationTime"]
                 .as_u64()
                 .and_then(|ts| chrono::DateTime::from_timestamp_millis(ts as i64));
 
-            let permissions = status["permission"].as_deref().map(|s| s.to_string());
+            let permissions = status["permission"].as_str().map(|s| s.to_string());
 
             let entry_path = if normalized_path == "/" {
                 format!("/{}", name)
@@ -608,7 +608,7 @@ impl FileSystem for HdfsFileSystem {
 
             let metadata = FileMetadata {
                 path: format!("hdfs://{}", entry_path),
-                size,
+                size: size.unwrap_or(0),
                 created: None,
                 modified: modification_time,
                 is_directory,

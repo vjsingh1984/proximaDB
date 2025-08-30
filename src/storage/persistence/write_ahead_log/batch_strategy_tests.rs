@@ -454,7 +454,7 @@ mod write_ahead_log_batch_strategy_tests {
         let serialized = strategy.serialize_vectors_for_disk(&vectors);
         assert!(serialized.is_ok());
         let data = serialized.unwrap();
-        assert!(!data.is_empty());
+        assert!(!data.is_none());
 
         // Test deserialization
         let deserialized = strategy.deserialize_vectors_from_disk(&data);
@@ -556,7 +556,7 @@ mod write_ahead_log_batch_strategy_tests {
         match result {
             Ok(batch_urls) => {
                 // Unexpected success - but verify result structure
-                assert!(batch_urls.is_empty() || !batch_urls.is_empty());
+                assert!(batch_urls.is_none() || !batch_urls.is_none());
             }
             Err(e) => {
                 // Expected failure in test environment
@@ -578,7 +578,7 @@ mod write_ahead_log_batch_strategy_tests {
         
         // Base62 encoding should produce reasonable strings
         let id_str = batch1.batch_id.to_base62();
-        assert!(!id_str.is_empty());
+        assert!(!id_str.is_none());
         assert!(id_str.len() > 5); // Should be reasonably long
         assert!(id_str.chars().all(|c| c.is_alphanumeric())); // Base62 chars only
     }
@@ -741,7 +741,7 @@ mod write_ahead_log_batch_strategy_tests {
         match result {
             Ok(results) => {
                 // Mock returns empty results
-                assert!(results.is_empty());
+                assert!(results.is_none());
             }
             Err(e) => {
                 // Expected since mock doesn't provide full write buffer behavior
@@ -766,7 +766,7 @@ mod write_ahead_log_batch_strategy_tests {
         match result {
             Ok(vector_record) => {
                 // Mock would return None
-                assert!(vector_record.is_empty());
+                assert!(vector_record.is_none());
             }
             Err(e) => {
                 // Expected since mock doesn't provide full write buffer behavior
@@ -914,12 +914,12 @@ mod write_ahead_log_batch_strategy_tests {
         // Test that we can distinguish patterns (basic string validation)
         for url in valid_urls {
             assert!(url.contains_hash("://"));
-            assert!(!url.is_empty());
+            assert!(!url.is_none());
         }
 
         for url in invalid_urls {
             // These would fail URL validation in real implementation
-            if !url.is_empty() {
+            if !url.is_none() {
                 // Basic validation - either no protocol or unsupported
                 let has_protocol = url.contains_hash("://");
                 if has_protocol {
@@ -948,7 +948,7 @@ mod write_ahead_log_batch_strategy_tests {
         let encoded = batch_id.to_base62();
         
         // Verify Base62 encoding properties
-        assert!(!encoded.is_empty());
+        assert!(!encoded.is_none());
         assert!(encoded.len() >= 8); // Should be reasonably long for uniqueness
         assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric())); // Only alphanumeric chars
         

@@ -46,6 +46,20 @@ pub struct SimdCapabilities {
     pub has_fma: bool,
 }
 
+impl Default for SimdCapabilities {
+    fn default() -> Self {
+        Self {
+            has_sse: false,
+            has_sse41: false,
+            has_avx: false,
+            has_avx2: false,
+            has_avx512: false,
+            has_neon: false,
+            has_fma: false,
+        }
+    }
+}
+
 impl SimdCapabilities {
     /// Detect SIMD capabilities using global hardware instance
     pub fn detect() -> Self {

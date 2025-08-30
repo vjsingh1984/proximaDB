@@ -199,24 +199,24 @@ impl InstanceMetadataProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse credentials: {}", e)))?;
 
         let access_key_id = creds_json["AccessKeyId"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("AccessKeyId not found in credentials".to_string())
             })?
             .to_string();
 
         let secret_access_key = creds_json["SecretAccessKey"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("SecretAccessKey not found in credentials".to_string())
             })?
             .to_string();
 
-        let session_token = creds_json["Token"].as_deref().map(|s| s.to_string());
+        let session_token = creds_json["Token"].as_str().map(|s| s.to_string());
 
         // Parse expiration
         let expiration = creds_json["Expiration"]
-            .as_deref()
+            .as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| {
                 Instant::now()
@@ -275,23 +275,23 @@ impl CredentialProvider for EcsTaskMetadataProvider {
         })?;
 
         let access_key_id = creds_json["AccessKeyId"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("AccessKeyId not found in ECS credentials".to_string())
             })?
             .to_string();
 
         let secret_access_key = creds_json["SecretAccessKey"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("SecretAccessKey not found in ECS credentials".to_string())
             })?
             .to_string();
 
-        let session_token = creds_json["Token"].as_deref().map(|s| s.to_string());
+        let session_token = creds_json["Token"].as_str().map(|s| s.to_string());
 
         let expiration = creds_json["Expiration"]
-            .as_deref()
+            .as_str()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| {
                 Instant::now()
@@ -452,7 +452,7 @@ impl AzureCredentialProvider for AzureManagedIdentityProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse Azure token: {}", e)))?;
 
         let access_token = token_json["access_token"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("access_token not found in Azure response".to_string())
             })?
@@ -462,7 +462,7 @@ impl AzureCredentialProvider for AzureManagedIdentityProvider {
         let account_name =
             env::var("AZURE_STORAGE_ACCOUNT").unwrap_or_else(|_| "default".to_string());
 
-        let expires_in = token_json["expires_in"].as_u64();
+        let expires_in = token_json["expires_in"].as_u64().unwrap_or(3600);
         let expiration = Some(Instant::now() + Duration::from_secs(expires_in));
 
         Ok(AzureCredentials {
@@ -509,7 +509,7 @@ impl GcsCredentialProvider for GcsApplicationDefaultProvider {
             .map_err(|e| FilesystemError::Auth(format!("Failed to parse GCS token: {}", e)))?;
 
         let access_token = token_json["access_token"]
-            .as_deref()
+            .as_str()
             .ok_or_else(|| {
                 FilesystemError::Auth("access_token not found in GCS response".to_string())
             })?
@@ -519,7 +519,7 @@ impl GcsCredentialProvider for GcsApplicationDefaultProvider {
             .or_else(|_| env::var("GCLOUD_PROJECT"))
             .unwrap_or_else(|_| "default".to_string());
 
-        let expires_in = token_json["expires_in"].as_u64();
+        let expires_in = token_json["expires_in"].as_u64().unwrap_or(3600);
         let expiration = Some(Instant::now() + Duration::from_secs(expires_in));
 
         Ok(GcsCredentials {
@@ -553,7 +553,7 @@ mod tests {
             credentials.session_token,
             Some("test_session_token".to_string())
         );
-        assert!(credentials.expiration.is_empty());
+        assert!(credentials.expiration.is_none());
     }
 
     #[tokio::test]

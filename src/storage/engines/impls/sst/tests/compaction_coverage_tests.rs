@@ -68,7 +68,7 @@ mod tests {
         assert_eq!(stats.bytes_read, 0);
         assert_eq!(stats.files_merged, 0);
         assert_eq!(stats.avg_compaction_time_ms, 0);
-        assert!(stats.last_compaction_time.is_empty());
+        assert!(stats.last_compaction_time.is_none());
         assert_eq!(stats.expired_records_deleted, 0);
         assert_eq!(stats.tombstones_removed, 0);
         
@@ -82,8 +82,8 @@ mod tests {
         // Test EnhancedCompactionStats default values
         let enhanced_stats = EnhancedCompactionStats::default();
         assert_eq!(enhanced_stats.base_stats.total_compactions, 0);
-        assert!(enhanced_stats.deleted_vector_ids.is_empty());
-        assert!(enhanced_stats.merged_vectors.is_empty());
+        assert!(enhanced_stats.deleted_vector_ids.is_none());
+        assert!(enhanced_stats.merged_vectors.is_none());
         assert!(!enhanced_stats.recommend_full_rebuild);
         
         // Test clone
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(stats.bytes_read, 0);
         assert_eq!(stats.files_merged, 0);
         assert_eq!(stats.avg_compaction_time_ms, 0);
-        assert!(stats.last_compaction_time.is_empty());
+        assert!(stats.last_compaction_time.is_none());
         assert_eq!(stats.expired_records_deleted, 0);
         assert_eq!(stats.tombstones_removed, 0);
     }

@@ -70,7 +70,7 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.jwt_secret, None);
         assert_eq!(config.jwt_expiration_secs, 3600);
-        assert!(config.api_keys.is_empty());
+        assert!(config.api_keys.is_none());
     }
 
     #[tokio::test]
@@ -82,7 +82,7 @@ mod tests {
         assert_eq!(config.burst_size, 100);
         assert!(config.by_ip);
         assert!(!config.limit_health_endpoints);
-        assert!(config.global_requests_per_minute.is_empty());
+        assert!(config.global_requests_per_minute.is_none());
     }
 
     #[tokio::test]

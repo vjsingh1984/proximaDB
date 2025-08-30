@@ -595,8 +595,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 dimension: versioned.dimension,
                 distance_metric: versioned.distance_metric,
                 indexing_algorithm: versioned.indexing_algorithm,
-                timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
-                updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
+                timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                    .unwrap_or_else(|| Utc::now()),
+                updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                    .unwrap_or_else(|| Utc::now()),
                 vector_count: versioned.vector_count,
                 total_size_bytes: versioned.total_size_bytes,
                 config: versioned.config,
@@ -642,7 +644,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     }
 
     async fn delete_collection(&self, collection_id: &str) -> Result<bool> {
-        let exists = self.collection(collection_id).await?.is_some();
+        let exists = self.get_collection(collection_id).await?.is_some();
 
         if exists {
             let transaction_id = self
@@ -683,8 +685,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     dimension: versioned.dimension,
                     distance_metric: versioned.distance_metric,
                     indexing_algorithm: versioned.indexing_algorithm,
-                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
-                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0).clone(),
+                    timestamp: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                        .unwrap_or_else(|| Utc::now()),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                        .unwrap_or_else(|| Utc::now()),
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,

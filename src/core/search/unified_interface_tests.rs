@@ -556,8 +556,8 @@ mod tests {
         assert_eq!(params.vector.len(), 128);
         assert_eq!(params.top_k, Some(10));
         assert_eq!(params.distance_metric, Some(DistanceMetric::Cosine));
-        assert!(params.metadata_filters.is_empty());
-        assert!(params.custom_hints.is_empty());
+        assert!(params.metadata_filters.is_none());
+        assert!(params.custom_hints.is_none());
     }
 
     #[test]

@@ -356,11 +356,11 @@ mod tests {
             // Validate block can be read individually
             let block = reader.read_data_block_async(i as u64, ReadMode::Buffered).await.unwrap();
             assert_eq!(block.block_id, i as u32);
-            assert!(!block.records.is_empty());
+            assert!(!block.records.is_none());
             
             // Validate hierarchical metadata
-            assert!(!block.metadata_stats.min_key.is_empty());
-            assert!(!block.metadata_stats.max_key.is_empty());
+            assert!(!block.metadata_stats.min_key.is_none());
+            assert!(!block.metadata_stats.max_key.is_none());
             assert!(block.metadata_stats.record_count > 0);
             assert!(block.block_bloom_filter.is_some(), "Block should have bloom filter");
         }
@@ -496,7 +496,7 @@ mod tests {
         };
         
         let records = reader.read_with_strategy(&strategy).await.unwrap();
-        assert!(records.is_empty(), "Bloom filter should prevent unnecessary reads");
+        assert!(records.is_none(), "Bloom filter should prevent unnecessary reads");
         
         // Test bloom filter for existing key
         let strategy = ReadStrategy::PointLookup {
@@ -565,7 +565,7 @@ mod tests {
             for record in &block.records {
                 total_records += 1;
                 // Verify ordering
-                assert!(record.id > last_id || last_id.is_empty());
+                assert!(record.id > last_id || last_id.is_none());
                 last_id = record.id.clone();
             }
             

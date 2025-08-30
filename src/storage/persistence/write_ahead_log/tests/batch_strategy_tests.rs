@@ -119,7 +119,7 @@ mod tests {
         assert_eq!(strategy.strategy_name(), "AvroBatch");
         
         // Test that the strategy follows clean architecture (no direct WAL behavior exposure)
-        assert!(strategy.get_wal_behavior().is_empty());
+        assert!(strategy.get_wal_behavior().is_none());
     }
 
     #[tokio::test]
@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(strategy.strategy_name(), "BincodeBatch");
         
         // Test that the strategy follows clean architecture (no direct WAL behavior exposure)
-        assert!(strategy.get_wal_behavior().is_empty());
+        assert!(strategy.get_wal_behavior().is_none());
     }
 
     #[tokio::test]

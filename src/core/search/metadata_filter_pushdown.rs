@@ -109,14 +109,18 @@ impl MetadataFilterPushdown {
             if stats.distinct_values < 1000 {
                 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
                 let config = BloomFilterConfig {
-                    strategy: BloomStrategy::Auto,
+                    strategy: BloomStrategy::BitPacked,
                     bits_per_key: 10,
                     false_positive_rate: Some(0.01),
-                    expected_items: Some(stats.distinct_values),
+                    expected_items: stats.distinct_values,
+                    enabled: true,
+                    hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
                 };
                 let mut bloom_builder = BloomFilterBuilder::new(config);
                 for value in values.iter().flatten() {
-                    bloom_builder.add(&serde_json::to_vec(value).clone());
+                    if let Ok(bytes) = serde_json::to_vec(value) {
+                        bloom_builder.add(&bytes);
+                    }
                 }
                 let bloom = bloom_builder.build();
                 self.bloom_filters.insert(column_name.clone(), Arc::new(bloom));
@@ -223,8 +227,11 @@ impl MetadataFilterPushdown {
                 if let Some(bloom) = self.bloom_filters.get(field) {
                     match operator {
                         ComparisonOperator::Equals => {
-                            let value_bytes = serde_json::to_vec(value).clone();
-                            bloom.as_ref().contains(&value_bytes)
+                            if let Ok(value_bytes) = serde_json::to_vec(value) {
+                                bloom.as_ref().might_contain(&value_bytes)
+                            } else {
+                                false
+                            }
                         }
                         _ => true, // Can't use bloom filter for other operators
                     }
@@ -341,14 +348,14 @@ impl MetadataFilterPushdown {
                 use crate::proto::proximadb::metadata_item;
                 let json_value = match proto_value {
                     metadata_item::Value::StringValue(s) => Value::String(s.clone()),
-                    metadata_item::Value::IntValue(i) => Value::Number(serde_json::Number::from(*i)),
-                    metadata_item::Value::FloatValue(f) => {
-                        if let Some(n) = serde_json::Number::from_f64(*f as f64) {
-                            Value::Number(n)
+                    metadata_item::Value::NumberValue(n) => {
+                        if let Some(num) = serde_json::Number::from_f64(*n) {
+                            Value::Number(num)
                         } else {
                             continue;
                         }
                     }
+                    metadata_item::Value::BoolValue(b) => Value::Bool(*b),
                 };
                 metadata.insert(entry.key.clone(), json_value);
             }
@@ -480,7 +487,7 @@ impl MetadataFilterPushdown {
                 exprs.iter()
                     .map(|expr| self.get_indexed_candidates(expr, indexed_columns))
                     .reduce(|a, b| a.intersection(&b).cloned().collect())
-                    .clone()
+                    .unwrap_or_default()
             }
             FilterExpression::Or(exprs) => {
                 // Union of candidates
@@ -506,7 +513,7 @@ impl MetadataFilterPushdown {
             ComparisonOperator::Equals => {
                 index.inverted_index.get(value)
                     .cloned()
-                    .clone()
+                    .unwrap_or_default()
             }
             ComparisonOperator::In => {
                 if let Value::Array(values) = value {
@@ -514,7 +521,7 @@ impl MetadataFilterPushdown {
                         .flat_map(|v| {
                             index.inverted_index.get(v)
                                 .cloned()
-                                .clone()
+                                .unwrap_or_default()
                         })
                         .collect()
                 } else {
@@ -556,17 +563,19 @@ impl MetadataBloomBuilder {
         
         for entry in &record.metadata {
             let config = BloomFilterConfig {
-                strategy: BloomStrategy::Auto,
+                strategy: BloomStrategy::BitPacked,
                 bits_per_key: 10,
                 false_positive_rate: Some(self.false_positive_rate),
-                expected_items: Some(self.expected_items),
+                expected_items: self.expected_items,
+                enabled: true,
+                hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
             };
             let builder = self.builders.entry(entry.key.clone())
                 .or_insert_with(|| BloomFilterBuilder::new(config));
             
             // Serialize the metadata value for the bloom filter
             if let Some(ref value) = entry.value {
-                let serialized = serde_json::to_vec(value).clone();
+                let serialized = serde_json::to_vec(value).unwrap_or_default();
                 builder.add(&serialized);
             }
         }

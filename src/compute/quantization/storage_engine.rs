@@ -497,13 +497,14 @@ impl StorageQuantizationEngine {
                 // Use existing INT8 SIMD infrastructure from distance_computation
                 // The quantized data is stored in the data field
                 let int8_data: Vec<i8> = quantized_vector.data.iter().map(|&b| b as i8).collect();
+                let query_int8 = self.fp32_to_int8(query, scalar.scale, scalar.offset as i8);
                 let result = self.distance_compute.calculate_int8_distance(
-                    &self.fp32_to_int8(query, scalar.scale, scalar.offset as f32),
+                    &query_int8,
                     &int8_data,
                     scalar.scale,
                     scalar.scale,
-                    scalar.offset as f32,
-                    scalar.offset as f32,
+                    scalar.offset as i8,
+                    scalar.offset as i8,
                     metric,
                 );
                 Ok(result.raw_value)
@@ -512,7 +513,11 @@ impl StorageQuantizationEngine {
                 // Use Hamming distance for binary vectors
                 // Binary data is stored in the data field
                 let query_binary = self.fp32_to_binary(query);
-                let hamming_dist = self.calculate_hamming_distance(&query_binary, &quantized_vector.data);
+                // Calculate Hamming distance manually since method doesn't exist
+                let hamming_dist = query_binary.iter()
+                    .zip(quantized_vector.data.iter())
+                    .map(|(a, b)| (a ^ b).count_ones() as u32)
+                    .sum::<u32>();
                 Ok(hamming_dist as f32)
             }
             Some(QuantizationLevel::Pq(_)) => {

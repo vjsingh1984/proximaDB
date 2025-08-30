@@ -207,7 +207,7 @@ impl CollectionAnalyzer {
             sparsity_variance: vector_chars.sparsity_variance,
             dimension_variance: vector_chars.dimension_variance,
             query_patterns,
-            performance_metrics,
+            performance_metrics: performance_metrics.unwrap_or_default(),
             growth_rate: vector_chars.growth_rate,
             access_frequency,
             metadata_complexity,
@@ -279,7 +279,7 @@ impl CollectionAnalyzer {
 
         // Calculate metrics from query statistics
         let time_window_hours = 1.0;
-        let queries_in_window = stats.total_queries as f64;
+        let queries_in_window = stats.as_ref().map(|s| s.total_queries).unwrap_or(0) as f64;
 
         Ok(AccessFrequencyMetrics {
             reads_per_second: queries_in_window / (time_window_hours * 3600.0),
@@ -366,7 +366,7 @@ impl QueryPatternTracker {
             .cloned()
             .clone();
 
-        let total = stats.total_queries as f32;
+        let total = stats.as_ref().map(|s| s.total_queries).unwrap_or(0) as f32;
         if total == 0.0 {
             return QueryPatternAnalysis {
                 total_queries: 0,
@@ -383,11 +383,11 @@ impl QueryPatternTracker {
         }
 
         QueryPatternAnalysis {
-            total_queries: stats.total_queries,
-            point_query_percentage: stats.point_queries as f32 / total,
-            similarity_search_percentage: stats.similarity_queries as f32 / total,
-            metadata_filter_percentage: stats.filtered_queries as f32 / total,
-            average_k: stats.average_k,
+            total_queries: stats.as_ref().map(|s| s.total_queries).unwrap_or(0),
+            point_query_percentage: stats.as_ref().map(|s| s.point_queries).unwrap_or(0) as f32 / total,
+            similarity_search_percentage: stats.as_ref().map(|s| s.similarity_queries).unwrap_or(0) as f32 / total,
+            metadata_filter_percentage: stats.as_ref().map(|s| s.filtered_queries).unwrap_or(0) as f32 / total,
+            average_k: stats.as_ref().map(|s| s.average_k).unwrap_or(10.0),
             query_distribution: QueryDistribution {
                 uniform: true,                              // TODO: Analyze actual distribution
                 hotspot_percentage: 0.1,                    // TODO: Calculate hotspots

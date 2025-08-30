@@ -176,6 +176,6 @@ async fn metrics_health_endpoint(
 async fn alerts_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<Vec<crate::metrics::Alert>> {
-    let alerts = metrics_collector.get_active_alerts().await;
+    let alerts = metrics_collector.active_alerts().await;
     Json(alerts)
 }

@@ -150,7 +150,7 @@ pub struct UnifiedSwiftReader {
     cached_header: Option<super::SwiftHeader>,
     
     /// Filesystem reference for direct operations
-    filesystem: Arc<dyn FileSystem>,
+    filesystem: Arc<FilesystemFactory>,
 }
 
 /// Lightweight superblock metadata for caching
@@ -231,7 +231,7 @@ impl UnifiedSwiftReader {
         
         // Create shared reader for actual file operations
         let shared_reader = Arc::new(SharedSstFormatReader::new(
-            filesystem,
+            filesystem.clone(),
             mmap_strategy,
             zero_copy_system.clone(),
             collection_id.clone(),
@@ -245,6 +245,8 @@ impl UnifiedSwiftReader {
             zero_copy_system,
             collection_id,
             cached_id_index: None,
+            cached_header: None,
+            filesystem,
         };
         
         Ok(reader)
@@ -480,16 +482,18 @@ impl UnifiedSwiftReader {
         let mut all_records = Vec::new();
         
         // Read entire file in large chunks for efficiency
-        let file_size = self.filesystem.file_size(&self.file_path).await?;
+        let file_metadata = self.filesystem.metadata(&self.file_path).await?;
+        let file_size = file_metadata.size;
         let chunk_size = 16 * 1024 * 1024; // 16MB chunks
         
         let mut offset = header.superblock_offset;
         while offset < file_size {
             let read_size = (chunk_size as u64).min(file_size - offset);
-            let chunk_data = self.filesystem.read_range(
+            let actual_fs = self.filesystem.get_filesystem(&self.file_path)?;
+            let chunk_data = actual_fs.read_range(
                 &self.file_path,
                 offset,
-                read_size as usize
+                read_size
             ).await?;
             
             // Parse records from chunk
@@ -703,7 +707,8 @@ impl UnifiedSwiftReader {
         
         // Read metadata section in one read (more efficient than multiple small reads)
         let metadata_size = header.id_index_offset - header.superblock_offset;
-        let metadata_data = self.filesystem.read_range(
+        let actual_fs = self.filesystem.get_filesystem(&self.file_path)?;
+        let metadata_data = actual_fs.read_range(
             &self.file_path,
             header.superblock_offset,
             metadata_size,
@@ -774,7 +779,8 @@ impl UnifiedSwiftReader {
                 let fs = filesystem.clone();
                 let path = file_path.clone();
                 async move {
-                    let data = fs.read_range(&path, req.offset, req.length).await?;
+                    let actual_fs = fs.get_filesystem(&path)?;
+                    let data = actual_fs.read_range(&path, req.offset, req.length as u64).await?;
                     Ok::<_, anyhow::Error>((data, req.purpose))
                 }
             })

@@ -323,7 +323,7 @@ mod tests {
         assert!(metrics_result.is_ok(), "Metrics collection should succeed");
         
         let metrics_data = metrics_result.unwrap();
-        assert!(!metrics_data.is_empty(), "Metrics should return data");
+        assert!(!metrics_data.is_none(), "Metrics should return data");
     }
 
     #[tokio::test]
@@ -335,7 +335,7 @@ mod tests {
         assert!(wal_metrics.is_some(), "WAL metrics should be available");
         
         let report = wal_metrics.unwrap();
-        assert!(!report.is_empty(), "WAL metrics report should not be empty");
+        assert!(!report.is_none(), "WAL metrics report should not be empty");
     }
 
     #[tokio::test]
@@ -362,7 +362,7 @@ mod tests {
         let (service, _temp_dir) = create_test_service().await;
         
         // Test get vector with non-existent collection
-        let get_result = service.get_vector("non_existent_collection", "test_id", true, true).await;
+        let get_result = service.vector("non_existent_collection", "test_id", true, true).await;
         // Result depends on implementation - should handle gracefully
         assert!(get_result.is_ok() || get_result.is_err(), "Get vector should return a result");
         
@@ -398,7 +398,7 @@ mod tests {
         
         let vectors = debug_result.unwrap();
         // Should return empty list for new collection
-        assert!(vectors.is_empty() || !vectors.is_empty(), "Debug should return vector list");
+        assert!(vectors.is_none() || !vectors.is_empty(), "Debug should return vector list");
     }
 
     #[tokio::test]

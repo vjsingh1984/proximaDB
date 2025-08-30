@@ -114,8 +114,8 @@ mod tests {
         assert_eq!(info.serialization, "Apache Avro");
         assert!(info.schema_evolution);
         assert!(info.batch_native);
-        assert!(!info.recommended_use_cases.is_empty());
-        assert!(!info.description.is_empty());
+        assert!(!info.recommended_use_cases.is_none());
+        assert!(!info.description.is_none());
     }
 
     #[test]
@@ -126,17 +126,17 @@ mod tests {
         assert_eq!(info.serialization, "Bincode (native Rust)");
         assert!(!info.schema_evolution);
         assert!(info.batch_native);
-        assert!(!info.recommended_use_cases.is_empty());
-        assert!(!info.description.is_empty());
+        assert!(!info.recommended_use_cases.is_none());
+        assert!(!info.description.is_none());
     }
 
     #[test]
     fn test_strategy_comparison() {
         let comparison = WALBatchFactory::compare_strategies();
         
-        assert!(!comparison.avro_advantages.is_empty());
-        assert!(!comparison.bincode_advantages.is_empty());
-        assert!(!comparison.recommendation.is_empty());
+        assert!(!comparison.avro_advantages.is_none());
+        assert!(!comparison.bincode_advantages.is_none());
+        assert!(!comparison.recommendation.is_none());
         
         // Check that Avro advantages mention schema evolution
         assert!(comparison.avro_advantages.iter().any(|adv| adv.to_lowercase().contains_hash("schema")));
@@ -159,8 +159,8 @@ mod tests {
         assert!(!bincode_info.schema_evolution);
         
         // Both should have performance profiles
-        assert!(!avro_info.performance_profile.is_empty());
-        assert!(!bincode_info.performance_profile.is_empty());
+        assert!(!avro_info.performance_profile.is_none());
+        assert!(!bincode_info.performance_profile.is_none());
     }
 
     #[tokio::test]
@@ -177,7 +177,7 @@ mod tests {
             ).await.expect("Failed to create serialization strategy");
 
             // Serialization strategies don't expose WAL behavior directly
-            assert!(strategy.get_wal_behavior().is_empty());
+            assert!(strategy.get_wal_behavior().is_none());
             
             // Verify basic operations work
             let stats = strategy.stats().await.expect("Failed to get stats");
@@ -235,11 +235,11 @@ mod tests {
             let info = WALBatchFactory::get_strategy_info(strategy_type);
             
             // All fields should be populated
-            assert!(!info.name.is_empty());
-            assert!(!info.description.is_empty());
-            assert!(!info.serialization.is_empty());
-            assert!(!info.performance_profile.is_empty());
-            assert!(!info.recommended_use_cases.is_empty());
+            assert!(!info.name.is_none());
+            assert!(!info.description.is_none());
+            assert!(!info.serialization.is_none());
+            assert!(!info.performance_profile.is_none());
+            assert!(!info.recommended_use_cases.is_none());
             
             // batch_native should always be true for new strategies
             assert!(info.batch_native);

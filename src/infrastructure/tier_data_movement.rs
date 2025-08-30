@@ -260,7 +260,7 @@ impl TierDataMovement {
         // expects file paths, not directory paths
         let sst_file = format!("{}/data.sstable", path);
         for id in ids {
-            if let Some(vector) = reader.get_vector(&sst_file, id).await? {
+            if let Some(vector) = reader.vector(&sst_file, id).await? {
                 vectors.push(vector);
             }
         }

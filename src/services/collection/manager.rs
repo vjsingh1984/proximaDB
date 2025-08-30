@@ -3,26 +3,72 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Collection Service - Common Business Logic Layer
+//! # Collection Service - Core Business Logic and Collection Management
 //!
-//! This service provides a unified interface for collection operations that both
-//! gRPC and REST handlers can use. It handles:
-//! - Minimal translation between gRPC protobuf and Avro records
-//! - Business logic validation
-//! - Storage coordination with UUID-based paths
-//! - Error handling and response formatting
+//! This service is the central orchestrator for all collection-related operations in ProximaDB.
+//! It provides a unified interface that abstracts storage details from the API layer while
+//! managing collection lifecycle, metadata, and coordination with storage engines.
 //!
-//! ## Design Principles:
-//! - Single source of truth using Avro records
-//! - Minimal object allocation and translation
-//! - UUID-based storage organization
-//! - Atomic operations with proper error handling
+//! ## Role in ProximaDB Architecture
+//!
+//! The CollectionService sits at the heart of the service layer:
+//! ```text
+//! API Handlers → CollectionService → Storage/Index/WAL
+//!                     ↓
+//!              Metadata Backend
+//! ```
+//!
+//! ## Key Responsibilities
+//!
+//! 1. **Collection Lifecycle Management**:
+//!    - Create, update, delete collections
+//!    - UUID generation and management
+//!    - Schema validation and evolution
+//!
+//! 2. **Storage Coordination**:
+//!    - Storage engine selection based on workload
+//!    - Multi-disk path assignment
+//!    - Collection-to-storage affinity
+//!
+//! 3. **Metadata Management**:
+//!    - Persistent metadata storage
+//!    - Configuration caching with DashMap
+//!    - Index configuration management
+//!
+//! 4. **Business Logic**:
+//!    - Validation of collection parameters
+//!    - Default value resolution
+//!    - Compression strategy selection
+//!    - Quantization configuration
+//!
+//! ## Design Principles
+//!
+//! - **Proto-First**: Uses native protocol buffer types (Collection, CollectionConfig)
+//! - **Zero-Copy**: Minimal allocations and translations
+//! - **UUID-Based**: All storage paths use UUIDs for uniqueness
+//! - **Atomic Operations**: All operations are atomic with proper rollback
+//! - **Cache-Friendly**: DashMap for lock-free concurrent access to metadata
+//!
+//! ## Integration Points
+//!
+//! - **Upstream**: Called by `UnifiedHandlers` for all collection operations
+//! - **Downstream**: 
+//!   - `FilestoreMetadataBackend` for metadata persistence
+//!   - `FilesystemFactory` for storage access
+//!   - Storage engines via `CollectionMetadataProvider` trait
+//!
+//! ## Performance Optimizations
+//!
+//! - **Lock-Free Caching**: DashMap eliminates lock contention
+//! - **Lazy Loading**: Metadata loaded on-demand
+//! - **Batch Operations**: Support for bulk collection operations
+//! - **Smart Defaults**: Automatic selection of optimal configurations
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
@@ -47,7 +93,8 @@ pub struct CollectionService {
     metadata_backend: Arc<FilestoreMetadataBackend>,
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
-    index_config_cache: Arc<RwLock<HashMap<String, crate::index::config::IndexConfig>>>,
+    /// Using dashmap for lock-free concurrent access
+    index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
     storage_config: StorageConfig,
 }
 
@@ -348,23 +395,17 @@ impl CollectionService {
         debug!("🔍 Getting IndexConfig for collection: {}", identifier);
 
         // Check cache first
-        {
-            let cache = self.index_config_cache.read().await;
-            if let Some(cached_config) = cache.get(identifier) {
-                debug!("📋 Retrieved IndexConfig from cache for collection: {}", identifier);
-                return Ok(Some(cached_config.clone()));
-            }
+        if let Some(cached_config) = self.index_config_cache.get(identifier) {
+            debug!("📋 Retrieved IndexConfig from cache for collection: {}", identifier);
+            return Ok(Some(cached_config.value().clone()));
         }
 
         if let Some(proto_collection) = self.get_native_proto(identifier).await? {
             let index_config = self.parse_index_config_from_proto(&proto_collection)?;
             
             // Cache the result
-            {
-                let mut cache = self.index_config_cache.write().await;
-                cache.insert(identifier.to_string(), index_config.clone());
-                cache.insert(proto_collection.id.clone(), index_config.clone()); // Cache by UUID too
-            }
+            self.index_config_cache.insert(identifier.to_string(), index_config.clone());
+            self.index_config_cache.insert(proto_collection.id.clone(), index_config.clone()); // Cache by UUID too
             
             debug!("📋 Cached IndexConfig for collection: {}", identifier);
             Ok(Some(index_config))
@@ -591,24 +632,24 @@ impl CollectionService {
 
             info!(
                 "🔍 Found collection to delete: {} (UUID: {})",
-                collection_name, collection_uuid
+                collection_name.as_deref().unwrap_or("<unnamed>"), collection_uuid
             );
 
             // Step 1: Clean up all storage directories and files
             let cleanup_results = self
-                .cleanup_storage_directories(&collection_name, &collection_uuid)
+                .cleanup_storage_directories(collection_name.as_deref().unwrap_or(collection_identifier), &collection_uuid)
                 .await;
             match cleanup_results {
                 Ok(cleaned_components) => {
                     info!(
                         "🧹 Cleaned up {} storage components for collection {}",
-                        cleaned_components, collection_name
+                        cleaned_components, collection_name.as_deref().unwrap_or("<unnamed>")
                     );
                 }
                 Err(e) => {
                     warn!(
                         "⚠️ Some storage cleanup failed for collection {}: {}",
-                        collection_name, e
+                        collection_name.as_deref().unwrap_or("<unnamed>"), e
                     );
                     // Continue with metadata deletion even if storage cleanup partially fails
                 }
@@ -619,14 +660,14 @@ impl CollectionService {
 
             // Step 3: Delete from metadata backend
             self.metadata_backend
-                .delete_collection(&collection_name)
+                .delete_collection(collection_name.as_deref().unwrap_or(collection_identifier))
                 .await?;
             let deleted = true;
 
             if deleted {
                 info!(
                     "✅ Collection deleted: {} (UUID: {}) in {}μs",
-                    collection_name,
+                    collection_name.as_deref().unwrap_or("<unnamed>"),
                     collection_uuid,
                     start_time.elapsed().as_micros()
                 );

@@ -174,7 +174,7 @@ mod tests {
             .filter(|e| e.name.ends_with(".oplog"))
             .collect();
         
-        assert!(!oplog_files.is_empty(), "Should have created .oplog files");
+        assert!(!oplog_files.is_none(), "Should have created .oplog files");
         assert!(oplog_files[0].name.starts_with("op_"), "Oplog file should have correct prefix");
     }
 
@@ -249,7 +249,7 @@ mod tests {
             .filter(|e| e.name.starts_with("checkpoint_") && e.name.ends_with(".meta"))
             .collect();
         
-        assert!(!checkpoint_files.is_empty(), "Should have created checkpoint files");
+        assert!(!checkpoint_files.is_none(), "Should have created checkpoint files");
     }
 
     #[tokio::test]

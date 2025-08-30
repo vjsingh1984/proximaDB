@@ -256,6 +256,15 @@ pub struct AxisConfig {
     
     /// Performance thresholds
     pub performance_thresholds: PerformanceThresholds,
+    
+    /// Strategy configuration
+    pub strategy_config: StrategyConfig,
+    
+    /// Migration configuration
+    pub migration_config: MigrationConfig,
+    
+    /// Monitoring configuration
+    pub monitoring_config: MonitoringConfig,
 }
 
 /// Performance thresholds for monitoring
@@ -264,6 +273,38 @@ pub struct PerformanceThresholds {
     pub max_latency_ms: u64,
     pub min_recall: f32,
     pub max_memory_usage: f64,
+}
+
+/// Strategy configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrategyConfig {
+    pub use_ml_models: bool,
+    pub min_training_size: usize,
+}
+
+impl Default for StrategyConfig {
+    fn default() -> Self {
+        Self {
+            use_ml_models: false,
+            min_training_size: 10000,
+        }
+    }
+}
+
+/// Migration configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationConfig {
+    pub improvement_threshold: f32,
+    pub max_concurrent_migrations: usize,
+}
+
+impl Default for MigrationConfig {
+    fn default() -> Self {
+        Self {
+            improvement_threshold: 0.1,
+            max_concurrent_migrations: 2,
+        }
+    }
 }
 
 impl Default for AxisConfig {
@@ -283,6 +324,9 @@ impl Default for AxisConfig {
                 min_recall: 0.9,
                 max_memory_usage: 0.8,
             },
+            strategy_config: StrategyConfig::default(),
+            migration_config: MigrationConfig::default(),
+            monitoring_config: MonitoringConfig::default(),
         }
     }
 }
@@ -321,6 +365,9 @@ pub struct AlertThresholds {
     pub latency_ms: u64,
     pub memory_usage: f64,
     pub error_rate: f64,
+    pub max_query_latency_ms: u64,
+    pub min_query_throughput: f64,
+    pub max_error_rate: f64,
 }
 
 /// Monitoring configuration
@@ -328,7 +375,9 @@ pub struct AlertThresholds {
 pub struct MonitoringConfig {
     pub enabled: bool,
     pub interval_seconds: u64,
+    pub metrics_interval_seconds: u64,
     pub thresholds: AlertThresholds,
+    pub alert_thresholds: AlertThresholds,
 }
 
 impl Default for MonitoringConfig {
@@ -336,10 +385,22 @@ impl Default for MonitoringConfig {
         Self {
             enabled: true,
             interval_seconds: 60,
+            metrics_interval_seconds: 60,
             thresholds: AlertThresholds {
                 latency_ms: 100,
                 memory_usage: 0.8,
                 error_rate: 0.05,
+                max_query_latency_ms: 100,
+                min_query_throughput: 10.0,
+                max_error_rate: 0.05,
+            },
+            alert_thresholds: AlertThresholds {
+                latency_ms: 100,
+                memory_usage: 0.8,
+                error_rate: 0.05,
+                max_query_latency_ms: 100,
+                min_query_throughput: 10.0,
+                max_error_rate: 0.05,
             },
         }
     }

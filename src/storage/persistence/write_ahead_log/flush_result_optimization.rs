@@ -128,7 +128,7 @@ impl BatchFlushProcessor {
                 let mut processed = Vec::with_capacity(chunk.len());
                 for vector in chunk {
                     // Process vector with memory pool buffer
-                    let _buffer = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
+                    let _buffer = pool.acquire().await;
                     processed.push(Arc::new(vector));
                 }
                 processed
@@ -179,7 +179,7 @@ impl FlushResultCache {
     
     /// Check if a flush result is cached
     pub async fn get(&self, key: &str) -> Option<Arc<FlushResult>> {
-        self.cache.get(&key).await
+        self.cache.get(key).await
     }
     
     /// Cache a flush result

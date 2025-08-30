@@ -172,7 +172,7 @@ async fn test_avro_search_by_id() {
         .await
         .expect("Failed to search");
     
-    assert!(not_found.is_empty());
+    assert!(not_found.is_none());
 }
 
 #[tokio::test]

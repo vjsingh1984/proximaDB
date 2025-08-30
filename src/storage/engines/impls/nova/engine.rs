@@ -2,8 +2,11 @@
 // Implements UnifiedStorageEngine trait for integration with ProximaDB
 
 use anyhow::{anyhow, Result};
+use crate::core::search::StorageTier;
+use crate::storage::engines::core::ops::{UniversallyOptimized, UniversalPerformanceOptimizer, UniversalOptimizationStrategy};
+use crate::storage::engines::impls::nova::NovaFile;
 use crate::core::compression::StandardCompression;
-use crate::storage::engines::core::ops::{UniversalPerformanceOptimizer, UniversalOptimizationStrategy};use async_trait::async_trait;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -644,20 +647,33 @@ impl UnifiedStorageEngine for NovaEngine {
                     metric: distance_metric,
                 };
                 
-                crate::proto::proximadb::SearchResult {
-                    id: record.id.clone().unwrap_or_else(|| format!("unknown_{}", idx)),
-                    vector_id: record.id.clone(),
+                crate::core::search::InternalSearchResult {
+                    id: if record.id.is_empty() { format!("unknown_{}", idx) } else { record.id.clone() },
+                    vector_id: Some(record.id.clone()),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
                     vector: Some(record.vector.clone()),
-                    metadata: Some(record.metadata.clone()),
+                    metadata: record.metadata.iter()
+                        .map(|item| {
+                            let value = match &item.value {
+                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
+                                    serde_json::Value::String(s.clone()),
+                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                                    serde_json::json!(n),
+                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
+                                    serde_json::Value::Bool(*b),
+                                None => serde_json::Value::Null,
+                            };
+                            (item.key.clone(), value)
+                        })
+                        .collect(),
                     debug_info: None,
                     version: record.version,
-                    timestamp: record.timestamp.map(|ts| ts as u64),
-                    semantic_similarity: Some(similarity_result),
+                    timestamp: record.timestamp,
                     quantization_info: None,
                     engine_stats: None,
-                    index_path: None,
+                    semantic_similarity: Some(similarity_result),
+                    index_path: Some("nova".to_string()),
                 }
             })
             .collect();
@@ -859,7 +875,7 @@ impl NovaEngine {
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         tracing::warn!("🔄 NOVA: Falling back to direct search implementation");
         
         // Use the existing search implementation
@@ -894,20 +910,33 @@ impl NovaEngine {
                     metric: distance_metric,
                 };
                 
-                crate::proto::proximadb::SearchResult {
-                    id: record.id.clone().unwrap_or_else(|| format!("unknown_{}", idx)),
-                    vector_id: record.id.clone(),
+                crate::core::search::InternalSearchResult {
+                    id: if record.id.is_empty() { format!("unknown_{}", idx) } else { record.id.clone() },
+                    vector_id: Some(record.id.clone()),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
                     vector: Some(record.vector.clone()),
-                    metadata: Some(record.metadata.clone()),
+                    metadata: record.metadata.iter()
+                        .map(|item| {
+                            let value = match &item.value {
+                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
+                                    serde_json::Value::String(s.clone()),
+                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                                    serde_json::json!(n),
+                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
+                                    serde_json::Value::Bool(*b),
+                                None => serde_json::Value::Null,
+                            };
+                            (item.key.clone(), value)
+                        })
+                        .collect(),
                     debug_info: None,
                     version: record.version,
-                    timestamp: record.timestamp.map(|ts| ts as u64),
-                    semantic_similarity: Some(similarity_result),
+                    timestamp: record.timestamp,
                     quantization_info: None,
                     engine_stats: None,
-                    index_path: None,
+                    semantic_similarity: Some(similarity_result),
+                    index_path: Some("nova".to_string()),
                 }
             })
             .collect();

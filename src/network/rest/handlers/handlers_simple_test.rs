@@ -41,6 +41,6 @@ use tracing::{debug, error, info};
         let converted = proto_metadata_helper::proto_metadata_to_hashmap(&empty_metadata);
         
         debug!("Empty metadata conversion: {:?}", converted);
-        assert!(converted.is_empty());
+        assert!(converted.is_none());
     }
 }

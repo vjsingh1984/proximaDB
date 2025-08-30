@@ -1065,7 +1065,7 @@ impl TransactionCoordinator {
         let staging_dir = config
             .custom_staging_dir
             .as_ref()
-            .map(|s| s.as_deref())
+            .map(|s| s.as_str())
             .unwrap_or_else(|| config.operation_type.staging_dir_name());
 
         info!("    staging_dir resolved to: '{}'", staging_dir);
@@ -1129,6 +1129,28 @@ impl TransactionCoordinator {
         info!("    Final staging_url: {}", staging_url);
         info!("    Final final_url: {}", final_url);
         Ok((staging_url, final_url))
+    }
+
+    /// Generate staging URL for an operation
+    fn generate_staging_url(&self, config: &StagingConfig, operation_id: &str) -> String {
+        let base = &config.base_url;
+        let staging_dir = match &config.operation_type {
+            TransactionStageType::Flush => format!("__flush/{}", operation_id),
+            TransactionStageType::Compaction => format!("__compact/{}", operation_id),
+            TransactionStageType::Metadata => format!("__metadata_info/{}", operation_id),
+            TransactionStageType::Wal => format!("__wal/{}", operation_id),
+            TransactionStageType::Transaction => format!("__transaction/{}", operation_id),
+            TransactionStageType::Custom(name) => format!("{}_{}", name, operation_id),
+        };
+        format!("{}/{}", base, staging_dir)
+    }
+
+    /// Generate final URL for an operation
+    fn generate_final_url(&self, config: &StagingConfig) -> String {
+        match &config.collection_id {
+            Some(collection) => format!("{}/{}", config.base_url, collection),
+            None => config.base_url.clone()
+        }
     }
 
     /// Update operation status
@@ -1356,7 +1378,7 @@ mod tests {
         assert!(coordinator
             .get_operation_status(&metadata.operation_id)
             .await
-            .is_empty());
+            .is_none());
     }
 
     #[tokio::test]
@@ -1417,7 +1439,7 @@ mod tests {
         assert!(coordinator
             .get_operation_status(&metadata.operation_id)
             .await
-            .is_empty());
+            .is_none());
     }
 
     #[tokio::test]

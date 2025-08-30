@@ -357,7 +357,7 @@ use tracing::{debug, error, info, warn};
         
         match query {
             MetadataQuery::And(queries) => {
-                assert!(!queries.is_empty());
+                assert!(!queries.is_none());
             }
             _ => panic!("Expected AND query"),
         }

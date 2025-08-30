@@ -2299,7 +2299,7 @@ impl UnifiedSstableReader {
         // Check if we have cached vectors for this block
         // TODO: Fix DataBlock construction - fields don't match actual structure
         // let cached_vectors = self.vector_cache.get_block_vectors(&sst_cache_key, 100).await;
-        // if !cached_vectors.is_empty() {
+        // if !cached_vectors.is_none() {
         //     return Ok(Some(block)); 
         // }
 
@@ -2577,8 +2577,8 @@ impl UnifiedSstableReader {
 
     /// Simple get operation for single vector retrieval
     /// This provides a lightweight interface for basic get operations
-    pub async fn get_vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
-        debug!("🔍 get_vector: Looking for vector '{}' in file '{}'", vector_id, file_path);
+    pub async fn vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
+        debug!("🔍 vector: Looking for vector '{}' in file '{}'", vector_id, file_path);
         
         // Check bloom filter for quick rejection using the proper bloom filter
         // The bloom_cache bitmap is just a marker, not the actual bloom filter

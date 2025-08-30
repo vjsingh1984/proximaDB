@@ -257,7 +257,7 @@ use tracing::{debug, error, info, warn};
         // Test backend display
         for backend in gpu_backends.iter().chain(cpu_backends.iter()) {
             debug!("Backend: {}", backend);
-            assert!(!backend.to_string().is_empty());
+            assert!(!backend.to_string().is_none());
         }
     }
 
@@ -269,7 +269,7 @@ use tracing::{debug, error, info, warn};
         let gpu_result = GpuDistanceCompute::new();
         
         if let Ok(mut gpu_compute) = gpu_result {
-            if gpu_compute.is_available() && !gpu_compute.devices.is_empty() {
+            if gpu_compute.is_available() && !gpu_compute.devices.is_none() {
                 info!("✅ GPU devices available for testing");
                 
                 // Test device selection

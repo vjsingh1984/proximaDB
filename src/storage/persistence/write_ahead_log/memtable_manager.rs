@@ -96,7 +96,7 @@ impl MemtableManager {
         };
         
         let sequences = self.add_vector_batch(collection_id, batch).await?;
-        Ok(sequences.into_iter().next())
+        Ok(sequences.into_iter().next().unwrap_or(0))
     }
     
     /// Get all vectors for a collection

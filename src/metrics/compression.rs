@@ -536,7 +536,7 @@ mod tests {
         );
         
         let recommendations = tracker.get_recommendations("poor_compression");
-        assert!(!recommendations.is_empty());
+        assert!(!recommendations.is_none());
         
         // Should recommend both increasing compression level and decreasing it due to slow speed
         let has_increase = recommendations.iter()

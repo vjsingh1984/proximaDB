@@ -142,6 +142,9 @@ pub enum FilterCondition {
     Like { column: String, pattern: String },
     Contains { column: String, value: serde_json::Value },
     StartsWith { column: String, prefix: String },
+    EndsWith { column: String, suffix: String },
+    Between { column: String, min: serde_json::Value, max: serde_json::Value },
+    IsNotNull { column: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -688,6 +691,12 @@ pub enum OptimizationGoal {
     BalancedSpeedRecall,
 }
 
+impl Default for OptimizationGoal {
+    fn default() -> Self {
+        OptimizationGoal::Balanced
+    }
+}
+
 impl std::fmt::Display for OptimizationGoal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -932,6 +941,34 @@ pub fn migrate_universal_filter(filter: &crate::core::search::FilterExpression) 
                     ComparisonOperator::StartsWith => FilterCondition::StartsWith {
                         column: field.clone(),
                         prefix: value.as_str().unwrap_or("").to_string(),
+                    },
+                    ComparisonOperator::EndsWith => FilterCondition::EndsWith {
+                        column: field.clone(),
+                        suffix: value.as_str().unwrap_or("").to_string(),
+                    },
+                    ComparisonOperator::Between => {
+                        // Between expects an array of two values [min, max]
+                        let values = match value {
+                            serde_json::Value::Array(arr) if arr.len() >= 2 => {
+                                (arr[0].clone(), arr[1].clone())
+                            }
+                            _ => (value.clone(), value.clone()),
+                        };
+                        FilterCondition::Between {
+                            column: field.clone(),
+                            min: values.0,
+                            max: values.1,
+                        }
+                    },
+                    ComparisonOperator::IsNull => FilterCondition::IsNull {
+                        column: field.clone(),
+                    },
+                    ComparisonOperator::IsNotNull => FilterCondition::IsNotNull {
+                        column: field.clone(),
+                    },
+                    ComparisonOperator::Like => FilterCondition::Like {
+                        column: field.clone(),
+                        pattern: value.as_str().unwrap_or("").to_string(),
                     },
                 };
                 conditions.push(condition);
@@ -1218,8 +1255,8 @@ mod tests {
     #[test]
     fn test_unified_optimizer_creation() {
         let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
-        assert!(optimizer.file_metadata_cache.is_empty());
-        assert!(optimizer.column_metadata_cache.is_empty());
+        assert!(optimizer.file_metadata_cache.is_none());
+        assert!(optimizer.column_metadata_cache.is_none());
     }
     
     #[test]
@@ -1276,7 +1313,7 @@ mod tests {
         let plan = optimizer.optimize_query(context).await.unwrap();
         
         // Should produce a combined execution plan
-        assert!(!plan.execution_steps.is_empty());
+        assert!(!plan.execution_steps.is_none());
         assert!(matches!(
             plan.execution_steps.first(),
             Some(ExecutionStep::CombinedFilterSearch { .. }) |

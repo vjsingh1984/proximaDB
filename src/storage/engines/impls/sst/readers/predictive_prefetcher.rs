@@ -728,7 +728,7 @@ use tracing::{debug, error, info};
             
             // If confidence is high enough for predictions
             if pattern.confidence > 0.7 {
-                assert!(!predictions.is_empty());
+                assert!(!predictions.is_none());
                 assert_eq!(predictions[0].0.block_id, 10);
                 assert!(matches!(predictions[0].2, PatternType::Sequential));
             }

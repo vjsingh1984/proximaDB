@@ -251,7 +251,7 @@ mod tests {
             vec![vector],
         ).await.unwrap();
         
-        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        assert!(!sst_files.is_none(), "Should create at least one SST file");
         let sst_file = &sst_files[0];
         debug!("🔍 Attempting to read SST file: {}", sst_file);
         
@@ -531,7 +531,7 @@ mod tests {
             vectors,
         ).await.unwrap();
         
-        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        assert!(!sst_files.is_none(), "Should create at least one SST file");
         let sst_file = &sst_files[0];
         debug!("📝 Testing streaming from SST file: {}", sst_file);
         
@@ -757,7 +757,7 @@ mod tests {
             vectors,
         ).await.unwrap();
         
-        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        assert!(!sst_files.is_none(), "Should create at least one SST file");
         
         // Read back and verify hierarchical structure using SstDirectReader
         for sst_file in &sst_files {
@@ -812,7 +812,7 @@ mod tests {
             vectors,
         ).await.unwrap();
         
-        assert!(!sst_files.is_empty(), "Should create SST files");
+        assert!(!sst_files.is_none(), "Should create SST files");
         
         // Compact the files to test metadata preservation
         let output_path = format!("file://{}/metadata_stats_compacted.sstable", base_path.to_string_lossy());
@@ -950,7 +950,7 @@ mod tests {
             .map(|entry| format!("{}/{}", storage_url, entry.name))
             .collect();
         
-        assert!(!sst_files.is_empty(), "Should create at least one SST file");
+        assert!(!sst_files.is_none(), "Should create at least one SST file");
         
         // Get file size before compaction
         let mut pre_compaction_size: u64 = 0;

@@ -384,7 +384,7 @@ async fn test_cleanup_collection() {
     coordinator.cleanup_collection("cleanup_test").await;
     
     // State should be gone
-    assert!(coordinator.get_flush_state("cleanup_test").await.is_empty());
+    assert!(coordinator.get_flush_state("cleanup_test").await.is_none());
 }
 
 #[tokio::test]
@@ -399,7 +399,7 @@ async fn test_drop_collection() {
     assert!(result.is_ok());
     
     // State should be gone
-    assert!(coordinator.get_flush_state("drop_test").await.is_empty());
+    assert!(coordinator.get_flush_state("drop_test").await.is_none());
 }
 
 #[tokio::test]

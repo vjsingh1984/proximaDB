@@ -351,7 +351,7 @@ mod tests {
         let mmap_result = MemoryMappedVectors::from_file("/tmp/test_vectors.bin");
         if mmap_result.is_ok() {
             let mmap_vectors = mmap_result.unwrap();
-            let vector_view = mmap_vectors.get_vector(0);
+            let vector_view = mmap_vectors.vector(0);
             assert!(vector_view.is_some(), "Should get vector view without copying");
         }
     }

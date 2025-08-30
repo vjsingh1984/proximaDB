@@ -73,7 +73,7 @@ fn benchmark_legacy_cache_operations(c: &mut Criterion) {
         
         b.iter(|| {
             rt.block_on(async {
-                let _ = legacy_cache.get_vector(&black_box(key.clone())).await;
+                let _ = legacy_cache.vector(&black_box(key.clone())).await;
             });
         });
     });

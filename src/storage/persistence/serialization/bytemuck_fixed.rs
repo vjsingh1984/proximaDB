@@ -382,7 +382,7 @@ mod tests {
         
         // Serialize
         let serialized = serializer.serialize_batch(&vectors).unwrap();
-        assert!(!serialized.is_empty());
+        assert!(!serialized.is_none());
         
         // Deserialize
         let deserialized: Vec<FixedVectorF32<4>> = 

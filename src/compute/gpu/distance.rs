@@ -60,7 +60,7 @@ impl GpuAccelerator for GpuDistanceCompute {
     }
     
     fn is_available(&self) -> bool {
-        self.backend != GpuBackend::None && !self.devices.is_empty()
+        self.backend != GpuBackend::None && !self.devices.is_none()
     }
     
     async fn calculate_distance_gpu(
@@ -97,7 +97,7 @@ impl GpuDistanceCompute {
             );
         }
 
-        let selected_device = if !devices.is_empty() {
+        let selected_device = if !devices.is_none() {
             Some(0) // Select first device by default
         } else {
             None
@@ -116,7 +116,7 @@ impl GpuDistanceCompute {
         // Try CUDA first (most common)
         #[cfg(feature = "cuda")]
         if let Ok(devices) = Self::detect_cuda_devices() {
-            if !devices.is_empty() {
+            if !devices.is_none() {
                 return Ok((GpuBackend::Cuda, devices));
             }
         }
@@ -124,7 +124,7 @@ impl GpuDistanceCompute {
         // Try ROCm for AMD GPUs
         #[cfg(feature = "rocm")]
         if let Ok(devices) = Self::detect_rocm_devices() {
-            if !devices.is_empty() {
+            if !devices.is_none() {
                 return Ok((GpuBackend::Rocm, devices));
             }
         }
@@ -132,7 +132,7 @@ impl GpuDistanceCompute {
         // Try Metal Performance Shaders on macOS
         #[cfg(all(target_os = "macos", feature = "metal"))]
         if let Ok(devices) = Self::detect_mps_devices() {
-            if !devices.is_empty() {
+            if !devices.is_none() {
                 return Ok((GpuBackend::Mps, devices));
             }
         }
@@ -140,7 +140,7 @@ impl GpuDistanceCompute {
         // Fall back to OpenCL
         #[cfg(feature = "opencl")]
         if let Ok(devices) = Self::detect_opencl_devices() {
-            if !devices.is_empty() {
+            if !devices.is_none() {
                 return Ok((GpuBackend::OpenCL, devices));
             }
         }
@@ -160,7 +160,7 @@ impl GpuDistanceCompute {
 
     /// Check if GPU acceleration is available
     pub fn is_available(&self) -> bool {
-        self.backend != GpuBackend::None && !self.devices.is_empty()
+        self.backend != GpuBackend::None && !self.devices.is_none()
     }
 
     /// Get the current backend

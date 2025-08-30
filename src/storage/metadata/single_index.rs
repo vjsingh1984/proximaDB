@@ -39,7 +39,9 @@ pub struct CollectionIndexEntry {
 
 impl CollectionIndexEntry {
     pub fn new(record: Collection) -> Self {
-        let name_key = record.config.as_ref().map(|c| c.name.clone()).clone();
+        let name_key = record.config.as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
         let uuid_key = record.id.clone();
 
         Self {
@@ -51,7 +53,9 @@ impl CollectionIndexEntry {
 
     /// Update with new record, maintaining key consistency
     pub fn update_record(&mut self, new_record: Collection) {
-        self.name_key = new_record.config.as_ref().map(|c| c.name.clone()).clone();
+        self.name_key = new_record.config.as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
         self.uuid_key = new_record.id.clone();
         self.record = Arc::new(new_record);
     }
@@ -111,7 +115,9 @@ impl SingleCollectionIndex {
     pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
+        let name = record.config.as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
         
         // Check if this is an update (collection exists)
         let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
@@ -258,7 +264,9 @@ impl SingleCollectionIndex {
         
         for record in records {
             let uuid = record.id.clone();
-            let name = record.config.as_ref().map(|c| c.name.clone()).clone();
+            let name = record.config.as_ref()
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "unnamed".to_string());
             
             // Insert into primary index
             let entry = CollectionIndexEntry::new(record);
@@ -287,6 +295,11 @@ impl SingleCollectionIndex {
     /// Get performance metrics
     pub fn get_metrics(&self) -> SingleIndexMetrics {
         self.metrics.read().clone()
+    }
+    
+    /// Get metrics (alias for get_metrics)
+    pub fn metrics(&self) -> SingleIndexMetrics {
+        self.get_metrics()
     }
 
     /// Filter collections by predicate - O(n) parallel scan

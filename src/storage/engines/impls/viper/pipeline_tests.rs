@@ -78,7 +78,7 @@ pub mod viper_pipeline_tests {
         assert_eq!(config.processing_config.batch_size, 100);
         assert!(config.processing_config.enable_compression);
         assert!(matches!(config.processing_config.sorting_strategy, SortingStrategy::ByTimestamp));
-        assert!(config.processing_config.quantization_level.is_empty());
+        assert!(config.processing_config.quantization_level.is_none());
         
         assert!(matches!(config.flushing_config.compression_algorithm, CompressionAlgorithm::Snappy));
         assert_eq!(config.flushing_config.compression_level, 6);
@@ -183,9 +183,9 @@ pub mod viper_pipeline_tests {
         assert_eq!(record.vector, vector);
         assert_eq!(record.metadata.len(), 2);
         assert_eq!(record.version, Some(1));
-        assert!(record.rank.is_empty());
-        assert!(record.score.is_empty());
-        assert!(record.similarity.is_empty());
+        assert!(record.rank.is_none());
+        assert!(record.score.is_none());
+        assert!(record.similarity.is_none());
     }
 
     #[test]

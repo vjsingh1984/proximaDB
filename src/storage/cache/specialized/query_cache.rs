@@ -89,7 +89,7 @@ impl QueryCache {
         if let Some(cached) = BaseCache::get_with_hooks(&self.base, key).await {
             let age = SystemTime::now()
                 .duration_since(cached.cached_at)
-                .clone()
+                .unwrap_or_default()
                 .as_secs();
             
             if age <= max_age_secs {

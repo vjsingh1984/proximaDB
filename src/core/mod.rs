@@ -1,26 +1,97 @@
-pub mod service_types;  // Core service types for vector operations
+//! # Core Module - Foundation Types and Utilities
+//!
+//! This module provides the foundational types, configurations, and utilities that are used
+//! throughout ProximaDB. It serves as the common vocabulary for all other modules, ensuring
+//! consistency and type safety across the codebase.
+//!
+//! ## Role in ProximaDB Architecture
+//!
+//! The core module sits at the base of the dependency hierarchy:
+//! ```text
+//! All Modules
+//!      ↓
+//! Core Module (types, config, errors, utilities)
+//! ```
+//!
+//! ## Key Components
+//!
+//! - **Types & Service Types**: Common type definitions (VectorRecord, Collection, etc.)
+//! - **Configuration**: System configuration and loading
+//! - **Error Handling**: Unified error types with `thiserror`
+//! - **Search**: Core search functionality and result types
+//! - **Compression**: Unified compression algorithms (LZ4, Snappy, Zstd, etc.)
+//! - **Bloom Filters**: Probabilistic data structures for fast lookups
+//! - **Hardware Capabilities**: SIMD/GPU detection and optimization
+//! - **Memory Management**: Memory pools and allocation strategies
+
+/// Core service types for vector operations (VectorRecord, Collection, etc.)
+pub mod service_types;
+
+/// Base62 encoding utilities for compact ID generation
 pub mod base62;
+
+/// System configuration structures and defaults
 pub mod config;
+
+/// Configuration loading from files and environment
 pub mod config_loader;
-pub mod conversions;  // Unified conversion utilities
+
+/// Type conversions and proto-to-native mappings
+pub mod conversions;
+
+/// Migration utilities for vector record formats
 pub mod vector_record_migration;
+
+/// Legacy error module (being replaced by errors module)
 pub mod error;
+
+/// gRPC metadata parsing utilities
 pub mod grpc_metadata_parser;
+
+/// Index-related core types and traits
 pub mod index;
+
+/// Indexing configuration and strategies
 pub mod indexing;
+
+/// Metadata query parsing and execution
 pub mod metadata_query;
+
+/// Core search functionality, filters, and result types
 pub mod search;
+
+/// Serialization utilities for various formats
 pub mod serialization;
-pub mod compression;  // 🆕 UNIFIED COMPRESSION MODULE
+
+/// Unified compression module with 13 algorithm support
+pub mod compression;
+
+/// Storage-related core types and traits
 pub mod storage;
+
+/// Foundation traits and base implementations
 pub mod foundation;
+
+/// Storage layout and path management
 pub mod storage_layout;
+
+/// Memory management, pools, and allocation strategies
 pub mod memory;
+
+/// Protocol buffer metadata helpers
 pub mod proto_metadata_helper;
+
+/// Bloom filter implementations for fast lookups
 pub mod bloom;
-pub mod errors;  // Error types for ProximaDB
+
+/// Unified error types with thiserror
+pub mod errors;
+
+/// Hardware capability detection (SIMD, GPU, etc.)
 pub mod hardware_capabilities;
-pub mod enum_packing;  // 🆕 ULTRA-EFFICIENT ENUM PACKING (75% storage savings)
+
+/// Ultra-efficient enum packing for 75% storage savings
+pub mod enum_packing;
 
 #[cfg(test)]
 mod config_tests;
@@ -110,7 +181,7 @@ impl VectorRecordSerialization for VectorRecord {
         
         // 2. Serialize remaining fields using fast bincode (faster than protobuf)
         let other_fields = VectorRecordOtherFields {
-            id: self.id.clone(),
+            id: Some(self.id.clone()),
             metadata: self.metadata.clone(),
             timestamp: self.timestamp,
             updated_at: self.updated_at,
@@ -175,7 +246,7 @@ impl VectorRecordSerialization for VectorRecord {
         
         // 3. Combine zero-copy vector with fast-deserialized fields
         Ok(VectorRecord {
-            id: other_fields.id,
+            id: other_fields.id.unwrap_or_default(),
             vector,
             metadata: other_fields.metadata,
             timestamp: other_fields.timestamp,

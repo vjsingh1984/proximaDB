@@ -1013,6 +1013,14 @@ impl GlobalTier {
                     &self.tier_configs,
                 )
             },
+            WorkloadType::Mixed => {
+                // Use hybrid policy for mixed workload
+                SmartTierPolicy::for_hybrid_workload_constrained(
+                    collection_config,
+                    &self.available_tiers,
+                    &self.tier_configs,
+                )
+            },
             WorkloadType::Hybrid { .. } => {
                 SmartTierPolicy::for_hybrid_workload_constrained(
                     collection_config,
@@ -1091,6 +1099,13 @@ impl GlobalTier {
                         // let (promoted, evicted) = self.handle_cache_memory_pressure(&collection_id)?;
                         // For testing, simulate freeing some memory
                         let (promoted, evicted) = (50, 100); // Simulate freeing 150 units
+                        response.add_promotion(collection_id.to_string(), promoted);
+                        response.add_eviction(collection_id.to_string(), evicted);
+                        memory_freed += (promoted + evicted) * 1024;
+                    },
+                    WorkloadType::Mixed => {
+                        // Mixed: Balance between eviction and promotion
+                        let (promoted, evicted) = (40, 60); // Balance between cache and index
                         response.add_promotion(collection_id.to_string(), promoted);
                         response.add_eviction(collection_id.to_string(), evicted);
                         memory_freed += (promoted + evicted) * 1024;
@@ -1693,6 +1708,9 @@ impl SmartTierPolicy {
                 mount_path: "/mnt/nvme".to_string() 
             },
             WorkloadType::Cache { .. } => StorageTier::Memory,
+            WorkloadType::Mixed { .. } => StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string()
+            },
             WorkloadType::Hybrid { .. } => StorageTier::CloudStandard { 
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-default".to_string(),

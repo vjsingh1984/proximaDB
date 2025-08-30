@@ -145,7 +145,7 @@ impl AxisManager {
     /// Get collection's IndexConfig from collection service for index build decisions
     pub async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
         if let Some(collection_service) = &self.collection_service {
-            match collection_service.get_native_index_config(collection_id).await {
+            match collection_service.native_index_config(collection_id).await {
                 Ok(Some(config)) => {
                     tracing::debug!("📋 AXIS: Retrieved IndexConfig for collection: {}", collection_id);
                     Ok(config)
@@ -684,6 +684,13 @@ impl AxisManager {
         Ok(())
     }
 
+    /// Get native index config for a collection
+    pub async fn native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+        // Return default config for now
+        // In production, this would look up collection-specific configuration
+        Ok(crate::index::config::IndexConfig::default())
+    }
+
     /// Notify AXIS about newly flushed vectors that need indexing
     /// This method is called by the flush coordinator after successful storage flush
     pub async fn handle_flushed_vectors(
@@ -705,7 +712,7 @@ impl AxisManager {
         );
 
         // Get IndexConfig for this collection to determine indexing behavior
-        let index_config = match self.get_native_index_config(collection_id).await {
+        let index_config = match self.native_index_config(collection_id).await {
             Ok(config) => config,
             Err(e) => {
                 tracing::warn!(

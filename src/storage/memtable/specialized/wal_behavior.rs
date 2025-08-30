@@ -19,7 +19,8 @@ use crate::core::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, CompositeBloomFilter};
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
+use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
@@ -42,7 +43,7 @@ impl WALVectorBatch {
     pub fn create_bloom_filter(&mut self) -> Result<()> {
         // Create bloom filter with optimal false positive rate
         let config = BloomFilterConfig {
-            // strategy removed -  BloomStrategy::ByteAligned,
+            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
             bits_per_key: 10, // 10 bits per key for ~1% false positive
             false_positive_rate: Some(0.01),
             expected_items: self.vector_records.len(),
@@ -118,7 +119,7 @@ impl BatchCoordinator {
         // Update vector index
         for (index, vector_record) in batch.vector_records.iter().enumerate() {
             self.vector_index.insert(
-                vector_record.id.as_deref().to_string(),
+                vector_record.id.clone(),
                 (collection_id.to_string(), batch_id.clone(), index),
             );
         }
@@ -166,7 +167,7 @@ impl BatchCoordinator {
             let mut cleared_batch_records = Vec::new();
             for batch in collection_batches.values() {
                 if batch.is_flushed {
-                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.as_deref().to_string()));
+                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.clone()));
                 }
             }
             
@@ -314,7 +315,7 @@ impl WALBehaviorWrapper {
         );
         
         // Create bloom filter if not already present
-        if batch.metadata_bloom_filter.is_empty() && vector_count > 0 {
+        if batch.metadata_bloom_filter.is_none() && vector_count > 0 {
             match batch.create_bloom_filter() {
                 Ok(_) => {
                     tracing::debug!("✅ Created bloom filter for batch {} with {} vectors", batch_id, vector_count);
@@ -425,8 +426,7 @@ impl WALBehaviorWrapper {
         _metadata_filters: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
-        use crate::proto::proximadb::SearchResult;
+    ) -> Result<Vec<crate::proto::proximadb::SearchVectorRecord>> {
         
         tracing::info!(
             "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (top_k={}) using {:?}",
@@ -462,50 +462,27 @@ impl WALBehaviorWrapper {
         debug!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
         tracing::info!("🔍 WAL_SEARCH: Found {} unflushed results", raw_results.len());
         
-        // Convert (SimilarityResult, VectorRecord) to SearchResult objects
+        // Convert (SimilarityResult, VectorRecord) to SearchVectorRecord objects
         let mut search_results = Vec::new();
-        for (rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
-            let search_result = SearchResult {
-                id: vector_record.id.clone().clone(),
-                vector_id: vector_record.id.clone(),
-                score: similarity.raw_distance, // Add score field
-                similarity: similarity.rank_value,
-                // rank removed -  Some((rank + 1) as u16),
+        for (_rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
+            let search_result = crate::proto::proximadb::SearchVectorRecord {
+                id: vector_record.id.clone(),
+                score: similarity.raw_value,
+                similarity: Some(similarity.normalized_score),
                 vector: if include_vectors { 
-                    Some(vector_record.vector.clone()) 
+                    vector_record.vector.clone()
                 } else { 
-                    None 
+                    Vec::new()
                 },
                 metadata: if include_metadata {
-                    // Convert proto metadata to HashMap
-                    vector_record.metadata.iter()
-                        .filter_map(|item| {
-                            let value = item.value.as_ref().map(|v| match v {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
-                                    serde_json::Value::String(s.clone())
-                                }
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
-                                    serde_json::Number::from_f64(*n)
-                                        .map(serde_json::Value::Number)
-                                        
-                                }
-                                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
-                                    serde_json::Value::Bool(*b)
-                                }
-                            });
-                            Some((item.key.clone(), value))
-                        })
-                        .collect()
+                    vector_record.metadata.clone()
                 } else {
-                    std::collections::HashMap::new()
+                    Vec::new()
                 },
-                debug_info: None,
-                quantization_info: None,
-                engine_stats: None,
                 version: vector_record.version,
                 timestamp: Some(vector_record.timestamp),
-                semantic_similarity: None,
-                index_path: Some("wal_memtable".to_string()),
+                source: None,
+                expanded_context: Vec::new(),
             };
             search_results.push(search_result);
         }
@@ -552,13 +529,24 @@ impl WALBehaviorWrapper {
         // ZERO-COPY: Share Arc references instead of cloning entire batches
         let unflushed_batches = unflushed_batch_refs
             .into_iter()
-            .map(|batch_ref| WALVectorBatch {
-                batch_id: batch_ref.batch_id.clone(),
-                vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
-                timestamp: batch_ref.created_at,
-                total_size_bytes: batch_ref.total_size_bytes,
-                is_flushed: batch_ref.is_flushed,
-                metadata_bloom_filter: batch_ref.metadata_bloom_filter.clone(),
+            .map(|batch_ref| {
+                // Create a new batch, handling bloom filter properly
+                let mut new_batch = WALVectorBatch {
+                    batch_id: batch_ref.batch_id.clone(),
+                    vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
+                    timestamp: batch_ref.timestamp,
+                    total_size_bytes: batch_ref.total_size_bytes,
+                    is_flushed: batch_ref.is_flushed,
+                    metadata_bloom_filter: None, // Will recreate if needed
+                };
+                
+                // Recreate bloom filter if it exists
+                if batch_ref.metadata_bloom_filter.is_some() {
+                    // Create bloom filter from the batch's vector records
+                    let _ = new_batch.create_bloom_filter();
+                }
+                
+                new_batch
             })
             .collect();
         
@@ -597,7 +585,7 @@ impl WALBehaviorWrapper {
 
     fn get_operation_type(&self, operation: &WALOperation) -> u8 {
         // Map operation types to numeric codes
-        match operation.operation_type.as_deref() {
+        match operation.operation_type.as_str() {
             "upsert_batch" => 1,
             "delete_batch" => 2,
             _ => 0, // Unknown operation
@@ -729,7 +717,7 @@ impl WALBehaviorWrapper {
         );
 
         for collection_id in &collections_to_flush {
-            let (entries, size) = self.inner.collection_stats(collection_id).await;
+            let (entries, size) = self.inner.stats(collection_id).await;
             tracing::info!(
                 "🔍 COLLECTIONS_FLUSH_CHECK: Collection {} has {} entries, {} bytes ({}MB)",
                 collection_id,
@@ -753,8 +741,8 @@ impl WALBehaviorWrapper {
             if let Some(removed_batch) = collection_batches.remove(batch_id) {
                 // Remove vector index entries for this batch
                 for vector_record in removed_batch.vector_records.iter() {
-                    if let Some(ref id) = vector_record.id {
-                        coordinator.vector_index.remove(id);
+                    if !vector_record.id.is_empty() {
+                        coordinator.vector_index.remove(&vector_record.id);
                     }
                 }
             }
@@ -764,6 +752,35 @@ impl WALBehaviorWrapper {
         // IMPORTANT: Also remove from the actual GlobalPartitionedMemtable
         // This is the real storage - coordinator is just for backward compatibility
         self.inner.remove_batch(collection_id, batch_id).await
+    }
+
+    /// Get stats for all collections
+    pub async fn stats(&self) -> Result<std::collections::HashMap<String, crate::storage::persistence::write_ahead_log::WALStats>> {
+        let mut stats = std::collections::HashMap::new();
+        
+        // Get list of all collections from the inner memtable
+        let collections = self.inner.list_collections().await?;
+        
+        for collection_id in collections {
+            let (entries, size) = self.inner.stats(&collection_id).await;
+            stats.insert(
+                collection_id.clone(),
+                crate::storage::persistence::write_ahead_log::WALStats {
+                    total_entries: entries as u64,
+                    memory_entries: entries as u64,
+                    disk_segments: 0,
+                    total_disk_size_bytes: 0,
+                    memory_size_bytes: size as u64,
+                    collections_count: 1,
+                    last_flush_time: None,
+                    write_throughput_entries_per_sec: 0.0,
+                    read_throughput_entries_per_sec: 0.0,
+                    compression_ratio: 1.0,
+                }
+            );
+        }
+        
+        Ok(stats)
     }
 
     /// Get statistics with String keys
@@ -1075,6 +1092,6 @@ mod tests {
         let found_vectors: Vec<_> = all_vectors.iter()
             .filter(|(_, record)| record.id.as_deref() == vector_id)
             .collect();
-        assert!(!found_vectors.is_empty());
+        assert!(!found_vectors.is_none());
     }
 }

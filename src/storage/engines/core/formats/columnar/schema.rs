@@ -427,7 +427,7 @@ impl ColumnarSchemaBuilder {
             
             // Enable dictionary encoding for low-cardinality strings
             let field = if config.optimization.enable_dictionary_encoding 
-                && matches!(filterable.data_type, FilterableDataType::String)
+                && matches!(filterable.data_type, FilterableData::String)
                 && filterable.estimated_cardinality.map_or(false, |c| c < 10000) 
             {
                 Field::new(&filterable.name, data_type, filterable.nullable)
@@ -443,9 +443,9 @@ impl ColumnarSchemaBuilder {
             
             // Estimate compression ratio based on data type
             let ratio = match filterable.data_type {
-                FilterableDataType::String => 3.0, // Text compresses well
-                FilterableDataType::Json => 4.0,   // JSON compresses very well
-                FilterableDataType::Array(_) => 2.5,
+                FilterableData::String => 3.0, // Text compresses well
+                FilterableData::Json => 4.0,   // JSON compresses very well
+                FilterableData::Array(_) => 2.5,
                 _ => 1.5, // Numbers compress moderately
             };
             compression_ratios.insert(filterable.name.clone(), ratio);
@@ -487,13 +487,13 @@ impl ColumnarSchemaBuilder {
     /// Convert filterable data type to Arrow data type
     fn convert_filterable_type(&self, data_type: &FilterableData) -> Result<DataType> {
         let arrow_type = match data_type {
-            FilterableDataType::String => DataType::Utf8,
-            FilterableDataType::Integer => DataType::Int64,
-            FilterableDataType::Float => DataType::Float64,
-            FilterableDataType::Boolean => DataType::Boolean,
-            FilterableDataType::Datetime => DataType::Timestamp(TimeUnit::Millisecond, None),
-            FilterableDataType::Json => DataType::Utf8, // Store as JSON string
-            FilterableDataType::Array(inner) => {
+            FilterableData::String => DataType::Utf8,
+            FilterableData::Integer => DataType::Int64,
+            FilterableData::Float => DataType::Float64,
+            FilterableData::Boolean => DataType::Boolean,
+            FilterableData::Datetime => DataType::Timestamp(TimeUnit::Millisecond, None),
+            FilterableData::Json => DataType::Utf8, // Store as JSON string
+            FilterableData::Array(inner) => {
                 let inner_type = self.convert_filterable_type(inner)?;
                 DataType::List(Arc::new(Field::new("item", inner_type, false)))
             }
@@ -739,17 +739,17 @@ mod tests {
         let builder = ColumnarSchemaBuilder::new();
         
         assert!(matches!(
-            builder.convert_filterable_type(&FilterableDataType::String).unwrap(),
+            builder.convert_filterable_type(&FilterableData::String).unwrap(),
             DataType::Utf8
         ));
         
         assert!(matches!(
-            builder.convert_filterable_type(&FilterableDataType::Integer).unwrap(),
+            builder.convert_filterable_type(&FilterableData::Integer).unwrap(),
             DataType::Int64
         ));
         
         assert!(matches!(
-            builder.convert_filterable_type(&FilterableDataType::Array(Box::new(FilterableDataType::String))).unwrap(),
+            builder.convert_filterable_type(&FilterableData::Array(Box::new(FilterableData::String))).unwrap(),
             DataType::List(_)
         ));
     }

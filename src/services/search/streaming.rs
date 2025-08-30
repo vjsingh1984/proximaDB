@@ -24,8 +24,24 @@ use tracing::{debug, info, warn};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::{InternalSearchResult, SearchDebugInfo};
-use crate::proto::proximadb::SearchVectorRecord;
+use crate::proto::proximadb::{SearchVectorRecord, metadata_item};
 use crate::services::operations::vectors::VectorOperationsService;
+use std::collections::HashMap;
+
+/// Helper function to convert proto metadata Value to serde_json::Value
+fn convert_proto_value_to_json(value: metadata_item::Value) -> serde_json::Value {
+    match value {
+        metadata_item::Value::StringValue(s) => serde_json::Value::String(s),
+        metadata_item::Value::NumberValue(f) => {
+            if let Some(n) = serde_json::Number::from_f64(f) {
+                serde_json::Value::Number(n)
+            } else {
+                serde_json::Value::Null
+            }
+        }
+        metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(b),
+    }
+}
 
 /// Configuration for streaming search
 #[derive(Debug, Clone)]
@@ -147,15 +163,18 @@ impl StreamingSearchService {
         config: Option<StreamingSearchConfig>,
     ) -> Self {
         let config = config.clone();
+        let buffer_size = config.as_ref().map(|c| c.buffer_size).unwrap_or(1000);
+        let concurrent_search = config.as_ref().map(|c| c.concurrent_search).unwrap_or(true);
+        let max_concurrent_tasks = config.as_ref().map(|c| c.max_concurrent_tasks).unwrap_or(8);
         
         info!(
             "🚀 StreamingSearchService: Initializing with buffer_size={}, concurrent_search={}, max_tasks={}",
-            config.buffer_size, config.concurrent_search, config.max_concurrent_tasks
+            buffer_size, concurrent_search, max_concurrent_tasks
         );
         
         Self {
             direct_service,
-            config,
+            config: config.unwrap_or_default(),
             distance_compute: UnifiedDistanceCompute::default(),
             stats: Arc::new(tokio::sync::RwLock::new(StreamingSearchStats::default())),
         }
@@ -331,7 +350,32 @@ impl StreamingSearchService {
                 };
                 
                 if should_include {
-                    deduped_storage_records.push(record);
+                    // Convert SearchVectorRecord to InternalSearchResult
+                    let internal_result = InternalSearchResult {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id.clone()),
+                        score: record.score,
+                        similarity: Some(record.similarity.unwrap_or(record.score)),
+                        vector: Some(record.vector.clone()),
+                        metadata: record.metadata.clone()
+                            .into_iter()
+                            .filter_map(|item| {
+                                item.value.map(|v| (item.key, convert_proto_value_to_json(v)))
+                            })
+                            .collect(),
+                        debug_info: None,
+                        version: record.version,
+                        timestamp: record.timestamp,
+                        updated_at: None,  // SearchVectorRecord doesn't have this
+                        expires_at: None,  // SearchVectorRecord doesn't have this
+                        source: None,      // TODO: Convert source if needed
+                        expanded_context: Vec::new(),
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+                    deduped_storage_records.push(internal_result);
                     if deduped_storage_records.len() >= remaining_k {
                         break;
                     }
@@ -422,13 +466,18 @@ impl StreamingSearchService {
                         score: similarity.normalized_score,
                         similarity: Some(similarity.rank_value),
                         vector: Some(record.vector.clone()),
-                        metadata: record.metadata.clone(),  // Already in serde_json::Value format
+                        metadata: record.metadata.clone()
+                            .into_iter()
+                            .filter_map(|item| {
+                                item.value.map(|v| (item.key, convert_proto_value_to_json(v)))
+                            })
+                            .collect(),
                         debug_info: None,
                         version: record.version,
                         timestamp: Some(record.timestamp),
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
-                        source: record.source.clone(),  // Preserve source from VectorRecord
+                        source: None,  // TODO: Convert source if needed
                         expanded_context: Vec::new(),   // No expanded context from WAL
                         semantic_similarity: Some(similarity),
                         quantization_info: None,

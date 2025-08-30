@@ -15,7 +15,7 @@ mod base_traits_tests {
 
     impl BaseConfig for TestConfig {
         fn validate(&self) -> Result<(), String> {
-            if self.name.is_empty() {
+            if self.name.is_none() {
                 return Err("Name cannot be empty".to_string());
             }
             if self.value < 0 {
@@ -25,7 +25,7 @@ mod base_traits_tests {
         }
 
         fn apply_defaults(&mut self) {
-            if self.name.is_empty() {
+            if self.name.is_none() {
                 self.name = "default".to_string();
             }
             if self.value < 0 {
@@ -272,7 +272,7 @@ mod base_traits_tests {
 
         assert!(result.is_success());
         assert_eq!(result.data().unwrap(), "success_data");
-        assert!(result.error().is_empty());
+        assert!(result.error().is_none());
         assert_eq!(result.processing_time_us().unwrap(), 1000);
     }
 
@@ -286,7 +286,7 @@ mod base_traits_tests {
         };
 
         assert!(!result.is_success());
-        assert!(result.data().is_empty());
+        assert!(result.data().is_none());
         assert_eq!(result.error().unwrap(), "test error");
         assert_eq!(result.processing_time_us().unwrap(), 500);
     }
@@ -498,7 +498,7 @@ mod conversion_tests {
         let source: Option<SourceType> = None;
         let target: Option<TargetType> = convert_option(source);
         
-        assert!(target.is_empty());
+        assert!(target.is_none());
     }
 
     #[test]
@@ -554,7 +554,7 @@ mod generic_types_tests {
         let config = GenericConfig::new(data.clone());
         
         assert_eq!(config.data, data);
-        assert!(config.validation_rules.is_empty());
+        assert!(config.validation_rules.is_none());
     }
 
     #[test]
@@ -611,8 +611,8 @@ mod generic_types_tests {
         assert_eq!(metadata.id, "test_id");
         assert_eq!(metadata.data, data);
         assert_eq!(metadata.version, 1);
-        assert!(metadata.tags.is_empty());
-        assert!(metadata.properties.is_empty());
+        assert!(metadata.tags.is_none());
+        assert!(metadata.properties.is_none());
         
         // Timestamps should be recent
         let now = Utc::now();
@@ -762,10 +762,10 @@ mod generic_types_tests {
         
         assert!(result.success);
         assert_eq!(result.data, Some(data));
-        assert!(result.error_message.is_empty());
-        assert!(result.error_code.is_empty());
-        assert!(result.processing_time_us.is_empty());
-        assert!(result.metadata.is_empty());
+        assert!(result.error_message.is_none());
+        assert!(result.error_code.is_none());
+        assert!(result.processing_time_us.is_none());
+        assert!(result.metadata.is_none());
     }
 
     #[test]
@@ -773,11 +773,11 @@ mod generic_types_tests {
         let result: GenericResult<TestData> = GenericResult::error("Test error".to_string());
         
         assert!(!result.success);
-        assert!(result.data.is_empty());
+        assert!(result.data.is_none());
         assert_eq!(result.error_message, Some("Test error".to_string()));
-        assert!(result.error_code.is_empty());
-        assert!(result.processing_time_us.is_empty());
-        assert!(result.metadata.is_empty());
+        assert!(result.error_code.is_none());
+        assert!(result.processing_time_us.is_none());
+        assert!(result.metadata.is_none());
     }
 
     #[test]
@@ -810,7 +810,7 @@ mod generic_types_tests {
         // Test BaseResult trait methods
         assert!(result.is_success());
         assert_eq!(result.data().unwrap(), &data);
-        assert!(result.error().is_empty());
+        assert!(result.error().is_none());
         assert_eq!(result.processing_time_us().unwrap(), 1000);
     }
 
@@ -821,7 +821,7 @@ mod generic_types_tests {
         
         // Test BaseResult trait methods
         assert!(!result.is_success());
-        assert!(result.data().is_empty());
+        assert!(result.data().is_none());
         assert_eq!(result.error().unwrap(), "Trait error");
         assert_eq!(result.processing_time_us().unwrap(), 500);
     }

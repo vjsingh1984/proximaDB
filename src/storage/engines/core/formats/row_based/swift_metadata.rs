@@ -8,7 +8,7 @@ use bytemuck::{Pod, Zeroable, bytes_of, from_bytes};
 use serde::{Serialize, Deserialize};
 use tracing::{debug, trace};
 
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::io::zero_copy::traits::{
     MetadataSerializer, EngineMetadata, QueryContext, DataRange, QueryType
@@ -474,7 +474,7 @@ mod tests {
 
         // Test serialization
         let serialized = serializer.serialize_metadata("/test/file.swift", "test_collection").unwrap();
-        assert!(!serialized.is_empty());
+        assert!(!serialized.is_none());
 
         // Test deserialization
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
@@ -522,7 +522,7 @@ mod tests {
         let ranges = serializer.get_required_ranges(metadata.as_ref(), &query_context);
         // Should get specific ranges for ID lookup, not full file
         if let Some(ranges) = ranges {
-            assert!(!ranges.is_empty());
+            assert!(!ranges.is_none());
             assert!(ranges.len() <= 10); // Shouldn't need all segments
         }
     }

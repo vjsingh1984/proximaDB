@@ -82,11 +82,11 @@ async fn test_end_to_end_cache_system() {
     
     // Run optimization
     let report = optimizer.analyze().await;
-    assert!(!report.optimization_hints.is_empty() || report.optimization_hints.is_empty());
+    assert!(!report.optimization_hints.is_none() || report.optimization_hints.is_none());
     
     // Get dashboard state
     let state = dashboard.get_dashboard_state().await;
-    assert!(!state.cache_status.is_empty());
+    assert!(!state.cache_status.is_none());
     
     // Trigger memory reallocation
     orchestrator.reallocate_memory_tiers().await.unwrap();

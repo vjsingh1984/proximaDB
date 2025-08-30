@@ -247,7 +247,6 @@ impl CompactionCoordinator {
             active_operations: DashMap::new(),
             global_state: RwLock::new(GlobalCompactionState::default()),
             config,
-            queue_manager: None,
             deferred_compactions: DashMap::new(),
         }
     }
@@ -552,7 +551,6 @@ impl Clone for CompactionCoordinator {
             active_operations: self.active_operations.clone(),
             global_state: RwLock::new(GlobalCompactionState::default()), // Fresh state for clone
             config: self.config.clone(),
-            queue_manager: self.queue_manager.clone(),
             deferred_compactions: self.deferred_compactions.clone(),
         }
     }
@@ -592,8 +590,8 @@ impl FilenameCodec {
         
         pattern.captures(filename)
             .and_then(|caps| caps.get(1))
-            .and_then(|m| m.as_deref().parse().ok())
-            
+            .and_then(|m| m.as_str().parse().ok())
+            .unwrap_or(0)
     }
     
     /// Parse timestamp from filename with caching
@@ -605,11 +603,11 @@ impl FilenameCodec {
         pattern.captures(filename)
             .and_then(|caps| caps.get(1))
             .and_then(|m| {
-                DateTime::parse_from_str(&format!("{}+00:00", m.as_deref()), "%Y%m%dT%H%M%S%z")
+                DateTime::parse_from_str(&format!("{}+00:00", m.as_str()), "%Y%m%dT%H%M%S%z")
                     .ok()
                     .map(|dt| dt.timestamp() as u64)
             })
-            
+            .unwrap_or(0)
     }
     
     /// Check if filename follows convention

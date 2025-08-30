@@ -173,7 +173,7 @@ impl MultiTierDeduplicator {
                     if !result {
                         tracing::debug!(
                             "🔍 Query filter: Vector {} did not match logical query",
-                            vector_record.id.as_deref().unwrap_or("<no-id>")
+                            if vector_record.id.is_empty() { "<no-id>" } else { &vector_record.id }
                         );
                     }
                     return result;
@@ -181,7 +181,7 @@ impl MultiTierDeduplicator {
                 Err(e) => {
                     tracing::warn!(
                         "🚨 Query evaluation error for vector {}: {}",
-                        vector_record.id.as_deref().unwrap_or("<no-id>"), e
+                        if vector_record.id.is_empty() { "<no-id>" } else { &vector_record.id }, e
                     );
                     return false; // Fail safe on query evaluation error
                 }
@@ -246,12 +246,12 @@ impl MultiTierDeduplicator {
             if !self.matches_filters(&result.vector_record) {
                 tracing::debug!(
                     "🚫 Filter: Skipping vector {} due to metadata filter mismatch",
-                    result.vector_record.id.as_deref().unwrap_or("<no-id>")
+                    if result.vector_record.id.is_empty() { "<no-id>" } else { &result.vector_record.id }
                 );
                 continue;
             }
 
-            if result.vector_record.id.as_ref().map_or(true, |id| id.is_empty()) {
+            if result.vector_record.id.is_empty() {
                 // No ID - include directly (no deduplication possible)
                 self.results_without_id.push(result);
             } else {
