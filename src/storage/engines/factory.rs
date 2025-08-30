@@ -150,7 +150,7 @@ impl StorageEngineFactory {
         let config = config.unwrap_or_else(raptor::RaptorConfig::default);
         // Create shared cache for RAPTOR
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-        let cache = Arc::new(CrossCacheOrchestrator::new());
+        let cache = Arc::new(CrossCacheOrchestrator::new(1000)); // Default history size
         let engine = RaptorEngine::new(collection_id, base_path, config, cache).await?;
         Ok(Arc::new(engine))
     }

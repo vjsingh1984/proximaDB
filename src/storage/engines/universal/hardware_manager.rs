@@ -206,7 +206,7 @@ impl HardwareAccelerationManager {
     /// Get optimal SIMD lane count for given data type
     pub fn get_optimal_simd_lanes(&self, data_type: SIMDData) -> usize {
         match data_type {
-            SIMDDataType::F32 => {
+            SIMDData::F32 => {
                 if self.simd_capabilities.avx512_supported && self.config.enable_avx512 {
                     16 // AVX-512 supports 16 f32 values
                 } else if self.simd_capabilities.avx2_supported && self.config.enable_avx2 {
@@ -219,8 +219,8 @@ impl HardwareAccelerationManager {
                     1  // Scalar fallback
                 }
             },
-            SIMDDataType::I32 => self.get_optimal_simd_lanes(SIMDDataType::F32), // Same as F32
-            SIMDDataType::I8 => {
+            SIMDData::I32 => self.get_optimal_simd_lanes(SIMDData::F32), // Same as F32
+            SIMDData::I8 => {
                 if self.simd_capabilities.avx512_supported && self.config.enable_avx512 {
                     64 // AVX-512 supports 64 i8 values
                 } else if self.simd_capabilities.avx2_supported && self.config.enable_avx2 {
@@ -233,7 +233,7 @@ impl HardwareAccelerationManager {
                     1  // Scalar fallback
                 }
             },
-            SIMDDataType::U8 => self.get_optimal_simd_lanes(SIMDDataType::I8), // Same as I8
+            SIMDData::U8 => self.get_optimal_simd_lanes(SIMDData::I8), // Same as I8
         }
     }
     

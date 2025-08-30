@@ -278,11 +278,9 @@ impl ProgressiveSearchExecutor {
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
-        // Delegate all quantization to UnifiedQuantizationEngine
-        let query_quantized = self.quantization_engine.quantize_to_level(
-            query_vector,
-            &QuantizationType::Binary
-        )?;
+        // Quantize query vector to binary for this stage
+        // Note: UnifiedQuantizationEngine doesn't have quantize_to_level, 
+        // so we'll use the distance compute directly with binary comparison
         
         for candidate in candidates {
             if let Some(binary_repr) = candidate.quantized_vectors

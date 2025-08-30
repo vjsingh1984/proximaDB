@@ -473,15 +473,25 @@ impl AcceleratedQuantization {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     unsafe fn reduce_min_avx512(&self, v: std::arch::x86_64::__m512) -> f32 {
         use std::arch::x86_64::*;
-        let min = _mm512_reduce_min_ps(v);
-        min
+        // Manual reduction since _mm512_reduce_min_ps is unstable
+        // Extract 256-bit halves
+        let low = _mm512_extractf32x8_ps(v, 0);
+        let high = _mm512_extractf32x8_ps(v, 1);
+        let min256 = _mm256_min_ps(low, high);
+        // Continue reduction using AVX2
+        self.reduce_min_avx2(min256)
     }
     
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     unsafe fn reduce_max_avx512(&self, v: std::arch::x86_64::__m512) -> f32 {
         use std::arch::x86_64::*;
-        let max = _mm512_reduce_max_ps(v);
-        max
+        // Manual reduction since _mm512_reduce_max_ps is unstable
+        // Extract 256-bit halves
+        let low = _mm512_extractf32x8_ps(v, 0);
+        let high = _mm512_extractf32x8_ps(v, 1);
+        let max256 = _mm256_max_ps(low, high);
+        // Continue reduction using AVX2
+        self.reduce_max_avx2(max256)
     }
     
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]

@@ -147,20 +147,11 @@ impl UniversalCompressionAdapter {
         context_config: &ContextAwareCompressionConfig,
     ) -> Result<CompressionContext> {
         let context = match context_config.data_type {
-            CompressionDataType::SstBlock => CompressionContext::Block,
-            CompressionDataType::VectorData => CompressionContext::VectorSerialization,
-            CompressionDataType::ParquetColumn => CompressionContext::Parquet,
-            CompressionDataType::MetadataJson => CompressionContext::VectorSerialization, // Best fit
-            CompressionDataType::IndexData => CompressionContext::Block, // Best fit
-            CompressionDataType::Custom(ref name) => {
-                // Map custom contexts to best fit
-                match name.as_deref() {
-                    "bloom_filter" | "index_node" => CompressionContext::Block,
-                    "vector_batch" | "embedding" => CompressionContext::VectorSerialization,
-                    "columnar_chunk" => CompressionContext::Parquet,
-                    _ => CompressionContext::Block, // Default fallback
-                }
-            }
+            CompressionData::Vector => CompressionContext::VectorSerialization,
+            CompressionData::Metadata => CompressionContext::Block,
+            CompressionData::Index => CompressionContext::Block,
+            CompressionData::BloomFilter => CompressionContext::Block,
+            CompressionData::Mixed => CompressionContext::Block, // Default for mixed data
         };
         
         Ok(context)

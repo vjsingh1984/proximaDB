@@ -294,7 +294,7 @@ impl UniversalSearchPipeline {
         
         // Sort by distance
         reranked.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
         });
         
         Ok(reranked)
