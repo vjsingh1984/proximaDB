@@ -222,11 +222,12 @@ impl ProgressiveSearchExecutor {
             SearchStage::BinaryFilter => ctx.binary_filter_selectivity(),
             SearchStage::Int8Ranking => ctx.metadata.quantization_config
                 .as_ref()
-                .map(|qc| qc.int8_ranking_selectivity)
-                ,
+                .and_then(|qc| qc.int8_ranking_selectivity)
+                .unwrap_or(0.5),  // Default selectivity
             SearchStage::PqRanking => ctx.metadata.quantization_config
                 .as_ref()
-                .map(|qc| qc.pq_ranking_selectivity)
+                .and_then(|qc| qc.pq_ranking_selectivity)
+                .unwrap_or(0.2)
                 ,
             SearchStage::FullPrecision => 1.0,
         };
@@ -323,12 +324,12 @@ impl ProgressiveSearchExecutor {
                     .map(|&x| x as f32 / 127.0)  // Normalize INT8 to [-1, 1] range
                     .collect();
                 
-                let distance = self.distance_compute.calculate_distance(
+                let similarity = self.distance_compute.calculate_distance(
                     query_vector,
                     &int8_as_f32,
-                    DistanceMetric::Cosine  // Default to cosine for now
+                    &DistanceMetric::Cosine  // Default to cosine for now
                 );
-                candidate.score = distance;
+                candidate.score = similarity.raw_value;
             }
         }
         

@@ -205,8 +205,8 @@ pub struct UniversalPerformanceOptimizer {
     /// Filesystem factory for seamless local/cloud integration
     filesystem_factory: Arc<FilesystemFactory>,
     
-    /// Memory-mapped file cache
-    mmap_cache: Arc<RwLock<HashMap<String, memmap2::Mmap>>>,
+    /// Memory-mapped file cache (using Arc for shared ownership)
+    mmap_cache: Arc<RwLock<HashMap<String, Arc<memmap2::Mmap>>>>,
     
     /// Generic data cache for any storage engine
     data_cache: Arc<RwLock<HashMap<String, Arc<Vec<u8>>>>>,
@@ -292,13 +292,12 @@ impl UniversalPerformanceOptimizer {
     
     /// Filesystem-integrated memory-mapped file access for ultra-fast I/O
     /// Supports local filesystem and cloud storage through unified filesystem API
-    pub async fn get_memory_mapped_file(&self, file_url: &str) -> Result<Option<memmap2::Mmap>> {
+    pub async fn get_memory_mapped_file(&self, file_url: &str) -> Result<Option<Arc<memmap2::Mmap>>> {
         // Check cache first
         {
             let cache = self.mmap_cache.read().await;
             if let Some(mmap) = cache.get(file_url) {
-                // Safety: mmap is read-only and file is immutable for SST-like files
-                return Ok(Some(unsafe { std::ptr::read(mmap as *const memmap2::Mmap) }));
+                return Ok(Some(Arc::clone(mmap)));
             }
         }
         
@@ -307,20 +306,21 @@ impl UniversalPerformanceOptimizer {
         
         // Try local file memory mapping first (works for file:// URLs)
         if file_url.starts_with("file://") {
-            let local_path = file_url.strip_prefix("file://");
-            if let Ok(file) = File::open(local_path) {
-                let mmap = unsafe { MmapOptions::new().map(&file)? };
-                
-                // Cache for future access
-                {
-                    let mut cache = self.mmap_cache.write().await;
-                    cache.insert(file_url.to_string(), mmap.clone());
+            if let Some(local_path) = file_url.strip_prefix("file://") {
+                if let Ok(file) = File::open(local_path) {
+                    let mmap = Arc::new(unsafe { MmapOptions::new().map(&file)? });
+                    
+                    // Cache for future access
+                    {
+                        let mut cache = self.mmap_cache.write().await;
+                        cache.insert(file_url.to_string(), Arc::clone(&mmap));
+                    }
+                    
+                    // Update access patterns
+                    self.update_access_stats(file_url, file.metadata()?.len()).await;
+                    
+                    return Ok(Some(mmap));
                 }
-                
-                // Update access patterns
-                self.update_access_stats(file_url, file.metadata()?.len()).await;
-                
-                return Ok(Some(mmap));
             }
         }
         
@@ -432,8 +432,10 @@ impl UniversalPerformanceOptimizer {
     }
     
     /// Memory pool optimization using the global shared pool
-    pub async fn get_memory_buffer(&self, size: usize) -> Result<Vec<f32>> {
-        let pooled_item = SHARED_MEMORY_POOL.get_f32_buffer(size);
+    pub async fn get_memory_buffer(&self, _size: usize) -> Result<Vec<f32>> {
+        // VectorMemoryPool provides pre-allocated buffers
+        // The acquire() method returns a PooledItem which derefs to Vec<f32>
+        let pooled_item = SHARED_MEMORY_POOL.acquire();
         Ok(pooled_item.take())
     }
     
@@ -558,11 +560,12 @@ impl UniversalPerformanceOptimizer {
             let mmap_cache = self.mmap_cache.clone();
             tokio::spawn(async move {
                 for file_url in local_files {
-                    let local_path = file_url.strip_prefix("file://");
-                    if let Ok(file) = File::open(local_path) {
-                        if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
-                            let mut cache = mmap_cache.write().await;
-                            cache.insert(file_url, mmap);
+                    if let Some(local_path) = file_url.strip_prefix("file://") {
+                        if let Ok(file) = File::open(local_path) {
+                            if let Ok(mmap) = unsafe { MmapOptions::new().map(&file) } {
+                                let mut cache = mmap_cache.write().await;
+                                cache.insert(file_url, Arc::new(mmap));
+                            }
                         }
                     }
                 }
@@ -635,7 +638,7 @@ impl UniversalPerformanceOptimizer {
     ) -> Result<Vec<f32>> {
         let mut distances = Vec::new();
         
-        if get_shared_hardware_capabilities().cpu.supports_avx2() {
+        if get_shared_hardware_capabilities().cpu.features.avx2_support {
             // Use SIMD acceleration
             for candidate in candidates {
                 let distance = match metric {
