@@ -476,7 +476,7 @@ pub struct PerformanceMonitor {
 }
 
 /// Operation performance metrics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct OperationMetrics {
     /// Serialization metrics
     serialization_ops: usize,
@@ -501,7 +501,7 @@ pub struct OperationMetrics {
 }
 
 /// Resource usage metrics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ResourceMetrics {
     /// Memory usage
     memory_usage_bytes: usize,
@@ -678,14 +678,15 @@ impl CommonColumnarOperations {
                 if !self.is_cache_expired(cached) {
                     cached.last_accessed = std::time::Instant::now();
                     cached.access_count += 1;
+                    
+                    let metadata = cached.metadata.clone();
+                    let schema = cached.schema.clone();
+                    let compression_metadata = cached.compression_metadata.clone();
+                    
                     cache.hits += 1;
                     
                     debug!("File metadata cache hit for: {}", path_str);
-                    return Ok((
-                        cached.metadata.clone(),
-                        cached.schema.clone(),
-                        cached.compression_metadata.clone(),
-                    ));
+                    return Ok((metadata, schema, compression_metadata));
                 }
             }
         }

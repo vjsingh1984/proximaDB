@@ -436,7 +436,7 @@ impl UniversalPerformanceOptimizer {
         // VectorMemoryPool provides pre-allocated buffers
         // The acquire() method returns a PooledItem which derefs to Vec<f32>
         // Need to deref the Lazy first to get the Arc<VectorMemoryPool>
-        let pooled_item = (*SHARED_MEMORY_POOL).acquire();
+        let pooled_item = SHARED_MEMORY_POOL.acquire();
         Ok(pooled_item.take())
     }
     

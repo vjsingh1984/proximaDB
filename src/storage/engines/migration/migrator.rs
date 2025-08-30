@@ -195,7 +195,7 @@ impl EngineMigrator {
         let mut warnings = Vec::new();
         
         // Execute based on strategy
-        match plan.strategy {
+        match self.config.strategy {
             MigrationStrategy::CopyThenSwitch => {
                 let result = self.execute_copy_then_switch(&plan.collections).await?;
                 migrated_collections = result.migrated_collections;
@@ -255,7 +255,6 @@ impl EngineMigrator {
             total_time_ms: total_time,
             average_throughput,
             performance_metrics: HashMap::new(),
-            validation_results: None, // Would be populated if validation was run
             errors,
             warnings,
         })

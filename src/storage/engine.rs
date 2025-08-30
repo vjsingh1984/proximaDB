@@ -105,7 +105,7 @@ impl StorageEngine {
         let data_dirs: Vec<PathBuf> = config.storage_locations.iter()
             .filter_map(|loc| {
                 if loc.url.starts_with("file://") {
-                    Some(PathBuf::from(loc.url.strip_prefix("file://")))
+                    loc.url.strip_prefix("file://").map(PathBuf::from)
                 } else {
                     None
                 }
@@ -220,7 +220,7 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let sst_config = self.config.sst_config.clone().clone();
+        let sst_config = self.config.sst_config.clone().unwrap_or_else(|| SstConfig::default());
         let mut temp_manager = Compaction::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
@@ -258,7 +258,7 @@ impl StorageEngine {
         let vector_ref = &record.vector[..];
         let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
         let start = std::time::Instant::now();
-        let vector_id = record.id.as_ref().map(|s| s.as_deref());
+        let vector_id = &record.id;
         
         tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
                        vector_id, collection_id, vector_ref.len(), vector_size);
@@ -425,7 +425,7 @@ impl StorageEngine {
                     Ok(_) => tracing::debug!("Created directory: {}", dir_url),
                     Err(e) => {
                         // Check if already exists
-                        if !fs.exists(&dir_url).await {
+                        if !fs.exists(&dir_url).await.unwrap_or(false) {
                             return Err(crate::core::StorageError::DiskIO(
                                 std::io::Error::new(
                                     std::io::ErrorKind::Other,
@@ -485,8 +485,8 @@ impl StorageEngine {
         for collection in &collections {
             let collection_id = &collection.id;
             let collection_name = collection.config.as_ref()
-                .map(|c| c.name.as_deref())
-                ;
+                .map(|c| c.name.as_str())
+                .unwrap_or("unknown");
             
             // Storage assignment is now part of collection metadata
             if let Some(ref assignment) = collection.storage_assignment {
@@ -798,7 +798,7 @@ impl StorageEngine {
 
         // Use existing write method for each record to ensure consistency
         for (index, record) in records.iter().enumerate() {
-            let record_id = record.id.as_deref().to_string();
+            let record_id = record.id.clone();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
                 index + 1,

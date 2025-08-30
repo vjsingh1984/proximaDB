@@ -160,7 +160,7 @@ impl StorageEngineFactory {
         info!("Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine");
         
         // Use default configuration for now
-        let config = prism::config::Config::default();
+        let config = prism::engine::Config::default();
         
         // TODO: This needs to be updated when the PRISM engine constructor is fixed
         // For now, return an error indicating PRISM needs additional setup
@@ -172,7 +172,7 @@ impl StorageEngineFactory {
         info!("Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine");
         
         // Use default configuration
-        let config = prism::config::Config::default();
+        let config = prism::engine::Config::default();
         
         // Create PRISM engine with async initialization
         let engine = PrismEngine::new(config).await?;
