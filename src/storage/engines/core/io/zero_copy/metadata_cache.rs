@@ -60,7 +60,7 @@ impl CacheFileHeader {
             metadata_size,
             created_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .clone()
+                .unwrap_or_default()
                 .as_secs(),
             file_path_hash,
             compression_flags,
@@ -105,7 +105,9 @@ impl MmappedMetadata {
             ));
         }
 
-        let header = *from_bytes::<CacheFileHeader>(&mmap[0..std::mem::size_of::<CacheFileHeader>()]);
+        let header = unsafe {
+            std::ptr::read(mmap.as_ptr() as *const CacheFileHeader)
+        };
         
         if !header.is_valid() {
             return Err(ProximaDBError::InvalidInput(

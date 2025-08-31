@@ -43,7 +43,7 @@ pub enum DownloadStrategy {
 }
 
 /// Optimized data range with priority and merging information
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OptimizedRange {
     /// Original data range
     pub range: DataRange,
@@ -738,7 +738,7 @@ impl CostCalculator {
 
         // Calculate request cost impact (negative for additional requests)
         let additional_requests = request_count.saturating_sub(1) as f64; // Assume 1 request for full download
-        let request_cost_impact = additional_requests * self.config.request_cost_weight * 0.001; // Small per-request cost
+        let request_cost_impact = additional_requests * self.config.request_cost_weight as f64 * 0.001; // Small per-request cost
 
         bandwidth_savings - request_cost_impact
     }

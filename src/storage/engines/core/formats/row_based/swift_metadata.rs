@@ -16,7 +16,7 @@ use crate::storage::engines::core::io::zero_copy::traits::{
 
 /// SWIFT global metadata header (bytemuck compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SwiftGlobalHeader {
     /// Total file size
     pub file_size: u64,
@@ -42,7 +42,7 @@ pub struct SwiftGlobalHeader {
 
 /// SWIFT segment metadata header (bytemuck compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SwiftSegmentHeader {
     /// Segment offset in file
     pub offset: u64,

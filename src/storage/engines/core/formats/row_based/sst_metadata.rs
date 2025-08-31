@@ -16,7 +16,7 @@ use crate::core::error::ProximaDBError;
 
 /// SST Global metadata (fixed size, bytemuck-compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SstGlobalHeader {
     /// Total file size
     pub file_size: u64,
@@ -54,7 +54,7 @@ pub struct SstGlobalHeader {
 
 /// SST DataBlock metadata (fixed size, array-based)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct SstBlockHeader {
     /// Block offset in file
     pub offset: u64,

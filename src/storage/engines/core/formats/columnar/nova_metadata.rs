@@ -16,7 +16,7 @@ use crate::storage::engines::core::io::zero_copy::traits::{
 
 /// NOVA file footer information (bytemuck compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct NovaFooterHeader {
     /// Total file size
     pub file_size: u64,
@@ -46,7 +46,7 @@ pub struct NovaFooterHeader {
 
 /// NOVA column group information (bytemuck compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct NovaColumnGroupHeader {
     /// Column group offset in file
     pub offset: u64,
@@ -74,7 +74,7 @@ pub struct NovaColumnGroupHeader {
 
 /// NOVA column information (bytemuck compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct NovaColumnHeader {
     /// Column offset within group
     pub offset: u64,

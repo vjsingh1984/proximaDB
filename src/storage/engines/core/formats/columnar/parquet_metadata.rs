@@ -16,7 +16,7 @@ use crate::core::error::ProximaDBError;
 
 /// Parquet Footer metadata (fixed size, bytemuck-compatible)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ParquetFooterHeader {
     /// Total file size
     pub file_size: u64,
@@ -57,7 +57,7 @@ pub struct ParquetFooterHeader {
 
 /// Parquet Row Group metadata (fixed size, array-based)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ParquetRowGroupHeader {
     /// Row group offset in file
     pub offset: u64,
@@ -95,7 +95,7 @@ pub struct ParquetRowGroupHeader {
 
 /// Parquet Column Chunk metadata (fixed size)
 #[repr(C)]
-#[derive(Pod, Zeroable, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct ParquetColumnHeader {
     /// Column chunk offset in file
     pub offset: u64,

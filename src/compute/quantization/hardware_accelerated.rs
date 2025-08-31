@@ -327,7 +327,7 @@ impl AcceleratedQuantization {
     fn quantize_u8_sse(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         use crate::core::hardware_capabilities::try_get_hardware_capabilities;
         if let Some(caps) = try_get_hardware_capabilities() {
-            if caps.cpu.features.sse4_support {
+            if caps.cpu.features.sse42_support {
                 unsafe {
                 use std::arch::x86_64::*;
                 
