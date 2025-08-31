@@ -68,7 +68,7 @@ impl AcceleratedQuantization {
     /// Quantize to 8-bit with hardware acceleration
     pub fn quantize_u8_accelerated(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         match self.backend {
-            HardwareBackend::AVX512 => self.quantize_u8_avx512(values),
+            HardwareBackend::AVX512 => self.quantize_u8_avx2(values), // Use AVX2 for now, AVX512 requires unstable
             HardwareBackend::AVX2 => self.quantize_u8_avx2(values),
             HardwareBackend::SSE => self.quantize_u8_sse(values),
             HardwareBackend::NEON => self.quantize_u8_neon(values),
@@ -193,6 +193,9 @@ impl AcceleratedQuantization {
     /// AVX-512 implementation
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
+        // AVX512 requires unstable features, use AVX2 implementation instead
+        self.quantize_u8_avx2(values)
+        /*
         #[cfg(target_feature = "avx512f")]
         unsafe {
             use std::arch::x86_64::*;
@@ -251,6 +254,7 @@ impl AcceleratedQuantization {
         
         #[cfg(not(target_feature = "avx512f"))]
         self.quantize_u8_scalar(values)
+        */
     }
     
     /// AVX2 implementation
@@ -470,6 +474,8 @@ impl AcceleratedQuantization {
     }
     
     // Helper functions for SIMD reductions
+    // AVX512 reduction functions commented out - require unstable features
+    /*
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     unsafe fn reduce_min_avx512(&self, v: std::arch::x86_64::__m512) -> f32 {
         use std::arch::x86_64::*;
@@ -493,6 +499,7 @@ impl AcceleratedQuantization {
         // Continue reduction using AVX2
         self.reduce_max_avx2(max256)
     }
+    */
     
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     unsafe fn reduce_min_avx2(&self, v: std::arch::x86_64::__m256) -> f32 {
