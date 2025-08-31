@@ -819,10 +819,10 @@ pub mod utils {
                     rows_per_group: 1000000,
                     column_chunk_size: 65536,
                 };
-                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 6; // Better compression
+                config.compression.compression_level = 6; // Better compression
             }
             WorkloadType::RealTime => {
-                config.storage.organization = StorageOrganization::Adaptive {
+                config.storage_config.organization = StorageOrganization::Adaptive {
                     workload_hints: vec![WorkloadHint::RealTimeHeavy, WorkloadHint::PointQueryHeavy],
                     adaptation_frequency: 60000, // 1 minute
                 };
@@ -845,7 +845,7 @@ pub mod utils {
     /// Validate configuration compatibility
     pub fn validate_config_compatibility(config: &UniversalEngineConfig) -> Result<()> {
         // Validate engine type matches storage organization
-        match (&config.engine_type, &config.storage.organization) {
+        match (&config.engine_type, &config.storage_config.organization) {
             (EngineType::Columnar, StorageOrganization::Columnar { .. }) => {}
             (EngineType::RowBased, StorageOrganization::Hierarchical { .. }) => {}
             (EngineType::RowBased, StorageOrganization::Flat { .. }) => {}
@@ -859,7 +859,7 @@ pub mod utils {
         }
         
         // Validate dimension consistency
-        if config.dimension != config.storage.schema_config.vector_schema.dimension {
+        if config.dimension != config.storage_config.schema_config.vector_schema.dimension {
             return Err(anyhow::anyhow!("Dimension mismatch in configuration"));
         }
         

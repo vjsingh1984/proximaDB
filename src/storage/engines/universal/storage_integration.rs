@@ -294,12 +294,13 @@ impl StorageEngineAdapter for PRISMAdapter {
         let mut vectors = Vec::new();
         for &id in vector_ids {
             vectors.push(VectorRecord {
-                id: Some(id.to_string()),
+                id: id.to_string(),
                 vector: vec![0.0; 128], // Placeholder vector
                 metadata: vec![], // Empty metadata items
                 timestamp: chrono::Utc::now().timestamp() as u32,
                 updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
+                source: None,
                 version: Some(1),
                 quantized_vector: None,
             });
@@ -473,12 +474,13 @@ impl StorageEngineAdapter for NOVAAdapter {
         let mut vectors = Vec::new();
         for &id in vector_ids {
             vectors.push(VectorRecord {
-                id: Some(id.to_string()),
+                id: id.to_string(),
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
                 metadata: vec![], // Empty metadata items
                 timestamp: chrono::Utc::now().timestamp() as u32,
                 updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
+                source: None,
                 version: Some(1),
                 quantized_vector: None,
             });
@@ -623,13 +625,14 @@ macro_rules! create_simple_adapter {
                 let mut vectors = Vec::new();
                 for &id in vector_ids {
                     vectors.push(VectorRecord {
-                        id: Some(id.to_string()),
+                        id: id.to_string(),
                         vector: vec![0.0; 128],
                         metadata: vec![],  // Empty metadata
                         version: Some(1),
                         timestamp: chrono::Utc::now().timestamp() as u32,
                         updated_at: Some(chrono::Utc::now().timestamp() as u32),
                         expires_at: None,
+                        source: None,
                         quantized_vector: None,
                     });
                 }
