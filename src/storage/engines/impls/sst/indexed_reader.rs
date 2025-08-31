@@ -62,7 +62,17 @@ impl SSTMetadataSource {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?
         );
-        let reader = crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(filesystem);
+        let zero_copy_system = Arc::new(
+            crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
+                filesystem.clone(),
+                1024 * 1024 * 100
+            ).await?
+        );
+        let reader = crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
+            filesystem,
+            zero_copy_system,
+            String::from("indexed_reader")
+        );
         
         // Load metadata to build index cache - SST doesn't support full read like VIPER
         reader.load_metadata(file_path).await?;

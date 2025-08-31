@@ -3417,7 +3417,7 @@ impl SstStorage {
             let mut append_only_counter = 0u64;
             
             for record in &level_records {
-                let key = if record.id.as_ref().map_or(true, |id: &String| id.is_empty()) {
+                let key = if record.id.is_empty() {
                     // For append-only vectors (empty IDs), use a unique key
                     let unique_key = format!("__append_only_seq_{}", append_only_counter);
                     append_only_counter += 1;
@@ -3728,15 +3728,15 @@ impl SstStorage {
             }
             
             let _min_key = flushed_records.iter()
-                .filter_map(|r| r.id.as_ref().map(|s| s.as_str()))
+                .map(|r| r.id.as_str())
                 .min()
-                .clone()
-                .to_string();
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             let _max_key = flushed_records.iter()
-                .filter_map(|r| r.id.as_ref().map(|s| s.as_str()))
+                .map(|r| r.id.as_str())
                 .max()
-                .clone()
-                .to_string();
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             let _min_sequence = flushed_records.iter()
                 .filter_map(|r| r.version)
                 .min()
@@ -3938,10 +3938,7 @@ impl SstStorage {
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
                         // Secondary sort: vector ID for stable ordering
-                        let empty_id = String::new();
-                        let a_id = a.id.as_ref().map(|s| s.as_str());
-                        let b_id = b.id.as_ref().map(|s| s.as_str());
-                        a_id.cmp(b_id)
+                        a.id.cmp(&b.id)
                     }
                     other => other,
                 }

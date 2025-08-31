@@ -28,6 +28,7 @@ use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 // Import unified level-based compaction framework
@@ -175,7 +176,12 @@ impl Compaction {
                 crate::storage::persistence::filesystem::FilesystemConfig::default()
             ).await.map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?
         );
-        let unified_reader = Arc::new(UnifiedSstableReader::new(filesystem_factory.clone()));
+        let zero_copy_system = Arc::new(ZeroCopyIOSystem::new(filesystem_factory.clone(), 1024 * 1024 * 100).await?);
+        let unified_reader = Arc::new(UnifiedSstableReader::new(
+            filesystem_factory.clone(),
+            zero_copy_system,
+            String::from("compaction")
+        ));
         
         // Initialize zero-copy compactor with proper block size from config
         let sst_compactor = if let Some(ref coord) = atomic_coordinator {
