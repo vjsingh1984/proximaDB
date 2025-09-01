@@ -148,8 +148,12 @@ impl StreamingRowGroupProcessor {
             self.config.max_memory_bytes
         );
         // Create processing channels
-        let (sender, mut receiver) = mpsc::channel(self.config.prefetch_queue_size);
+        let (sender, receiver) = mpsc::channel(self.config.prefetch_queue_size);
         let (result_sender, mut result_receiver) = mpsc::channel(self.config.max_concurrent_processors);
+        
+        // Wrap receiver in Arc<Mutex> for sharing among consumer tasks
+        let receiver = Arc::new(tokio::sync::Mutex::new(receiver));
+        
         // Start producer task
         let producer_handle = self.start_producer_task(
             context.clone(),
@@ -229,7 +233,7 @@ impl StreamingRowGroupProcessor {
     async fn start_consumer_task(
         &self,
         context: StreamingContext,
-        mut receiver: mpsc::Receiver<RowGroupTask>,
+        receiver: Arc<tokio::sync::Mutex<mpsc::Receiver<RowGroupTask>>>,
         result_sender: mpsc::Sender<RowGroupProcessingResult>,
     ) -> Result<tokio::task::JoinHandle<Result<()>>> {
         let semaphore = self.semaphore.clone();
@@ -238,7 +242,16 @@ impl StreamingRowGroupProcessor {
         let pipeline = self.processing_pipeline.clone();
         
         let handle = tokio::spawn(async move {
-            while let Some(task) = receiver.recv().await {
+            loop {
+                // Lock the receiver to get the next task
+                let task = {
+                    let mut recv = receiver.lock().await;
+                    recv.recv().await
+                };
+                
+                let Some(task) = task else {
+                    break; // Channel closed
+                };
                 let _permit = semaphore.acquire().await.map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
                 let memory_reservation = {
@@ -306,7 +319,7 @@ impl StreamingRowGroupProcessor {
                         let intersects = stats.vector_zone_map.intersects_query(
                             &context.query_vector,
                             crate::compute::distance_computation::DistanceMetric::Euclidean,
-                            context.distance_threshold,
+                            context.distance_threshold.unwrap_or(f32::MAX),
                         );
                         if !intersects {
                             records_filtered += records_processed;
@@ -423,7 +436,7 @@ impl StreamingRowGroupProcessor {
         for candidate in &mut candidates {
             // Would load actual vectors and compute real distances
             candidate.record = Some(VectorRecord {
-                id: candidate.vector_id.clone().clone(),
+                id: candidate.vector_id.clone().unwrap_or_else(|| format!("row_{}", candidate.row_offset)),
                 vector: vec![0.0f32; context.query_vector.len()],
                 metadata: vec![],
                 timestamp: 0,

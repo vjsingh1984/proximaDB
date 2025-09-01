@@ -336,7 +336,7 @@ impl NovaHierarchicalCache {
         let hot_zones = global.collection_stats
             .get(collection_id)
             .map(|s| s.hot_zones.clone())
-            .clone();
+            .unwrap_or_default();
         
         let common_projections = global.query_patterns.common_projections.clone();
         

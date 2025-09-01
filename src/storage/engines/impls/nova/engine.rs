@@ -294,7 +294,12 @@ impl NovaEngine {
             |operation| operation
         ).await?;
         
-        Ok(results)
+        // Unwrap the nested Results
+        let unwrapped_results: Result<Vec<Vec<u8>>, _> = results.into_iter()
+            .map(|res| res.map_err(|e| anyhow::anyhow!("Column read failed: {}", e)))
+            .collect();
+        
+        Ok(unwrapped_results?)
     }
     
     /// Storage tier optimization for Parquet files based on access patterns (delegates to universal optimizer)

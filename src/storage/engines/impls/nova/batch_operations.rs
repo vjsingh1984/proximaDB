@@ -166,7 +166,7 @@ async fn load_and_extract_records(
             
             // Check cache or load row group
             let batch = if let Some(ref cache) = cache {
-                if let Some(cached_batch) = cache.get(&rg_id).await {
+                if let Some(cached_batch) = cache.get(rg_id).await {
                     debug!("Row group {} found in cache", rg_id);
                     cached_batch
                 } else {
@@ -356,7 +356,7 @@ pub async fn prefetch_row_groups(
     
     for rg_id in row_group_ids {
         // Skip if already cached
-        if cache.get(&rg_id).await.is_some() {
+        if cache.get(rg_id).await.is_some() {
             continue;
         }
         

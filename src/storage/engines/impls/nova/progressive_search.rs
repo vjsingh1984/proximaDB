@@ -343,7 +343,7 @@ impl ProgressiveColumnarSearch {
         relevant_blocks.sort_by(|a, b| {
             a.selectivity_hints.search_cost_estimate
                 .partial_cmp(&b.selectivity_hints.search_cost_estimate)
-                
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(relevant_blocks)
     }
@@ -651,14 +651,13 @@ impl ProgressiveColumnarSearch {
             let exact_distance = self.compute_exact_distance(query_vector, &full_vector)?;
             
             let record = VectorRecord {
-                id: candidate.vector_id.clone(),
+                id: candidate.vector_id.clone().unwrap_or_else(|| format!("unknown_{}", i)),
                 vector: full_vector,
-                metadata: HashMap::new(),
+                metadata: Vec::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                similarity: Some(exact_distance),
             };
             final_candidates.push((record, exact_distance));
         }

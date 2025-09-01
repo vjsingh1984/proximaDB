@@ -680,11 +680,12 @@ impl NovaColumnarSearch {
                         &batch,
                         candidate.row_offset as usize,
                     )? {
-                        let distance = self.distance_compute.calculate_distance(
+                        let distance_result = self.distance_compute.calculate_distance(
                             query_vector,
                             &record.vector,
                             &distance_metric,
-                        )?;
+                        );
+                        let distance = distance_result.normalized_score;
                         
                         final_results.push((record, distance));
                     }

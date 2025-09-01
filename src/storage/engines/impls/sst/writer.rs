@@ -1088,10 +1088,17 @@ impl SstableWriter {
         let mut has_constants = false;
         let mut has_small_range = false;
         let mut has_deltas = false;
+        let mut overall_min_val = f32::INFINITY;
+        let mut first_value = 0f32;
 
         for record in records.iter().take(sample_size) {
             if !record.vector.is_empty() {
                 let vec = &record.vector;
+                
+                // Store first value for delta encoding
+                if first_value == 0.0 && !vec.is_empty() {
+                    first_value = vec[0];
+                }
                 
                 // Check for constant dimensions
                 let first_val = vec[0];
@@ -1102,6 +1109,7 @@ impl SstableWriter {
                 // Check for small range (good for frame of reference)
                 let min_val = vec.iter().fold(f32::INFINITY, |a, &b| a.min(b));
                 let max_val = vec.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                overall_min_val = overall_min_val.min(min_val);
                 if (max_val - min_val) < 100.0 {
                     has_small_range = true;
                 }
@@ -1126,12 +1134,12 @@ impl SstableWriter {
             FastLanesScheme::RunLength
         } else if has_small_range {
             FastLanesScheme::FrameOfReference { 
-                reference: min_val,
+                reference: overall_min_val,
                 bits: 16, // Use 16 bits for small ranges
             }
         } else if has_deltas {
             FastLanesScheme::Delta { 
-                base: values[0] as i64 
+                base: first_value as i64 
             }
         } else {
             // Default to bit packing for dense data

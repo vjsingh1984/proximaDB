@@ -26,6 +26,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn, trace};
 
+// Import UnifiedQuantizationLevel
+use crate::compute::quantization::types::UnifiedQuantizationLevel;
+
 // Universal performance optimization imports
 use crate::storage::engines::core::ops::performance_optimization::{
     UniversalPerformanceOptimizer, UniversalOptimizationStrategy, 
@@ -1269,10 +1272,10 @@ impl UnifiedStorageEngine for ViperEngine {
                 }).collect())
                 .unwrap_or_else(Vec::new),
             available_quantization: vec![
-                crate::core::search::UnifiedQuantizationLevel::Binary,
-                crate::core::search::UnifiedQuantizationLevel::Int8,
-                crate::core::search::UnifiedQuantizationLevel::Pq4,
-                crate::core::search::UnifiedQuantizationLevel::Pq8,
+                UnifiedQuantizationLevel::Binary,
+                UnifiedQuantizationLevel::Int8,
+                UnifiedQuantizationLevel::Pq4,
+                UnifiedQuantizationLevel::Pq8,
             ], // VIPER supports all quantization levels
         };
         
