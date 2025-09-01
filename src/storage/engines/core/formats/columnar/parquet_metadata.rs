@@ -388,21 +388,55 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         let mut buffer = Vec::new();
         
         // Serialize footer header (fixed size)
-        buffer.extend_from_slice(bytemuck::bytes_of(&metadata.footer));
+        buffer.extend_from_slice(&metadata.footer.file_size.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.num_row_groups.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.footer_offset.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.footer_size.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.schema_offset.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.schema_size.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.total_rows.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.num_columns.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.parquet_version.to_le_bytes());
+        buffer.extend_from_slice(&metadata.footer.created_timestamp.to_le_bytes());
+        buffer.extend_from_slice(&[metadata.footer.compression_type]);
+        buffer.extend_from_slice(&metadata.footer.reserved);
         
         // Serialize row group count
         buffer.extend_from_slice(&(metadata.row_groups.len() as u32).to_le_bytes());
         
         // Serialize row group headers (fixed size array)
         for rg in &metadata.row_groups {
-            buffer.extend_from_slice(bytemuck::bytes_of(rg));
+            buffer.extend_from_slice(&rg.offset.to_le_bytes());
+            buffer.extend_from_slice(&rg.compressed_size.to_le_bytes());
+            buffer.extend_from_slice(&rg.uncompressed_size.to_le_bytes());
+            buffer.extend_from_slice(&rg.num_rows.to_le_bytes());
+            buffer.extend_from_slice(&rg.num_columns.to_le_bytes());
+            buffer.extend_from_slice(&rg.statistics_offset.to_le_bytes());
+            buffer.extend_from_slice(&rg.statistics_size.to_le_bytes());
+            buffer.extend_from_slice(&rg.min_key_hash.to_le_bytes());
+            buffer.extend_from_slice(&rg.max_key_hash.to_le_bytes());
+            buffer.extend_from_slice(&[rg.priority]);
+            buffer.extend_from_slice(&rg.reserved);
         }
         
         // Serialize column headers for each row group
         for rg_columns in &metadata.columns {
             buffer.extend_from_slice(&(rg_columns.len() as u32).to_le_bytes());
             for col in rg_columns {
-                buffer.extend_from_slice(bytemuck::bytes_of(col));
+                buffer.extend_from_slice(&col.offset.to_le_bytes());
+                buffer.extend_from_slice(&col.compressed_size.to_le_bytes());
+                buffer.extend_from_slice(&col.uncompressed_size.to_le_bytes());
+                buffer.extend_from_slice(&col.num_values.to_le_bytes());
+                buffer.extend_from_slice(&col.null_count.to_le_bytes());
+                buffer.extend_from_slice(&col.distinct_count.to_le_bytes());
+                buffer.extend_from_slice(&col.min_value_hash.to_le_bytes());
+                buffer.extend_from_slice(&col.max_value_hash.to_le_bytes());
+                buffer.extend_from_slice(&col.data_type.to_le_bytes());
+                buffer.extend_from_slice(&col.encoding.to_le_bytes());
+                buffer.extend_from_slice(&col.compression.to_le_bytes());
+                for &r in &col.reserved {
+                    buffer.extend_from_slice(&r.to_le_bytes());
+                }
             }
         }
         
@@ -418,15 +452,31 @@ impl MetadataSerializer for ParquetMetadataSerializer {
     fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
         let mut offset = 0;
         
-        // Deserialize footer header
-        if data.len() < offset + std::mem::size_of::<ParquetFooterHeader>() {
+        // Deserialize footer header manually
+        let footer_size = 8 + 4 + 4 + 4 + 4 + 4 + 8 + 4 + 4 + 8 + 1 + 7; // 64 bytes total
+        if data.len() < offset + footer_size {
             return Err(ProximaDBError::InvalidInput("Invalid Parquet metadata size".into()));
         }
         
-        let footer = *bytemuck::from_bytes::<ParquetFooterHeader>(
-            &data[offset..offset + std::mem::size_of::<ParquetFooterHeader>()]
-        );
-        offset += std::mem::size_of::<ParquetFooterHeader>();
+        let footer = ParquetFooterHeader {
+            file_size: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3], 
+                                          data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
+            num_row_groups: u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]]),
+            footer_offset: u32::from_le_bytes([data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
+            footer_size: u32::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19]]),
+            schema_offset: u32::from_le_bytes([data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
+            schema_size: u32::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27]]),
+            total_rows: u64::from_le_bytes([data[offset+28], data[offset+29], data[offset+30], data[offset+31],
+                                           data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
+            num_columns: u32::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39]]),
+            parquet_version: u32::from_le_bytes([data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
+            created_timestamp: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
+                                                  data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
+            compression_type: data[offset+52],
+            reserved: [data[offset+53], data[offset+54], data[offset+55], data[offset+56], 
+                      data[offset+57], data[offset+58], data[offset+59]],
+        };
+        offset += footer_size;
         
         // Deserialize row group count
         if data.len() < offset + 4 {
@@ -435,17 +485,39 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         let rg_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
         offset += 4;
         
-        // Deserialize row group headers
-        let rg_header_size = std::mem::size_of::<ParquetRowGroupHeader>();
+        // Deserialize row group headers manually
+        let rg_header_size = 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 1 + 7; // 72 bytes per header
         let total_rg_size = rg_count as usize * rg_header_size;
         
         if data.len() < offset + total_rg_size {
             return Err(ProximaDBError::InvalidInput("Invalid Parquet row group headers".into()));
         }
         
-        let rg_data = &data[offset..offset + total_rg_size];
-        let row_groups: Vec<ParquetRowGroupHeader> = try_cast_slice(rg_data)?.to_vec();
-        offset += total_rg_size;
+        let mut row_groups = Vec::new();
+        for _ in 0..rg_count {
+            let rg = ParquetRowGroupHeader {
+                offset: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3],
+                                           data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
+                compressed_size: u64::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11],
+                                                    data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
+                uncompressed_size: u64::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19],
+                                                      data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
+                num_rows: u64::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27],
+                                             data[offset+28], data[offset+29], data[offset+30], data[offset+31]]),
+                num_columns: u32::from_le_bytes([data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
+                statistics_offset: u32::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39]]),
+                statistics_size: u32::from_le_bytes([data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
+                min_key_hash: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
+                                                 data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
+                max_key_hash: u64::from_le_bytes([data[offset+52], data[offset+53], data[offset+54], data[offset+55],
+                                                 data[offset+56], data[offset+57], data[offset+58], data[offset+59]]),
+                priority: data[offset+60],
+                reserved: [data[offset+61], data[offset+62], data[offset+63], data[offset+64],
+                          data[offset+65], data[offset+66], data[offset+67]],
+            };
+            row_groups.push(rg);
+            offset += rg_header_size;
+        }
         
         // Deserialize column headers for each row group
         let mut columns = Vec::new();
@@ -456,17 +528,42 @@ impl MetadataSerializer for ParquetMetadataSerializer {
             let col_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
             offset += 4;
             
-            let col_header_size = std::mem::size_of::<ParquetColumnHeader>();
+            let col_header_size = 8 + 4 + 4 + 4 + 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8; // 76 bytes per column header
             let total_col_size = col_count as usize * col_header_size;
             
             if data.len() < offset + total_col_size {
                 return Err(ProximaDBError::InvalidInput("Invalid Parquet column headers".into()));
             }
             
-            let col_data = &data[offset..offset + total_col_size];
-            let rg_columns: Vec<ParquetColumnHeader> = try_cast_slice(col_data)?.to_vec();
+            let mut rg_columns = Vec::new();
+            for _ in 0..col_count {
+                let col = ParquetColumnHeader {
+                    offset: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3],
+                                               data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
+                    compressed_size: u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]]),
+                    uncompressed_size: u32::from_le_bytes([data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
+                    data_type: u32::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19]]),
+                    encoding: u32::from_le_bytes([data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
+                    compression: u32::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27]]),
+                    num_values: u64::from_le_bytes([data[offset+28], data[offset+29], data[offset+30], data[offset+31],
+                                                   data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
+                    null_count: u64::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39],
+                                                   data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
+                    distinct_count: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
+                                                       data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
+                    min_value_hash: u64::from_le_bytes([data[offset+52], data[offset+53], data[offset+54], data[offset+55],
+                                                       data[offset+56], data[offset+57], data[offset+58], data[offset+59]]),
+                    max_value_hash: u64::from_le_bytes([data[offset+60], data[offset+61], data[offset+62], data[offset+63],
+                                                       data[offset+64], data[offset+65], data[offset+66], data[offset+67]]),
+                    reserved: [
+                        u32::from_le_bytes([data[offset+68], data[offset+69], data[offset+70], data[offset+71]]),
+                        u32::from_le_bytes([data[offset+72], data[offset+73], data[offset+74], data[offset+75]]),
+                    ],
+                };
+                rg_columns.push(col);
+                offset += col_header_size;
+            }
             columns.push(rg_columns);
-            offset += total_col_size;
         }
         
         // Deserialize variable data size

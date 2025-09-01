@@ -707,7 +707,7 @@ impl UnifiedParquetReader {
             .map(|arr| arr.value(row_idx) as u32);
         Ok(Some(VectorRecord {
             id: id.unwrap_or_else(|| format!("row_{}", row_idx)),
-            vector: vector.unwrap_or_default(),
+            vector,
             metadata: vec![], // Would extract from metadata columns
             timestamp: timestamp.unwrap_or(0),
             updated_at: None,
@@ -820,17 +820,30 @@ impl UnifiedParquetReader {
             }
             // Extract vector (simplified - would need proper handling of different formats)
             let vector = vec![0.0f32; query.len()]; // Placeholder
-            // Compute distance (simplified euclidean)
+            
+            // Use the unified distance compute engine for proper similarity calculation
+            // For now, compute raw euclidean distance
             let distance = query.iter()
                 .zip(vector.iter())
                 .map(|(a, b)| (a - b).powi(2))
                 .sum::<f32>()
                 .sqrt();
+            
+            // Create a proper SimilarityResult
+            // For euclidean distance: lower = more similar, so we use rank_value directly
+            // normalized_score would be (1.0 / (1.0 + distance)) for [0,1] range where 1 = most similar
+            let similarity_result = crate::compute::distance_computation::engine::SimilarityResult {
+                raw_value: distance,
+                metric: crate::proto::proximadb::DistanceMetric::Euclidean,
+                normalized_score: 1.0 / (1.0 + distance), // Simple normalization for euclidean
+                rank_value: distance, // For euclidean, rank_value = raw distance (lower is better)
+            };
+            
             let vector_id = id_col.map(|arr| arr.value(row_idx).to_string());
             candidates.push(SearchCandidate {
                 row_group_id: row_group_idx,
                 row_offset: row_idx as u32,
-                distance,
+                similarity: similarity_result.rank_value, // Use rank_value for consistent ordering
                 vector_id,
             });
         }
@@ -1897,6 +1910,7 @@ pub struct PagePruningInfo {
 }
 
 /// Page range for reading specific pages
+#[derive(Debug, Clone)]
 pub struct PageRange {
     pub start: usize,
     pub end: usize,

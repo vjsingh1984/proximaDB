@@ -583,7 +583,7 @@ impl BandwidthOptimizer {
         } else if latency_ms > 50.0 {
             (base_limit as f32 * 0.85) as u32 // Reduce by 15%
         } else {
-            base_limit // Normal limit for low latency
+            base_limit as u32 // Normal limit for low latency
         }
     }
     

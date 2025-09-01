@@ -1252,6 +1252,40 @@ pub struct QuantizationConfig {
     /// Use SIMD for quantization ops (default: true)
     #[prost(bool, tag = "13")]
     pub enable_simd_acceleration: bool,
+    /// Direct quantization type enables (for easy configuration)
+    /// These provide shortcuts to common configurations without needing custom_levels
+    ///
+    /// Enable binary quantization (default: follows strategy)
+    #[prost(bool, tag = "14")]
+    pub enable_binary: bool,
+    /// Enable INT8 quantization (default: follows strategy)
+    #[prost(bool, tag = "15")]
+    pub enable_int8: bool,
+    /// Enable product quantization (default: follows strategy)
+    #[prost(bool, tag = "16")]
+    pub enable_pq: bool,
+    /// Product Quantization specific settings (used when enable_pq=true)
+    ///
+    /// Number of PQ segments/subvectors (default: 8)
+    #[prost(int32, tag = "17")]
+    pub pq_segments: i32,
+    /// Bits per PQ code (default: 8)
+    #[prost(int32, tag = "18")]
+    pub pq_bits: i32,
+    /// Pre-trained codebooks (optional)
+    #[prost(bytes = "vec", repeated, tag = "19")]
+    pub pq_codebooks: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    /// Thresholds for progressive search stages
+    ///
+    /// Binary stage selectivity (default: 0.5)
+    #[prost(float, tag = "20")]
+    pub binary_threshold: f32,
+    /// INT8 stage selectivity (default: 0.3)
+    #[prost(float, tag = "21")]
+    pub int8_threshold: f32,
+    /// PQ stage selectivity (default: 0.1)
+    #[prost(float, tag = "22")]
+    pub pq_threshold: f32,
 }
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {

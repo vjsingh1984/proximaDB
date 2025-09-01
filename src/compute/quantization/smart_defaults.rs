@@ -78,6 +78,16 @@ impl QuantizationSmartDefaults {
             optimize_for_storage: false,
             optimize_for_memory: false,
             enable_simd_acceleration: true,
+            // New direct fields
+            enable_binary: false,  // No binary for small dimensions
+            enable_int8: true,     // Use INT8
+            enable_pq: false,      // No PQ for small dimensions
+            pq_segments: 0,
+            pq_bits: 0,
+            pq_codebooks: vec![],
+            binary_threshold: 0.0,
+            int8_threshold: 0.3,
+            pq_threshold: 0.0,
         }
     }
     
@@ -134,6 +144,16 @@ impl QuantizationSmartDefaults {
             optimize_for_storage: false,
             optimize_for_memory: false,
             enable_simd_acceleration: true,
+            // New direct fields
+            enable_binary: true,   // Enable binary for filtering
+            enable_int8: true,     // Enable INT8 for ranking
+            enable_pq: false,      // No PQ for medium dimensions
+            pq_segments: 0,
+            pq_bits: 0,
+            pq_codebooks: vec![],
+            binary_threshold: 0.3,
+            int8_threshold: 0.1,
+            pq_threshold: 0.0,
         }
     }
     
@@ -210,6 +230,16 @@ impl QuantizationSmartDefaults {
             optimize_for_storage: true,      // Enable storage optimization for large dims
             optimize_for_memory: false,
             enable_simd_acceleration: true,
+            // New direct fields
+            enable_binary: true,   // Enable binary for filtering
+            enable_int8: true,     // Enable INT8 for ranking
+            enable_pq: true,       // Enable PQ for large dimensions
+            pq_segments: num_subvectors as i32,
+            pq_bits: 8,
+            pq_codebooks: vec![],
+            binary_threshold: 0.3,
+            int8_threshold: 0.1,
+            pq_threshold: 0.05,
         }
     }
     
@@ -286,6 +316,16 @@ impl QuantizationSmartDefaults {
             optimize_for_storage: true,      // Prioritize storage savings
             optimize_for_memory: true,       // Prioritize memory usage
             enable_simd_acceleration: true,
+            // New direct fields
+            enable_binary: true,   // Enable binary for aggressive filtering
+            enable_int8: false,    // Skip INT8 in aggressive mode
+            enable_pq: true,       // Enable PQ4 for aggressive compression
+            pq_segments: num_subvectors as i32,
+            pq_bits: 4,            // Use PQ4 for aggressive compression
+            pq_codebooks: vec![],
+            binary_threshold: 0.4,
+            int8_threshold: 0.0,
+            pq_threshold: 0.03,
         }
     }
     

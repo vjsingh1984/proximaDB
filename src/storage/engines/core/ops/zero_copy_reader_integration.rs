@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::storage::persistence::filesystem::{FilesystemFactory, ZeroCopyFilesystem};
+use crate::storage::persistence::filesystem::{FilesystemFactory, ZeroCopyFilesystem, FileSystem};
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystemBuilder;
 use crate::core::error::ProximaDBError;
 

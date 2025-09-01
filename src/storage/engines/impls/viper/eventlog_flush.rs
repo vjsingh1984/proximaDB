@@ -64,7 +64,7 @@ impl ViperFlushNotifier {
             collection_id,
             flushed_files.clone(),
             records.len(),
-            has_quantized,
+            has_quantized.unwrap_or(false),
             has_fp32,
             StorageEngineType::VIPER,
         ).await?;

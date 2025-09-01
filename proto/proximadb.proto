@@ -985,6 +985,22 @@ message QuantizationConfig {
   bool optimize_for_memory = 12;         // Prioritize memory usage over quality (default: false)
   bool enable_simd_acceleration = 13;    // Use SIMD for quantization ops (default: true)
 
+  // Direct quantization type enables (for easy configuration)
+  // These provide shortcuts to common configurations without needing custom_levels
+  bool enable_binary = 14;               // Enable binary quantization (default: follows strategy)
+  bool enable_int8 = 15;                 // Enable INT8 quantization (default: follows strategy)
+  bool enable_pq = 16;                   // Enable product quantization (default: follows strategy)
+  
+  // Product Quantization specific settings (used when enable_pq=true)
+  int32 pq_segments = 17;                // Number of PQ segments/subvectors (default: 8)
+  int32 pq_bits = 18;                    // Bits per PQ code (default: 8)
+  repeated bytes pq_codebooks = 19;      // Pre-trained codebooks (optional)
+  
+  // Thresholds for progressive search stages
+  float binary_threshold = 20;           // Binary stage selectivity (default: 0.5)
+  float int8_threshold = 21;             // INT8 stage selectivity (default: 0.3)
+  float pq_threshold = 22;               // PQ stage selectivity (default: 0.1)
+
   // NOTE: Distance metric is inherited from CollectionConfig.distance_metric
   // This ensures consistency between search and quantization operations
 }

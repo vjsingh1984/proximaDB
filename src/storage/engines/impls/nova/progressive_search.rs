@@ -613,7 +613,7 @@ impl ProgressiveColumnarSearch {
         );
         
         let metrics = StageMetrics {
-            stage: ProcessingStage::PQFilter,
+            stage: ProcessingStage::PQ8Filter,
             duration_ms,
             candidates_in,
             candidates_out,

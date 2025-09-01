@@ -205,17 +205,11 @@ pub struct ClusterMetadata {
     pub partition_files: Vec<String>,
 }
 
-/// Quantization configuration
-#[derive(Debug, Clone)]
-pub struct QuantizationConfig {
-    pub enabled: bool,
-    pub quantization_type: QuantizationType,
-    pub bits_per_dimension: u8,
-    pub compression_ratio: f32,
-    pub accuracy_threshold: f32,
-}
+/// Use proto-generated config directly - no more duplicates!
+pub use crate::proto::proximadb::QuantizationConfig;
 
-/// Quantization types
+/// DEPRECATED: Use proto-generated QuantizationType instead
+/// Keeping for backward compatibility only
 #[derive(Debug, Clone)]
 pub enum QuantizationType {
     ProductQuantization,
@@ -416,14 +410,4 @@ impl Default for TransactionalOperationsConfig {
     }
 }
 
-impl Default for QuantizationConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            quantization_type: QuantizationType::ProductQuantization,
-            bits_per_dimension: 8,
-            compression_ratio: 0.25,
-            accuracy_threshold: 0.95,
-        }
-    }
-}
+// Default implementation removed - using proto-generated Default

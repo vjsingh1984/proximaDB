@@ -190,27 +190,9 @@ pub struct ColumnarConfig {
     pub optimization_thresholds: OptimizationThresholds,
 }
 
-/// Quantization configuration for columnar storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationConfig {
-    /// Enable binary quantization
-    pub enable_binary: bool,
-    
-    /// Enable INT8 quantization
-    pub enable_int8: bool,
-    
-    /// Enable Product Quantization
-    pub enable_pq: bool,
-    
-    /// PQ configuration
-    pub pq_segments: u8,
-    pub pq_bits: u8,
-    
-    /// Thresholds for progressive search
-    pub binary_threshold: f32,
-    pub int8_threshold: f32,
-    pub pq_threshold: f32,
-}
+// DEPRECATED: Replaced with proto-generated config
+// All quantization configs now use the canonical proto version
+pub use crate::proto::proximadb::QuantizationConfig;
 
 /// Optimization thresholds
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,14 +357,8 @@ pub struct ColumnarOptimizations {
     pub quantization_level: QuantizationLevel,
 }
 
-#[derive(Debug, Clone)]
-pub enum QuantizationLevel {
-    None,
-    Binary,
-    Int8,
-    ProductQuantization,
-    Progressive,
-}
+// DEPRECATED: Replaced with proto-generated QuantizationLevel
+pub use crate::proto::proximadb::QuantizationLevel;
 
 /// Create optimized Parquet schema for vectors with mandatory ID column
 pub fn create_columnar_schema(
@@ -408,7 +384,7 @@ pub fn create_columnar_schema(
     if config.enable_binary {
         fields.push(Field::new(
             "vector_binary",
-            DataType::FixedSizeBinary((dimension + 7) / 8),
+            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
             true,
         ));
     }
@@ -471,20 +447,7 @@ impl Default for ColumnarConfig {
     }
 }
 
-impl Default for QuantizationConfig {
-    fn default() -> Self {
-        Self {
-            enable_binary: true,
-            enable_int8: true,
-            enable_pq: true,
-            pq_segments: 16,
-            pq_bits: 8,
-            binary_threshold: 100.0,
-            int8_threshold: 50.0,
-            pq_threshold: 10.0,
-        }
-    }
-}
+// Default implementation removed - using proto-generated Default
 
 impl Default for OptimizationThresholds {
     fn default() -> Self {
@@ -544,7 +507,8 @@ impl ColumnarFactory {
                 crate::compute::distance_computation::engine::DistanceMetric::Cosine
             )
         );
-        ColumnarOptimizer::new(distance_compute, config)
+        // TODO: Fix this to be async and provide proper arguments
+        todo!("ColumnarOptimizer::new requires async and 5 arguments - needs refactoring")
     }
 }
 

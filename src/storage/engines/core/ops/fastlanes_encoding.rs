@@ -142,12 +142,12 @@ impl FastLanesEncoder {
     /// Create encoder with specified scheme
     pub fn new(scheme: FastLanesScheme) -> Self {
         // Choose block size based on hardware capabilities
-        let hw = HardwareCapabilities::get();
-        let block_size = if hw.has_avx512() {
+        let hw = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let block_size = if hw.cpu.simd.has_avx512 {
             512 // AVX-512 can process 16 x 32-bit values
-        } else if hw.has_avx2() {
+        } else if hw.cpu.simd.has_avx2 {
             256 // AVX2 can process 8 x 32-bit values
-        } else if hw.has_neon() {
+        } else if hw.cpu.simd.has_neon {
             128 // NEON processes 4 x 32-bit values
         } else {
             64  // Fallback to cache-line size
@@ -354,7 +354,7 @@ impl FastLanesEncoder {
             .collect();
         
         // Determine optimal bit width for deltas
-        let max_delta = deltas.iter().map(|&d| d.abs()).max();
+        let max_delta = deltas.iter().map(|&d| d.abs()).max().unwrap_or(0);
         let bits = 64 - max_delta.leading_zeros() as u8;
         encoded.push(bits);
         
@@ -465,12 +465,12 @@ pub struct FastLanesDecoder {
 
 impl FastLanesDecoder {
     pub fn new(scheme: FastLanesScheme) -> Self {
-        let hw = HardwareCapabilities::get();
-        let block_size = if hw.has_avx512() {
+        let hw = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let block_size = if hw.cpu.simd.has_avx512 {
             512
-        } else if hw.has_avx2() {
+        } else if hw.cpu.simd.has_avx2 {
             256
-        } else if hw.has_neon() {
+        } else if hw.cpu.simd.has_neon {
             128
         } else {
             64
@@ -819,7 +819,8 @@ impl FastLanesDecoder {
 /// Analyze data to choose optimal encoding scheme
 pub fn analyze_and_choose_scheme(data: &[i64]) -> FastLanesScheme {
     if data.is_empty() {
-        return FastLanesScheme::Uncompressed;
+        // Use BitPacked with 64 bits as fallback for empty data
+        return FastLanesScheme::BitPacked { bits: 64 };
     }
     
     // Calculate statistics

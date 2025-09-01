@@ -1583,9 +1583,9 @@ impl Default for UniversalCompressionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            primary_algorithm: CompressionAlgorithm::ZSTD,
+            primary_algorithm: CompressionAlgorithm::Zstd,
             fallback_algorithms: vec![
-                CompressionAlgorithm::LZ4,
+                CompressionAlgorithm::Lz4,
                 CompressionAlgorithm::Snappy,
             ],
             compression_level: 3,
@@ -1681,6 +1681,7 @@ impl Default for ContextAwareCompressionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            data_type: crate::metrics::compression::CompressionData::Mixed,
             context_types: vec![
                 CompressionContext::VectorData {
                     dimension: 768,
@@ -1899,7 +1900,7 @@ impl Default for CompressionQualitySettings {
                     frequency: ValidationFrequency::Sampling { rate: 0.01 },
                     actions: ValidationActions {
                         on_failure: ValidationAction::Fallback {
-                            fallback_algorithm: CompressionAlgorithm::LZ4,
+                            fallback_algorithm: CompressionAlgorithm::Lz4,
                         },
                         on_warning: ValidationAction::Warn,
                         on_success: ValidationAction::Continue,

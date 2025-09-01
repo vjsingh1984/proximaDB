@@ -51,11 +51,13 @@ pub struct FileBloomFilters {
     pub false_positive_rate: f64,
 }
 /// Bloom filters for a single row group
+#[derive(Debug)]
 pub struct RowGroupBloomFilters {
     pub row_group_id: usize,
     pub column_filters: HashMap<String, BloomFilterInfo>,
 }
 /// Bloom filter information
+#[derive(Debug)]
 pub struct BloomFilterInfo {
     pub field: String,
     pub size_bytes: usize,

@@ -591,23 +591,25 @@ impl HardwareCapabilities {
         let cpuid = CpuId::new();
         
         // Try to get cache info from CPUID
-        if let Some(cache_info) = cpuid.get_cache_info() {
+        // Using get_cache_parameters which provides detailed cache info
+        if let Some(cache_params) = cpuid.get_cache_parameters() {
             let mut l1_data = 32 * 1024;
             let mut l1_instruction = 32 * 1024;
             let mut l2 = 256 * 1024;
             let mut l3 = 8 * 1024 * 1024;
             
-            for cache in cache_info {
-                match cache.level {
+            for cache in cache_params {
+                match cache.level() {
                     1 => {
-                        if cache.cache_type == raw_cpuid::CacheType::Data {
-                            l1_data = cache.size as usize;
-                        } else if cache.cache_type == raw_cpuid::CacheType::Instruction {
-                            l1_instruction = cache.size as usize;
+                        let cache_type = cache.cache_type();
+                        if cache_type == raw_cpuid::CacheType::Data {
+                            l1_data = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize;
+                        } else if cache_type == raw_cpuid::CacheType::Instruction {
+                            l1_instruction = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize;
                         }
                     },
-                    2 => l2 = cache.size as usize,
-                    3 => l3 = cache.size as usize,
+                    2 => l2 = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize,
+                    3 => l3 = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize,
                     _ => {}
                 }
             }

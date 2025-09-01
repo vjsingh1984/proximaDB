@@ -96,24 +96,11 @@ pub struct SmartRowGroupSizer {
     pub query_pattern: QueryPattern,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationConfig {
-    /// Primary quantization level (Binary/INT8/PQ4/PQ8)
-    pub primary_level: QuantizationLevel,
-    /// Whether FP32 is also stored (dual storage)
-    pub store_fp32: bool,
-    /// Compression ratio achieved
-    pub compression_ratio: f32,
-}
+// DEPRECATED: Replaced with proto-generated config
+pub use crate::proto::proximadb::QuantizationConfig;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum QuantizationLevel {
-    Binary,   // 1 bit per dimension
-    INT8,     // 8 bits per dimension  
-    PQ4,      // 4 bits per dimension
-    PQ8,      // 8 bits per dimension
-    FP32,     // 32 bits per dimension (unquantized)
-}
+// DEPRECATED: Replaced with proto-generated QuantizationLevel
+pub use crate::proto::proximadb::QuantizationLevel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryPattern {

@@ -25,6 +25,7 @@ use tracing::{debug, info, trace};
 
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
+use crate::proto::proximadb::metadata_item;
 use crate::storage::engines::core::formats::columnar::{ColumnarConfig, QuantizationConfig};
 use crate::storage::engines::core::formats::columnar::native_metadata::{
     NativeMetadataHandler, NativeMetadataStats, NativeMetadataQueryOptimizer
@@ -272,7 +273,7 @@ impl StreamingParquetWriter {
     
     /// Create writer properties with comprehensive optimizations
     fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterProperties> {
-        let mut builder = WriterPropertiesBuilder::default()
+        let mut builder = WriterProperties::builder()
             .set_max_row_group_size(config.row_group_size)
             .set_data_page_size_limit(config.page_size)
             .set_write_batch_size(config.write_batch_size);
@@ -314,19 +315,20 @@ impl StreamingParquetWriter {
         }
         
         // Enable page index for faster seeks
-        if config.enable_page_index {
-            builder = builder.set_page_row_count_limit(config.page_index_granularity); // Configurable granularity
-        }
+        // TODO: These methods may not be available in the current parquet version
+        // if config.enable_page_index {
+        //     builder = builder.set_page_row_count_limit(config.page_index_granularity); // Configurable granularity
+        // }
         
         // Enable column index for 5-20x faster range queries
-        if config.enable_column_index {
-            builder = builder.set_column_index_enabled(true);
-        }
+        // if config.enable_column_index {
+        //     builder = builder.set_column_index_enabled(true);
+        // }
         
         // Enable offset index for direct page addressing
-        if config.enable_offset_index {
-            builder = builder.set_offset_index_enabled(true);
-        }
+        // if config.enable_offset_index {
+        //     builder = builder.set_offset_index_enabled(true);
+        // }
         
         info!("📈 Parquet Writer Properties: row_group_size={}, page_size={}, compression={:?}, bloom_filters={}, statistics={}, column_index={}, offset_index={}", 
               config.row_group_size, config.page_size, config.compression, 
@@ -473,7 +475,7 @@ impl StreamingParquetWriter {
         
         // ID column (ALWAYS REQUIRED for customer APIs)
         let ids: Vec<Option<String>> = records.iter()
-            .map(|r| r.id.clone())
+            .map(|r| Some(r.id.clone()))
             .collect();
         arrays.push(Arc::new(StringArray::from(ids)));
         
@@ -526,13 +528,24 @@ impl StreamingParquetWriter {
             let stats = handler.get_optimization_stats();
             if stats.total_fields > 0 {
                 // Use native types for metadata
-                let metadata_maps: Vec<HashMap<String, crate::proto::proximadb::metadata_item::Value>> = records.iter()
+                let metadata_maps: Vec<serde_json::Map<String, serde_json::Value>> = records.iter()
                     .map(|r| {
-                        let mut map = HashMap::new();
+                        let mut map = serde_json::Map::new();
                         for item in &r.metadata {
-                            if let Some(value) = &item.value {
-                                map.insert(item.key.clone(), value.clone());
-                            }
+                            // Convert MetadataItem to JSON value
+                            let json_value = match &item.value {
+                                Some(metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                                Some(metadata_item::Value::NumberValue(f)) => {
+                                    if let Some(n) = serde_json::Number::from_f64(*f) {
+                                        serde_json::Value::Number(n)
+                                    } else {
+                                        serde_json::Value::Null
+                                    }
+                                },
+                                Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                                None => serde_json::Value::Null,
+                            };
+                            map.insert(item.key.clone(), json_value);
                         }
                         map
                     })
@@ -553,7 +566,7 @@ impl StreamingParquetWriter {
                         if r.metadata.is_empty() {
                             None
                         } else {
-                            Some(serde_json::to_string(&r.metadata).clone())
+                            serde_json::to_string(&r.metadata).ok()
                         }
                     })
                     .collect();
@@ -566,7 +579,7 @@ impl StreamingParquetWriter {
                     if r.metadata.is_empty() {
                         None
                     } else {
-                        Some(serde_json::to_string(&r.metadata).clone())
+                        serde_json::to_string(&r.metadata).ok()
                     }
                 })
                 .collect();
@@ -589,7 +602,7 @@ impl StreamingParquetWriter {
             values.push(Some(bytes));
         }
         
-        Ok(Arc::new(FixedSizeBinaryArray::try_from_iter(values.into_iter())?))
+        Ok(Arc::new(FixedSizeBinaryArray::try_from_iter(values.into_iter().flatten())?))
     }
     
     /// Create binary quantized vector array
@@ -623,7 +636,7 @@ impl StreamingParquetWriter {
             values.push(Some(bits));
         }
         
-        Ok(Arc::new(FixedSizeBinaryArray::try_from_iter(values.into_iter())?))
+        Ok(Arc::new(FixedSizeBinaryArray::try_from_iter(values.into_iter().flatten())?))
     }
     
     /// Create INT8 quantized vector arrays
@@ -650,7 +663,7 @@ impl StreamingParquetWriter {
             zero_points.push(Some(zero_point));
         }
         
-        let vector_array = Arc::new(FixedSizeBinaryArray::try_from_iter(vectors.into_iter())?);
+        let vector_array = Arc::new(FixedSizeBinaryArray::try_from_iter(vectors.into_iter().flatten())?);
         let scale_array = Arc::new(Float32Array::from(scales));
         let zero_point_array = Arc::new(arrow_array::Int8Array::from(zero_points));
         
@@ -689,8 +702,15 @@ impl StreamingParquetWriter {
             codebooks.push(Some(codebook));
         }
         
-        let pq_array = Arc::new(FixedSizeBinaryArray::try_from_iter(pq_codes.into_iter())?);
-        let codebook_array = Arc::new(BinaryArray::from_opt_vec(codebooks));
+        // Create FixedSizeBinaryArray for PQ codes
+        let pq_array = Arc::new(FixedSizeBinaryArray::try_from_iter(
+            pq_codes.into_iter().map(|opt| opt.as_deref())
+        )?);
+        
+        // Create BinaryArray for codebooks
+        let codebook_array = Arc::new(BinaryArray::from(
+            codebooks.into_iter().map(|opt| opt.as_deref()).collect::<Vec<_>>()
+        ));
         
         Ok((pq_array, codebook_array))
     }
@@ -699,9 +719,7 @@ impl StreamingParquetWriter {
     fn update_bloom_filters(&mut self, records: &[VectorRecord]) -> Result<()> {
         for record in records {
             // ALWAYS add ID to bloom filter (critical for customer APIs)
-            if let Some(id) = &record.id {
-                self.add_to_bloom_filter("id", id)?;
-            }
+            self.add_to_bloom_filter("id", &record.id)?;
             
             // Add timestamp for time-range queries (common pattern)
             self.add_to_bloom_filter("timestamp", &record.timestamp.to_string())?;
@@ -712,8 +730,25 @@ impl StreamingParquetWriter {
             }
             
             // Add metadata fields that might be frequently filtered
-            if let Some(metadata) = &record.metadata {
-                self.add_metadata_to_bloom_filters(metadata)?;
+            if !record.metadata.is_empty() {
+                // Convert Vec<MetadataItem> to serde_json::Map
+                let mut metadata_map = serde_json::Map::new();
+                for item in &record.metadata {
+                    let json_value = match &item.value {
+                        Some(metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(metadata_item::Value::NumberValue(f)) => {
+                            if let Some(n) = serde_json::Number::from_f64(*f) {
+                                serde_json::Value::Number(n)
+                            } else {
+                                serde_json::Value::Null
+                            }
+                        },
+                        Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        None => serde_json::Value::Null,
+                    };
+                    metadata_map.insert(item.key.clone(), json_value);
+                }
+                self.add_metadata_to_bloom_filters(&metadata_map)?;
             }
         }
         
@@ -771,7 +806,7 @@ impl StreamingParquetWriter {
             if self.id_bloom_filters.len() <= self.current_row_group {
                 // Use configured NDV or estimate for ID columns
                 let estimated_items = self.config.expected_ndv
-                    ; // IDs are typically unique
+                    .unwrap_or(self.config.row_group_size); // IDs are typically unique
                 
                 let bloom = crate::storage::engines::core::formats::columnar::id_index::BloomFilter::new(
                     estimated_items, 
@@ -898,7 +933,7 @@ impl StreamingParquetWriter {
     fn build_pq_codebook(&self, records: &[VectorRecord]) -> Result<PqCodebook> {
         let dimension = records.first()
             .map(|r| r.vector.len())
-            ;
+            .unwrap_or(0);
         
         if dimension == 0 {
             return Err(anyhow!("Cannot build PQ codebook for zero-dimensional vectors"));

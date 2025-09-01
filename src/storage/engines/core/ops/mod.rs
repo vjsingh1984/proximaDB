@@ -796,25 +796,25 @@ pub mod utils {
         
         match workload {
             WorkloadType::HighThroughput => {
-                config.storage.organization = StorageOrganization::Hierarchical {
+                config.storage_config.organization = StorageOrganization::Hierarchical {
                     superblock_size_target: 2 * 1024 * 1024 * 1024, // 2GB
                     blocks_per_superblock: 128,
                     records_per_block: 4000,
                 };
                 config.performance.max_concurrent_operations = 32;
-                config.storage.as_ref().and_then(|s| s.compression.as_ref()).compression_level = 1; // Fast compression
+                config.storage_config.block_config.compression = true; // Fast compression
             }
             WorkloadType::LowLatency => {
-                config.storage.organization = StorageOrganization::Flat {
+                config.storage_config.organization = StorageOrganization::Flat {
                     target_block_size: 4 * 1024 * 1024, // 4MB
                     records_per_block: 500,
                 };
                 config.performance.enable_prefetching = true;
-                config.storage.index_config.id_index.enable_caching = true;
+                config.storage_config.index_config.id_index.enable_caching = true;
             }
             WorkloadType::Analytics => {
                 config.engine_type = EngineType::Columnar;
-                config.storage.organization = StorageOrganization::Columnar {
+                config.storage_config.organization = StorageOrganization::Columnar {
                     row_group_size_target: 256 * 1024 * 1024, // 256MB
                     rows_per_group: 1000000,
                     column_chunk_size: 65536,
@@ -892,7 +892,7 @@ mod tests {
         assert_eq!(config.engine_name, "universal");
         assert_eq!(config.dimension, 768);
         assert!(matches!(config.engine_type, EngineType::RowBased));
-        assert!(config.storage.block_config.enable_compression);
+        assert!(config.storage_config.block_config.enable_compression);
     }
     
     #[test]
@@ -905,7 +905,7 @@ mod tests {
         );
         
         if let StorageOrganization::Hierarchical { records_per_block, .. } = 
-            high_throughput_config.storage.organization {
+            high_throughput_config.storage_config.organization {
             assert_eq!(records_per_block, 4000);
         } else {
             panic!("Expected hierarchical organization for high throughput");
@@ -927,11 +927,11 @@ mod tests {
         assert!(validate_config_compatibility(&config).is_ok());
         
         // Mismatched dimensions should fail
-        config.storage.schema_config.vector_schema.dimension = 512;
+        config.storage_config.schema_config.vector_schema.dimension = 512;
         assert!(validate_config_compatibility(&config).is_err());
         
         // Fix dimension and test invalid concurrent operations
-        config.storage.schema_config.vector_schema.dimension = 768;
+        config.storage_config.schema_config.vector_schema.dimension = 768;
         config.performance.max_concurrent_operations = 0;
         assert!(validate_config_compatibility(&config).is_err());
     }

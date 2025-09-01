@@ -28,6 +28,12 @@ use crate::storage::engines::core::ops::compression_common::{
     AdaptiveCompressionSettings, AdaptiveStrategy,
     ContextAwareCompressionConfig,
 };
+// Use unified quantization engine
+use crate::compute::quantization::{
+    UnifiedQuantizationEngine,
+    unified::InMemoryCodebookStore,
+};
+use crate::compute::distance_computation::UnifiedDistanceCompute;
 use crate::metrics::compression::CompressionData;
 
 use crate::storage::persistence::filesystem::{
@@ -430,7 +436,9 @@ impl Flush {
         
         // Add filterable metadata columns based on collection configuration using proto types
         for filterable_column in &filterable_metadata {
-            let arrow_data_type = self.schema_manager.convert_proto_type_to_arrow(filterable_column.data_type)?;
+            // TODO: Implement convert_proto_type_to_arrow method on ColumnarSchema
+            // For now, use String as default for filterable columns
+            let arrow_data_type = arrow_schema::DataType::Utf8;
             
             schema_fields.push(Field::new(
                 &filterable_column.name,
@@ -500,10 +508,18 @@ impl Flush {
                     let int8_vector = self.quantize_to_int8(fp32_vector, quant_config);
                     vector_int8_data.push(int8_vector);
                     
-                    let pq8_vector = self.quantize_to_pq8(fp32_vector, quant_config);
+                    // Use unified quantization engine for PQ8
+                    let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+                    let codebook_store = Arc::new(InMemoryCodebookStore::new());
+                    let quant_engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
+                    
+                    // Default to 8 subvectors for PQ - TODO: get from unified config
+                    let num_subvectors = 8usize;
+                    
+                    let pq8_vector = quant_engine.quantize_to_pq(fp32_vector, num_subvectors, 8)?;
                     vector_pq8_data.push(pq8_vector);
                     
-                    let pq4_vector = self.quantize_to_pq4(fp32_vector, quant_config);
+                    let pq4_vector = quant_engine.quantize_to_pq(fp32_vector, num_subvectors, 4)?;
                     vector_pq4_data.push(pq4_vector);
                 } else {
                     return Err(anyhow::anyhow!("Quantization enabled but no collection config provided"));
@@ -776,8 +792,8 @@ impl Flush {
                             crate::core::compression::CompressionAlgorithm::Gzip,
                         Ok(ProtoAlgorithm::CompressionBrotli) => 
                             crate::core::compression::CompressionAlgorithm::Brotli,
-                        Ok(ProtoAlgorithm::CompressionMixed) => 
-                            crate::core::compression::CompressionAlgorithm::Mixed,
+                        // CompressionMixed not available in proto, using Mixed from our enum
+                        // This case should not occur with current proto definitions
                         _ => crate::core::compression::CompressionAlgorithm::None,
                     }
                     } else {
@@ -943,96 +959,11 @@ impl Flush {
         quantized
     }
     
-    /// PQ8 quantization using collection config parameters  
-    fn quantize_to_pq8(&self, fp32_vector: &[f32], quant_config: &crate::proto::proximadb::QuantizationConfig) -> Vec<u8> {
-        if fp32_vector.is_empty() {
-            return Vec::new();
-        }
-        
-        // Use default subvector configuration (32 subvectors)
-        let subvectors = 32usize;
-        let subvector_size = if subvectors > 0 { 
-            (fp32_vector.len() + subvectors - 1) / subvectors 
-        } else { 
-            8 
-        };
-        
-        debug!("🔧 VIPER: Enhanced PQ8 quantization with {} subvectors, size={}", 
-               subvectors, subvector_size);
-        
-        let num_actual_subvectors = (fp32_vector.len() + subvector_size - 1) / subvector_size;
-        let mut quantized = Vec::with_capacity(num_actual_subvectors);
-        
-        for i in 0..num_actual_subvectors {
-            let start = i * subvector_size;
-            let end = std::cmp::min(start + subvector_size, fp32_vector.len());
-            let subvector = &fp32_vector[start..end];
-            
-            // Enhanced quantization with collection-aware hashing
-            let mut hash: u64 = 0;
-            for (j, &val) in subvector.iter().enumerate() {
-                hash = hash.wrapping_add(((val * 1000.0) as u64).wrapping_mul(j as u64 + 1));
-            }
-            quantized.push((hash % 256) as u8);
-        }
-        
-        quantized
-    }
+    // DEPRECATED: Use UnifiedQuantizationEngine::quantize_to_pq() instead
+    // Removed duplicate quantize_to_pq8 implementation
     
-    /// PQ4 quantization using collection config parameters
-    fn quantize_to_pq4(&self, fp32_vector: &[f32], quant_config: &crate::proto::proximadb::QuantizationConfig) -> Vec<u8> {
-        if fp32_vector.is_empty() {
-            return Vec::new();
-        }
-        
-        // Use collection-specific bits per subvector configuration  
-        let bits_per_subvector = 4usize; // Default to 4 bits per subvector
-        let effective_bits = std::cmp::min(bits_per_subvector, 4); // Max 4 bits for PQ4
-        
-        debug!("🔧 VIPER: Enhanced PQ4 quantization with {} effective bits per subvector", 
-               effective_bits);
-        
-        let subvectors = 32usize; // Default to 32 subvectors
-        let subvector_size = if subvectors > 0 { 
-            (fp32_vector.len() + subvectors - 1) / subvectors 
-        } else { 
-            8 
-        };
-        
-        let num_actual_subvectors = (fp32_vector.len() + subvector_size - 1) / subvector_size;
-        let mut quantized = Vec::with_capacity((num_actual_subvectors + 1) / 2);
-        
-        for i in (0..num_actual_subvectors).step_by(2) {
-            let start1 = i * subvector_size;
-            let end1 = std::cmp::min(start1 + subvector_size, fp32_vector.len());
-            let subvector1 = &fp32_vector[start1..end1];
-            
-            let mut hash1: u64 = 0;
-            for (j, &val) in subvector1.iter().enumerate() {
-                hash1 = hash1.wrapping_add(((val * 1000.0) as u64).wrapping_mul(j as u64 + 1));
-            }
-            let code1 = (hash1 % (1 << effective_bits)) as u8;
-            
-            let code2 = if i + 1 < num_actual_subvectors {
-                let start2 = (i + 1) * subvector_size;
-                let end2 = std::cmp::min(start2 + subvector_size, fp32_vector.len());
-                let subvector2 = &fp32_vector[start2..end2];
-                
-                let mut hash2: u64 = 0;
-                for (j, &val) in subvector2.iter().enumerate() {
-                    hash2 = hash2.wrapping_add(((val * 1000.0) as u64).wrapping_mul(j as u64 + 1));
-                }
-                (hash2 % (1 << effective_bits)) as u8
-            } else {
-                0
-            };
-            
-            // Pack two codes into one byte
-            quantized.push((code1 << 4) | code2);
-        }
-        
-        quantized
-    }
+    // DEPRECATED: Use UnifiedQuantizationEngine::quantize_to_pq() instead  
+    // Removed duplicate quantize_to_pq4 implementation
 
 
     /// Write Parquet data using atomic write strategy
@@ -1178,7 +1109,7 @@ impl Flush {
         }
         
         // Create metadata sorter from filterable columns
-        let sorter = MetadataSorter::from_filterable_specs(&filterable_columns);
+        let sorter = MetadataSorter::from_filterable_specs(filterable_columns.as_deref().unwrap_or(&[]));
         
         // Sort records for optimal encoding
         let (sorted_records, stats) = sorter.sort_for_encoding(records.to_vec())?;

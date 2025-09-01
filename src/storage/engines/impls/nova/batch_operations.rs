@@ -48,6 +48,7 @@ impl Default for BatchConfig {
 }
 
 /// Row group cache for recently accessed data
+#[derive(Clone)]
 struct RowGroupCache {
     cache: Arc<RwLock<lru::LruCache<usize, Arc<RecordBatch>>>>,
     current_size: Arc<RwLock<usize>>,
@@ -253,6 +254,7 @@ fn extract_records_from_batch(
             quantized_vector: None,
             expires_at: None,
             version: None,
+            source: None, // No source information in batch data
         };
         records.push(record);
     }

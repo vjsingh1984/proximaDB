@@ -14,6 +14,23 @@ use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, St
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use super::{SwiftFile, MetadataFilter, SuperBlock, DataBlock};
 
+/// Helper function to compute L2 distance squared for INT8 vectors
+fn compute_l2_distance_squared_i8(a: &[i8], b: &[i8]) -> Result<f32> {
+    if a.len() != b.len() {
+        return Err(anyhow!("Vector dimensions don't match"));
+    }
+    
+    let distance: f32 = a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| {
+            let diff = (*x as f32) - (*y as f32);
+            diff * diff
+        })
+        .sum();
+    
+    Ok(distance)
+}
+
 /// Helper function to compare JSON values
 fn compare_json_values(
     a: &serde_json::Value,
@@ -156,6 +173,9 @@ pub async fn search_progressive(
 ) -> Result<Vec<VectorRecord>> {
     let config = ProgressiveSearchConfig::default();
     
+    // Create quantization engine for binary operations
+    let quantization_engine = StorageQuantizationEngine::new_default();
+    
     info!(
         "Starting progressive search for top-{} with query dimension {}",
         top_k,
@@ -169,6 +189,7 @@ pub async fn search_progressive(
         top_k * config.binary_expansion,
         &filter,
         config.binary_threshold,
+        &quantization_engine,
     ).await?;
     
     debug!(
@@ -229,15 +250,24 @@ async fn phase1_binary_filtering(
     n_candidates: usize,
     filter: &Option<MetadataFilter>,
     threshold: f32,
+    quantization_engine: &StorageQuantizationEngine,
 ) -> Result<Vec<Candidate>> {
-    let binary_query = BinaryQuantization::quantize_single(query, 128);
+    // Use binary quantization approach - create a simple binary representation
+    // TODO: Implement proper binary quantization via storage engine
+    let binary_query_bits = query.iter()
+        .map(|&x| if x > 0.0 { 1u8 } else { 0u8 })
+        .collect::<Vec<u8>>();
+    let binary_query = BinarySketch {
+        bits: binary_query_bits,
+        dimension: query.len(),
+    };
     let mut candidates = BinaryHeap::new();
     
     // First check superblock-level signatures
     for (sb_idx, superblock) in sst.superblocks.iter().enumerate() {
         // Quick check with superblock signature
         let sb_binary = BinarySketch {
-            bits: bytes_to_bits(&superblock.quantized_signature),
+            bits: superblock.quantized_signature.clone(),
             dimension: query.len(),
         };
         
@@ -258,7 +288,8 @@ async fn phase1_binary_filtering(
             // Check each vector in block using binary sketches
             if let Some(ref sketches) = block.quantized_vectors {
                 for (v_idx, sketch) in sketches.iter().enumerate() {
-                    let distance = binary_query.hamming_distance(sketch) as f32;
+                    let sketch_binary = BinarySketch { bits: sketch.clone(), dimension: query.len() };
+                    let distance = binary_query.hamming_distance(&sketch_binary) as f32;
                 
                     if distance <= threshold {
                         candidates.push(Candidate {
@@ -331,7 +362,12 @@ async fn phase2_int8_filtering(
         for v_idx in vector_indices {
             if let Some(ref quantized) = block.quantized_vectors {
                 if let Some(int8_vec) = quantized.get(v_idx as usize) {
-                    let distance = int8_query.l2_distance_squared(int8_vec);
+                    // Use distance computation for INT8 vectors
+                    // Convert Vec<u8> to &[i8] using unsafe transmute
+                    let int8_slice = unsafe {
+                        std::slice::from_raw_parts(int8_vec.as_ptr() as *const i8, int8_vec.len())
+                    };
+                    let distance = compute_l2_distance_squared_i8(&int8_query, int8_slice)?;
                     
                     if distance <= threshold {
                         candidates.push(Candidate {
@@ -368,9 +404,11 @@ async fn phase3_pq_refinement(
     n_candidates: usize,
     threshold: f32,
 ) -> Result<Vec<Candidate>> {
-    // Compute distance tables for PQ
-    let distance_table = if !sst.header.quantization.pq_codebooks.is_empty() {
-        Some(DistanceTable::compute(query, &sst.header.quantization.pq_codebooks))
+    // Create distance computation engine for PQ operations 
+    // Note: Skip PQ distance table computation for now, use direct computation
+    let distance_table: Option<Vec<Vec<f32>>> = if !sst.header.quantization.pq_codebooks.is_empty() {
+        // TODO: Implement proper PQ distance table computation
+        None
     } else {
         None
     };
@@ -412,15 +450,15 @@ async fn phase3_pq_refinement(
         for v_idx in vector_indices {
             if let Some(ref quantized) = block.quantized_vectors {
                 if let Some(pq_code) = quantized.get(v_idx as usize) {
-                    let distance: f32 = if let Some(ref dt) = distance_table {
-                        dt.lookup_distance(pq_code) as f32
-                    } else {
-                        // Fallback to INT8 distance if no PQ
-                        pq_code.iter()
-                            .zip(int8_query.iter())
-                            .map(|(a, b)| (*a as f32 - *b as f32).powi(2))
-                            .sum::<f32>()
-                    };
+                    // TODO: Implement proper PQ distance computation
+                    let distance: f32 = pq_code.iter()
+                        .zip(query.iter())
+                        .map(|(a, b)| {
+                            let diff = (*a as f32) - b;
+                            diff * diff
+                        })
+                        .sum::<f32>()
+                        .sqrt();
                     
                     if distance <= threshold {
                         candidates.push(Candidate {

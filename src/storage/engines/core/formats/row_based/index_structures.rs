@@ -12,7 +12,6 @@ use crate::core::bloom::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig
 use super::block_structures::{BlockLocation, RowBasedDataBlock};
 
 /// Row-based ID indexing with multiple strategies
-#[derive(Debug)]
 pub struct RowBasedIdIndex {
     /// Index strategy
     index_type: Index,
@@ -281,8 +280,15 @@ impl RowBasedIdIndex {
     pub fn new(index_type: Index, config: IndexConfiguration) -> Self {
         // Create bloom filter builders
         let mut bloom_filter_builders = Vec::new();
-        if config.enable_bloom_filters {
-            let bloom_config = SstBloomConfig::default();
+        if config.bloom_config.enabled {
+            let bloom_config = SstBloomConfig {
+                enabled: config.bloom_config.enabled,
+                bits_per_key: 10,
+                false_positive_rate: Some(config.bloom_config.false_positive_rate),
+                expected_items: config.bloom_config.max_items_per_filter as usize,
+                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+                hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
+            };
             bloom_filter_builders.push(BloomFilterBuilder::new(bloom_config));
         }
         

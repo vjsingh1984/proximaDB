@@ -292,7 +292,7 @@ impl OptimizedVectorWriter {
         let vector_dimensions = records.iter()
             .find(|r| !r.vector.is_empty())
             .map(|r| r.vector.len())
-            ;
+            .unwrap_or(0);
 
         if vector_dimensions == 0 {
             return Err(anyhow::anyhow!("No valid vectors found to determine dimensions"));

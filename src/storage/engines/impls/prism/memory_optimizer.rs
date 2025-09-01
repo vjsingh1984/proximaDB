@@ -1,11 +1,11 @@
 // Memory-First Optimization for PRISM Engine
 // Maximizes in-memory caching and minimizes I/O for read-heavy workloads
 
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use crate::storage::persistence::filesystem::FileSystem;use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use memmap2::{Mmap, MmapOptions};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -263,11 +263,11 @@ impl MemoryOptimizedStorage {
         
         match tier {
             MemoryTier::L2Binary => {
-                let mut cache = self.l2_binary_mmap.write().await;
+                let mut cache = self.binary_sketches.write().await;
                 cache.insert(file_path.to_string(), mmap_arc.clone());
             }
             MemoryTier::L2Quantized => {
-                let mut cache = self.l2_quantized_mmap.write().await;
+                let mut cache = self.int8_vectors.write().await;
                 cache.insert(file_path.to_string(), mmap_arc.clone());
             }
             _ => {}
@@ -297,7 +297,7 @@ impl MemoryOptimizedStorage {
     
     /// Get vector from L3 compressed cache
     async fn get_from_l3_compressed(&self, id: &str) -> Result<Option<Arc<VectorRecord>>> {
-        let cache = self.l3_compressed_cache.read().await;
+        let cache = self.pq_codes.read().await;
         if let Some(compressed_data) = cache.get(id) {
             // Decompress vector
             // Real implementation would use compression library
@@ -308,7 +308,7 @@ impl MemoryOptimizedStorage {
     
     /// Promote vector to L1 cache
     async fn promote_to_l1(&self, id: &str, vector: Arc<VectorRecord>) -> Result<()> {
-        let mut l1 = self.l1_cache.write().await;
+        let mut l1 = self.fp32_cache.write().await;
         
         // Check memory pressure before promotion
         if self.memory_monitor.is_under_pressure() {
@@ -370,15 +370,15 @@ impl MemoryOptimizedStorage {
         info!("Memory pressure detected, evicting cold entries");
         
         // Evict from L1 first
-        let mut l1 = self.l1_cache.write().await;
+        let mut l1 = self.fp32_cache.write().await;
         
         // Simple eviction: remove least recently used
         // LruCache handles this automatically
         
         // If still under pressure, evict from L2
         if self.memory_monitor.is_under_pressure() {
-            let mut l2_binary = self.l2_binary_mmap.write().await;
-            let mut l2_quantized = self.l2_quantized_mmap.write().await;
+            let mut l2_binary = self.binary_sketches.write().await;
+            let mut l2_quantized = self.int8_vectors.write().await;
             
             // Remove least accessed mmaps
             // Real implementation would track access stats
@@ -509,14 +509,14 @@ impl PrismMemoryOptimizer {
         
         // Load binary sketches into L2 (smallest, most frequently accessed)
         let binary_path = format!("{}/binary_sketches.bin", collection_id);
-        if self.filesystem.exists(&binary_path).await {
+        if self.filesystem.exists(&binary_path).await.unwrap_or(false) {
             self.storage.mmap_file(&binary_path, MemoryTier::L2Binary, &self.filesystem).await?;
             debug!("Loaded binary sketches into L2 memory-mapped cache");
         }
         
         // Load frequently accessed quantized vectors
         let quantized_path = format!("{}/quantized_vectors.pq", collection_id);
-        if self.filesystem.exists(&quantized_path).await {
+        if self.filesystem.exists(&quantized_path).await.unwrap_or(false) {
             self.storage.mmap_file(&quantized_path, MemoryTier::L2Quantized, &self.filesystem).await?;
             debug!("Loaded quantized vectors into L2 memory-mapped cache");
         }
@@ -541,6 +541,53 @@ impl PrismMemoryOptimizer {
             memory_usage_mb: self.storage.memory_monitor.current_usage.load(Ordering::Relaxed) / 1024 / 1024,
             pressure_events: self.storage.memory_monitor.pressure_events.load(Ordering::Relaxed),
         }
+    }
+    
+    // Missing methods implementations (stubs for now)
+    
+    async fn filter_by_metadata(&self, _filter: &HashMap<String, String>) -> Result<Vec<String>> {
+        // TODO: Implement metadata filtering
+        Ok(Vec::new())
+    }
+    
+    async fn get_all_vector_ids(&self) -> Result<Vec<String>> {
+        // TODO: Implement getting all vector IDs
+        let metadata = self.metadata_cache.read().await;
+        Ok(metadata.keys().cloned().collect())
+    }
+    
+    async fn search_binary_sketches(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
+        // TODO: Implement binary sketch search
+        Ok(candidates.iter().take(k).cloned().collect())
+    }
+    
+    async fn search_int8_vectors(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
+        // TODO: Implement INT8 vector search
+        Ok(candidates.iter().take(k).cloned().collect())
+    }
+    
+    async fn search_pq_codes(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
+        // TODO: Implement PQ code search
+        Ok(candidates.iter().take(k).cloned().collect())
+    }
+    
+    async fn rerank_with_fp32(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<(String, f32)>> {
+        // TODO: Implement FP32 reranking
+        Ok(candidates.iter()
+            .take(k)
+            .enumerate()
+            .map(|(i, id)| (id.clone(), 1.0 - (i as f32 / k as f32)))
+            .collect())
+    }
+    
+    async fn fetch_fp32_from_cloud(&self, _id: &str) -> Result<Arc<VectorRecord>> {
+        // TODO: Implement cloud fetch
+        Err(anyhow!("FP32 cloud fetch not implemented"))
+    }
+    
+    async fn vector(&self, id: &str) -> Result<VectorRecord> {
+        // TODO: Implement vector retrieval
+        self.fetch_fp32_from_cloud(id).await.map(|arc| (*arc).clone())
     }
 }
 

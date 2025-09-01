@@ -250,14 +250,14 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         let distance_compute = UnifiedDistanceCompute::default();
         
         // Use the unified distance compute to calculate distances
-        let metric = distance_metric;
+        let metric = distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
         let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
         
         for vector in vectors {
             let distance_result = distance_compute.calculate_distance(
                 query_vector,
                 &vector.vector,
-                metric,
+                &metric,
             );
             // Use empty string for vectors without IDs
             let id = vector.id.clone().clone();

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable, bytes_of, from_bytes};
+// Bytemuck imports removed - using manual serialization for flexibility
 use serde::{Serialize, Deserialize};
 use tracing::{debug, trace};
 
@@ -492,22 +492,56 @@ impl MetadataSerializer for NovaMetadataSerializer {
         // Serialize using efficient format
         let mut serialized = Vec::new();
 
-        // 1. Footer header (fixed size, bytemuck)
-        serialized.extend_from_slice(bytes_of(&metadata.footer));
+        // 1. Footer header (fixed size, manual serialization)
+        serialized.extend_from_slice(&metadata.footer.file_size.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.num_column_groups.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.footer_offset.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.footer_size.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.schema_offset.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.schema_size.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.total_vectors.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.num_columns.to_le_bytes());
+        serialized.extend_from_slice(&metadata.footer.created_timestamp.to_le_bytes());
+        // compression_algorithm and reserved fields not present in current struct
+        // serialized.extend_from_slice(&[metadata.footer.compression_algorithm]);
+        // serialized.extend_from_slice(&metadata.footer.reserved);
 
         // 2. Number of column groups
         serialized.extend_from_slice(&(metadata.column_groups.len() as u32).to_le_bytes());
 
         // 3. Column group headers
         for group in &metadata.column_groups {
-            serialized.extend_from_slice(bytes_of(group));
+            serialized.extend_from_slice(&group.offset.to_le_bytes());
+            serialized.extend_from_slice(&group.compressed_size.to_le_bytes());
+            serialized.extend_from_slice(&group.uncompressed_size.to_le_bytes());
+            serialized.extend_from_slice(&group.num_vectors.to_le_bytes());
+            serialized.extend_from_slice(&group.num_columns.to_le_bytes());
+            serialized.extend_from_slice(&group.statistics_offset.to_le_bytes());
+            serialized.extend_from_slice(&group.statistics_size.to_le_bytes());
+            // Fields not present in current struct
+            // serialized.extend_from_slice(&group.min_vector_id_hash.to_le_bytes());
+            // serialized.extend_from_slice(&group.max_vector_id_hash.to_le_bytes());
+            // serialized.extend_from_slice(&group.zone_map_offset.to_le_bytes());
+            // serialized.extend_from_slice(&group.zone_map_size.to_le_bytes());
+            // serialized.extend_from_slice(&[group.priority]);
+            // serialized.extend_from_slice(&group.reserved);
         }
 
         // 4. Columns for each group
         for group_columns in &metadata.columns {
             serialized.extend_from_slice(&(group_columns.len() as u32).to_le_bytes());
             for column in group_columns {
-                serialized.extend_from_slice(bytes_of(column));
+                serialized.extend_from_slice(&column.offset.to_le_bytes());
+                serialized.extend_from_slice(&column.compressed_size.to_le_bytes());
+                serialized.extend_from_slice(&column.uncompressed_size.to_le_bytes());
+                serialized.extend_from_slice(&[column.column_type]);
+                serialized.extend_from_slice(&[column.compression_algorithm]);
+                serialized.extend_from_slice(&column.null_count.to_le_bytes());
+                serialized.extend_from_slice(&column.stats_offset.to_le_bytes());
+                // Reserved fields (3 x u16)
+                for &r in &column.reserved {
+                    serialized.extend_from_slice(&r.to_le_bytes());
+                }
             }
         }
 
@@ -534,9 +568,29 @@ impl MetadataSerializer for NovaMetadataSerializer {
 
         let mut offset = 0;
 
-        // 1. Deserialize footer header
-        let footer_size = std::mem::size_of::<NovaFooterHeader>();
-        let footer = *from_bytes::<NovaFooterHeader>(&data[offset..offset + footer_size]);
+        // 1. Deserialize footer header manually
+        let footer_size = 8 + 4 + 4 + 4 + 4 + 4 + 8 + 4 + 8 + 1 + 7; // 64 bytes total
+        if data.len() < footer_size {
+            return Err(ProximaDBError::InvalidInput("Invalid Nova footer size".into()));
+        }
+        let footer = NovaFooterHeader {
+            file_size: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3], 
+                                          data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
+            num_column_groups: u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]]),
+            footer_offset: u32::from_le_bytes([data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
+            footer_size: u32::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19]]),
+            schema_offset: u32::from_le_bytes([data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
+            schema_size: u32::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27]]),
+            total_vectors: u64::from_le_bytes([data[offset+28], data[offset+29], data[offset+30], data[offset+31],
+                                              data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
+            num_columns: u32::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39]]),
+            format_version: u32::from_le_bytes([data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
+            created_timestamp: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
+                                                  data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
+            compression_type: data[offset+52],
+            reserved: [data[offset+53], data[offset+54], data[offset+55], data[offset+56], 
+                      data[offset+57], data[offset+58], data[offset+59]],
+        };
         offset += footer_size;
 
         // 2. Read number of column groups
@@ -545,8 +599,8 @@ impl MetadataSerializer for NovaMetadataSerializer {
         ]);
         offset += 4;
 
-        // 3. Deserialize column group headers
-        let group_size = std::mem::size_of::<NovaColumnGroupHeader>();
+        // 3. Deserialize column group headers manually
+        let group_size = 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 1 + 7; // 68 bytes per group
         let mut column_groups = Vec::with_capacity(num_groups as usize);
         
         for _ in 0..num_groups {
@@ -556,13 +610,32 @@ impl MetadataSerializer for NovaMetadataSerializer {
                 ));
             }
             
-            let group = *from_bytes::<NovaColumnGroupHeader>(&data[offset..offset + group_size]);
+            let group = NovaColumnGroupHeader {
+                offset: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3],
+                                           data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
+                compressed_size: u64::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11],
+                                                    data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
+                uncompressed_size: u64::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19],
+                                                      data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
+                num_vectors: u64::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27],
+                                                data[offset+28], data[offset+29], data[offset+30], data[offset+31]]),
+                num_columns: u32::from_le_bytes([data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
+                statistics_offset: u32::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39]]),
+                statistics_size: u32::from_le_bytes([data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
+                min_id_hash: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
+                                                data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
+                max_id_hash: u64::from_le_bytes([data[offset+52], data[offset+53], data[offset+54], data[offset+55],
+                                                data[offset+56], data[offset+57], data[offset+58], data[offset+59]]),
+                priority: data[offset+60],
+                reserved: [data[offset+61], data[offset+62], data[offset+63], data[offset+64],
+                          data[offset+65], data[offset+66], data[offset+67]],
+            };
             column_groups.push(group);
             offset += group_size;
         }
 
-        // 4. Deserialize columns for each group
-        let column_size = std::mem::size_of::<NovaColumnHeader>();
+        // 4. Deserialize columns for each group manually
+        let column_size = 8 + 4 + 4 + 1 + 1 + 4 + 4 + 6; // 32 bytes per column (8+4+4+1+1+4+4+6)
         let mut columns = Vec::with_capacity(num_groups as usize);
         
         for _ in 0..num_groups {
@@ -585,7 +658,21 @@ impl MetadataSerializer for NovaMetadataSerializer {
                     ));
                 }
                 
-                let column = *from_bytes::<NovaColumnHeader>(&data[offset..offset + column_size]);
+                let column = NovaColumnHeader {
+                    offset: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3],
+                                               data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
+                    compressed_size: u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]]),
+                    uncompressed_size: u32::from_le_bytes([data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
+                    column_type: data[offset+16],
+                    compression_algorithm: data[offset+17],
+                    null_count: u32::from_le_bytes([data[offset+18], data[offset+19], data[offset+20], data[offset+21]]),
+                    stats_offset: u32::from_le_bytes([data[offset+22], data[offset+23], data[offset+24], data[offset+25]]),
+                    reserved: [
+                        u16::from_le_bytes([data[offset+26], data[offset+27]]),
+                        u16::from_le_bytes([data[offset+28], data[offset+29]]),
+                        u16::from_le_bytes([data[offset+30], data[offset+31]]),
+                    ],
+                };
                 group_columns.push(column);
                 offset += column_size;
             }

@@ -768,9 +768,9 @@ impl SelectivityModel {
         match self.model_type {
             ModelType::Linear => {
                 // Simple linear model: selectivity = a * norm + b * sparsity + c
-                let norm_factor = self.parameters.get("norm");
-                let sparsity_factor = self.parameters.get("sparsity");
-                let intercept = self.parameters.get("intercept");
+                let norm_factor = self.parameters.get("norm").unwrap_or(&0.0);
+                let sparsity_factor = self.parameters.get("sparsity").unwrap_or(&0.0);
+                let intercept = self.parameters.get("intercept").unwrap_or(&0.5);
                 
                 (norm_factor * characteristics.norm + sparsity_factor * characteristics.sparsity + intercept)
                     .max(0.0)

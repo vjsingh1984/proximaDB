@@ -354,7 +354,7 @@ impl NovaHierarchicalCache {
         
         // Load all SuperBlock stats (small, critical)
         let superblock_path = format!("{}/superblock_stats.bin", collection_id);
-        if self.filesystem.exists(&superblock_path).await {
+        if self.filesystem.exists(&superblock_path).await.unwrap_or(false) {
             let data = self.filesystem.read(&superblock_path).await?;
             let stats: Vec<SuperBlockStats> = bincode::deserialize(&data)?;
             
@@ -366,7 +366,7 @@ impl NovaHierarchicalCache {
         
         // Load zone maps (critical for pruning)
         let zonemap_path = format!("{}/zonemaps.bin", collection_id);
-        if self.filesystem.exists(&zonemap_path).await {
+        if self.filesystem.exists(&zonemap_path).await.unwrap_or(false) {
             let data = self.filesystem.read(&zonemap_path).await?;
             let zonemaps: HashMap<String, ZoneMap> = bincode::deserialize(&data)?;
             

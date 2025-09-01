@@ -364,16 +364,15 @@ impl ColumnarSearcher {
             // Extract vector (simplified - would handle different formats)
             let vector = self.extract_vector_from_array(vector_array, row_idx)?;
             
-            let distance = self.distance_compute.as_ref().calculate_distance(
+            let similarity_result = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &vector,
                 distance_metric,
-            )?;
+            );
             
             results.push(SearchResult {
                 id,
-                similarity: Some(distance),
-                similarity: Some(1.0 - distance),
+                similarity: Some(similarity_result.normalized_score), // Use normalized_score [0,1] where 1 = most similar
                 vector: Some(vector),
                 metadata: None, // Would extract if needed
             });

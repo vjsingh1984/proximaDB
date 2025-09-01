@@ -224,11 +224,8 @@ impl OptimizedSwiftOperations {
         let mut results = Vec::new();
         
         // Use distance compute with appropriate mode
-        let mode = if self.hardware.has_gpu() {
-            DistanceMode::GPU
-        } else {
-            DistanceMode::SIMD
-        };
+        // Hardware-specific optimizations are handled internally by the distance engine
+        let mode = DistanceMode::RankOptimized;
         
         // Get vectors from candidates (would load from blocks)
         let vectors: Vec<Vec<f32>> = candidates.iter()
@@ -236,12 +233,12 @@ impl OptimizedSwiftOperations {
             .collect();
         
         // Batch compute distances using unified compute
-        let distances = self.distance_compute.batch_distances(
+        let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
+        let distances = self.distance_compute.calculate_distance_batch(
             query,
-            &vectors,
-            DistanceMetric::Euclidean,
-            mode,
-        )?;
+            &vector_refs,
+            &DistanceMetric::Euclidean,
+        );
         
         // Combine with records and sort
         for (idx, distance) in distances.iter().enumerate() {
@@ -322,6 +319,8 @@ fn deserialize_block(_data: &[u8]) -> Result<DataBlock> {
     
     // In real implementation, would deserialize from bytes
     Ok(DataBlock {
+        encoding_marker: 0x00, // Raw/Uncompressed format
+        encoding_metadata: None, // No FastLanes metadata for raw format
         block_id: 0,
         records: Vec::new(),
         quantized_vectors: None,

@@ -124,7 +124,7 @@ impl Default for SchemaOptimization {
             optimize_nullability: true,
             optimize_timestamp_precision: true,
             enable_fixed_size_binary: true,
-            tarrow_group_size: 50_000,
+            target_row_group_size: 50_000,
         }
     }
 }
@@ -358,7 +358,7 @@ impl ColumnarSchemaBuilder {
             let binary_size = (config.dimension + 7) / 8; // Bits to bytes
             fields.push(Field::new(
                 "vector_binary",
-                DataType::FixedSizeBinary(binary_size),
+                DataType::FixedSizeBinary(binary_size as i32),
                 true, // Nullable for progressive rollout
             ));
             
@@ -574,7 +574,7 @@ impl ColumnarSchemaBuilder {
 impl CachedSchema {
     /// Check if cached schema has expired
     fn is_expired(&self) -> bool {
-        self.created_at.elapsed() > self.ttl
+        self.timestamp.elapsed() > self.ttl
     }
 }
 

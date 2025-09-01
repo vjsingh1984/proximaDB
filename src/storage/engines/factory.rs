@@ -29,7 +29,7 @@ impl StorageEngineFactory {
         engine_type: ProtoStorageEngine,
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {
         match engine_type {
-            ProtoStorageEngine::StorageEngineUnspecified => {
+            ProtoStorageEngine::Unspecified => {
                 warn!("Unspecified storage engine, defaulting to SST (VIPER not available)");
                 Self::create_sst()
             }
@@ -189,15 +189,17 @@ impl StorageEngineFactory {
         // Set up metrics for SWIFT and NOVA engines
         match engine_type {
             ProtoStorageEngine::Swift => {
-                if let Ok(mut swift) = Arc::try_unwrap(engine).and_then(|e| e.downcast::<SwiftEngine>()) {
-                    swift.set_metrics_collector(metrics_collector.clone());
-                    // Register engine with collector
-                    let weak_ref = Arc::downgrade(&(Arc::new(swift) as Arc<dyn UnifiedStorageEngine>));
-                    tokio::spawn(async move {
-                        metrics_collector.register_engine("SWIFT".to_string(), weak_ref).await;
-                    });
-                    return Ok(Arc::new(swift) as Arc<dyn UnifiedStorageEngine>);
-                }
+                // TODO: Fix trait object downcasting - this is complex with Arc<dyn Trait>
+                // Commented out until swift variable is properly defined
+                // if false { // Temporarily disable this complex downcasting
+                //     swift.set_metrics_collector(metrics_collector.clone());
+                //     // Register engine with collector
+                //     let weak_ref = Arc::downgrade(&(Arc::new(swift) as Arc<dyn UnifiedStorageEngine>));
+                //     tokio::spawn(async move {
+                //         metrics_collector.register_engine("SWIFT".to_string(), weak_ref).await;
+                //     });
+                //     return Ok(Arc::new(swift) as Arc<dyn UnifiedStorageEngine>);
+                // }
             }
             ProtoStorageEngine::Nova => {
                 // NOVA engine already created, just register it

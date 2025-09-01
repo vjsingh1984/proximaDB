@@ -137,8 +137,14 @@ impl NovaColumnarSearch {
             // Create quantization engine for progressive search
             let quant_distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+            // Create codebook store for UnifiedQuantizationEngine
+            let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            let unified_quant_engine = Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::new(
+                quant_distance_compute.clone(),
+                codebook_store,
+            ));
             let quantization_engine = Arc::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::default()),
+                unified_quant_engine.clone(),
                 quant_distance_compute.clone(),
                 quant_config,
             ));
@@ -146,7 +152,7 @@ impl NovaColumnarSearch {
                 prog_config,
                 DistanceMetric::Euclidean, // Default, will be overridden per search
                 quant_distance_compute,
-                quantization_engine,
+                unified_quant_engine,
             )))
         } else {
             None
@@ -312,11 +318,19 @@ impl NovaColumnarSearch {
         let mut heap = BinaryHeap::new();
         while let Some(candidates) = rx.recv().await {
             for (record, distance) in candidates {
+                // Create SimilarityResult manually based on distance metric
+                let similarity_result = crate::compute::distance_computation::engine::SimilarityResult {
+                    raw_value: distance,
+                    metric: distance_metric,
+                    normalized_score: 1.0 / (1.0 + distance), // Simple normalization
+                    rank_value: distance, // For most metrics, rank_value = raw distance
+                };
+                
                 heap.push(SearchCandidate {
                     row_group_id: 0,
                     row_offset: 0,
-                    similarity: 1.0 - distance, // Convert distance to similarity
-                    vector_id: record.id.clone(),
+                    similarity: similarity_result.rank_value, // Use rank_value for proper ordering
+                    vector_id: Some(record.id.clone()),
                 });
                 
                 // Keep only top candidates in memory
@@ -728,12 +742,12 @@ impl NovaColumnarSearch {
             // Extract vector (simplified - would need proper conversion)
             let vector = extract_vector_from_column(vector_col, row_idx)?;
             
-            // Compute distance
-            let distance = self.distance_compute.calculate_distance(
+            // Compute distance and get proper SimilarityResult
+            let similarity_result = self.distance_compute.calculate_distance(
                 query_vector,
                 &vector,
-                &distance_metric,
-            )?;
+                distance_metric,
+            );
             
             let vector_id = id_col.map(|arr| arr.value(row_idx).to_string());
             
@@ -741,10 +755,10 @@ impl NovaColumnarSearch {
                 SearchCandidate {
                     row_group_id,
                     row_offset: row_idx as u32,
-                    similarity: 1.0 - distance,
+                    similarity: similarity_result.rank_value, // Use rank_value for proper ordering
                     vector_id,
                 },
-                distance,
+                similarity_result.raw_value, // Keep raw distance for processing
             ));
         }
         
@@ -805,6 +819,7 @@ impl NovaColumnarSearch {
             expires_at: None,
             version: None,
             quantized_vector: None,
+            source: None, // No source information available from Arrow batch
         }))
     }
     

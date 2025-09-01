@@ -18,6 +18,7 @@ use crate::index::axis::eventlog::{
 use crate::storage::engines::{FlushParameters, CompactionParameters};
 
 /// Helper trait for storage engines to notify EventLog
+#[async_trait::async_trait]
 pub trait EventLogNotifier {
     /// Notify about flush completion (fire-and-forget)
     fn notify_flush(
@@ -56,6 +57,7 @@ impl SstEventLogNotifier {
     }
 }
 
+#[async_trait::async_trait]
 impl EventLogNotifier for SstEventLogNotifier {
     fn notify_flush(
         &self,
@@ -140,6 +142,7 @@ impl ViperEventLogNotifier {
     }
 }
 
+#[async_trait::async_trait]
 impl EventLogNotifier for ViperEventLogNotifier {
     fn notify_flush(
         &self,
@@ -252,9 +255,10 @@ pub trait FlushParametersExt {
 impl FlushParametersExt for FlushParameters {
     fn has_quantized(&self) -> bool {
         self.collection_config.as_ref()
-            .and_then(|c| c.quantization.as_ref())
+            .and_then(|c| c.config.as_ref())
+            .and_then(|config| config.quantization.as_ref())
             .map(|q| q.enabled)
-            
+            .unwrap_or(false)
     }
     
     fn has_fp32(&self) -> bool {
@@ -264,10 +268,7 @@ impl FlushParametersExt for FlushParameters {
     
     fn storage_engine(&self) -> StorageEngineType {
         // Could check hints or collection config
-        if self.hints.as_ref()
-            .map(|h| h.contains_key("engine") && h["engine"] == "viper")
-             
-        {
+        if self.hints.contains_key("engine") && self.hints["engine"] == serde_json::Value::String("viper".to_string()) {
             StorageEngineType::VIPER
         } else {
             StorageEngineType::SST
@@ -283,10 +284,7 @@ pub trait CompactionParametersExt {
 
 impl CompactionParametersExt for CompactionParameters {
     fn storage_engine(&self) -> StorageEngineType {
-        if self.hints.as_ref()
-            .map(|h| h.contains_key("engine") && h["engine"] == "viper")
-            
-        {
+        if self.hints.contains_key("engine") && self.hints["engine"] == serde_json::Value::String("viper".to_string()) {
             StorageEngineType::VIPER
         } else {
             StorageEngineType::SST

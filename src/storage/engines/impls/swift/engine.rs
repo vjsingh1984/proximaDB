@@ -3,7 +3,9 @@
 
 use anyhow::{anyhow, Result};
 use crate::storage::engines::core::ops::{UniversallyOptimized, UniversalPerformanceOptimizer, UniversalOptimizationStrategy};
-use crate::core::search::StorageTier;use async_trait::async_trait;
+use crate::core::search::StorageTier;
+use crate::storage::persistence::filesystem::StorageTier as FilesystemStorageTier;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -183,7 +185,17 @@ impl SwiftEngine {
     /// Memory-mapped hierarchical file access for ultra-fast superblock traversal (delegates to universal optimizer)
     async fn get_memory_mapped_superblock(&self, file_path: &str) -> Result<Option<memmap2::Mmap>> {
         // Use universal optimizer's memory mapping functionality
-        self.universal_optimizer.get_memory_mapped_file(file_path).await
+        let mmap_arc_opt = self.universal_optimizer.get_memory_mapped_file(file_path).await?;
+        // Convert Arc<Mmap> to Mmap by cloning the underlying data
+        // Note: This is a temporary workaround - ideally we'd use Arc<Mmap> everywhere
+        if let Some(mmap_arc) = mmap_arc_opt {
+            // We can't easily convert Arc<Mmap> to Mmap, so return None for now
+            // TODO: Refactor to use Arc<Mmap> throughout the system
+            tracing::warn!("Memory mapping available but type conversion needed - falling back to regular I/O");
+            Ok(None)
+        } else {
+            Ok(None)
+        }
     }
     
     /// Parallel superblock operations with configurable concurrency (delegates to universal optimizer)
@@ -202,7 +214,24 @@ impl SwiftEngine {
     async fn optimize_hierarchical_storage_tier(&self, _access_frequency: f32, superblock_size_bytes: usize) -> Result<StorageTier> {
         // Use universal optimizer's storage tier optimization
         let file_key = format!("hierarchical_superblock_{}", superblock_size_bytes);
-        self.universal_optimizer.optimize_storage_tier(&file_key, superblock_size_bytes).await
+        let optimizer_tier = self.universal_optimizer.optimize_storage_tier(&file_key, superblock_size_bytes).await?;
+        
+        // Convert from filesystem::StorageTier to core::search::StorageTier
+        let core_tier = match optimizer_tier {
+            FilesystemStorageTier::Memory => StorageTier::Unflushed,
+            FilesystemStorageTier::NVMe => StorageTier::Flushed,
+            FilesystemStorageTier::SSD => StorageTier::Flushed,
+            FilesystemStorageTier::HDD => StorageTier::Compacted,
+            FilesystemStorageTier::S3Express => StorageTier::Compacted,
+            FilesystemStorageTier::S3Standard => StorageTier::Compacted,
+            FilesystemStorageTier::S3GlacierInstant => StorageTier::Compacted,
+            FilesystemStorageTier::AzurePremium => StorageTier::Flushed,
+            FilesystemStorageTier::AzureStandard => StorageTier::Compacted,
+            FilesystemStorageTier::GcsSSD => StorageTier::Flushed,
+            FilesystemStorageTier::GcsHDD => StorageTier::Compacted,
+        };
+        
+        Ok(core_tier)
     }
     
     /// Hierarchical distance computation using unified distance compute engine (delegates to universal optimizer)
@@ -224,8 +253,15 @@ impl SwiftEngine {
     
     /// Hierarchical compression optimization using unified compression module (delegates to universal optimizer)
     async fn compress_hierarchical_data(&self, data: &[u8], tier: StorageTier) -> Result<Vec<u8>> {
+        // Convert from core::search::StorageTier to filesystem::StorageTier
+        let fs_tier = match tier {
+            StorageTier::Unflushed => crate::storage::persistence::filesystem::StorageTier::Memory,
+            StorageTier::Flushed => crate::storage::persistence::filesystem::StorageTier::NVMe,
+            StorageTier::Compacted => crate::storage::persistence::filesystem::StorageTier::SSD,
+        };
+        
         // Use universal optimizer's tier-aware compression
-        self.universal_optimizer.compress_for_tier(data, tier).await
+        self.universal_optimizer.compress_for_tier(data, fs_tier).await
     }
     
     /// Prefetch hierarchical superblocks based on access patterns (delegates to universal optimizer)
@@ -277,11 +313,9 @@ impl SwiftEngine {
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
                     for (record_idx, record) in block.records.iter().enumerate() {
-                        if let Some(ref id) = record.id {
-                            // Compute approximate distance
-                            let distance = query.iter().zip(record.vector.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
-                            results.push((id.clone(), distance));
-                        }
+                        // Compute approximate distance
+                        let distance = query.iter().zip(record.vector.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>();
+                        results.push((record.id.clone(), distance));
                     }
                 }
             }
@@ -384,6 +418,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
+            flushed_batch_ids: vec![], // TODO: Track batch IDs when integrating with WAL
         })
     }
     
@@ -622,15 +657,16 @@ impl UnifiedStorageEngine for SwiftEngine {
         all_results.truncate(top_k);
         
         // Convert to core SearchResult format
-        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results.into_iter()
+        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> = all_results.into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
-                // Use SimilarityResult for proper semantic meaning
-                let similarity_result = crate::compute::distance_computation::SimilarityResult {
-                    normalized_score: 1.0 - distance.min(1.0).max(0.0), // Normalize to [0,1]
-                    raw_score: 1.0 - distance,
-                    distance: Some(distance),
-                    metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
+                // Create SimilarityResult manually for Euclidean distance
+                // For euclidean: lower distance = better similarity
+                let similarity_result = crate::compute::distance_computation::engine::SimilarityResult {
+                    raw_value: distance,
+                    metric: crate::proto::proximadb::DistanceMetric::Euclidean,
+                    normalized_score: 1.0 / (1.0 + distance), // Simple normalization
+                    rank_value: distance, // For euclidean, rank_value = raw distance
                 };
                 
                 crate::proto::proximadb::SearchVectorRecord {
@@ -647,6 +683,12 @@ impl UnifiedStorageEngine for SwiftEngine {
                 }
             })
             .collect();
+        
+        let search_results = vec![crate::proto::proximadb::SearchResult {
+            results: search_vector_records,
+            total_found: all_results.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }];
         
         // Track bytes processed for metrics
         if let Some(ref mut timer) = timer {
@@ -691,7 +733,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         })
     }
     
-    async fn supports_feature(&self, feature: &str) -> bool {
+    fn supports_feature(&self, feature: &str) -> bool {
         match feature {
             "id_lookup" => true,
             "similarity_search" => true,
@@ -859,11 +901,12 @@ impl SwiftEngine {
         let search_results: Vec<crate::core::search::InternalSearchResult> = all_results.into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
-                let similarity_result = crate::compute::distance_computation::SimilarityResult {
-                    normalized_score: 1.0 - distance.min(1.0).max(0.0),
-                    raw_score: 1.0 - distance,
-                    distance: Some(distance),
+                // Create SimilarityResult manually based on distance metric
+                let similarity_result = crate::compute::distance_computation::engine::SimilarityResult {
+                    raw_value: distance,
                     metric: distance_metric,
+                    normalized_score: 1.0 / (1.0 + distance), // Simple normalization
+                    rank_value: distance, // For most metrics, rank_value = raw distance
                 };
                 
                 // Convert metadata from proto to internal format
@@ -888,23 +931,19 @@ impl SwiftEngine {
                     vector_id: Some(record.id.clone()),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
-                    distance: Some(distance),
                     vector: Some(record.vector.clone()),
                     metadata,
-                    version: Some(record.version),
-                    timestamp: record.timestamp,
-                    collection_id: Some(collection_id.to_string()),
-                    engine: Some("swift".to_string()),
-                    shard_id: None,
-                    partition_key: None,
-                    namespace: None,
-                    labels: std::collections::HashMap::new(),
-                    explanation: None,
+                    version: record.version,
+                    timestamp: Some(record.timestamp),
+                    updated_at: record.updated_at,
+                    expires_at: record.expires_at,
+                    source: None,
+                    expanded_context: Vec::new(),
+                    semantic_similarity: Some(similarity_result),
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None, // SWIFT doesn't use traditional index paths
                     debug_info: None,
-                    highlights: Vec::new(),
-                    facets: std::collections::HashMap::new(),
-                    aggregations: std::collections::HashMap::new(),
-                    related_items: Vec::new(),
                 }
             })
             .collect();

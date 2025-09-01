@@ -326,8 +326,11 @@ impl ColumnarSerializer {
         
         let quantization_engine = if config.quantization.is_some() {
             let quant_config = StorageQuantizationConfig::default(); // TODO: Convert from QuantizationConfig
-            let unified_engine = Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::new());
             let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            let codebook_store = Arc::new(crate::compute::InMemoryCodebookStore::new());
+            let unified_engine = Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::new(
+                distance_compute.clone(), codebook_store
+            ));
             Some(Arc::new(StorageQuantizationEngine::new(
                 unified_engine,
                 distance_compute,
@@ -621,12 +624,12 @@ impl ColumnarSerializer {
                 
                 vector_builder.append_value(int8_data)?;
                 
-                // Extract scale and zero point from metadata
-                let scale = fast_quant.metadata.scale;
-                let zero_point = fast_quant.metadata.zero_point;
+                // Extract scale and offset from metadata
+                let scale = fast_quant.metadata.scale.unwrap_or(1.0);
+                let offset = fast_quant.metadata.offset.unwrap_or(0.0);
                 
                 scale_builder.append_value(scale);
-                zero_point_builder.append_value(zero_point);
+                zero_point_builder.append_value(offset as i8);
             } else {
                 vector_builder.append_null();
                 scale_builder.append_null();
@@ -645,7 +648,7 @@ impl ColumnarSerializer {
     fn serialize_pq_vectors(&self, quantized_data: &[StorageQuantizedData]) -> Result<ArrayRef> {
         let pq_size = self.config.quantization.as_ref()
             .map(|q| q.pq_segments as usize)
-            ;
+            .unwrap_or(16); // Default PQ segments
         
         let mut builder = FixedSizeBinaryBuilder::new(pq_size as i32);
         
@@ -712,7 +715,7 @@ impl ColumnarSerializer {
         let pq_size = pq_array.as_ref().map(|a| a.get_array_memory_size());
         
         let total_original = fp32_size;
-        let total_compressed = binary_size + int8_size + pq_size;
+        let total_compressed = binary_size.unwrap_or(0) + int8_size.unwrap_or(0) + pq_size.unwrap_or(0);
         
         let compression_ratio = if total_compressed > 0 {
             total_original as f32 / total_compressed as f32
@@ -722,9 +725,9 @@ impl ColumnarSerializer {
         
         Ok(CompressionStats {
             fp32_compressed_size: fp32_size,
-            binary_compressed_size: binary_size,
-            int8_compressed_size: int8_size,
-            pq_compressed_size: pq_size,
+            binary_compressed_size: binary_size.unwrap_or(0),
+            int8_compressed_size: int8_size.unwrap_or(0),
+            pq_compressed_size: pq_size.unwrap_or(0),
             total_original_size: total_original,
             total_compressed_size: total_compressed,
             compression_ratio,

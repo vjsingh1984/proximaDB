@@ -793,7 +793,7 @@ impl CommonColumnarOperations {
     
     fn is_cache_expired(&self, cached: &CachedFileMetadata) -> bool {
         let ttl = std::time::Duration::from_secs(self.config.schema_config.schema_cache_ttl_seconds);
-        cached.created_at.elapsed() > ttl
+        cached.timestamp.elapsed() > ttl
     }
     
     fn estimate_metadata_size(&self, _metadata: &ColumnarFileMetadata) -> usize {
@@ -1306,7 +1306,7 @@ pub fn map_core_to_parquet_compression(
                 Compression::BROTLI(parquet::basic::BrotliLevel::default())
             }
         }
-        CompressionAlgorithm::Lz4Raw => Compression::LZ4_RAW,
+        CompressionAlgorithm::Lz4 => Compression::LZ4,
         CompressionAlgorithm::Lzo => Compression::LZO,
         // Map unsupported algorithms to fallbacks
         CompressionAlgorithm::Deflate | CompressionAlgorithm::Zlib => {
@@ -1317,11 +1317,11 @@ pub fn map_core_to_parquet_compression(
                 Compression::GZIP(parquet::basic::GzipLevel::default())
             }
         }
-        CompressionAlgorithm::Lz4Hc => Compression::LZ4, // Use regular LZ4
+        CompressionAlgorithm::Lz4hc => Compression::LZ4, // Use regular LZ4
         CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
             // XZ and LZMA provide high compression, map to ZSTD with high level
-            let high_level = level.max(9);
-            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
+            let high_level = level.unwrap_or(9).max(9);
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level as i32)?)
         }
         CompressionAlgorithm::Bzip2 => {
             // BZip2 provides good compression, map to Brotli

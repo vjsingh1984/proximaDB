@@ -166,9 +166,9 @@ impl SstableWriter {
             path: path.as_ref().to_path_buf(),
             block_size,
             bloom_config: BloomFilterConfig {
+                strategy: crate::core::bloom::BloomStrategy::ByteAligned,
                 expected_items: 10000,
                 false_positive_rate: Some(0.01),
-                // strategy removed -  BloomStrategy::ByteAligned,
                 bits_per_key: 8,
                 enabled: true,
                 hash_algorithm: HashAlgorithm::Murmur3,
@@ -458,17 +458,41 @@ impl SstableWriter {
         // Write bloom filter
         output_data.extend_from_slice(&combined_bloom_filter.serialize()?);
         
-        // Create footer with proper metadata
-        let footer = SstMetadata {
-            global: global_header,
-            blocks: block_headers,
-            variable_data: Vec::new(), // No variable data needed here
-            global_bloom: None,
-            encoding_metadata: None,
-        };
+        // Manually serialize metadata instead of using bincode
+        let mut footer_bytes = Vec::new();
         
-        // Serialize footer using bincode
-        let footer_bytes = bincode::serialize(&footer)?;
+        // Serialize global header manually
+        footer_bytes.extend_from_slice(&global_header.file_size.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.num_blocks.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.bloom_filter_offset.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.bloom_filter_size.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.index_offset.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.index_size.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.total_records.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.min_timestamp.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.max_timestamp.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.compression_ratio.to_le_bytes());
+        footer_bytes.extend_from_slice(&global_header.reserved);
+        
+        // Serialize block count
+        footer_bytes.extend_from_slice(&(block_headers.len() as u32).to_le_bytes());
+        
+        // Serialize block headers manually
+        for header in &block_headers {
+            footer_bytes.extend_from_slice(&header.offset.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.compressed_size.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.uncompressed_size.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.record_count.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.bloom_offset.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.bloom_size.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.min_key_hash.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.max_key_hash.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.priority.to_le_bytes());
+            footer_bytes.extend_from_slice(&header.reserved);
+        }
+        
+        // Serialize variable data size and data
+        footer_bytes.extend_from_slice(&0u32.to_le_bytes()); // No variable data
         output_data.extend_from_slice(&footer_bytes);
         
         // Write all data atomically
@@ -1101,12 +1125,19 @@ impl SstableWriter {
         let scheme = if has_constants {
             FastLanesScheme::RunLength
         } else if has_small_range {
-            FastLanesScheme::FrameOfReference {}
+            FastLanesScheme::FrameOfReference { 
+                reference: min_val,
+                bits: 16, // Use 16 bits for small ranges
+            }
         } else if has_deltas {
-            FastLanesScheme::Delta {}
+            FastLanesScheme::Delta { 
+                base: values[0] as i64 
+            }
         } else {
             // Default to bit packing for dense data
-            FastLanesScheme::BitPacked {}
+            FastLanesScheme::BitPacked { 
+                bits: 32 // Default to 32 bits
+            }
         };
 
         debug!("🔍 FastLanes scheme selected: {:?}", scheme);

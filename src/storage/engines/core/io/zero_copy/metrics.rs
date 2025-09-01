@@ -556,7 +556,7 @@ impl MetricsCollector {
 
     /// Check alert conditions and fire alerts if needed
     pub fn check_alerts(&self) {
-        let metrics = self.metrics();
+        let metrics = self.get_metrics();
         
         // Check cache hit rate
         if metrics.metadata_cache.hit_rate < 0.8 {
@@ -606,7 +606,7 @@ impl MetricsCollector {
 
     /// Generate optimization recommendations based on current metrics
     pub fn generate_recommendations(&self) -> Vec<OptimizationRecommendation> {
-        let metrics = self.metrics();
+        let metrics = self.get_metrics();
         let mut recommendations = Vec::new();
 
         // Cache hit rate optimization
@@ -669,7 +669,7 @@ impl MetricsCollector {
 
     /// Store current metrics in history for trend analysis
     pub fn store_historical_metrics(&mut self) {
-        let current_metrics = self.metrics();
+        let current_metrics = self.get_metrics();
         self.historical_metrics.push(current_metrics);
         
         // Maintain history size limit

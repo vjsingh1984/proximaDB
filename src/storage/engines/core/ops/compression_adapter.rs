@@ -4,6 +4,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
 
 use crate::core::compression::{
     self as unified_compression, 
@@ -173,20 +174,20 @@ impl UniversalCompressionAdapter {
         let data_analysis = self.analyze_data_characteristics(data);
         
         // Select algorithm based on adaptive strategy
-        let selected_algorithm = match adaptive_settings.search_strategy {
-            crate::storage::engines::core::ops::compression_common::AdaptiveStrategy::DataDriven => {
-                self.select_data_driven_algorithm(&data_analysis)
-            }
-            crate::storage::engines::core::ops::compression_common::AdaptiveStrategy::PerformanceDriven => {
+        let selected_algorithm = match adaptive_settings.strategies.first() {
+            Some(CompressionStrategy::Speed { .. }) => {
                 self.select_performance_driven_algorithm(&data_analysis)
             }
-            crate::storage::engines::core::ops::compression_common::AdaptiveStrategy::HardwareDriven => {
+            Some(CompressionStrategy::Ratio { .. }) => {
+                self.select_data_driven_algorithm(&data_analysis)
+            }
+            Some(CompressionStrategy::Memory { .. }) => {
                 self.select_hardware_driven_algorithm(&data_analysis)
             }
-            crate::storage::engines::core::ops::compression_common::AdaptiveStrategy::HybridOptimization => {
-                self.select_hybrid_algorithm(&data_analysis)
+            _ => {
+                self.select_data_driven_algorithm(&data_analysis)
             }
-        };
+        }.ok_or_else(|| anyhow::anyhow!("No suitable compression algorithm found"))?;
         
         Ok(selected_algorithm)
     }

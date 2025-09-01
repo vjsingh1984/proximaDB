@@ -143,7 +143,7 @@ pub struct QueryContext {
 }
 
 /// Type of query for pattern analysis and optimization
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum QueryType {
     /// Single or batch ID lookup
     IdLookup,

@@ -67,7 +67,7 @@ pub struct SwiftSegmentHeader {
 }
 
 /// Complete SWIFT metadata structure
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SwiftMetadata {
     /// Global file information
     pub global: SwiftGlobalHeader,
@@ -304,15 +304,33 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         // Serialize using efficient format
         let mut serialized = Vec::new();
 
-        // 1. Global header (fixed size, bytemuck)
-        serialized.extend_from_slice(bytes_of(&metadata.global));
+        // 1. Global header (fixed size, manual serialization)
+        serialized.extend_from_slice(&metadata.global.file_size.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.num_segments.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.index_offset.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.index_size.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.total_records.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.min_timestamp.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.max_timestamp.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.compression_ratio.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.format_version.to_le_bytes());
+        serialized.extend_from_slice(&metadata.global.reserved);
 
         // 2. Number of segments
         serialized.extend_from_slice(&(metadata.segments.len() as u32).to_le_bytes());
 
-        // 3. Segment headers (fixed size, bytemuck)
+        // 3. Segment headers (fixed size, manual serialization)
         for segment in &metadata.segments {
-            serialized.extend_from_slice(bytes_of(segment));
+            serialized.extend_from_slice(&segment.offset.to_le_bytes());
+            serialized.extend_from_slice(&segment.compressed_size.to_le_bytes());
+            serialized.extend_from_slice(&segment.uncompressed_size.to_le_bytes());
+            serialized.extend_from_slice(&segment.record_count.to_le_bytes());
+            serialized.extend_from_slice(&segment.bloom_offset.to_le_bytes());
+            serialized.extend_from_slice(&segment.bloom_size.to_le_bytes());
+            serialized.extend_from_slice(&segment.min_id_hash.to_le_bytes());
+            serialized.extend_from_slice(&segment.max_id_hash.to_le_bytes());
+            serialized.extend_from_slice(&segment.priority.to_le_bytes());
+            serialized.extend_from_slice(&segment.reserved);
         }
 
         // 4. Variable data size + data
@@ -338,10 +356,20 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         let mut offset = 0;
 
-        // 1. Deserialize global header
-        let global_size = std::mem::size_of::<SwiftGlobalHeader>();
-        let global = *from_bytes::<SwiftGlobalHeader>(&data[offset..offset + global_size]);
-        offset += global_size;
+        // 1. Deserialize global header manually
+        let global = SwiftGlobalHeader {
+            file_size: u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()),
+            num_segments: u32::from_le_bytes(data[offset+8..offset+12].try_into().unwrap()),
+            index_offset: u32::from_le_bytes(data[offset+12..offset+16].try_into().unwrap()),
+            index_size: u32::from_le_bytes(data[offset+16..offset+20].try_into().unwrap()),
+            total_records: u64::from_le_bytes(data[offset+20..offset+28].try_into().unwrap()),
+            min_timestamp: u64::from_le_bytes(data[offset+28..offset+36].try_into().unwrap()),
+            max_timestamp: u64::from_le_bytes(data[offset+36..offset+44].try_into().unwrap()),
+            compression_ratio: data[offset+44],
+            format_version: data[offset+45],
+            reserved: data[offset+46..offset+52].try_into().unwrap(),
+        };
+        offset += 52; // Size of SwiftGlobalHeader
 
         // 2. Read number of segments
         let num_segments = u32::from_le_bytes([
@@ -360,9 +388,20 @@ impl MetadataSerializer for SwiftMetadataSerializer {
                 ));
             }
             
-            let segment = *from_bytes::<SwiftSegmentHeader>(&data[offset..offset + segment_size]);
+            let segment = SwiftSegmentHeader {
+                offset: u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()),
+                compressed_size: u32::from_le_bytes(data[offset+8..offset+12].try_into().unwrap()),
+                uncompressed_size: u32::from_le_bytes(data[offset+12..offset+16].try_into().unwrap()),
+                record_count: u32::from_le_bytes(data[offset+16..offset+20].try_into().unwrap()),
+                bloom_offset: u32::from_le_bytes(data[offset+20..offset+24].try_into().unwrap()),
+                bloom_size: u32::from_le_bytes(data[offset+24..offset+28].try_into().unwrap()),
+                min_id_hash: u64::from_le_bytes(data[offset+28..offset+36].try_into().unwrap()),
+                max_id_hash: u64::from_le_bytes(data[offset+36..offset+44].try_into().unwrap()),
+                priority: data[offset+44],
+                reserved: data[offset+45..offset+52].try_into().unwrap(),
+            };
             segments.push(segment);
-            offset += segment_size;
+            offset += 52; // Size of SwiftSegmentHeader
         }
 
         // 4. Read variable data
@@ -524,6 +563,18 @@ mod tests {
         if let Some(ranges) = ranges {
             assert!(!ranges.is_none());
             assert!(ranges.len() <= 10); // Shouldn't need all segments
+        }
+    }
+}
+// Manual Clone implementation for SwiftMetadata
+impl Clone for SwiftMetadata {
+    fn clone(&self) -> Self {
+        Self {
+            global: self.global.clone(),
+            segments: self.segments.clone(),
+            variable_data: self.variable_data.clone(),
+            global_bloom: parking_lot::RwLock::new(self.global_bloom.read().clone()),
+            segment_blooms: parking_lot::RwLock::new(self.segment_blooms.read().clone()),
         }
     }
 }

@@ -30,8 +30,8 @@ impl RowBasedUtilities {
             // Calculate vector data size
             for record in &block.records {
                 total_vector_bytes += record.vector.len() * 4; // 4 bytes per f32
-                if let Some(ref metadata) = record.metadata {
-                    total_metadata_bytes += metadata.len(); // Rough estimate
+                if !record.metadata.is_empty() {
+                    total_metadata_bytes += record.metadata.len() * 32; // Rough estimate per metadata item
                 }
             }
             
@@ -41,7 +41,7 @@ impl RowBasedUtilities {
             }
             
             // Calculate index size (rough estimate)
-            total_index_bytes += block.block_id.as_bytes().len() * 2; // ID in index structures
+            total_index_bytes += 8 * 2; // u32 block_id takes 8 bytes in index structures
         }
         
         let total_size = total_vector_bytes + total_metadata_bytes + total_quantized_bytes + total_index_bytes;
@@ -121,7 +121,7 @@ impl RowBasedUtilities {
             let mut record_issues = Vec::new();
             
             // Check ID
-            if record.id.is_empty() || record.id.as_ref().unwrap().is_empty() {
+            if record.id.is_empty() {
                 record_issues.push("Missing or empty ID".to_string());
             }
             
@@ -151,7 +151,7 @@ impl RowBasedUtilities {
                 report.invalid_records += 1;
                 report.validation_errors.push(RecordValidationError {
                     record_index: idx,
-                    record_id: record.id.clone(),
+                    record_id: Some(record.id.clone()),
                     issues: record_issues,
                 });
             }
@@ -458,7 +458,7 @@ impl PerformanceProfiler {
         PerformanceProfile {
             total_time_ms: total_time.as_millis() as u64,
             checkpoints: self.checkpoints,
-            peak_memory_bytes: peak_memory,
+            peak_memory_bytes: peak_memory.unwrap_or(0),
         }
     }
     

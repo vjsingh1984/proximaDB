@@ -228,7 +228,7 @@ impl ColumnarIdIndex {
         // For now, return placeholder based on file path
         let file_stem = std::path::Path::new(&self.file_path)
             .file_stem()
-            .clone()
+            .unwrap_or_default()
             .to_string_lossy();
         
         Ok((
@@ -289,7 +289,7 @@ impl ColumnarIdIndex {
             // Check bloom filter
             if self.bloom_filters[idx].contains(id) {
                 // Check ID range
-                if id >= &rg_index.id_range.0 && id <= &rg_index.id_range.1 {
+                if id >= rg_index.id_range.0.as_str() && id <= rg_index.id_range.1.as_str() {
                     candidates.push(idx);
                 }
             }
@@ -304,7 +304,7 @@ impl ColumnarIdIndex {
         
         for (idx, rg_index) in self.row_group_index.iter().enumerate() {
             // Check if ranges overlap
-            if !(end < &rg_index.id_range.0 || start > &rg_index.id_range.1) {
+            if !(end < rg_index.id_range.0.as_str() || start > rg_index.id_range.1.as_str()) {
                 groups.push(idx);
             }
         }

@@ -164,9 +164,10 @@ impl Default for SwiftHeader {
     }
 }
 
-/// Quantization configuration - multi-level for progressive search
+/// DEPRECATED: Being replaced with unified config
+/// Use crate::core::unified_config::EngineQuantizationConfig instead
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationConfig {
+pub struct QuantizationConfig_OLD {
     // Binary quantization
     pub enable_binary: bool,
     pub binary_threshold: f32,
@@ -187,7 +188,7 @@ pub struct QuantizationConfig {
     pub compression_level: u8,
 }
 
-impl Default for QuantizationConfig {
+impl Default for QuantizationConfig_OLD {
     fn default() -> Self {
         Self {
             enable_binary: false,
@@ -204,6 +205,9 @@ impl Default for QuantizationConfig {
         }
     }
 }
+
+/// Use proto-generated config directly - no more duplicates!
+pub use crate::proto::proximadb::QuantizationConfig;
 
 /// PQ Codebook
 #[derive(Debug, Clone, Serialize, Deserialize)]

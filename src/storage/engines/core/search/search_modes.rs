@@ -1284,9 +1284,6 @@ impl Default for ApproximationParams {
             },
             refinement: Some(RefinementParams {
                 enabled: true,
-                strategy: RefinementStrategy::ExactReranking {
-                    rerank_factor: 2.0,
-                },
                 refinement_budget: RefinementBudget::Time {
                     max_time_ms: 50,
                 },

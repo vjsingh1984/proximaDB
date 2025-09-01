@@ -408,7 +408,7 @@ impl RowBasedDataBlock {
     /// Check if block contains ID (using bloom filter if available)
     pub fn contains_id(&self, id: &str) -> bool {
         if let Some(ref bloom) = self.bloom_filter {
-            bloom.contains(id.as_bytes())
+            bloom.might_contain_key(id).unwrap_or(true)
         } else {
             self.find_record_by_id(id).is_some()
         }
@@ -419,7 +419,7 @@ impl RowBasedDataBlock {
         let records_size = self.records.len() * std::mem::size_of::<VectorRecord>();
         let quantized_size = self.quantized_vectors.as_ref()
             .map(|qv| qv.iter().map(|v| v.len()).sum())
-            ;
+            .unwrap_or(0);
         let metadata_size = std::mem::size_of::<RowBasedBlockMetadata>();
         
         records_size + quantized_size + metadata_size
@@ -523,9 +523,9 @@ impl RowBasedDataBlock {
                 base: ((min_val + max_val) / 2.0) as i64,
                 patch_bits: 8 
             },
-            0x50 => FastLanesScheme::Dictionary { dict_bits: 8 },
+            0x50 => FastLanesScheme::Dictionary,
             0x60 => FastLanesScheme::RunLength,
-            _ => FastLanesScheme::Uncompressed,
+            _ => FastLanesScheme::BitPacked { bits: 8 }, // Default to 8-bit packing
         };
         
         FastLanesMetadata {

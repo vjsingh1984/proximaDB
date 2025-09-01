@@ -179,7 +179,7 @@ impl Default for MigrationConfig {
             source_engine: ProtoStorageEngine::Viper,
             target_engine: ProtoStorageEngine::Nova,
             collections: Vec::new(),
-            // strategy removed -  MigrationStrategy::CopyThenSwitch,
+            strategy: MigrationStrategy::CopyThenSwitch,
             validation: ValidationConfig::default(),
             performance: PerformanceConfig::default(),
             rollback: RollbackConfig::default(),

@@ -45,7 +45,7 @@ impl ColumnarUtilities {
     pub async fn optimize_file_layout(
         &self,
         file_paths: &[String],
-        tarrow_group_size: Option<usize>,
+        target_row_group_size: Option<usize>,
     ) -> Result<FileLayoutOptimization> {
         info!("Optimizing file layout for {} files", file_paths.len());
         
@@ -62,7 +62,7 @@ impl ColumnarUtilities {
         }
         
         // Calculate optimal layout
-        let optimal_row_group_size = tarrow_group_size.unwrap_or(
+        let optimal_row_group_size = target_row_group_size.unwrap_or(
             self.calculate_optimal_row_group_size(total_vectors, total_size_bytes)
         );
         

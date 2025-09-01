@@ -8,6 +8,7 @@ use std::time::Instant;
 use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+use crate::storage::persistence::filesystem::FileSystem;
 use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 
@@ -370,7 +371,7 @@ impl SwiftSuperBlockCache {
         
         // Load bloom filter metadata (for instant filtering)
         let bloom_path = format!("{}/bloom_filters_metadata.bin", collection_id);
-        if self.filesystem.exists(&bloom_path).await {
+        if self.filesystem.exists(&bloom_path).await.unwrap_or(false) {
             let data = self.filesystem.read(&bloom_path).await?;
             let filters: HashMap<String, BloomFilterMetadata> = bincode::deserialize(&data)?;
             
@@ -405,7 +406,7 @@ impl SwiftSuperBlockCache {
     
     async fn load_or_generate_navigation_hints(&self, superblock_id: &str) -> Result<TreeNavigationHints> {
         let path = format!("cache/navigation/{}.bin", superblock_id);
-        if self.filesystem.exists(&path).await {
+        if self.filesystem.exists(&path).await.unwrap_or(false) {
             let data = self.filesystem.read(&path).await?;
             Ok(bincode::deserialize(&data)?)
         } else {

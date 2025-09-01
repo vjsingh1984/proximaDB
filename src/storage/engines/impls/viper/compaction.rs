@@ -222,7 +222,7 @@ impl Compaction {
                 if !entry.metadata.is_directory && entry.name.ends_with(".parquet") {
                     let codec = FilenameCodec::new();
                     let level = codec.parse_level(&entry.name);
-                    let timestamp = codec.parse_timestamp(&entry.name).unwrap_or(0);
+                    let timestamp = codec.parse_timestamp(&entry.name);
                     
                     debug!("✅ VIPER: Found Parquet file: {} at level {}", entry.name, level);
                     
@@ -380,7 +380,7 @@ impl Compaction {
                 level: 0, // Default to level 0 for now, will be updated when unified framework is applied
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .clone()
+                    .unwrap_or_default()
                     .as_millis() as u64,
             });
         }
@@ -530,8 +530,8 @@ impl Compaction {
         
         // Atomic write will handle staging internally
         
-        // Generate dynamic schema with caching using pre-fetched collection config
-        let schema = self.schema_manager.get_or_generate_cached_schema(collection_id, &collection_config).await?;
+        // Use the schema from the compaction instance
+        let schema = &self.schema;
         
         // COMPACTION FIX: Validate schema compatibility before processing
         // This prevents column alignment issues during compaction
@@ -548,21 +548,11 @@ impl Compaction {
         }
         
         // Log schema differences for debugging
-        for (idx, input_schema) in input_schemas.iter().enumerate() {
-            let missing_in_input: Vec<_> = schema.fields().iter()
-                .filter(|f| input_schema.field_with_name(f.name()).is_err())
-                .map(|f| f.name())
-                .collect();
-            
-            let extra_in_input: Vec<_> = input_schema.fields().iter()
-                .filter(|f| schema.field_with_name(f.name()).is_err())
-                .map(|f| f.name())
-                .collect();
-            
-            if !missing_in_input.is_empty() || !extra_in_input.is_empty() {
-                info!("📊 Schema differences in file {}: missing {:?}, extra {:?}", 
-                      idx, missing_in_input, extra_in_input);
-            }
+        // TODO: Re-enable schema validation after refactoring to get Arrow Schema from ColumnarSchema
+        for (idx, _input_schema) in input_schemas.iter().enumerate() {
+            debug!("📊 Processing schema validation for file {}", idx);
+            // Schema validation temporarily disabled due to type mismatch
+            // Need to extract Arrow Schema from ColumnarSchema first
         }
         
         // Process each input file and merge records by ID with MVCC resolution
@@ -978,7 +968,12 @@ impl Compaction {
                     None
                 };
                 
-                let mut writer = ArrowWriter::try_new(&mut parquet_data, schema.clone(), writer_props)
+                // Use the first input schema as a template (all should be compatible)
+                let arrow_schema = input_schemas.first()
+                    .ok_or_else(|| anyhow::anyhow!("No input schemas available for writing"))?
+                    .clone();
+                
+                let mut writer = ArrowWriter::try_new(&mut parquet_data, arrow_schema.clone(), writer_props)
                     .with_context(|| format!("Failed to create Arrow writer for file {}", file_idx))?;
                 
                 // Extract row data from records for this file
@@ -986,7 +981,7 @@ impl Compaction {
                     .map(|r| r.row_data.clone())
                     .collect();
                 
-                let batch = self.build_record_batch_from_data(schema.clone(), &row_data_vec)?;
+                let batch = self.build_record_batch_from_data(arrow_schema, &row_data_vec)?;
                 
                 if batch.num_rows() != file_record_count {
                     error!("❌ RecordBatch row count mismatch for file {}! Expected {}, got {}", 

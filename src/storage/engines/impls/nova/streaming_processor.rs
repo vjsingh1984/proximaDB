@@ -102,6 +102,7 @@ struct MemoryTracker {
 }
 
 /// Streaming context for row group processing
+#[derive(Clone)]
 pub struct StreamingContext {
     pub query_vector: Vec<f32>,
     pub top_k: usize,
@@ -327,11 +328,11 @@ impl StreamingRowGroupProcessor {
                 }
                 ProcessingStage::PQ4Filter => {
                     // PQ4 quantization filtering with Parquet encoding
-                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered, 4).await?;
+                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
                 }
                 ProcessingStage::PQ8Filter => {
                     // PQ8 quantization filtering with Parquet encoding
-                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered, 8).await?;
+                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
                 }
                 ProcessingStage::FullPrecision => {
                     // Full precision processing
@@ -374,6 +375,7 @@ impl StreamingRowGroupProcessor {
                 similarity: i as f32 * 0.1, // Simulated distance
                 vector_id: Some(format!("rg{}_row{}", task.row_group_id, i)),
                 record: None,
+                stage: ProcessingStage::BinaryFilter,
             });
         }
         Ok(candidates)

@@ -1320,6 +1320,18 @@ fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> Quant
         optimize_for_storage: false,
         optimize_for_memory: false,
         enable_simd_acceleration: true,
+        // NEW: Direct quantization type enables
+        enable_binary: true,
+        enable_int8: true,
+        enable_pq: true,
+        // Product Quantization specific settings
+        pq_segments: 8,
+        pq_bits: 8,
+        pq_codebooks: vec![],
+        // Thresholds for progressive search
+        binary_threshold: 0.3,
+        int8_threshold: 0.1,
+        pq_threshold: 0.05,
     }
 }
 

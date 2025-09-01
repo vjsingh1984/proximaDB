@@ -321,24 +321,51 @@ impl PrismEngine {
             use crate::storage::engines::core::io::zero_copy::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = crate::storage::engines::core::io::zero_copy::QueryContext {
-                    collection_context: None,
+                    query_vector: Some(query_vector.to_vec()),
+                    metadata_filters: HashMap::new(),
+                    id_lookups: vec![],
+                    top_k: Some(top_k),
                     distance_threshold: None,
-                    id_lookups: HashMap::new(),
-                    query_plan: None,
-                    search_stage: SearchStage::Initial,
-                    tiering_hints: vec![],
-                estimated_result_size: top_k as u64,
-                concurrent_queries: Some(1),
-                metadata_filters: vec![],
-                page_size: Some(100),
-                pagination_token: String::new(),
+                    query_type: QueryType::SimilaritySearch,
+                    collection_context: None,
+                    priority: RequestPriority::Normal,
+                    estimated_result_size: Some(top_k),
+                    selectivity_hint: None,
+                    collection_id: String::new(),
+                    concurrent_queries: Some(1),
+                    cache_temperature: crate::storage::engines::core::io::zero_copy::traits::CacheTemperature::Warm,
             };
             
             // Strategy decision handled internally
         }
         
         // Use progressive search with metadata filtering
-        self.progressive_search(query_vector, top_k, distance_metric, metadata_filters).await
+        // Convert metadata_filters from HashMap<String, Value> to HashMap<String, String>
+        let string_filters = metadata_filters.map(|filters| {
+            filters.into_iter()
+                .filter_map(|(k, v)| {
+                    if let serde_json::Value::String(s) = v {
+                        Some((k, s))
+                    } else {
+                        Some((k, v.to_string()))
+                    }
+                })
+                .collect()
+        });
+        // Convert progressive search results to CandidateVector
+        let results = self.progressive_search(query_vector, string_filters, top_k).await?;
+        
+        // Convert (String, f32) to CandidateVector
+        Ok(results.into_iter().map(|(id_str, score)| {
+            use uuid::Uuid;
+            CandidateVector {
+                id: Uuid::parse_str(&id_str).unwrap_or(Uuid::nil()),
+                data: Vec::new(),
+                original_vector: None,
+                metadata: None,
+                quality_score: Some(score),
+            }
+        }).collect())
     }
     
     /// 🚀 NEW: Search with compaction strategy - for full read operations where cache lookups are suboptimal
@@ -361,27 +388,27 @@ impl PrismEngine {
             use crate::storage::engines::core::io::zero_copy::traits::{QueryContext, QueryType, RequestPriority};
             
             let query_context = QueryContext {
-                    collection_context: None,
+                    query_vector: None,
+                    metadata_filters: HashMap::new(),
+                    id_lookups: vec![],
+                    top_k: None,
                     distance_threshold: None,
-                    id_lookups: HashMap::new(),
-                    query_plan: None,
-                    search_stage: SearchStage::Initial,
-                    tiering_hints: vec![],
-                query_type: QueryType::FullScan,
-                priority: RequestPriority::Background,
-                estimated_result_size: 1000000, // Large result set for compaction
-                selectivity_hint: 1.0, // Read everything
-                collection_id: "prism".to_string(),
-                concurrent_queries: 1,
-                cache_temperature: CacheTemperature::Cold, // Don't pollute cache for compaction
+                    query_type: QueryType::MetadataFilter, // Use metadata filter for full scan
+                    collection_context: None,
+                    priority: RequestPriority::Normal,
+                    estimated_result_size: Some(1000000), // Large result set for compaction
+                    selectivity_hint: Some(1.0), // Read everything
+                    collection_id: String::new(),
+                    concurrent_queries: Some(1),
+                    cache_temperature: crate::storage::engines::core::io::zero_copy::traits::CacheTemperature::Cold,
             };
             
             // Make bandwidth-optimized decisions for compaction
-            match optimizer.decide_strategy("prism_memory", &query_context).await {
+            match optimizer.decide_strategy("prism_memory", 0, None, &query_context, RequestPriority::Normal).await {
                 Ok(decision) => {
                     // For compaction, prefer using memory-first approach, minimal cloud access
                     debug!("🔄 PRISM COMPACTION BANDWIDTH: Memory strategy: {:?} (memory-first for compaction)", 
-                           decision.strategy);
+                           decision);
                 }
                 Err(e) => {
                     warn!("⚠️ PRISM COMPACTION BANDWIDTH: Failed to get decision: {}", e);
@@ -511,7 +538,7 @@ impl PrismEngine {
         self.universal_optimizer.write_data_optimized(
             &file_url,
             &bytes,
-            StorageTier::Hot, // Memory cache is always hot tier
+            StorageTier::Unflushed, // Memory cache is unflushed tier  
         ).await
     }
     
@@ -540,7 +567,16 @@ impl PrismEngine {
     async fn optimize_memory_storage_tier(&self, _access_frequency: f32, vector_size_bytes: usize) -> Result<StorageTier> {
         // Use universal optimizer's storage tier optimization
         let key = format!("prism_vector_{}", vector_size_bytes);
-        self.universal_optimizer.optimize_storage_tier(&key, vector_size_bytes).await
+        let infrastructure_tier = self.universal_optimizer.optimize_storage_tier(&key, vector_size_bytes).await?;
+        
+        // Convert from storage::persistence::filesystem::StorageTier to multi_tier_deduplication::StorageTier
+        use crate::storage::persistence::filesystem::StorageTier as FsStorageTier;
+        let tier = match infrastructure_tier {
+            FsStorageTier::Memory => StorageTier::Unflushed,
+            FsStorageTier::NVMe | FsStorageTier::SSD | FsStorageTier::HDD | FsStorageTier::S3Express | FsStorageTier::S3Standard | FsStorageTier::S3GlacierInstant | FsStorageTier::AzurePremium | FsStorageTier::AzureStandard | FsStorageTier::GcsStandard | FsStorageTier::GcsNearline => StorageTier::Compacted,
+        };
+        
+        Ok(tier)
     }
     
     /// Distance computation using unified distance compute engine with memory optimization (delegates to universal optimizer)
@@ -580,8 +616,9 @@ impl PrismEngine {
             query_vector,
             candidates,
             distance_metric,
-            storage_format: storage_format,
+            storage_format: storage_format.unwrap_or(StorageFormat::FP32),
             refinement_config: None,
+            quality_threshold: None,
             max_results,
             enable_acceleration: true,
             // quality_threshold removed -  Some(0.85),
@@ -647,7 +684,10 @@ impl PrismEngine {
         
         use super::fastlanes_serializer::{PrismFastLanesSerializer, ResolutionLevel};
         
-        let serializer = PrismFastLanesSerializer::new();
+        // Create default quantization config for PRISM
+        use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+        let quantization_config = StorageQuantizationConfig::default();
+        let serializer = PrismFastLanesSerializer::new(quantization_config);
         
         // Serialize at multiple resolution levels for progressive search
         let levels = vec![
@@ -658,7 +698,7 @@ impl PrismEngine {
         ];
         
         // Serialize progressive format
-        let serialized = serializer.serialize_progressive(records, &levels)?;
+        let serialized = serializer.serialize_progressive(records, &levels).await?;
         
         // Store in memory cache (PRISM is memory-first)
         // In production, this would update the actual in-memory structures
@@ -732,7 +772,10 @@ impl PrismEngine {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::compute::distance_computation::DistanceMetric;
         
-        let serializer = PrismFastLanesSerializer::new();
+        // Create default quantization config for PRISM
+        use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+        let quantization_config = StorageQuantizationConfig::default();
+        let serializer = PrismFastLanesSerializer::new(quantization_config);
         let distance_compute = UnifiedDistanceCompute::default();
         
         // Phase 1: Binary filtering - reduce candidates by 90%
@@ -796,7 +839,10 @@ impl UnifiedStorageEngine for PrismEngine {
         use super::fastlanes_serializer::{PrismFastLanesSerializer, ResolutionLevel};
         
         // PRISM is memory-first, so serialize and store in memory cache
-        let serializer = PrismFastLanesSerializer::new();
+        // Create default quantization config for PRISM
+        use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+        let quantization_config = StorageQuantizationConfig::default();
+        let serializer = PrismFastLanesSerializer::new(quantization_config);
         
         // Serialize at multiple resolution levels for fast access
         let levels = vec![
@@ -815,9 +861,15 @@ impl UnifiedStorageEngine for PrismEngine {
         
         Ok(FlushResult {
             success: true,
-            files_created: 0, // Memory-first, no files created
+            collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+            entries_flushed: params.vector_records.len() as u64,
             bytes_written: bytes_written as u64,
+            files_created: 0, // Memory-first, no files created
             duration_ms: start_time.elapsed().as_millis() as u64,
+            completed_at: chrono::Utc::now(),
+            engine_metrics: std::collections::HashMap::new(), // TODO: Add PRISM-specific metrics
+            compaction_triggered: false,
+            flushed_batch_ids: vec![], // TODO: Track batch IDs when integrating with WAL
         })
     }
 
@@ -826,19 +878,23 @@ impl UnifiedStorageEngine for PrismEngine {
             .ok_or_else(|| anyhow!("Collection ID required for compaction"))?;
         let start_time = std::time::Instant::now();
         
-        info!("PRISM compaction: collection={}, level={}", collection_id, params.compaction_level);
+        info!("PRISM compaction: collection={}", collection_id);
         
         // PRISM uses memory-first approach, compaction reorganizes in-memory structures
         // TODO: Implement actual memory reorganization
         
         Ok(CompactionResult {
             success: true,
+            collections_affected: vec![collection_id.to_string()],
+            entries_processed: 0, // TODO: Track actual entries
+            entries_removed: 0,
+            bytes_read: params.estimated_input_size as u64,
+            bytes_written: ((params.estimated_input_size * 90) / 100) as u64, // 10% reduction
             input_files: 0, // Memory-based, no files
             output_files: 0,
-            bytes_read: params.estimated_input_size,
-            bytes_written: (params.estimated_input_size * 90) / 100, // 10% reduction
-            records_compacted: 0,
             duration_ms: start_time.elapsed().as_millis() as u64,
+            completed_at: chrono::Utc::now(),
+            engine_metrics: std::collections::HashMap::new(), // TODO: Add PRISM-specific metrics
         })
     }
 

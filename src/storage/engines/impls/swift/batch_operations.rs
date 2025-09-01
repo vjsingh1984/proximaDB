@@ -39,6 +39,7 @@ impl Default for BatchConfig {
 }
 
 /// Block cache for recently accessed blocks
+#[derive(Clone)]
 struct BlockCache {
     cache: Arc<RwLock<lru::LruCache<(u32, u32), Arc<DataBlock>>>>,
     current_size: Arc<RwLock<usize>>,
@@ -229,20 +230,20 @@ async fn load_block_from_disk(
     // 3. Read and decompress the block
     // 4. Deserialize the records
     
-    // For now, return a mock block
-    Ok(DataBlock {
-        id: block_idx,
-        offset_in_superblock: 0,
-        compressed_size: 0,
-        uncompressed_size: 0,
-        records: Vec::new(),
-        quantized_vectors: None, // Quantization handled by universal adapter
-        quantization_level: None,
-        id_range: (String::new(), String::new()),
-        // min_timestamp removed -  0,
-        // max_timestamp removed -  0,
-        metadata_stats: None,
-    })
+    // For now, return a mock block using the correct constructor
+    use crate::storage::engines::core::formats::row_based::BlockCompressionConfig;
+    use crate::core::compression::CompressionAlgorithm;
+    
+    let compression_config = BlockCompressionConfig {
+        algorithm: CompressionAlgorithm::Zstd,
+        compression_level: 3,
+        enable_vector_compression: true,
+        enable_metadata_compression: true,
+        compression_threshold_bytes: 1024,
+        dictionary_compression: false,
+    };
+    
+    Ok(DataBlock::new(Vec::new(), compression_config))
 }
 
 /// Extract a record from a block at the given offset
@@ -319,7 +320,7 @@ pub async fn prefetch_blocks(
     
     for (sb_idx, b_idx) in block_ids {
         // Skip if already cached
-        if cache.get(&(*sb_idx, *b_idx)).is_some() {
+        if cache.get(&(sb_idx, b_idx)).await.is_some() {
             continue;
         }
         

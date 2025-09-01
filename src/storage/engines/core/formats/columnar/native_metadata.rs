@@ -398,7 +398,11 @@ impl NativeMetadataHandler {
                 for value in values {
                     match value {
                         Some(JsonValue::Number(n)) => {
-                            builder.append_value(n.as_f64().clone())
+                            if let Some(f64_val) = n.as_f64() {
+                                builder.append_value(f64_val)
+                            } else {
+                                builder.append_null()
+                            }
                         }
                         None => builder.append_null(),
                         _ => builder.append_null(),
@@ -437,7 +441,7 @@ impl NativeMetadataHandler {
         element_type: &MetadataFieldType,
         values: &[Option<&JsonValue>]
     ) -> Result<ArrayRef> {
-        match element_type.as_ref() {
+        match element_type {
             MetadataFieldType::String => {
                 let mut builder = ListBuilder::new(StringBuilder::new());
                 

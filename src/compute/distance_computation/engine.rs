@@ -514,7 +514,7 @@ impl UnifiedDistanceCompute {
     
     /// Fast similarity result creation for hot path (avoids expensive normalization context)
     #[inline(always)]
-    fn create_similarity_result(&self, raw_value: f32, metric: &DistanceMetric, vec_a: &[f32], vec_b: &[f32]) -> SimilarityResult {
+    pub fn create_similarity_result(&self, raw_value: f32, metric: &DistanceMetric, vec_a: &[f32], vec_b: &[f32]) -> SimilarityResult {
         // Use fast approximate normalization for hot paths
         let normalized_score = match metric {
             DistanceMetric::Cosine => {

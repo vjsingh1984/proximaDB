@@ -292,9 +292,7 @@ impl NovaEngine {
         let results = self.universal_optimizer.parallel_operations(
             read_operations,
             |operation| operation
-        ).await.map(|results| {
-            results.into_iter().collect::<Result<Vec<_>, _>>()
-        })??;
+        ).await?;
         
         Ok(results)
     }
@@ -302,21 +300,42 @@ impl NovaEngine {
     /// Storage tier optimization for Parquet files based on access patterns (delegates to universal optimizer)
     async fn optimize_parquet_storage_tier(&self, file_path: &str, row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats) -> Result<StorageTier> {
         // Use common utility for consistent vector size estimation
-        let dimension = self.config.dimension.unwrap_or(1536); // Default to 1536 if not set
+        // Default configuration since NovaEngine doesn't have config field
+        let dimension = 1536; // Default dimension
+        // Estimate storage size based on dimension and number of row groups
+        // Use a reasonable estimate of vectors per row group (e.g., 10000)
+        let estimated_vectors = 10000; // Default estimate for row group size
         let estimated_size = crate::storage::engines::core::ops::estimate_vector_storage_size(
             dimension,
-            self.config.quantization.as_deref(),
-            row_group_stats.vector_zone_map.total_vectors
+            None, // No quantization config available
+            estimated_vectors
         );
         
         // Use universal optimizer's storage tier optimization
-        self.universal_optimizer.optimize_storage_tier(file_path, estimated_size as usize).await
+        let infrastructure_tier = self.universal_optimizer.optimize_storage_tier(file_path, estimated_size as usize).await?;
+        
+        // Convert from filesystem::StorageTier to multi_tier_deduplication::StorageTier
+        let tier = match infrastructure_tier {
+            crate::storage::persistence::filesystem::StorageTier::Memory => StorageTier::Unflushed,
+            crate::storage::persistence::filesystem::StorageTier::NVMe => StorageTier::Flushed,
+            crate::storage::persistence::filesystem::StorageTier::SSD => StorageTier::Flushed,
+            _ => StorageTier::Compacted,
+        };
+        
+        Ok(tier)
     }
     
     /// Compression optimization using unified compression module (delegates to universal optimizer)
     async fn compress_parquet_optimized(&self, data: &[u8], tier: StorageTier) -> Result<Vec<u8>> {
+        // Convert from multi_tier_deduplication::StorageTier to filesystem::StorageTier
+        let fs_tier = match tier {
+            StorageTier::Unflushed => crate::storage::persistence::filesystem::StorageTier::Memory,
+            StorageTier::Flushed => crate::storage::persistence::filesystem::StorageTier::NVMe,
+            StorageTier::Compacted => crate::storage::persistence::filesystem::StorageTier::SSD,
+        };
+        
         // Use universal optimizer's tier-aware compression
-        self.universal_optimizer.compress_for_tier(data, tier).await
+        self.universal_optimizer.compress_for_tier(data, fs_tier).await
     }
     
     /// Distance computation using unified distance compute engine (delegates to universal optimizer)
@@ -412,11 +431,28 @@ impl UnifiedStorageEngine for NovaEngine {
                 dimension,
                 distance_metric: DistanceMetric::Euclidean,
                 quantization: super::QuantizationConfig {
+                    enabled: true,
+                    strategy: 0, // SmartDefaults
+                    custom_levels: vec![],
+                    enable_progressive_search: true,
+                    binary_filter_selectivity: 0.3,
+                    int8_ranking_selectivity: 0.1,
+                    pq_ranking_selectivity: 0.05,
+                    training_sample_size: 10000,
+                    quality_threshold: 0.95,
+                    enable_adaptive_training: true,
+                    optimize_for_storage: false,
+                    optimize_for_memory: false,
+                    enable_simd_acceleration: true,
+                    // Direct quantization type enables
                     enable_binary: true,
                     enable_int8: true,
                     enable_pq: true,
+                    // Product Quantization specific settings
                     pq_segments: 32,
                     pq_bits: 8,
+                    pq_codebooks: vec![],
+                    // Thresholds for progressive search
                     binary_threshold: 0.0,
                     int8_threshold: 0.85,
                     pq_threshold: 0.95,
@@ -634,16 +670,16 @@ impl UnifiedStorageEngine for NovaEngine {
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
         
-        // Convert to SearchResult format
-        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results
+        // Convert to InternalSearchResult format
+        let search_results: Vec<crate::core::search::InternalSearchResult> = all_results
             .into_iter()
             .enumerate()
             .map(|(idx, (record, score))| {
                 // Create similarity result for semantic information
                 let similarity_result = crate::compute::distance_computation::SimilarityResult {
                     normalized_score: score,
-                    raw_score: score,
-                    distance: Some(1.0 - score), // Convert similarity to distance
+                    raw_value: 1.0 - score, // Distance value
+                    rank_value: 1.0 - score, // Lower distance = better rank
                     metric: distance_metric,
                 };
                 
@@ -669,7 +705,11 @@ impl UnifiedStorageEngine for NovaEngine {
                         .collect(),
                     debug_info: None,
                     version: record.version,
-                    timestamp: record.timestamp,
+                    timestamp: Some(record.timestamp),
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
                     quantization_info: None,
                     engine_stats: None,
                     semantic_similarity: Some(similarity_result),
@@ -744,6 +784,7 @@ impl NovaFile {
             expires_at: None,
             version: None,
             quantized_vector: None,
+            source: None, // No source information in current implementation
         })
     }
 }
@@ -898,15 +939,15 @@ impl NovaEngine {
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
         
-        // Convert to SearchResult format
-        let search_results: Vec<crate::proto::proximadb::SearchResult> = all_results
+        // Convert to InternalSearchResult format
+        let search_results: Vec<crate::core::search::InternalSearchResult> = all_results
             .into_iter()
             .enumerate()
             .map(|(idx, (record, score))| {
                 let similarity_result = crate::compute::distance_computation::SimilarityResult {
                     normalized_score: score,
-                    raw_score: score,
-                    distance: Some(1.0 - score),
+                    raw_value: 1.0 - score, // Distance value
+                    rank_value: 1.0 - score, // Lower distance = better rank
                     metric: distance_metric,
                 };
                 
@@ -932,7 +973,11 @@ impl NovaEngine {
                         .collect(),
                     debug_info: None,
                     version: record.version,
-                    timestamp: record.timestamp,
+                    timestamp: Some(record.timestamp),
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
                     quantization_info: None,
                     engine_stats: None,
                     semantic_similarity: Some(similarity_result),

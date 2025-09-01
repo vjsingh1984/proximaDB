@@ -263,7 +263,7 @@ pub struct StreamingProcessor {
 }
 
 /// Active streaming session
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct StreamingSession {
     session_id: String,
     collection_id: String,
@@ -771,6 +771,8 @@ impl NovaUnifiedEngine {
                 vector_id: format!("nova_vector_{}", i),
                 similarity: result.similarity,
                 quality_estimate: result.quality_estimate,
+                hierarchical_level: 0,
+                zone_id: None,
             })
             .collect();
         

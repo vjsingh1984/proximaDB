@@ -597,7 +597,7 @@ impl HybridParquetWriter {
         if flushes == 0 {
             self.stats.avg_flush_latency_ms.store(new_latency, Ordering::Relaxed);
         } else {
-            let new_avg = (current * (flushes - 1) + new_latency) / flushes;
+            let new_avg = (current * (flushes as u64 - 1) + new_latency) / flushes as u64;
             self.stats.avg_flush_latency_ms.store(new_avg, Ordering::Relaxed);
         }
     }

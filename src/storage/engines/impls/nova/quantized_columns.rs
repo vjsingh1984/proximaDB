@@ -115,15 +115,9 @@ pub struct QuantizedColumnBuilder {
     config: QuantizationConfig,
 }
 
-#[derive(Debug, Clone)]
-pub struct QuantizationConfig {
-    pub enable_binary: bool,
-    pub enable_int8: bool,
-    pub enable_pq: bool,
-    pub pq_segments: u8,
-    pub pq_bits: u8,
-    pub binary_threshold: f32,
-}
+// DEPRECATED: Replaced with proto-generated config
+// Use crate::proto::proximadb::QuantizationConfig instead
+pub use crate::proto::proximadb::QuantizationConfig;
 
 impl QuantizedColumnBuilder {
     pub fn new(dimension: usize, config: QuantizationConfig) -> Self {
@@ -148,7 +142,7 @@ impl QuantizedColumnBuilder {
         let start_time = std::time::Instant::now();
         
         // Use unified quantization engine
-        let quantized_batch = quantization_engine.quantize_batch(&self.vectors, config).await?;
+        let quantized_batch = quantization_engine.quantize_batch(&self.vectors, None).await?;
         
         let mut columns = QuantizedColumns {
             binary_column: None,
@@ -174,9 +168,9 @@ impl QuantizedColumnBuilder {
             // Process fast quantization (INT8)
             if let Some(fast_quant) = &quantized_data.fast {
                 int8_vectors.push(Int8Vector {
-                    values: fast_quant.data.clone(),
+                    values: fast_quant.data.iter().map(|&b| b as i8).collect(),
                     scale: fast_quant.metadata.scale.unwrap_or(1.0),
-                    zero_point: fast_quant.metadata.offset.unwrap_or(0.0),
+                    zero_point: fast_quant.metadata.offset.unwrap_or(0.0) as i8,
                 });
             }
             
@@ -210,9 +204,8 @@ impl QuantizedColumnBuilder {
         if !pq_codes.is_empty() {
             columns.pq_column = Some(PQQuantizedColumn {
                 codes: pq_codes,
-                segments: 8, // Default PQ segments
+                num_segments: 8, // Default PQ segments
                 bits_per_segment: 8, // Default PQ bits
-                codebooks: vec![], // Codebooks are managed by the unified engine
             });
         }
         

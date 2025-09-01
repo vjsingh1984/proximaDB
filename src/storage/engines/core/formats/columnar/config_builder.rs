@@ -45,11 +45,28 @@ impl ParquetConfigBuilder {
                 dictionary_threshold: 0.5,
                 enable_delta_encoding: false,
                 quantization: QuantizationConfig {
+                    enabled: false,
+                    strategy: 0, // SmartDefaults
+                    custom_levels: vec![],
+                    enable_progressive_search: false,
+                    binary_filter_selectivity: 0.3,
+                    int8_ranking_selectivity: 0.1,
+                    pq_ranking_selectivity: 0.05,
+                    training_sample_size: 10000,
+                    quality_threshold: 0.95,
+                    enable_adaptive_training: false,
+                    optimize_for_storage: false,
+                    optimize_for_memory: false,
+                    enable_simd_acceleration: true,
+                    // Direct quantization type enables
                     enable_binary: false,
                     enable_int8: false,
                     enable_pq: false,
+                    // Product Quantization specific settings
                     pq_segments: 8,
                     pq_bits: 8,
+                    pq_codebooks: vec![],
+                    // Thresholds for progressive search
                     binary_threshold: 100.0,
                     int8_threshold: 50.0,
                     pq_threshold: 10.0,
@@ -94,7 +111,7 @@ impl ParquetConfigBuilder {
     
     /// Set custom compression algorithm
     pub fn compression(mut self, compression: CompressionAlgorithm) -> Self {
-        self.config.storage.as_ref().and_then(|s| s.compression.as_ref()) = compression;
+        self.config.compression = compression;
         self
     }
     
@@ -175,7 +192,7 @@ impl FooterCacheBuilder {
     
     /// Disable compression
     pub fn disable_compression(mut self) -> Self {
-        self.config.enable_compression = false;
+        self.config.compression = false;
         self
     }
     
@@ -337,7 +354,7 @@ impl ParquetPresets {
         ParquetConfigBuilder::new()
             .row_group_size(50000) // Large row groups for fewer files
             .page_size(2 * 1024 * 1024) // 2MB pages
-            .storage.as_ref().and_then(|s| s.compression.as_ref())(CompressionAlgorithm::Zstd) // Best compression
+            .compression(CompressionAlgorithm::Zstd) // Best compression
             .bloom_filter_fpp(0.001) // 0.1% FPP for better filtering
             .build()
     }
@@ -348,7 +365,7 @@ impl ParquetPresets {
             .disable_pq_sorting() // Skip sorting for faster writes
             .row_group_size(1000) // Small row groups for quick flushes
             .page_size(256 * 1024) // Smaller pages
-            .storage.as_ref().and_then(|s| s.compression.as_ref())(CompressionAlgorithm::Lz4) // Fast compression
+            .compression(CompressionAlgorithm::Lz4) // Fast compression
             .build()
     }
 }

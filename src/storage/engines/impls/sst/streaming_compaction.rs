@@ -193,8 +193,19 @@ impl StreamingCompactor {
                 total_input_size += metadata.size;
             }
             
-            // Create streaming reader
-            let reader = UnifiedSstableReader::new(self.filesystem.clone());
+            // Create streaming reader - for compaction, we use simplified zero-copy and collection ID
+            let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
+            let zero_copy_system = Arc::new(crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
+                zero_copy_config,
+                self.filesystem.clone(),
+                Vec::new()
+            ).await.map_err(|e| anyhow::anyhow!("Failed to create zero-copy system: {}", e))?);
+            
+            let reader = UnifiedSstableReader::new(
+                self.filesystem.clone(),
+                zero_copy_system,
+                "compaction".to_string()
+            );
             
             // Get first record from this file for K-way merge initialization
             match self.get_first_record_from_file(&reader, input_file, file_index).await {

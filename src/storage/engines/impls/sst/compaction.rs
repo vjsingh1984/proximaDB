@@ -28,7 +28,7 @@ use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::Result;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use crate::storage::engines::core::io::zero_copy::{ZeroCopyIOSystem, ZeroCopyIOConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 // Import unified level-based compaction framework
@@ -176,7 +176,15 @@ impl Compaction {
                 crate::storage::persistence::filesystem::FilesystemConfig::default()
             ).await.map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?
         );
-        let zero_copy_system = Arc::new(ZeroCopyIOSystem::new(filesystem_factory.clone(), 1024 * 1024 * 100).await?);
+        let zero_copy_config = ZeroCopyIOConfig {
+            metadata_cache: crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
+                max_memory_mb: 100,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let zero_copy_system = Arc::new(ZeroCopyIOSystem::new(zero_copy_config, filesystem_factory.clone(), Vec::new()).await
+            .map_err(|e| crate::core::StorageError::SstStorage(format!("Failed to create zero-copy system: {}", e)))?);
         let unified_reader = Arc::new(UnifiedSstableReader::new(
             filesystem_factory.clone(),
             zero_copy_system,
@@ -668,14 +676,14 @@ impl Compaction {
         
         // OPTIMIZED: Sort VectorRecords directly by (id, version, timestamp) for merge deduplication
         all_vector_records.sort_by(|a, b| {
-            let id_a = a.id.as_ref();
-            let id_b = b.id.as_ref();
+            let id_a = &a.id;
+            let id_b = &b.id;
             
             // First sort by ID
             match id_a.cmp(id_b) {
                 std::cmp::Ordering::Equal => {
                     // For same ID, sort by version (newer versions first)
-                    match b.version.cmp(&a.version.unwrap_or(0)) {
+                    match b.version.unwrap_or(0).cmp(&a.version.unwrap_or(0)) {
                         std::cmp::Ordering::Equal => {
                             // For same version, sort by timestamp (newer timestamp first)
                             b.timestamp.cmp(&a.timestamp)
@@ -692,14 +700,14 @@ impl Compaction {
         let mut last_id = String::new();
         
         for record in all_vector_records {
-            let record_id = record.id.as_ref().clone();
+            let record_id = &record.id;
             
             // For append-only vectors (empty IDs), keep all records
-            if record_id.is_none() || record_id.starts_with("__append_only_") {
+            if record_id.is_empty() || record_id.starts_with("__append_only_") {
                 merged_vector_records.push(record);
-            } else if record_id != last_id {
+            } else if record_id != &last_id {
                 // New ID, add it
-                last_id = record_id;
+                last_id = record_id.clone();
                 merged_vector_records.push(record);
             } else {
                 // Same ID, skip (we already have the latest version due to sorting)
@@ -723,10 +731,10 @@ impl Compaction {
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
         
-        for (id, vector_record) in resolved_records.iter() {
+        for vector_record in resolved_records.iter() {
             // Check if record is expired (TTL-based expiry)
-            let is_expired = if vector_record.expires_at > 0 {
-                vector_record.expires_at < current_time // Both in milliseconds
+            let is_expired = if let Some(expires_at) = vector_record.expires_at {
+                expires_at as i64 > 0 && (expires_at as i64) < current_time // Both in milliseconds
             } else {
                 false
             };
@@ -735,13 +743,14 @@ impl Compaction {
             if is_expired {
                 expired_records_count += 1;
                 // Track deleted vector for AXIS
-                deleted_vector_ids.push(id.to_string());
+                deleted_vector_ids.push(vector_record.id.clone());
                 continue;
             }
             
             // Handle tombstone cleanup
             // Check if it's a tombstone by checking if expires_at is set and in the past
-            let is_tombstone = vector_record.expires_at > 0 && vector_record.expires_at < current_time;
+            let is_tombstone = vector_record.expires_at.map_or(false, |expires_at| 
+                expires_at as i64 > 0 && (expires_at as i64) < current_time);
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
                 let age = (current_time / 1000) - (vector_record.timestamp as i64); // Both in seconds
@@ -750,7 +759,7 @@ impl Compaction {
                 if !keep_tombstone {
                     tombstones_removed_count += 1;
                     // Track deleted vector for AXIS
-                    deleted_vector_ids.push(id.to_string());
+                    deleted_vector_ids.push(vector_record.id.clone());
                 }
                 
                 keep_tombstone
@@ -777,7 +786,8 @@ impl Compaction {
         }
 
         // OPTIMIZED: Sort VectorRecords by metadata for optimal encoding (no conversions)
-        info!("🔄 UNIFIED COMPACTION: Sorting {} VectorRecords by metadata for optimal encoding", resolved_records.len());
+        let resolved_records_len = resolved_records.len();
+        info!("🔄 UNIFIED COMPACTION: Sorting {} VectorRecords by metadata for optimal encoding", resolved_records_len);
         let (sorted_vectors, sort_stats) = Self::sort_vectors_for_compaction(resolved_records).await?;
         info!("✅ UNIFIED COMPACTION: Sorted records (estimated compression improvement: {:.1}%)", 
               sort_stats.compression_estimate * 100.0);
@@ -785,10 +795,10 @@ impl Compaction {
         // FASTEST: Direct VectorRecord to writer (no SstRecord conversions!)
         let mut sorted_vector_records: Vec<(String, VectorRecord)> = Vec::new();
         for (seq, vector) in sorted_vectors.into_iter().enumerate() {
-            let vector_id = vector.id.as_deref().unwrap_or("").to_string();
+            let vector_id = if vector.id.is_empty() { String::new() } else { vector.id.clone() };
             
             // Handle append-only vectors (empty/null IDs) specially
-            let key = if vector_id.is_none() {
+            let key = if vector_id.is_empty() {
                 // For append-only vectors, use sequence number as unique key
                 let append_only_key = format!("__append_only_seq_{}", seq);
                 info!("🔍 UNIFIED: Append-only vector at sequence {}, using key='{}'", seq, append_only_key);
@@ -1013,7 +1023,7 @@ impl Compaction {
 
         debug!(
             "🗜️ LSM compaction stats: {}MB read, {}MB written, {:.1}x compression, {} records merged, {} expired deleted, {} tombstones removed",
-            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, resolved_records.len(), expired_records_count, tombstones_removed_count
+            bytes_read / 1024 / 1024, bytes_written / 1024 / 1024, compression_ratio, resolved_records_len, expired_records_count, tombstones_removed_count
         );
 
         Ok(EnhancedCompactionStats {

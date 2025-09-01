@@ -264,20 +264,21 @@ pub struct CompressionStats {
 impl RowBasedCompressionConfig {
     /// Create compression config from proto config
     pub fn from_proto_config(proto_config: &ProtoCompressionConfig) -> Self {
-        let algorithm = match proto_config.algorithm.to_lowercase().as_deref() {
-            "zstd" => CompressionAlgorithm::Zstd,
-            "lz4" => CompressionAlgorithm::Lz4,
-            "snappy" => CompressionAlgorithm::Snappy,
-            "gzip" => CompressionAlgorithm::Gzip,
-            "brotli" => CompressionAlgorithm::Brotli,
+        use crate::proto::proximadb::CompressionAlgorithm as ProtoAlgorithm;
+        let algorithm = match ProtoAlgorithm::try_from(proto_config.algorithm) {
+            Ok(ProtoAlgorithm::CompressionZstd) => CompressionAlgorithm::Zstd,
+            Ok(ProtoAlgorithm::CompressionLz4) => CompressionAlgorithm::Lz4,
+            Ok(ProtoAlgorithm::CompressionSnappy) => CompressionAlgorithm::Snappy,
+            Ok(ProtoAlgorithm::CompressionGzip) => CompressionAlgorithm::Gzip,
+            Ok(ProtoAlgorithm::CompressionBrotli) => CompressionAlgorithm::Brotli,
             _ => CompressionAlgorithm::Zstd,
         };
         
         Self {
-            enabled: proto_config.enabled,
+            enabled: proto_config.adaptive, // Use adaptive field as enabled
             algorithm,
-            compression_level: proto_config.level as u8,
-            compression_ratio_estimate: proto_config.compression_ratio,
+            compression_level: proto_config.level.unwrap_or(3) as u8,
+            compression_ratio_estimate: 1.5, // Default ratio
             vector_compression: VectorCompressionStrategy::default(),
             metadata_compression: MetadataCompressionConfig::default(),
             block_compression: BlockLevelCompressionConfig::default(),
@@ -328,7 +329,7 @@ impl RowBasedCompressionConfig {
         
         // Context-specific decisions
         match context {
-            CompressionContext::Vector => {
+            CompressionContext::Column => { // Use Column for vector data
                 // Check if vector compression is enabled based on hardware optimizations or quantization
                 self.vector_compression.quantization_aware || 
                 self.vector_compression.hardware_optimizations.use_hardware_acceleration

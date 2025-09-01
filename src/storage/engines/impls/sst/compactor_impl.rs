@@ -637,8 +637,8 @@ impl SstCompactor {
             CompactionSortStrategy::ById => {
                 records.sort_by(|a, b| {
                     // Check if either record is append-only
-                    let a_is_append = a.id.as_ref().map_or(true, |id| Self::is_append_only(id));
-                    let b_is_append = b.id.as_ref().map_or(true, |id| Self::is_append_only(id));
+                    let a_is_append = Self::is_append_only(&a.id);
+                    let b_is_append = Self::is_append_only(&b.id);
                     
                     match (a_is_append, b_is_append) {
                         (true, true) => {

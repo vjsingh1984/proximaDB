@@ -108,7 +108,8 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage
         let mut candidates = Vec::new();
         
         // Get all SST files for the collection
-        let sst_files = self.get_collection_sst_files(collection_id).await?;
+        // TODO: Implement actual SST file retrieval
+        let _sst_files: Vec<String> = Vec::new(); // Placeholder
         
         // Placeholder implementation - would read from SST files with quantized data
         // For now, return empty results to make it compile

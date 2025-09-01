@@ -495,7 +495,7 @@ impl DecompressionCache {
         comp_caches
             .get(&algorithm)
             .cloned()
-            .clone()
+            .unwrap_or_default()
     }
 }
 

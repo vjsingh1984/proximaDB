@@ -244,15 +244,34 @@ impl MetadataSerializer for SstMetadataSerializer {
         
         let mut buffer = Vec::new();
         
-        // Serialize global header (fixed size)
-        buffer.extend_from_slice(bytemuck::bytes_of(&metadata.global));
+        // Serialize global header manually
+        buffer.extend_from_slice(&metadata.global.file_size.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.num_blocks.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.bloom_filter_offset.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.bloom_filter_size.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.index_offset.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.index_size.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.total_records.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.min_timestamp.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.max_timestamp.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.compression_ratio.to_le_bytes());
+        buffer.extend_from_slice(&metadata.global.reserved);
         
         // Serialize block count
         buffer.extend_from_slice(&(metadata.blocks.len() as u32).to_le_bytes());
         
-        // Serialize block headers (fixed size array)
+        // Serialize block headers manually
         for block in &metadata.blocks {
-            buffer.extend_from_slice(bytemuck::bytes_of(block));
+            buffer.extend_from_slice(&block.offset.to_le_bytes());
+            buffer.extend_from_slice(&block.compressed_size.to_le_bytes());
+            buffer.extend_from_slice(&block.uncompressed_size.to_le_bytes());
+            buffer.extend_from_slice(&block.record_count.to_le_bytes());
+            buffer.extend_from_slice(&block.bloom_offset.to_le_bytes());
+            buffer.extend_from_slice(&block.bloom_size.to_le_bytes());
+            buffer.extend_from_slice(&block.min_key_hash.to_le_bytes());
+            buffer.extend_from_slice(&block.max_key_hash.to_le_bytes());
+            buffer.extend_from_slice(&block.priority.to_le_bytes());
+            buffer.extend_from_slice(&block.reserved);
         }
         
         // Serialize variable data size
@@ -267,15 +286,25 @@ impl MetadataSerializer for SstMetadataSerializer {
     fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
         let mut offset = 0;
         
-        // Deserialize global header
-        if data.len() < offset + std::mem::size_of::<SstGlobalHeader>() {
+        // Deserialize global header manually
+        if data.len() < offset + 64 { // Size of header
             return Err(ProximaDBError::InvalidInput("Invalid SST metadata size".into()));
         }
         
-        let global = *bytemuck::from_bytes::<SstGlobalHeader>(
-            &data[offset..offset + std::mem::size_of::<SstGlobalHeader>()]
-        );
-        offset += std::mem::size_of::<SstGlobalHeader>();
+        let global = SstGlobalHeader {
+            file_size: u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()),
+            num_blocks: u32::from_le_bytes(data[offset+8..offset+12].try_into().unwrap()),
+            bloom_filter_offset: u32::from_le_bytes(data[offset+12..offset+16].try_into().unwrap()),
+            bloom_filter_size: u32::from_le_bytes(data[offset+16..offset+20].try_into().unwrap()),
+            index_offset: u32::from_le_bytes(data[offset+20..offset+24].try_into().unwrap()),
+            index_size: u32::from_le_bytes(data[offset+24..offset+28].try_into().unwrap()),
+            total_records: u64::from_le_bytes(data[offset+28..offset+36].try_into().unwrap()),
+            min_timestamp: u64::from_le_bytes(data[offset+36..offset+44].try_into().unwrap()),
+            max_timestamp: u64::from_le_bytes(data[offset+44..offset+52].try_into().unwrap()),
+            compression_ratio: data[offset+52],
+            reserved: data[offset+53..offset+60].try_into().unwrap(),
+        };
+        offset += 60;
         
         // Deserialize block count
         if data.len() < offset + 4 {
@@ -284,17 +313,31 @@ impl MetadataSerializer for SstMetadataSerializer {
         let block_count = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
         offset += 4;
         
-        // Deserialize block headers
-        let block_header_size = std::mem::size_of::<SstBlockHeader>();
+        // Deserialize block headers manually
+        let block_header_size = 56; // Size of SstBlockHeader
         let total_block_size = block_count as usize * block_header_size;
         
         if data.len() < offset + total_block_size {
             return Err(ProximaDBError::InvalidInput("Invalid SST block headers".into()));
         }
         
-        let block_data = &data[offset..offset + total_block_size];
-        let blocks: Vec<SstBlockHeader> = try_cast_slice(block_data)?.to_vec();
-        offset += total_block_size;
+        let mut blocks = Vec::new();
+        for _ in 0..block_count {
+            let block = SstBlockHeader {
+                offset: u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()),
+                compressed_size: u32::from_le_bytes(data[offset+8..offset+12].try_into().unwrap()),
+                uncompressed_size: u32::from_le_bytes(data[offset+12..offset+16].try_into().unwrap()),
+                record_count: u32::from_le_bytes(data[offset+16..offset+20].try_into().unwrap()),
+                bloom_offset: u32::from_le_bytes(data[offset+20..offset+24].try_into().unwrap()),
+                bloom_size: u32::from_le_bytes(data[offset+24..offset+28].try_into().unwrap()),
+                min_key_hash: u64::from_le_bytes(data[offset+28..offset+36].try_into().unwrap()),
+                max_key_hash: u64::from_le_bytes(data[offset+36..offset+44].try_into().unwrap()),
+                priority: data[offset+44],
+                reserved: data[offset+45..offset+52].try_into().unwrap(),
+            };
+            blocks.push(block);
+            offset += block_header_size;
+        }
         
         // Deserialize variable data size
         if data.len() < offset + 4 {
@@ -477,18 +520,7 @@ impl EngineMetadata for SstMetadata {
     }
 }
 
-// Enable downcasting for the metadata
-impl SstMetadata {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
-impl dyn EngineMetadata {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self as &dyn std::any::Any
-    }
-}
 
 // Implement Clone for SstMetadata
 impl Clone for SstMetadata {

@@ -134,10 +134,10 @@ pub fn get_shared_hardware_capabilities() -> Arc<HardwareCapabilities> {
 /// Configure the memory pool size from server config
 /// This should be called early in server initialization, before any engine is created
 pub fn configure_memory_pool_from_config(pool_size_mb: Option<usize>) {
-    if SHARED_MEMORY_POOL.strong_count() > 1 {
+    if Arc::strong_count(&*SHARED_MEMORY_POOL) > 1 {
         tracing::warn!(
             "Memory pool already initialized with {} references, configuration ignored",
-            SHARED_MEMORY_POOL.strong_count()
+            Arc::strong_count(&*SHARED_MEMORY_POOL)
         );
         return;
     }
@@ -436,7 +436,7 @@ impl UniversalPerformanceOptimizer {
         // VectorMemoryPool provides pre-allocated buffers
         // The acquire() method returns a PooledItem which derefs to Vec<f32>
         // Need to deref the Lazy first to get the Arc<VectorMemoryPool>
-        let pooled_item = SHARED_MEMORY_POOL.acquire();
+        let pooled_item = SHARED_MEMORY_POOL.as_ref().vector_buffers.acquire();
         Ok(pooled_item.take())
     }
     

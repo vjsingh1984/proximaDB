@@ -166,7 +166,9 @@ impl OptimizedNovaOperations {
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::new();
         // Get pooled buffer for query
-        let mut query_buffer = self.vector_pool.get_f32_buffer(query.len());
+        // Use vector_buffers.acquire() from the pool
+        let mut query_buffer = self.vector_pool.vector_buffers.acquire();
+        query_buffer.clear();
         query_buffer.extend_from_slice(query);
         // Process row groups in parallel
         for &rg_idx in row_groups {
@@ -211,14 +213,13 @@ impl OptimizedNovaOperations {
             // Load vectors from columnar storage
             let vectors = self.load_vectors_columnar(rg_idx, &row_offsets).await?;
             // Determine best computation mode
-            let mode = self.select_compute_mode(&vectors);
-            // Batch compute distances
-            let distances = self.distance_compute.batch_distances(
+            // Batch compute distances using correct method
+            let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
+            let distances = self.distance_compute.calculate_distance_batch(
                 query,
-                &vectors,
-                DistanceMetric::Euclidean,
-                mode,
-            )?;
+                &vector_refs,
+                &DistanceMetric::Euclidean,
+            );
             // Create records
             for (idx, (vec, dist)) in vectors.iter().zip(distances.iter()).enumerate() {
                 if idx < row_offsets.len() {
@@ -253,7 +254,9 @@ impl OptimizedNovaOperations {
         // Using memory pool for efficiency
         let mut vectors = Vec::new();
         for _ in row_offsets {
-            let mut vec = self.vector_pool.get_f32_buffer(768);
+            let mut vec = self.vector_pool.vector_buffers.acquire();
+            vec.clear();
+            vec.reserve(768);
             vec.resize(768, 0.0); // Placeholder
             vectors.push(vec.to_vec());
         }

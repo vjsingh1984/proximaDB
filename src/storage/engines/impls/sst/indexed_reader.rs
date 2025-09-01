@@ -62,10 +62,18 @@ impl SSTMetadataSource {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?
         );
+        let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
+            metadata_cache: crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
+                max_memory_mb: 100,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let zero_copy_system = Arc::new(
             crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
+                zero_copy_config,
                 filesystem.clone(),
-                1024 * 1024 * 100
+                Vec::new()
             ).await?
         );
         let reader = crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(

@@ -370,7 +370,9 @@ impl PredictivePrefetcher {
     
     /// Detect access type
     async fn detect_access_type(&self, key: &BlockCacheKey) -> AccessType {
-        if let Some(pattern) = self.access_patterns.sequential_patterns.get(key) {
+        // Convert BlockCacheKey to String for map lookup
+        let key_str = format!("{}:{}:{}", key.file_path, key.block_id, key.block_index);
+        if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key_str) {
             if pattern.access_count > 3 {  // Use access count threshold
                 return AccessType::Sequential;
             }

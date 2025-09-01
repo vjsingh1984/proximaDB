@@ -403,14 +403,11 @@ impl UniversalSearchPipeline {
         let mut results = Vec::with_capacity(records.len());
         
         for record in records {
-            let similarity_result = match self.distance_compute.as_ref().calculate_distance(
+            let similarity_result = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &record.vector,
                 &DistanceMetric::Cosine, // Use default for now
-            ) {
-                Ok(dist) => dist,
-                Err(_) => continue, // Skip this result if distance calculation fails
-            };
+            );
             
             // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>
             let metadata_map = record.metadata.into_iter()

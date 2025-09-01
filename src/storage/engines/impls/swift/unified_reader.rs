@@ -425,7 +425,14 @@ impl UnifiedSwiftReader {
     /// Read and cache file header
     async fn read_and_cache_header(&mut self) -> Result<()> {
         // Header is at the beginning of file, typically < 1KB
-        let header_data = self.filesystem.read_range(&self.file_path, 0, 4096).await?;
+        // Extract scheme for filesystem selection
+        let scheme = if self.file_path.contains("://") {
+            self.file_path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}://", scheme))?;
+        let header_data = fs.read_range(&self.file_path, 0, 4096).await?;
         let header = self.deserialize_header(&header_data)?;
         self.cached_header = Some(header);
         Ok(())

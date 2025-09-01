@@ -394,7 +394,7 @@ impl SstEntry {
     pub fn to_search_result(&self, score: f32) -> crate::core::search::InternalSearchResult {
         crate::core::search::InternalSearchResult {
             id: self.record.id.clone().clone(),
-            vector_id: self.record.id.clone(),
+            vector_id: Some(self.record.id.clone()),
             score,
             similarity: Some(score),  // Can be different from score in some metrics
             vector: Some(self.record.vector.clone()),
@@ -1113,6 +1113,7 @@ impl DataBlock {
                 expires_at: None,
                 version: None,
                 quantized_vector: None,
+                source: None, // No source information available from legacy format
             });
         }
         
@@ -1616,6 +1617,9 @@ impl DataBlock {
                     bloom_filter_enabled: false,
                 })
             }).collect(),
+            quantization_stats: crate::storage::engines::core::formats::row_based::block_structures::QuantizationStatistics::default(),
+            data_checksum: 0, // TODO: Calculate actual checksum
+            metadata_checksum: 0, // TODO: Calculate actual checksum
         };
         
         // Read records data section (4 bytes for length + metadata_len)
@@ -1643,6 +1647,8 @@ impl DataBlock {
         // Quantization will be populated during write or can be generated on-demand
         
         Ok(DataBlock {
+            encoding_marker: 0x00, // Raw/Uncompressed format
+            encoding_metadata: None, // No FastLanes metadata for raw format
             block_id,
             records,
             quantized_vectors: None,
@@ -1958,12 +1964,20 @@ impl SstStorage {
             |operation| operation
         ).await?;
         
-        // Extract successful results
+        // Extract successful results - results is Vec<Result<Vec<u8>>>
         let mut final_results = Vec::new();
         for result in results {
-            final_results.push(result);
+            match result {
+                Ok(data) => {
+                    // data is Result<Vec<u8>, Error>, so we need to unwrap it
+                    match data {
+                        Ok(bytes) => final_results.push(bytes),
+                        Err(e) => return Err(anyhow::anyhow!("Block read failed: {}", e)),
+                    }
+                },
+                Err(e) => return Err(anyhow::anyhow!("Task failed: {}", e)),
+            }
         }
-        
         Ok(final_results)
     }
     
@@ -3607,8 +3621,8 @@ impl SstStorage {
             version: 1, // Version 1 for initial implementation
             level,
             entry_count: records.len() as u64,
-            min_key: records.first().map(|r| r.id.clone()).clone(),
-            max_key: records.last().map(|r| r.id.clone()).clone(),
+            min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
+            max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
             timestamp: Utc::now().timestamp(),
             
             // Compression configuration
@@ -3748,7 +3762,7 @@ impl SstStorage {
             
             
             // SSTable file is now discoverable via directory listing
-            info!("Created SSTable file: {} with {} records at level {}", filename, flushed_records.len(), level);
+            info!("Created SSTable file: {} with {} records at level {}", filename, flushed_records.len(), level.unwrap_or(0));
         }
 
         Ok(())
@@ -3786,7 +3800,7 @@ impl SstStorage {
 
         while let Ok(Some(entry)) = dir_entries.next_entry().await {
             if let Some(filename) = entry.file_name().to_str() {
-                if FilenameCodec::new().is_tiered_filename(filename) && 
+                if FilenameCodec::new().is_tiered_filename(filename, "sst") && 
                    Some(FilenameCodec::new().parse_level(filename) as u8) == Some(level) {
                     count += 1;
                 }
@@ -3853,8 +3867,8 @@ impl SstStorage {
         
         // Add all keys and metadata to filters
         for record in records {
-            if let Some(id) = &record.id {
-                key_filter.insert(id.as_bytes());
+            if !record.id.is_empty() {
+                key_filter.insert(record.id.as_bytes());
             }
             
             // Add metadata values - already have MetadataItem
@@ -3944,10 +3958,7 @@ impl SstStorage {
                 }
             } else {
                 // Fallback: sort by vector ID only
-                let empty_id = String::new();
-                let a_id = a.id.as_ref().map(|s| s.as_str());
-                let b_id = b.id.as_ref().map(|s| s.as_str());
-                a_id.cmp(b_id)
+                a.id.cmp(&b.id)
             }
         });
         
@@ -4012,7 +4023,7 @@ impl SstStorage {
 
         for record in records {
             let record_size = std::mem::size_of::<VectorRecord>() + 
-                record.id.as_ref().map(|s| s.len()) + 
+                record.id.len() + 
                 record.vector.len() * 4 + // f32 size
                 record.metadata.iter().map(|item| item.key.len() + 50).sum::<usize>(); // Estimate metadata size (50 bytes per item)
 
@@ -4074,7 +4085,7 @@ impl SstStorage {
             let mut block_offset = 0u32;
             for record in &block.records {
                 index_entries.push(IndexEntry {
-                    key: record.id.as_ref().cloned().clone(),
+                    key: record.id.clone(),
                     offset: 0, // Will be set later with global offset
                     size: std::mem::size_of::<VectorRecord>() as u32, // Approximate size
                     // Enhanced block organization fields
@@ -4200,12 +4211,13 @@ impl SstStorage {
             ;
             
         // Store vector tracking info in engine_metrics if needed
-        if !deleted_vector_ids.is_none() {
+        if let Some(ids_vec) = deleted_vector_ids {
             result.engine_metrics.insert(
                 "deleted_vector_ids".to_string(),
                 serde_json::Value::Array(
-                    deleted_vector_ids.into_iter()
-                        .map(serde_json::Value::String)
+                    ids_vec
+                        .into_iter()
+                        .map(|id| serde_json::Value::String(id))
                         .collect()
                 ),
             );

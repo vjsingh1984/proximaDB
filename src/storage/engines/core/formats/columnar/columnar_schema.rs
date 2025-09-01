@@ -88,7 +88,7 @@ impl ColumnarSchema {
         if config.enable_binary {
             fields.push(Field::new(
                 "vector_binary",
-                DataType::FixedSizeBinary((dimension + 7) / 8),
+                DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
                 true,
             ));
             debug!("Added binary quantization column");
@@ -151,7 +151,7 @@ impl ColumnarSchema {
     
     /// Create field for filterable column
     fn create_filterable_field(&self, column: &FilterableColumn) -> Result<Field> {
-        let data_type = match column.data_type.as_deref() {
+        let data_type = match column.data_type.as_str() {
             "string" | "text" => DataType::Utf8,
             "int" | "integer" | "long" => DataType::Int64,
             "float" | "double" => DataType::Float64,
@@ -435,7 +435,7 @@ struct CachedSchema {
 impl CachedSchema {
     fn is_expired(&self) -> bool {
         let now = chrono::Utc::now();
-        let age = now.signed_duration_since(self.created_at);
+        let age = now.signed_duration_since(self.timestamp);
         age.num_seconds() > self.ttl_seconds
     }
 }
