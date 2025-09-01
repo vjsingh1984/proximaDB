@@ -132,11 +132,19 @@ impl VIPERParquetMetadataSource {
     
     fn infer_data_type(value: &serde_json::Value) -> ColumnData {
         match value {
-            serde_json::Value::String(_) => ColumnDataType::String,
-            serde_json::Value::Number(_) => ColumnDataType::Float,
-            serde_json::Value::Bool(_) => ColumnDataType::Boolean,
-            serde_json::Value::Array(_) => ColumnDataType::Array,
-            _ => ColumnDataType::String, // Default
+            serde_json::Value::String(s) => ColumnData::String(s.clone()),
+            serde_json::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    ColumnData::Float(f as f32)
+                } else {
+                    ColumnData::Float(0.0)
+                }
+            }
+            serde_json::Value::Bool(b) => ColumnData::Boolean(*b),
+            serde_json::Value::Array(arr) => ColumnData::List(
+                arr.iter().map(|v| v.to_string()).collect()
+            ),
+            _ => ColumnData::String(String::new()), // Default
         }
     }
     

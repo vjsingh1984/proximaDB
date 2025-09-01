@@ -114,12 +114,14 @@ impl OptimizedNovaOperations {
         debug!("Pruned to {} row groups", candidate_row_groups.len());
         // Phase 2: Columnar filtering with SIMD
         // TODO: Pass parquet metadata when available
-        // Create minimal FileMetaData for placeholder
+        // Create minimal FileMetaData for placeholder (needs 6 args)
         let file_metadata = parquet::file::metadata::FileMetaData::new(
             0, // version
             0, // num_rows
             None, // created_by
             None, // key_value_metadata
+            vec![], // schema_descr
+            vec![], // column_orders
         );
         let placeholder_metadata = parquet::file::metadata::ParquetMetaData::new(
             file_metadata,
@@ -269,29 +271,20 @@ impl OptimizedNovaOperations {
     }
     /// Select optimal computation mode based on data size
     fn select_compute_mode(&self, vectors: &[Vec<f32>]) -> DistanceMode {
-        let total_elements = vectors.len() * vectors.first().map_or(0, |v| v.len());
-        // Use GPU for large batches if available
-        if self.hardware.has_gpu() && total_elements > 100_000 {
-            DistanceMode::GPU
-        } else if total_elements > 10_000 {
-            DistanceMode::SIMD
-        } else {
-            DistanceMode::Auto
-        }
+        // DistanceMode is about value normalization, not hardware selection
+        // Hardware selection is handled internally by UnifiedDistanceCompute
+        // Return normalized mode for consistency
+        DistanceMode::Normalized
     }
     
     /// Build projection mask for column selection
     fn build_projection_mask(&self, config: &ColumnarSearchConfig) -> Vec<String> {
         let mut columns = vec!["id".to_string(), "vector".to_string()];
         if config.enable_projection {
-            // Add quantized columns based on search phases
-            if config.binary_expansion > 0 {
+            // Add all quantized columns when progressive search is enabled
+            if config.enable_progressive_search {
                 columns.push("vector_binary".to_string());
-            }
-            if config.int8_expansion > 0 {
                 columns.push("vector_int8".to_string());
-            }
-            if config.pq_expansion > 0 {
                 columns.push("vector_pq".to_string());
             }
         }

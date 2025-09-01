@@ -49,7 +49,9 @@ pub struct SuperBlockStats {
     
     /// Access patterns for caching decisions
     pub access_count: u64,
+    #[serde(skip)]
     pub last_access: Instant,
+    #[serde(skip)]
     pub creation_time: Instant,
 }
 
@@ -194,7 +196,9 @@ impl NovaHierarchicalCache {
     ) -> Self {
         Self {
             superblock_cache: Arc::new(DashMap::new()),
-            block_cache: Arc::new(RwLock::new(lru::LruCache::new(block_cache_size))),
+            block_cache: Arc::new(RwLock::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(block_cache_size).unwrap_or(std::num::NonZeroUsize::new(100).unwrap())
+            ))),
             rowgroup_cache: Arc::new(RwLock::new(HashMap::new())),
             rowgroup_ttl_sec,
             zonemap_cache: Arc::new(DashMap::new()),
