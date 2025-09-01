@@ -287,11 +287,10 @@ impl ViperEngine {
             // Metadata column - extract specific metadata field
             // This is a simplified implementation
             let mut data = Vec::new();
-            for record in &vectors {
-                // Serialize metadata for the column
-                // In a real implementation, this would map column_idx to metadata field names
-                data.extend_from_slice(b"metadata_placeholder");
-            }
+            // TODO: Implement actual metadata serialization
+            // This should serialize the actual metadata from records
+            return Err(anyhow::anyhow!("Metadata serialization not yet implemented"));
+            #[allow(unreachable_code)]
             data
         };
         
@@ -358,10 +357,9 @@ impl ViperEngine {
         let mut row_group_data = Vec::new();
         
         for batch in record_batches {
-            // For now, return placeholder data 
             // TODO: Properly extract vector data from the record batch columns
-            let num_rows = batch.num_rows();
-            row_group_data.extend(vec![0u8; num_rows * 128 * 4]); // Placeholder: assume 128-dim vectors
+            // This needs to read actual vector data from the batch columns
+            return Err(anyhow::anyhow!("Row group data extraction not yet implemented"));
         }
         
         Ok(row_group_data)
