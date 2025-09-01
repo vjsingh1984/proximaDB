@@ -300,7 +300,7 @@ impl ParquetMetadataSerializer {
                 let col_offset = rg_offset + (col_idx * column_size) as u64;
                 columns.push(ColumnInfo {
                     offset: col_offset,
-                    compressed_size: (column_size * 70 / 100) as u32, // 70% compression
+                    compressed_size: ((column_size as i64 * 70 / 100) as u32), // 70% compression
                     uncompressed_size: column_size as u32,
                     data_type: match col_idx {
                         0 => 6, // BYTE_ARRAY (string IDs)
@@ -321,7 +321,7 @@ impl ParquetMetadataSerializer {
             
             row_groups.push(RowGroupInfo {
                 offset: rg_offset,
-                compressed_size: (row_group_size * 70 / 100) as u64, // 70% compression
+                compressed_size: ((row_group_size as i64 * 70 / 100) as u64), // 70% compression
                 uncompressed_size: row_group_size as u64,
                 num_rows: 1000000, // 1M rows per row group
                 columns,
