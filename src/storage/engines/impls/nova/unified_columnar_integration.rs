@@ -45,6 +45,9 @@ pub struct NovaUnifiedEngine {
     
     /// Collection metadata cache
     collection_cache: Arc<tokio::sync::RwLock<HashMap<String, NovaCollectionMetadata>>>,
+    
+    /// Distance computation engine
+    distance_compute: Arc<crate::compute::distance_computation::UnifiedDistanceCompute>,
 }
 
 /// NOVA-specific configuration
@@ -250,16 +253,64 @@ pub struct HierarchicalStatsManager {
     stats_cache: Arc<tokio::sync::RwLock<HashMap<String, HierarchicalStatistics>>>,
 }
 
+impl HierarchicalStatsManager {
+    pub fn new(config: NovaSpecificConfig) -> Self {
+        Self {
+            config,
+            stats_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        }
+    }
+    
+    pub async fn metrics(&self) -> HashMap<String, f64> {
+        let mut metrics = HashMap::new();
+        let stats = self.stats_cache.read().await;
+        metrics.insert("cached_stats".to_string(), stats.len() as f64);
+        metrics
+    }
+}
+
 /// Zone map manager
 pub struct ZoneMapManager {
     config: ZoneMapConfig,
     zone_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ZoneMap>>>>,
 }
 
+impl ZoneMapManager {
+    pub fn new(config: ZoneMapConfig) -> Self {
+        Self {
+            config,
+            zone_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        }
+    }
+    
+    pub async fn metrics(&self) -> HashMap<String, f64> {
+        let mut metrics = HashMap::new();
+        let zones = self.zone_cache.read().await;
+        metrics.insert("cached_zones".to_string(), zones.len() as f64);
+        metrics
+    }
+}
+
 /// Streaming processor for large-scale operations
 pub struct StreamingProcessor {
     config: StreamingConfig,
     active_streams: Arc<tokio::sync::RwLock<HashMap<String, StreamingSession>>>,
+}
+
+impl StreamingProcessor {
+    pub fn new(config: StreamingConfig) -> Self {
+        Self {
+            config,
+            active_streams: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        }
+    }
+    
+    pub async fn metrics(&self) -> HashMap<String, f64> {
+        let mut metrics = HashMap::new();
+        let streams = self.active_streams.read().await;
+        metrics.insert("active_streams".to_string(), streams.len() as f64);
+        metrics
+    }
 }
 
 /// Active streaming session
@@ -321,6 +372,9 @@ impl NovaUnifiedEngine {
         
         let collection_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         
+        // Initialize distance compute engine
+        let distance_compute = Arc::new(crate::compute::distance_computation::UnifiedDistanceCompute::default());
+        
         info!("NOVA engine initialized with unified infrastructure and hierarchical optimizations");
         
         Ok(Self {
@@ -330,6 +384,7 @@ impl NovaUnifiedEngine {
             zone_map_manager,
             streaming_processor,
             collection_cache,
+            distance_compute,
         })
     }
     
@@ -486,11 +541,33 @@ impl NovaUnifiedEngine {
                 top_k,
             ).await?
         } else {
-            self.common_ops.compute_batch_distances(
+            // Use centralized quantized distance calculator
+            let distance_calc = QuantizedDistanceCalculator::new(QuantizedDistanceConfig::default())?;
+            let distances = distance_calc.compute_columnar_batch_distances(
                 &query_vector,
                 &quantized_vectors,
-                search_options.format_preference,
-            ).await?
+                search_options.format_preference.into(),
+            ).await?;
+            
+            // Convert to VectorRecords with scores
+            let mut results = Vec::new();
+            for (i, (distance, _format)) in distances.iter().enumerate() {
+                if let Some(vector_data) = quantized_vectors.get(i) {
+                    let record = VectorRecord {
+                        id: format!("vec_{}", i),
+                        vector: vector_data.fp32.clone().unwrap_or_else(|| vec![0.0; 768]),
+                        metadata: vec![],
+                        timestamp: 0,
+                        updated_at: None,
+                        quantized_vector: None,
+                        expires_at: None,
+                        version: None,
+                        source: None,
+                    };
+                    results.push((record, *distance));
+                }
+            }
+            results
         };
         let computation_time = computation_start.elapsed().as_secs_f64() * 1000.0;
         
@@ -667,7 +744,7 @@ impl NovaUnifiedEngine {
         max_vectors: Option<usize>,
     ) -> Result<Vec<QuantizedVectorData>> {
         // Placeholder implementation - using types from compute module
-        let count = max_vectors.min(1000);
+        let count = max_vectors.unwrap_or(100).min(1000);
         let vectors = vec![
             QuantizedVectorData {
                 fp32: Some(vec![1.0; 768]),
@@ -707,7 +784,7 @@ impl NovaUnifiedEngine {
                 (sim, 1.0) // Perfect quality
             } else if let Some(int8_data) = &vector.int8 {
                 // Good quality: dequantize INT8 and compute
-                let dequantized = dequantize_int8(&int8_data.data, int8_data.scale, int8_data.zero_point);
+                let dequantized = dequantize_int8(&int8_data.values, int8_data.scale, int8_data.zero_point);
                 let sim = self.distance_compute.calculate_distance(
                     query_vector,
                     &dequantized,

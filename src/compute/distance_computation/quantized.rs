@@ -798,6 +798,36 @@ impl QuantizedDistanceCalculator {
         batch_size >= 32 && self.config.simd_optimization.enable_simd
     }
     
+    /// Compute batch distances for columnar storage operations
+    /// This is the centralized method for all columnar engines (VIPER, NOVA)
+    pub async fn compute_columnar_batch_distances(
+        &self,
+        query_vector: &[f32],
+        quantized_vectors: &[QuantizedVectorData],
+        format_preference: SelectedFormat,
+    ) -> Result<Vec<(f32, SelectedFormat)>> {
+        let mut results = Vec::with_capacity(quantized_vectors.len());
+        
+        // Use batch processing if appropriate
+        if self.should_use_batch_processing(quantized_vectors.len()) {
+            // Process in batches for better cache utilization
+            for batch in quantized_vectors.chunks(64) {
+                for vector_data in batch {
+                    let result = self.compute_distance(query_vector, vector_data, format_preference.clone()).await?;
+                    results.push((result.similarity, format_preference.clone()));
+                }
+            }
+        } else {
+            // Process individually for small batches
+            for vector_data in quantized_vectors {
+                let result = self.compute_distance(query_vector, vector_data, format_preference.clone()).await?;
+                results.push((result.similarity, format_preference.clone()));
+            }
+        }
+        
+        Ok(results)
+    }
+    
     fn select_best_format(&self, vector: &QuantizedVectorData) -> SelectedFormat {
         if vector.fp32.is_some() {
             SelectedFormat::FP32

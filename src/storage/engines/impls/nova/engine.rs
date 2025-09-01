@@ -298,7 +298,8 @@ impl NovaEngine {
         let mut unwrapped_results = Vec::new();
         for res in results {
             match res {
-                Ok(data) => unwrapped_results.push(data),
+                Ok(Ok(data)) => unwrapped_results.push(data),
+                Ok(Err(e)) => return Err(anyhow::anyhow!("Column read failed: {}", e)),
                 Err(e) => return Err(anyhow::anyhow!("Column read failed: {}", e)),
             }
         }

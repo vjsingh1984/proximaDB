@@ -936,6 +936,17 @@ pub enum FormatPreference {
     Specific(SelectedFormat),
 }
 
+impl From<FormatPreference> for SelectedFormat {
+    fn from(pref: FormatPreference) -> Self {
+        match pref {
+            FormatPreference::HighestQuality => SelectedFormat::FP32,
+            FormatPreference::FastestRead => SelectedFormat::Binary,
+            FormatPreference::SmallestSize => SelectedFormat::PQ,
+            FormatPreference::Specific(format) => format,
+        }
+    }
+}
+
 // NOTE: SelectedFormat has been moved to crate::compute::distance_computation::quantized
 // This eliminates code duplication and allows all engines to use the same format definitions
 

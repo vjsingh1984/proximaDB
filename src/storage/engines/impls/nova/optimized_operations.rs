@@ -114,8 +114,15 @@ impl OptimizedNovaOperations {
         debug!("Pruned to {} row groups", candidate_row_groups.len());
         // Phase 2: Columnar filtering with SIMD
         // TODO: Pass parquet metadata when available
+        // Create minimal FileMetaData for placeholder
+        let file_metadata = parquet::file::metadata::FileMetaData::new(
+            0, // version
+            0, // num_rows
+            None, // created_by
+            None, // key_value_metadata
+        );
         let placeholder_metadata = parquet::file::metadata::ParquetMetaData::new(
-            parquet::file::metadata::FileMetaData::default(),
+            file_metadata,
             vec![],
         );
         let candidates = self.columnar_filter_simd(
