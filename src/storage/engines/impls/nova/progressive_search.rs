@@ -27,11 +27,9 @@ struct QuantizationAdapter {
 impl QuantizationAdapter {
     /// Quantize vector to binary format
     async fn quantize_to_binary(&self, vector: &[f32]) -> Result<Vec<u8>> {
-        let quantized = self.engine.quantize(
-            vector.to_vec(),
-            UnifiedQuantizationLevel::binary()
-        ).await?;
-        Ok(quantized.data)
+        // Use the quantization engine's binary quantization method
+        let binary = self.engine.quantize_to_binary(vector)?;
+        Ok(binary)
     }
     
     /// Compute hamming distance between binary vectors
@@ -45,11 +43,8 @@ impl QuantizationAdapter {
     
     /// Quantize vector to INT8 format
     async fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<i8>> {
-        let quantized = self.engine.quantize(
-            vector.to_vec(),
-            UnifiedQuantizationLevel::int8()
-        ).await?;
-        Ok(quantized.data.iter().map(|&b| b as i8).collect())
+        let quantized = self.engine.quantize_to_int8(vector)?;
+        Ok(quantized.iter().map(|&b| b as i8).collect())
     }
     
     /// Compute INT8 distance
@@ -640,7 +635,7 @@ impl ProgressiveColumnarSearch {
         debug!("Full precision stage: processing {} candidates", candidates_in);
         let mut final_candidates = Vec::new();
         
-        for candidate in candidates {
+        for (i, candidate) in candidates.into_iter().enumerate() {
             // Load full precision vector
             let full_vector = self.load_full_vector(
                 candidate.row_group_id,
@@ -658,6 +653,8 @@ impl ProgressiveColumnarSearch {
                 updated_at: None,
                 expires_at: None,
                 version: None,
+                quantized_vector: None,
+                source: None,
             };
             final_candidates.push((record, exact_distance));
         }
@@ -715,7 +712,8 @@ impl ProgressiveColumnarSearch {
     
     fn compute_exact_distance(&self, query: &[f32], vector: &[f32]) -> Result<f32> {
         // Use UnifiedDistanceCompute instead of local implementation
-        self.distance_compute.calculate_distance(query, vector, &self.distance_metric)
+        let result = self.distance_compute.calculate_distance(query, vector, &self.distance_metric);
+        Ok(result.normalized_score)
     }
     
     fn build_empty_result(
@@ -809,16 +807,16 @@ impl DistanceTable {
 impl BinarySketch {
     fn from_vector(vector: &[f32], threshold: f32) -> Self {
         let dimension = vector.len();
-        let num_words = (dimension + 63) / 64;
-        let mut bits = vec![0u64; num_words];
+        let num_bytes = (dimension + 7) / 8;
+        let mut bits = vec![0u8; num_bytes];
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {
-                let word_idx = i / 64;
-                let bit_idx = i % 64;
-                bits[word_idx] |= 1u64 << bit_idx;
+                let byte_idx = i / 8;
+                let bit_idx = i % 8;
+                bits[byte_idx] |= 1u8 << bit_idx;
             }
         }
-        Self { bits, dimension }
+        Self { bits }
     }
     
     fn hamming_distance(&self, other: &Self) -> u32 {

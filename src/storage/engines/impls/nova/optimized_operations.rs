@@ -115,14 +115,7 @@ impl OptimizedNovaOperations {
         // Phase 2: Columnar filtering with SIMD
         // TODO: Pass parquet metadata when available
         let placeholder_metadata = parquet::file::metadata::ParquetMetaData::new(
-            parquet::file::metadata::FileMetaData::new(
-                0,
-                0,
-                None,
-                None,
-                vec![],
-                None,
-            ),
+            parquet::file::metadata::FileMetaData::default(),
             vec![],
         );
         let candidates = self.columnar_filter_simd(
@@ -134,11 +127,16 @@ impl OptimizedNovaOperations {
         ).await?;
         debug!("Columnar filter: {} candidates", candidates.len());
         // Phase 3: Batch distance computation
-        let results = self.batch_compute_distances(
+        let results_with_scores = self.batch_compute_distances(
             candidates,
             query,
             top_k,
         ).await?;
+        
+        // Extract just the VectorRecords, discarding the scores
+        let results: Vec<VectorRecord> = results_with_scores.into_iter()
+            .map(|(record, _score)| record)
+            .collect();
         
         info!("Search complete: {} results", results.len());
         Ok(results)

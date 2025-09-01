@@ -675,7 +675,7 @@ impl NovaColumnarSearch {
             
             // Compute exact distances
             for batch in batch {
-                for candidate in group_candidates {
+                for candidate in &group_candidates {
                     if let Some(record) = self.extract_record_from_batch(
                         &batch,
                         candidate.row_offset as usize,
