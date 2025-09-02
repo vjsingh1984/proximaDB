@@ -60,8 +60,8 @@ impl OptimizedVectorWriterConfig {
     pub fn from_viper_config(config: &crate::core::ViperConfig) -> Self {
         Self {
             use_binary_array: true,
-            compression_enabled: config.storage.as_ref().and_then(|s| s.compression.as_ref()) != "none",
-            compression_algorithm: config.storage.as_ref().and_then(|s| s.compression.as_ref()).clone(),
+            compression_enabled: config.compression.as_ref().map(|c| c != "none").unwrap_or(true),
+            compression_algorithm: config.compression.clone(),
             parquet_compression_level: config.compression_level,
             row_group_size: config.row_group_size,
             write_batch_size: 1024,
@@ -114,7 +114,7 @@ impl OptimizedVectorWriter {
     /// Create optimized Parquet writer properties with configurable compression
     pub fn create_writer_properties(&self) -> Result<WriterProperties> {
         let compression = if self.config.compression_enabled {
-            match self.config.compression_algorithm.as_deref() {
+            match self.config.compression_algorithm.as_str() {
                 "zstd" => Compression::ZSTD(
                     ZstdLevel::try_new(self.config.parquet_compression_level)?
                 ),
@@ -153,7 +153,7 @@ impl OptimizedVectorWriter {
         
         // Build ID array
         let ids: Vec<String> = records.iter()
-            .map(|r| r.id.as_deref().to_string())
+            .map(|r| r.id.clone())
             .collect();
         let id_array = Arc::new(arrow_array::StringArray::from(ids));
 
@@ -200,7 +200,7 @@ impl OptimizedVectorWriter {
                                 Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
                                     serde_json::Number::from_f64(*n)
                                         .map(serde_json::Value::Number)
-                                        
+                                        .unwrap_or(serde_json::Value::Null)
                                 }
                                 Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                                 None => serde_json::Value::Null,
@@ -210,7 +210,7 @@ impl OptimizedVectorWriter {
                         .collect();
                     let json_metadata = serde_json::Value::Object(json_map);
                     
-                    Some(serde_json::to_string(&json_metadata).clone())
+                    serde_json::to_string(&json_metadata).ok()
                 }
             })
             .collect();
@@ -259,9 +259,10 @@ impl OptimizedVectorWriter {
                 // Handle empty vectors
                 vec![]
             } else {
-                // Use optimized serialization
-                let serialized = self.config.vector_config.serialize_vector(&record.vector)
-                    .context("Failed to serialize vector with bytemuck")?;
+                // Serialize vector directly as bytes
+                let serialized = record.vector.iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect::<Vec<u8>>();
                 
                 total_original_size += record.vector.len() * 4; // f32 size
                 total_compressed_size += serialized.len();
@@ -378,9 +379,15 @@ impl OptimizedVectorWriter {
             return Ok(vec![]);
         }
 
-        // Deserialize using the same config
-        self.config.vector_config.deserialize_vector(binary_data)
-            .context("Failed to deserialize vector from BinaryArray")
+        // Deserialize from bytes back to f32 vector
+        let vector: Vec<f32> = binary_data
+            .chunks_exact(4)
+            .map(|chunk| {
+                let bytes: [u8; 4] = chunk.try_into().unwrap();
+                f32::from_le_bytes(bytes)
+            })
+            .collect();
+        Ok(vector)
     }
 
     /// Get compression and performance statistics

@@ -17,7 +17,8 @@ use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
 use crate::core::search::{FilterExpression, ComparisonOperator};
-use crate::storage::engines::impls::sst::{IndexEntry, DataBlock, VectorFormat};
+use crate::storage::engines::impls::sst::{IndexEntry, VectorFormat};
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::impls::sst::row_filter::{SSTRowFilterEvaluator, SSTBatchFilterEvaluator};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::ReadStrategy;
@@ -65,7 +66,7 @@ impl ThreeStageFilterPipeline {
         filter_expr: &FilterExpression,
         bloom_filter: Option<&SstableBloomFilter>,
         index_entries: &[IndexEntry],
-        data_blocks: &[DataBlock],
+        data_blocks: &[FastLanesDataBlock],
     ) -> Result<FilterResult> {
         let mut stats = FilterStageStats::new();
         
@@ -194,9 +195,9 @@ impl ThreeStageFilterPipeline {
         &self,
         filter_expr: &FilterExpression,
         index_entries: &[IndexEntry],
-        data_blocks: &[DataBlock],
+        data_blocks: &[FastLanesDataBlock],
         stats: &mut FilterStageStats,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         let stage_start = std::time::Instant::now();
         let mut qualifying_blocks = Vec::new();
         
@@ -344,7 +345,7 @@ impl ThreeStageFilterPipeline {
     async fn stage3_row_filtering(
         &mut self,
         filter_expr: &FilterExpression,
-        qualifying_blocks: &[DataBlock],
+        qualifying_blocks: &[FastLanesDataBlock],
         stats: &mut FilterStageStats,
     ) -> Result<Vec<GlobalRowIndex>> {
         let stage_start = std::time::Instant::now();
@@ -493,9 +494,9 @@ mod tests {
         assert!(!result.qualifying_indices.is_none(), "Should find some matches");
     }
     
-    fn create_test_data_blocks() -> Vec<DataBlock> {
+    fn create_test_data_blocks() -> Vec<FastLanesDataBlock> {
         vec![
-            DataBlock {
+            FastLanesDataBlock {
                 block_id: 0,
                 records: vec![
                     crate::storage::engines::impls::sst::SstRecord {
@@ -553,7 +554,7 @@ mod tests {
                 uncompressed_size: 1024,
                 compression_algorithm: crate::core::serialization::CompressionAlgorithm::None,
                 // REMOVED: compression_ratio
-                metadata_stats: crate::storage::engines::impls::sst::DataBlockMetadata::default(),
+                metadata_stats: crate::storage::engines::impls::sst::FastLanesDataBlockMetadata::default(),
                 block_bloom_filter: None,
                 has_deletes: false,
                 quantized_vectors: None,

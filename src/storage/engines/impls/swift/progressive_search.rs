@@ -12,7 +12,10 @@ use crate::core::VectorRecord;
 use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
 use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig, StorageQuantizedData};
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use super::{SwiftFile, MetadataFilter, SuperBlock, DataBlock};
+use super::{SwiftFile, MetadataFilter};
+use crate::storage::engines::core::formats::fastlanes_blocks::{
+    FastLanesDataBlock, SuperBlock,
+};
 
 /// Helper function to compute L2 distance squared for INT8 vectors
 fn compute_l2_distance_squared_i8(a: &[i8], b: &[i8]) -> Result<f32> {
@@ -574,7 +577,7 @@ fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
     bits
 }
 
-fn block_matches_filter(block: &DataBlock, filter: &MetadataFilter) -> bool {
+fn block_matches_filter(block: &FastLanesDataBlock, filter: &MetadataFilter) -> bool {
     // Check block-level statistics against filter
     for condition in &filter.conditions {
         if !condition_matches_block_stats(condition, &block.metadata_stats) {

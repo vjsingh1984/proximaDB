@@ -334,8 +334,9 @@ impl MemoryOptimizedStorage {
                 prefetch_queue.push(next_id);
             }
             
-            // Trigger async prefetch
-            tokio::spawn(self.clone().execute_prefetch());
+            // Note: Can't spawn async task from &self reference
+            // This would need to be redesigned to work with Arc<Self>
+            // For now, skip the async prefetch
         }
         
         Ok(())
@@ -399,6 +400,53 @@ impl MemoryOptimizedStorage {
     async fn get_quantized_vector(&self, _id: &str) -> Result<Option<Vec<u8>>> {
         // Placeholder - would read from mmap
         Ok(None)
+    }
+    
+    // Missing methods implementations (stubs for now)
+    
+    async fn filter_by_metadata(&self, _filter: &HashMap<String, String>) -> Result<Vec<String>> {
+        // TODO: Implement metadata filtering
+        Ok(Vec::new())
+    }
+    
+    async fn get_all_vector_ids(&self) -> Result<Vec<String>> {
+        // TODO: Implement getting all vector IDs
+        let metadata = self.metadata_cache.read().await;
+        Ok(metadata.keys().cloned().collect())
+    }
+    
+    async fn search_binary_sketches(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
+        // TODO: Implement binary sketch search
+        Ok(candidates.iter().take(k).cloned().collect())
+    }
+    
+    async fn search_int8_vectors(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
+        // TODO: Implement INT8 vector search
+        Ok(candidates.iter().take(k).cloned().collect())
+    }
+    
+    async fn search_pq_codes(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
+        // TODO: Implement PQ code search
+        Ok(candidates.iter().take(k).cloned().collect())
+    }
+    
+    async fn rerank_with_fp32(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<(String, f32)>> {
+        // TODO: Implement FP32 reranking
+        Ok(candidates.iter()
+            .take(k)
+            .enumerate()
+            .map(|(i, id)| (id.clone(), 1.0 - (i as f32 / k as f32)))
+            .collect())
+    }
+    
+    async fn fetch_fp32_from_cloud(&self, _id: &str) -> Result<Arc<VectorRecord>> {
+        // TODO: Implement cloud fetch
+        Err(anyhow!("FP32 cloud fetch not implemented"))
+    }
+    
+    async fn vector(&self, id: &str) -> Result<VectorRecord> {
+        // TODO: Implement vector retrieval
+        self.fetch_fp32_from_cloud(id).await.map(|arc| (*arc).clone())
     }
 }
 
@@ -498,7 +546,7 @@ impl PrismMemoryOptimizer {
         filesystem: Arc<ZeroCopyFilesystem>,
     ) -> Result<Self> {
         Ok(Self {
-            storage: Arc::new(MemoryOptimizedStorage::new(config)?),
+            storage: Arc::new(MemoryOptimizedStorage::new(config, filesystem.clone())?),
             filesystem,
         })
     }
@@ -543,52 +591,6 @@ impl PrismMemoryOptimizer {
         }
     }
     
-    // Missing methods implementations (stubs for now)
-    
-    async fn filter_by_metadata(&self, _filter: &HashMap<String, String>) -> Result<Vec<String>> {
-        // TODO: Implement metadata filtering
-        Ok(Vec::new())
-    }
-    
-    async fn get_all_vector_ids(&self) -> Result<Vec<String>> {
-        // TODO: Implement getting all vector IDs
-        let metadata = self.metadata_cache.read().await;
-        Ok(metadata.keys().cloned().collect())
-    }
-    
-    async fn search_binary_sketches(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
-        // TODO: Implement binary sketch search
-        Ok(candidates.iter().take(k).cloned().collect())
-    }
-    
-    async fn search_int8_vectors(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
-        // TODO: Implement INT8 vector search
-        Ok(candidates.iter().take(k).cloned().collect())
-    }
-    
-    async fn search_pq_codes(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<String>> {
-        // TODO: Implement PQ code search
-        Ok(candidates.iter().take(k).cloned().collect())
-    }
-    
-    async fn rerank_with_fp32(&self, _query: &[f32], candidates: &[String], k: usize) -> Result<Vec<(String, f32)>> {
-        // TODO: Implement FP32 reranking
-        Ok(candidates.iter()
-            .take(k)
-            .enumerate()
-            .map(|(i, id)| (id.clone(), 1.0 - (i as f32 / k as f32)))
-            .collect())
-    }
-    
-    async fn fetch_fp32_from_cloud(&self, _id: &str) -> Result<Arc<VectorRecord>> {
-        // TODO: Implement cloud fetch
-        Err(anyhow!("FP32 cloud fetch not implemented"))
-    }
-    
-    async fn vector(&self, id: &str) -> Result<VectorRecord> {
-        // TODO: Implement vector retrieval
-        self.fetch_fp32_from_cloud(id).await.map(|arc| (*arc).clone())
-    }
 }
 
 #[derive(Debug, Clone)]

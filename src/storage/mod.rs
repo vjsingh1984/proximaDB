@@ -184,6 +184,7 @@ pub mod builder;
 pub mod traits;
 pub mod types;
 pub mod validation;
+pub mod unified_scan_strategy;
 
 // Common reusable components
 pub mod common;

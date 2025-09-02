@@ -84,7 +84,7 @@ pub mod swift_metadata;  // NEW: Zero-copy metadata serialization for SWIFT
 
 // Re-exports for common use
 pub use block_structures::{
-    RowBasedDataBlock, RowBasedDataBlock as DataBlock, RowBasedBlockMetadata as BlockMetadata, BlockLocation, 
+    FastLanesDataBlock, FastLanesBlockMetadata, BlockLocation, 
     SuperBlock, BlockLayout, BlockCompressionConfig,
 };
 pub use compression_config::{

@@ -361,7 +361,8 @@ impl VIPERSelectiveReader {
         let reader = tokio::runtime::Handle::current()
             .block_on(crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
                 Arc::new(filesystem_factory)
-            ));
+            ))
+            .expect("Failed to create UnifiedParquetReader");
         
         Self {
             reader,

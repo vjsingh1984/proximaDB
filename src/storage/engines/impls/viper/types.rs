@@ -348,7 +348,7 @@ impl ViperEngineConfig {
             enable_ml_clustering: false,  // Disabled by default
             initial_cluster_count: 16,
             enable_quantization: false,    // Disabled by default
-            parquet_compression: match config.storage.as_ref().and_then(|s| s.compression.as_ref()).as_deref() {
+            parquet_compression: match config.compression.as_str() {
                 "zstd" => ParquetCompression::Zstd,
                 "snappy" => ParquetCompression::Snappy,
                 "gzip" => ParquetCompression::Gzip,

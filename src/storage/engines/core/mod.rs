@@ -12,7 +12,7 @@ pub mod ops;     // Common operations: compression, encoding, optimization
 // Re-export commonly used types for convenience
 pub use io::zero_copy::ZeroCopyIOSystem;
 pub use formats::{
-    row_based::{DataBlock, BlockMetadata, RowBasedUtilities},
+    fastlanes_blocks::{FastLanesDataBlock, FastLanesBlockMetadata, RowBasedUtilities},
     columnar::{ColumnarSchema, ParquetQueryEngine, ParquetIOLayer},
 };
 pub use search::{ProgressiveSearchEngine, SearchContext};

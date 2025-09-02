@@ -547,8 +547,9 @@ impl NovaUnifiedEngine {
         } else {
             // Use centralized quantized distance calculator
             let distance_calc = QuantizedDistanceCalculator::new(QuantizedDistanceConfig::default())?;
-            let format = search_options.format_preference
-                .unwrap_or(SelectedFormat::Auto);
+            let format = search_options.format_preference.as_ref()
+                .cloned()
+                .unwrap_or(SelectedFormat::FP32); // Default to full precision
             let distances = distance_calc.compute_columnar_batch_distances(
                 &query_vector,
                 &quantized_vectors,
@@ -613,14 +614,16 @@ impl NovaUnifiedEngine {
         
         let zone_map_metrics = ZoneMapMetrics {
             zones_count: 0,
-            dimension_coverage: 0.9,
-            memory_usage_mb: 10.0,
+            nested_zones_count: 0,
+            pruning_operations: 0,
+            pruning_effectiveness: 0.9,
         };
         
         let streaming_metrics = StreamingMetrics {
-            active_sessions: 0,
-            bytes_streamed: 0,
-            throughput_mbps: 100.0,
+            active_streams: 0,
+            completed_streams: 0,
+            total_vectors_streamed: 0,
+            average_stream_throughput: 100.0,
         };
         
         Ok(NovaPerformanceMetrics {

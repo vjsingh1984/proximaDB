@@ -247,6 +247,10 @@ impl LocalFileSystem {
 
 #[async_trait]
 impl FileSystem for LocalFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         // Extract path from URL
         let path_str = self.resolve_path(path)?;

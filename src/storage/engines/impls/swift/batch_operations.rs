@@ -8,7 +8,8 @@ use tokio::sync::{Semaphore, RwLock};
 use tracing::{debug, info, warn};
 
 use crate::core::VectorRecord;
-use super::{SwiftFile, DataBlock};
+use super::SwiftFile;
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use super::id_index::BlockLocation;
 
 /// Configuration for batch operations
@@ -41,7 +42,7 @@ impl Default for BatchConfig {
 /// Block cache for recently accessed blocks
 #[derive(Clone)]
 struct BlockCache {
-    cache: Arc<RwLock<lru::LruCache<(u32, u32), Arc<DataBlock>>>>,
+    cache: Arc<RwLock<lru::LruCache<(u32, u32), Arc<FastLanesDataBlock>>>>,
     current_size: Arc<RwLock<usize>>,
     max_size: usize,
 }
@@ -57,11 +58,11 @@ impl BlockCache {
         }
     }
     
-    async fn get(&self, key: &(u32, u32)) -> Option<Arc<DataBlock>> {
+    async fn get(&self, key: &(u32, u32)) -> Option<Arc<FastLanesDataBlock>> {
         self.cache.write().await.get(key).cloned()
     }
     
-    async fn put(&self, key: (u32, u32), block: Arc<DataBlock>) {
+    async fn put(&self, key: (u32, u32), block: Arc<FastLanesDataBlock>) {
         let block_size = estimate_block_size(&block);
         
         let mut cache = self.cache.write().await;
@@ -223,7 +224,7 @@ async fn load_and_extract_records(
 async fn load_block_from_disk(
     superblock_idx:u32,
     block_idx: u32,
-) -> Result<DataBlock> {
+) -> Result<FastLanesDataBlock> {
     // In real implementation, this would:
     // 1. Calculate file offset using superblock and block indices
     // 2. Seek to that position in the file
@@ -231,7 +232,7 @@ async fn load_block_from_disk(
     // 4. Deserialize the records
     
     // For now, return a mock block using the correct constructor
-    use crate::storage::engines::core::formats::row_based::BlockCompressionConfig;
+    use crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig;
     use crate::core::compression::CompressionAlgorithm;
     
     let compression_config = BlockCompressionConfig {
@@ -243,19 +244,19 @@ async fn load_block_from_disk(
         dictionary_compression: false,
     };
     
-    Ok(DataBlock::new(Vec::new(), compression_config))
+    Ok(FastLanesDataBlock::new(Vec::new(), compression_config))
 }
 
 /// Extract a record from a block at the given offset
 fn extract_record_from_block(
-    block: &DataBlock,
+    block: &FastLanesDataBlock,
     offset: u32,
 ) -> Option<VectorRecord> {
     block.records.get(offset as usize).cloned()
 }
 
 /// Estimate memory size of a block
-fn estimate_block_size(block: &DataBlock) -> usize {
+fn estimate_block_size(block: &FastLanesDataBlock) -> usize {
     // Rough estimate: records + quantized data + metadata
     let record_size = block.records.len() * 
         (std::mem::size_of::<VectorRecord>() + 768 * 4); // Assume 768-dim vectors
@@ -397,7 +398,7 @@ mod tests {
     async fn test_block_cache() {
         let cache = BlockCache::new(1024 * 1024); // 1MB cache
         
-        let block = Arc::new(DataBlock {
+        let block = Arc::new(FastLanesDataBlock {
             id: 0,
             offset_in_superblock: 0,
             compressed_size: 0,

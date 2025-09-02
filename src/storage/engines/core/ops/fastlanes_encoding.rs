@@ -132,6 +132,66 @@ pub enum FastLanesScheme {
     PatchedBase { base: i64, patch_bits: u8 },
 }
 
+/// Vector encoding layout strategy
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum VectorEncodingLayout {
+    /// Columnar: Transpose vectors into dimension arrays for better compression
+    /// Each dimension stored separately across all vectors
+    /// Better for: compression ratio, analytics queries
+    Columnar { 
+        /// Number of dimensions per group (typically 64 for SIMD)
+        dims_per_group: usize,
+    },
+    
+    /// RowWise: Store vectors together as contiguous byte arrays
+    /// Each vector stored as a complete unit using bytemuck
+    /// Better for: fast reconstruction, random access, high-dimensional vectors
+    RowWise {
+        /// Whether to apply compression per vector
+        compress_individual: bool,
+    },
+}
+
+/// Encoded dimension data
+#[derive(Debug, Clone)]
+pub struct EncodedDimension {
+    pub dimension_index: usize,
+    pub encoded_data: Vec<u8>,
+    pub encoding_scheme: FastLanesScheme,
+}
+
+/// Group of encoded dimensions
+#[derive(Debug, Clone)]
+pub struct DimensionGroup {
+    pub start_dim: usize,
+    pub end_dim: usize,
+    pub dimensions: Vec<EncodedDimension>,
+}
+
+/// Columnar encoded vectors output
+#[derive(Debug, Clone)]
+pub struct ColumnarEncodedVectors {
+    pub num_vectors: usize,
+    pub dimension: usize,
+    pub dimension_groups: Vec<DimensionGroup>,
+}
+
+/// Row-wise encoded vectors output
+#[derive(Debug, Clone)]
+pub struct RowWiseEncodedVectors {
+    pub num_vectors: usize,
+    pub dimension: usize,
+    pub padded_dimension: usize,
+    pub encoded_vectors: Vec<Vec<u8>>,
+}
+
+/// Unified encoded vectors output
+#[derive(Debug, Clone)]
+pub enum EncodedVectors {
+    Columnar(ColumnarEncodedVectors),
+    RowWise(RowWiseEncodedVectors),
+}
+
 /// FastLanes encoder optimized for columnar data
 pub struct FastLanesEncoder {
     scheme: FastLanesScheme,
@@ -432,28 +492,140 @@ impl FastLanesEncoder {
         Ok(encoded)
     }
 
-    /// Encode floating-point vectors with quantization
-    pub async fn encode_vectors(
+    /// Encode vectors using columnar layout (dimension-wise transposition)
+    /// Only handles SIMD encoding - compression is caller's responsibility
+    pub fn encode_vectors_columnar(
         &self,
         vectors: &[Vec<f32>],
-        quantization_engine: &StorageQuantizationEngine,
-    ) -> Result<Vec<u8>> {
-        let mut encoded = Vec::new();
-        
-        // Use storage quantization engine for vector quantization
-        let quantized_batch = quantization_engine.quantize_batch(vectors, None).await?;
-        for quantized in quantized_batch {
-            // Use primary quantization data if available, otherwise filter
-            if let Some(primary) = &quantized.primary {
-                encoded.extend(&primary.data);
-            } else if let Some(filter) = &quantized.filter {
-                encoded.extend(&filter.data);
-            } else {
-                return Err(anyhow::anyhow!("No quantization data available"));
-            }
+        dims_per_group: usize,
+    ) -> Result<ColumnarEncodedVectors> {
+        if vectors.is_empty() {
+            return Ok(ColumnarEncodedVectors {
+                num_vectors: 0,
+                dimension: 0,
+                dimension_groups: vec![],
+            });
         }
         
-        Ok(encoded)
+        let dimension = vectors[0].len();
+        let num_groups = (dimension + dims_per_group - 1) / dims_per_group;
+        let mut dimension_groups = Vec::with_capacity(num_groups);
+        
+        // Process dimension groups
+        for group_idx in 0..num_groups {
+            let start_dim = group_idx * dims_per_group;
+            let end_dim = ((group_idx + 1) * dims_per_group).min(dimension);
+            
+            let mut dimensions = Vec::with_capacity(end_dim - start_dim);
+            
+            for dim in start_dim..end_dim {
+                // Transpose: collect values for this dimension
+                let dim_values: Vec<f32> = vectors.iter()
+                    .map(|v| v[dim])
+                    .collect();
+                
+                // Apply FastLanes SIMD encoding only
+                let simd_encoded = self.encode_f32(&dim_values)?;
+                
+                dimensions.push(EncodedDimension {
+                    dimension_index: dim,
+                    encoded_data: simd_encoded,
+                    encoding_scheme: self.scheme,
+                });
+            }
+            
+            dimension_groups.push(DimensionGroup {
+                start_dim,
+                end_dim,
+                dimensions,
+            });
+        }
+        
+        Ok(ColumnarEncodedVectors {
+            num_vectors: vectors.len(),
+            dimension,
+            dimension_groups,
+        })
+    }
+    
+    /// Encode vectors using row-wise layout (vector-wise storage)
+    /// Only handles SIMD encoding - compression is caller's responsibility
+    pub fn encode_vectors_rowwise(
+        &self,
+        vectors: &[Vec<f32>],
+        apply_simd_encoding: bool,
+    ) -> Result<RowWiseEncodedVectors> {
+        use bytemuck::cast_slice;
+        
+        if vectors.is_empty() {
+            return Ok(RowWiseEncodedVectors {
+                num_vectors: 0,
+                dimension: 0,
+                padded_dimension: 0,
+                encoded_vectors: vec![],
+            });
+        }
+        
+        let dimension = vectors[0].len();
+        
+        // For SIMD efficiency, align to 64-byte boundaries (16 floats)
+        const SIMD_ALIGNMENT: usize = 16; // 16 x f32 = 64 bytes (cache line)
+        let padded_dimension = ((dimension + SIMD_ALIGNMENT - 1) / SIMD_ALIGNMENT) * SIMD_ALIGNMENT;
+        
+        let mut encoded_vectors = Vec::with_capacity(vectors.len());
+        
+        // Process each vector
+        for vector in vectors {
+            // Create SIMD-aligned vector with padding
+            let mut aligned_vector = vec![0.0f32; padded_dimension];
+            aligned_vector[..dimension].copy_from_slice(&vector[..]);
+            
+            let encoded = if apply_simd_encoding {
+                // Apply FastLanes SIMD encoding to the entire vector
+                self.encode_f32(&aligned_vector)?
+            } else {
+                // Store as raw bytes for fastest access (bytemuck)
+                let bytes: &[u8] = cast_slice(&aligned_vector[..]);
+                bytes.to_vec()
+            };
+            
+            encoded_vectors.push(encoded);
+        }
+        
+        Ok(RowWiseEncodedVectors {
+            num_vectors: vectors.len(),
+            dimension,
+            padded_dimension,
+            encoded_vectors,
+        })
+    }
+    
+    /// Encode vectors with automatic layout selection based on dimension
+    /// Returns either columnar or row-wise encoded data
+    pub fn encode_vectors_auto(
+        &self,
+        vectors: &[Vec<f32>],
+    ) -> Result<EncodedVectors> {
+        if vectors.is_empty() {
+            return Ok(EncodedVectors::Columnar(ColumnarEncodedVectors {
+                num_vectors: 0,
+                dimension: 0,
+                dimension_groups: vec![],
+            }));
+        }
+        
+        let dimension = vectors[0].len();
+        
+        // Use columnar for low-medium dimensions (better compression)
+        // Use row-wise for high dimensions (faster reconstruction)
+        if dimension <= 512 {
+            let encoded = self.encode_vectors_columnar(vectors, 64)?;
+            Ok(EncodedVectors::Columnar(encoded))
+        } else {
+            // High dimensional vectors benefit from row-wise storage
+            let encoded = self.encode_vectors_rowwise(vectors, dimension <= 2048)?;
+            Ok(EncodedVectors::RowWise(encoded))
+        }
     }
 }
 
@@ -478,6 +650,200 @@ impl FastLanesDecoder {
 
         Self { scheme, block_size }
     }
+    
+    /// Decode vectors from columnar layout with layered decompression
+    /// Pipeline: Columnar decompression → FastLanes SIMD decoding → Un-transpose
+    pub fn decode_vectors_columnar(
+        &self,
+        data: &[u8],
+    ) -> Result<Vec<Vec<f32>>> {
+        use crate::core::compression::{decompress, CompressionAlgorithm};
+        let mut cursor = std::io::Cursor::new(data);
+        use std::io::Read;
+        
+        // Read layout marker
+        let mut marker = [0u8; 1];
+        cursor.read_exact(&mut marker)?;
+        if marker[0] != 0xC0 {
+            return Err(anyhow::anyhow!("Invalid columnar layout marker"));
+        }
+        
+        // Read header
+        let mut buf = [0u8; 4];
+        cursor.read_exact(&mut buf)?;
+        let num_vectors = u32::from_le_bytes(buf) as usize;
+        
+        cursor.read_exact(&mut buf)?;
+        let dimension = u32::from_le_bytes(buf) as usize;
+        
+        cursor.read_exact(&mut buf)?;
+        let num_groups = u32::from_le_bytes(buf) as usize;
+        
+        cursor.read_exact(&mut buf)?;
+        let dims_per_group = u32::from_le_bytes(buf) as usize;
+        
+        // Decode dimension groups
+        let mut dimension_columns = vec![Vec::with_capacity(num_vectors); dimension];
+        
+        for group_idx in 0..num_groups {
+            let start_dim = group_idx * dims_per_group;
+            
+            // Read group dimensions count
+            cursor.read_exact(&mut buf)?;
+            let group_dims = u32::from_le_bytes(buf) as usize;
+            
+            // Decode each dimension
+            for dim_offset in 0..group_dims {
+                let dim_idx = start_dim + dim_offset;
+                if dim_idx >= dimension {
+                    break;
+                }
+                
+                // Read compression algorithm marker
+                let mut algorithm_marker = [0u8; 1];
+                cursor.read_exact(&mut algorithm_marker)?;
+                
+                // Map marker to compression algorithm
+                let algorithm = match algorithm_marker[0] {
+                    0x01 => CompressionAlgorithm::Lz4,
+                    0x02 => CompressionAlgorithm::Snappy,
+                    0x03 => CompressionAlgorithm::Zstd,
+                    _ => CompressionAlgorithm::None,
+                };
+                
+                // Read compressed dimension data
+                cursor.read_exact(&mut buf)?;
+                let compressed_size = u32::from_le_bytes(buf) as usize;
+                
+                let mut compressed_data = vec![0u8; compressed_size];
+                cursor.read_exact(&mut compressed_data)?;
+                
+                // Step 1: Decompress columnar data
+                let simd_encoded = if algorithm != CompressionAlgorithm::None {
+                    decompress(&compressed_data, algorithm, num_vectors * 4 + 100)?
+                } else {
+                    compressed_data
+                };
+                
+                // Step 2: Decode FastLanes SIMD encoding
+                let decoded = self.decode_f32(&simd_encoded, num_vectors)?;
+                
+                // Step 3: Store in dimension column
+                dimension_columns[dim_idx] = decoded;
+            }
+        }
+        
+        // Un-transpose: reconstruct vectors from dimension columns
+        let mut vectors = Vec::with_capacity(num_vectors);
+        for vec_idx in 0..num_vectors {
+            let mut vector = Vec::with_capacity(dimension);
+            for dim in 0..dimension {
+                if vec_idx < dimension_columns[dim].len() {
+                    vector.push(dimension_columns[dim][vec_idx]);
+                } else {
+                    vector.push(0.0); // Padding for missing values
+                }
+            }
+            vectors.push(vector);
+        }
+        
+        Ok(vectors)
+    }
+    
+    /// Decode vectors from row-wise layout with SIMD alignment
+    pub fn decode_vectors_rowwise(
+        &self,
+        data: &[u8],
+    ) -> Result<Vec<Vec<f32>>> {
+        use bytemuck::cast_slice;
+        let mut cursor = std::io::Cursor::new(data);
+        use std::io::Read;
+        
+        // Read layout marker
+        let mut marker = [0u8; 1];
+        cursor.read_exact(&mut marker)?;
+        if marker[0] != 0xD0 {
+            return Err(anyhow::anyhow!("Invalid row-wise layout marker"));
+        }
+        
+        // Read header
+        let mut buf = [0u8; 4];
+        cursor.read_exact(&mut buf)?;
+        let num_vectors = u32::from_le_bytes(buf) as usize;
+        
+        cursor.read_exact(&mut buf)?;
+        let dimension = u32::from_le_bytes(buf) as usize;
+        
+        cursor.read_exact(&mut buf)?;
+        let padded_dimension = u32::from_le_bytes(buf) as usize;
+        
+        let mut compress_flag = [0u8; 1];
+        cursor.read_exact(&mut compress_flag)?;
+        let compressed = compress_flag[0] != 0;
+        
+        // Decode each vector
+        let mut vectors = Vec::with_capacity(num_vectors);
+        const SIMD_ALIGNMENT: usize = 16;
+        
+        for _ in 0..num_vectors {
+            let vector = if compressed {
+                // Read number of chunks
+                cursor.read_exact(&mut buf)?;
+                let num_chunks = u32::from_le_bytes(buf) as usize;
+                
+                // Decode each SIMD chunk
+                let mut decoded_vector = Vec::with_capacity(padded_dimension);
+                for _ in 0..num_chunks {
+                    cursor.read_exact(&mut buf)?;
+                    let chunk_size = u32::from_le_bytes(buf) as usize;
+                    
+                    let mut chunk_data = vec![0u8; chunk_size];
+                    cursor.read_exact(&mut chunk_data)?;
+                    
+                    // Decode chunk
+                    let chunk_decoded = self.decode_f32(&chunk_data, SIMD_ALIGNMENT)?;
+                    decoded_vector.extend(chunk_decoded);
+                }
+                
+                // Trim to actual dimension
+                decoded_vector.truncate(dimension);
+                decoded_vector
+            } else {
+                // Read raw SIMD-aligned data
+                cursor.read_exact(&mut buf)?;
+                let vec_size = u32::from_le_bytes(buf) as usize;
+                
+                let mut vec_data = vec![0u8; vec_size];
+                cursor.read_exact(&mut vec_data)?;
+                
+                // Direct cast from bytes to f32
+                let floats: &[f32] = cast_slice(&vec_data);
+                
+                // Trim padding to get actual dimension
+                floats[..dimension].to_vec()
+            };
+            
+            vectors.push(vector);
+        }
+        
+        Ok(vectors)
+    }
+    
+    /// Decode vectors with automatic layout detection
+    pub fn decode_vectors_auto(
+        &self,
+        data: &[u8],
+    ) -> Result<Vec<Vec<f32>>> {
+        if data.is_empty() {
+            return Ok(vec![]);
+        }
+        
+        match data[0] {
+            0xC0 => self.decode_vectors_columnar(data),
+            0xD0 => self.decode_vectors_rowwise(data),
+            _ => Err(anyhow::anyhow!("Unknown vector encoding layout marker: 0x{:02X}", data[0]))
+        }
+    }
 
     /// Decode integers
     pub fn decode_integers(&self, data: &[u8], count: usize) -> Result<Vec<i64>> {
@@ -499,14 +865,13 @@ impl FastLanesDecoder {
     }
     
     /// Decode f32 data with full fidelity
-    pub fn decode_f32(&self, data: &[u8]) -> Result<Vec<f32>> {
+    pub fn decode_f32(&self, data: &[u8], count: usize) -> Result<Vec<f32>> {
         // Check for f32 marker
         if data.is_empty() || data[0] != 0x80 {
             return Err(anyhow::anyhow!("Invalid f32 encoded data"));
         }
         
         // Decode integers and convert back to f32
-        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
         let int_data = self.decode_integers(&data[1..], count)?;
         
         let floats: Vec<f32> = int_data.iter()

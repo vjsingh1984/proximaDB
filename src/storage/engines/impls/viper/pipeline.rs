@@ -2167,6 +2167,23 @@ impl ParquetFlusher {
                     // No quantization - skip
                     continue;
                 }
+                
+                Some(crate::compute::quantization::types::QuantizationLevel::None(_)) => {
+                    // No quantization - skip
+                    continue;
+                }
+                
+                Some(crate::compute::quantization::types::QuantizationLevel::Uniform(_)) => {
+                    // Uniform quantization - handle similar to INT8
+                    // TODO: Implement uniform quantization handling
+                    continue;
+                }
+                
+                Some(crate::compute::quantization::types::QuantizationLevel::Binary(_)) => {
+                    // Binary quantization - handle as binary data
+                    // TODO: Implement binary quantization handling
+                    continue;
+                }
 
                 Some(crate::compute::quantization::types::QuantizationLevel::Custom(custom)) => {
                     let bits_per_element = custom.bits_per_element;

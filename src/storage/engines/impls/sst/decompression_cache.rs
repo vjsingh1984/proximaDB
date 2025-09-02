@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use super::DataBlock;  // OPTIMIZED: Removed SstRecord import (DataBlock now contains VectorRecord)
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Cache key for decompressed blocks
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub struct BlockCacheKey {
 #[derive(Debug, Clone)]
 pub struct CachedBlock {
     /// Decompressed block data
-    pub data: DataBlock,
+    pub data: FastLanesDataBlock,
     /// Size in bytes
     pub size_bytes: usize,
     /// Timestamp when cached
@@ -262,7 +262,7 @@ impl DecompressionCache {
     }
 
     /// Get a decompressed block from cache
-    pub async fn get(&self, key: &BlockCacheKey) -> Option<DataBlock> {
+    pub async fn get(&self, key: &BlockCacheKey) -> Option<FastLanesDataBlock> {
         let mut cache = self.block_cache.write().await;
         let mut stats = self.stats.write().await;
         
@@ -299,7 +299,7 @@ impl DecompressionCache {
     pub async fn put(
         &self,
         key: BlockCacheKey,
-        data: DataBlock,
+        data: FastLanesDataBlock,
         compression_algorithm: Option<crate::core::compression::CompressionAlgorithm>,
     ) -> Result<()> {
         // Calculate block size
@@ -402,11 +402,11 @@ impl DecompressionCache {
     }
 
     /// Calculate the size of a data block
-    fn calculate_block_size(block: &DataBlock) -> usize {
+    fn calculate_block_size(block: &FastLanesDataBlock) -> usize {
         // Estimate based on VectorRecords in the block
         block.records.iter().map(|r| {
             std::mem::size_of::<crate::core::VectorRecord>() +
-            r.id.as_ref().map(|s| s.len()) +
+            r.id.len() +
             r.vector.len() * std::mem::size_of::<f32>() +
             r.metadata.iter().map(|m| m.key.len() + 8).sum::<usize>() // Rough metadata size
         }).sum()
@@ -465,7 +465,7 @@ impl DecompressionCache {
     pub async fn prefetch_file_blocks(
         &self,
         file_path: &str,
-        blocks: Vec<(u32, DataBlock, Option<crate::core::compression::CompressionAlgorithm>)>,
+        blocks: Vec<(u32, FastLanesDataBlock, Option<crate::core::compression::CompressionAlgorithm>)>,
     ) -> Result<()> {
         info!(
             "📥 Prefetching {} blocks for file {}",

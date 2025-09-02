@@ -53,9 +53,10 @@ pub struct BlockMetadataStats {
     pub compression_ratio: f32,
 }
 
-/// Shared data block structure for row-based engines
+/// Shared data block structure using FastLanes columnar encoding
+/// Used by SST and SWIFT engines for efficient SIMD-optimized storage
 #[derive(Debug, Clone)]
-pub struct RowBasedDataBlock {
+pub struct FastLanesDataBlock {
     /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
     /// Format: [7:4] Major encoding type | [3:0] Sub-variant
     /// 0x00: Raw/Uncompressed (backward compatible)
@@ -93,7 +94,7 @@ pub struct RowBasedDataBlock {
     pub quantized_section: Option<QuantizedSection>,
     
     /// Block metadata
-    pub metadata: RowBasedBlockMetadata,
+    pub metadata: FastLanesBlockMetadata,
     
     /// Compression information
     pub compression_config: BlockCompressionConfig,
@@ -124,9 +125,10 @@ pub struct RowBasedDataBlock {
     pub has_deletes: bool,
 }
 
-/// Block metadata shared between engines
+/// Block metadata for FastLanes encoded blocks
+/// Shared between SST and SWIFT engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowBasedBlockMetadata {
+pub struct FastLanesBlockMetadata {
     /// Basic information
     pub record_count: u32,
     pub size_bytes: u64,
@@ -225,7 +227,7 @@ pub struct SuperBlock {
     pub timestamp: i64,
     
     /// Organization
-    pub blocks: Vec<RowBasedDataBlock>,
+    pub blocks: Vec<FastLanesDataBlock>,
     pub total_size_bytes: u64,
     pub compressed_size_bytes: u64,
     
@@ -314,7 +316,7 @@ pub struct BlockLocation {
     pub estimated_load_time_ms: f32,
 }
 
-impl RowBasedDataBlock {
+impl FastLanesDataBlock {
     /// Create a new data block
     pub fn new(
         records: Vec<VectorRecord>,
@@ -368,7 +370,7 @@ impl RowBasedDataBlock {
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
-            metadata: RowBasedBlockMetadata {
+            metadata: FastLanesBlockMetadata {
                 record_count,
                 size_bytes: 0, // Will be calculated
                 compressed_size: 0,
@@ -420,7 +422,7 @@ impl RowBasedDataBlock {
         let quantized_size = self.quantized_vectors.as_ref()
             .map(|qv| qv.iter().map(|v| v.len()).sum())
             .unwrap_or(0);
-        let metadata_size = std::mem::size_of::<RowBasedBlockMetadata>();
+        let metadata_size = std::mem::size_of::<FastLanesBlockMetadata>();
         
         records_size + quantized_size + metadata_size
     }
@@ -542,6 +544,328 @@ impl RowBasedDataBlock {
             compression_ratio: 1.0, // Will be calculated during actual encoding
         }
     }
+    
+    /// Serialize the block with optional compression
+    /// Delegates encoding to the fastlanes module
+    pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
+        self.serialize_with_config(&self.compression_config)
+    }
+    
+    /// Serialize with specific compression configuration
+    /// Uses optimized columnar compression with dimension grouping and sparse metadata
+    pub fn serialize_with_config(&self, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+        use std::io::Write;
+        use std::collections::{HashMap, HashSet};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, markers};
+        use crate::core::compression::{compress, CompressionContext};
+        use crate::core::compression::CompressionAlgorithm;
+        
+        let mut result = Vec::new();
+        
+        // Write format version for backward compatibility
+        const COLUMNAR_FORMAT_VERSION: u8 = 1;  // Version 1 = initial release
+        result.push(COLUMNAR_FORMAT_VERSION);
+        result.push(self.encoding_marker);
+        
+        if self.records.is_empty() {
+            result.write_all(&0u32.to_le_bytes())?; // Zero records
+            return Ok(result);
+        }
+        
+        // Write record count and dimension
+        result.write_all(&(self.records.len() as u32).to_le_bytes())?;
+        let dimension = self.records[0].vector.len();
+        result.write_all(&(dimension as u32).to_le_bytes())?;
+        
+        // ============ STEP 1: Encode vectors using FastLanes dual-mode encoding ============
+        // Initialize encoder - delegate to fastlanes_encoding module
+        let encoder = if self.encoding_marker != 0x00 {
+            FastLanesEncoder::new(
+                markers::to_scheme(self.encoding_marker).unwrap_or(
+                    crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::Delta { base: 0 }
+                )
+            )
+        } else {
+            // Default to delta encoding for better compression
+            FastLanesEncoder::new(crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::Delta { base: 0 })
+        };
+        
+        // Collect vectors from records
+        let vectors: Vec<Vec<f32>> = self.records.iter()
+            .map(|r| r.vector.clone())
+            .collect();
+        
+        // Choose encoding layout based on dimension and configuration
+        // Use columnar for better compression on low-medium dimensions
+        // Use row-wise for high dimensions to speed up reconstruction
+        let encoded_vectors = if dimension <= 512 {
+            // Columnar layout for better compression
+            encoder.encode_vectors_columnar(&vectors, 64)?
+        } else if dimension <= 2048 {
+            // Row-wise without compression for medium-high dimensions
+            encoder.encode_vectors_rowwise(&vectors, false)?
+        } else {
+            // Row-wise with compression for very high dimensions
+            encoder.encode_vectors_rowwise(&vectors, true)?
+        };
+        
+        // Write encoded vectors
+        result.write_all(&(encoded_vectors.len() as u32).to_le_bytes())?;
+        result.write_all(&encoded_vectors)?;
+        
+        // ============ STEP 2: Encode IDs using FastLanes dictionary encoding ============
+        let mut unique_ids = HashSet::new();
+        for record in &self.records {
+            unique_ids.insert(record.id.clone());
+        }
+        
+        let id_dictionary: Vec<String> = unique_ids.into_iter().collect();
+        let id_lookup: HashMap<String, i64> = id_dictionary.iter()
+            .enumerate()
+            .map(|(idx, id)| (id.clone(), idx as i64))
+            .collect();
+        
+        // Write dictionary
+        result.write_all(&(id_dictionary.len() as u32).to_le_bytes())?;
+        for id in &id_dictionary {
+            let bytes = id.as_bytes();
+            result.write_all(&(bytes.len() as u32).to_le_bytes())?;
+            result.write_all(bytes)?;
+        }
+        
+        // Collect indices and encode using FastLanes delta encoding
+        let id_indices: Vec<i64> = self.records.iter()
+            .map(|record| *id_lookup.get(&record.id).unwrap())
+            .collect();
+        
+        let encoded_ids = encoder.encode_i64(&id_indices)?;
+        result.write_all(&(encoded_ids.len() as u32).to_le_bytes())?;
+        result.write_all(&encoded_ids)?;
+        
+        // ============ STEP 3: Build sparse metadata columns ============
+        let mut metadata_keys = HashSet::new();
+        for record in &self.records {
+            for item in &record.metadata {
+                metadata_keys.insert(item.key.clone());
+            }
+        }
+        
+        let metadata_key_list: Vec<String> = metadata_keys.into_iter().collect();
+        result.write_all(&(metadata_key_list.len() as u32).to_le_bytes())?;
+        
+        for key in &metadata_key_list {
+            // Write key name
+            let key_bytes = key.as_bytes();
+            result.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
+            result.write_all(key_bytes)?;
+            
+            // Build sparse column for this key
+            let mut sparse_values = Vec::new();
+            let mut presence_bitmap = vec![0u8; (self.records.len() + 7) / 8];
+            
+            for (idx, record) in self.records.iter().enumerate() {
+                if let Some(item) = record.metadata.iter().find(|m| m.key == *key) {
+                    // Set bit in presence bitmap
+                    presence_bitmap[idx / 8] |= 1 << (idx % 8);
+                    
+                    // Serialize value
+                    if let Some(value) = &item.value {
+                        use prost::Message;
+                        let value_bytes = value.encode_to_vec();
+                        sparse_values.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
+                        sparse_values.write_all(&value_bytes)?;
+                    } else {
+                        sparse_values.write_all(&0u32.to_le_bytes())?;
+                    }
+                }
+            }
+            
+            // Write presence bitmap
+            result.write_all(&(presence_bitmap.len() as u32).to_le_bytes())?;
+            result.write_all(&presence_bitmap)?;
+            
+            // Compress and write sparse values
+            if !sparse_values.is_empty() {
+                let compressed_values = compress(
+                    &sparse_values,
+                    CompressionAlgorithm::Zstd,
+                    3,
+                    CompressionContext::Block,
+                )?;
+                result.write_all(&(compressed_values.len() as u32).to_le_bytes())?;
+                result.write_all(&compressed_values)?;
+            } else {
+                result.write_all(&0u32.to_le_bytes())?;
+            }
+        }
+        
+        // ============ STEP 4: Encode timestamps using FastLanes ============
+        let timestamps: Vec<i64> = self.records.iter()
+            .map(|record| record.updated_at.unwrap_or(0) as i64)
+            .collect();
+        
+        let encoded_timestamps = encoder.encode_i64(&timestamps)?;
+        result.write_all(&(encoded_timestamps.len() as u32).to_le_bytes())?;
+        result.write_all(&encoded_timestamps)?;
+        
+        // ============ STEP 5: Write block metadata ============
+        let metadata_bytes = bincode::serialize(&self.metadata)?;
+        result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
+        result.write_all(&metadata_bytes)?;
+        
+        Ok(result)
+    }
+    
+    /// Deserialize a block
+    /// Delegates decoding to the fastlanes module
+    pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Read;
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
+        use crate::core::compression::{compress, CompressionContext};
+        
+        if data.is_empty() {
+            return Err(anyhow::anyhow!("Empty data for FastLanesDataBlock deserialization"));
+        }
+        
+        let marker = data[0];
+        let data = &data[1..];
+        
+        // Check for compression
+        let decompressed_data = if marker >= 0x80 && marker < 0xA0 {
+            // Compressed data
+            let mut cursor = std::io::Cursor::new(data);
+            let mut size_bytes = [0u8; 4];
+            cursor.read_exact(&mut size_bytes)?;
+            let original_size = u32::from_le_bytes(size_bytes) as usize;
+            
+            let compressed_data = &data[4..];
+            // Map marker to compression algorithm
+            let algorithm = match marker {
+                0x10 => CompressionAlgorithm::Lz4,
+                0x11 => CompressionAlgorithm::Zstd,
+                0x12 => CompressionAlgorithm::Snappy,
+                0x13 => CompressionAlgorithm::Gzip,
+                _ => CompressionAlgorithm::None,
+            };
+            
+            crate::core::compression::decompress(
+                compressed_data,
+                algorithm,
+                CompressionContext::Block,
+            )?
+        } else {
+            data.to_vec()
+        };
+        
+        let mut cursor = std::io::Cursor::new(&decompressed_data);
+        
+        // Read metadata length and deserialize
+        let mut len_bytes = [0u8; 4];
+        cursor.read_exact(&mut len_bytes)?;
+        let metadata_len = u32::from_le_bytes(len_bytes) as usize;
+        
+        let mut metadata_bytes = vec![0u8; metadata_len];
+        cursor.read_exact(&mut metadata_bytes)?;
+        let metadata: FastLanesBlockMetadata = bincode::deserialize(&metadata_bytes)?;
+        
+        // Decode vectors based on marker
+        let records = if marker != 0x00 && marker < 0x80 {
+            // FastLanes encoded
+            let decoder = FastLanesDecoder::new(
+                markers::to_scheme(marker).unwrap_or(
+                    crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 }
+                )
+            );
+            
+            // Read dimensions and count
+            let mut dim_bytes = [0u8; 4];
+            cursor.read_exact(&mut dim_bytes)?;
+            let dimension = u32::from_le_bytes(dim_bytes) as usize;
+            
+            let mut count_bytes = [0u8; 4];
+            cursor.read_exact(&mut count_bytes)?;
+            let vector_count = u32::from_le_bytes(count_bytes) as usize;
+            
+            // Decode columns
+            let mut columns: Vec<Vec<f32>> = Vec::with_capacity(dimension);
+            for _ in 0..dimension {
+                let mut col_len_bytes = [0u8; 4];
+                cursor.read_exact(&mut col_len_bytes)?;
+                let col_len = u32::from_le_bytes(col_len_bytes) as usize;
+                
+                let mut col_data = vec![0u8; col_len];
+                cursor.read_exact(&mut col_data)?;
+                
+                // Each column contains `vector_count` floats
+                let column = decoder.decode_f32(&col_data, vector_count)?;
+                columns.push(column);
+            }
+            
+            // Transpose back to row-major
+            let mut records = Vec::with_capacity(vector_count);
+            for i in 0..vector_count {
+                let mut vector = Vec::with_capacity(dimension);
+                for col in &columns {
+                    vector.push(col[i]);
+                }
+                
+                records.push(VectorRecord {
+                    id: format!("record_{}", i), // Will be updated from metadata
+                    vector,
+                    metadata: HashMap::new(),
+                    timestamp: 0,
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                });
+            }
+            
+            records
+        } else {
+            // Raw encoding
+            let mut count_bytes = [0u8; 4];
+            cursor.read_exact(&mut count_bytes)?;
+            let record_count = u32::from_le_bytes(count_bytes) as usize;
+            
+            let mut records = Vec::with_capacity(record_count);
+            for _ in 0..record_count {
+                let mut len_bytes = [0u8; 4];
+                cursor.read_exact(&mut len_bytes)?;
+                let record_len = u32::from_le_bytes(len_bytes) as usize;
+                
+                let mut record_data = vec![0u8; record_len];
+                cursor.read_exact(&mut record_data)?;
+                
+                use prost::Message;
+                let record = VectorRecord::decode(&record_data[..])?;
+                records.push(record);
+            }
+            
+            records
+        };
+        
+        // Reconstruct the block
+        Ok(Self {
+            encoding_marker: marker,
+            encoding_metadata: None, // Will be reconstructed if needed
+            block_id: metadata.record_count, // Use from metadata
+            records,
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata,
+            compression_config: BlockCompressionConfig::default(),
+            compression_algorithm: CompressionAlgorithm::None,
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("".to_string(), "".to_string()),
+            timestamp_range: (0, 0),
+            statistics: BlockStatistics::default(),
+            metadata_stats: None,
+            has_deletes: metadata.has_deletes,
+        })
+    }
 }
 
 impl SuperBlock {
@@ -568,7 +892,7 @@ impl SuperBlock {
     }
     
     /// Add a block to the SuperBlock
-    pub fn add_block(&mut self, block: RowBasedDataBlock) {
+    pub fn add_block(&mut self, block: FastLanesDataBlock) {
         self.record_count += block.metadata.record_count as u64;
         self.total_size_bytes += block.metadata.size_bytes;
         self.compressed_size_bytes += block.metadata.compressed_size;
@@ -696,13 +1020,13 @@ impl Default for BlockMetadataStats {
     }
 }
 
-impl Default for RowBasedBlockMetadata {
+impl Default for FastLanesBlockMetadata {
     fn default() -> Self {
         Self {
             record_count: 0,
             size_bytes: 0,
             compressed_size: 0,
-            timestamp: chrono::Utc::now().timestamp(),
+            timestamp: 0,
             compaction_level: 0,
             has_deletes: false,
             has_updates: false,
@@ -714,6 +1038,7 @@ impl Default for RowBasedBlockMetadata {
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {

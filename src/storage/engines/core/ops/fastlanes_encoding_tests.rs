@@ -155,7 +155,7 @@ mod tests {
     
     #[test]
     fn test_sst_datablock_encoding() {
-        use crate::storage::engines::core::formats::row_based::block_structures::RowBasedDataBlock;
+        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
         use crate::core::VectorRecord;
         
         // Create sample vectors
@@ -168,7 +168,7 @@ mod tests {
         }
         
         // Create DataBlock with encoding
-        let mut block = RowBasedDataBlock::new(records.clone());
+        let mut block = FastLanesDataBlock::new(records.clone(), BlockCompressionConfig::default());
         block.encoding_marker = 0x30; // FrameOfReference
         block.encoding_metadata = Some(FastLanesMetadata {
             scheme: FastLanesScheme::FrameOfReference { 

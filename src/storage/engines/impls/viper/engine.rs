@@ -20,7 +20,7 @@
 //! - VIPER provides baseline search that works for ALL collections
 //! - AXIS can optionally add ML clustering as an optimization layer
 //! - Clean separation: VIPER = storage, AXIS = indexing
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -835,7 +835,7 @@ impl ViperEngine {
                 debug!("📁 filesystem.list returned {} entries", files.len());
                 let parquet_files: Vec<String> = files
                     .into_iter()
-                    .filter(|f| f.name.ends_with(".parquet") && !f.name.starts_with("__") && !f.name.starts_with("."))
+                    .filter(|f| f.name.ends_with(crate::storage::engines::VIPER_FILE_EXT) && !f.name.starts_with("__") && !f.name.starts_with("."))
                     .map(|f| f.url)  // Use the full URL from DirEntry
                     .collect();
                 debug!("📁 Found {} Parquet files", parquet_files.len());
@@ -871,7 +871,7 @@ impl ViperEngine {
             Ok(entries) => {
                 let mut files: Vec<String> = entries
                     .into_iter()
-                    .filter(|e| e.name.ends_with(".parquet") && !e.name.starts_with("__") && !e.name.starts_with("."))
+                    .filter(|e| e.name.ends_with(crate::storage::engines::VIPER_FILE_EXT) && !e.name.starts_with("__") && !e.name.starts_with("."))
                     .map(|e| e.url)
                     .collect();
                 // Sort files for consistent ordering
@@ -951,9 +951,8 @@ impl UnifiedStorageEngine for ViperEngine {
         debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
-                if let Some(ref compression) = config.storage.as_ref().and_then(|s| s.compression.as_ref()) {
-                    debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level);
+                if let Some(ref storage_config) = config.storage_config.as_ref() {
+                    debug!("   ✅ Found storage_config in collection_config");
                 } else {
                     debug!("   ⚠️ No compression config in collection_config");
                 }
@@ -1026,10 +1025,10 @@ impl UnifiedStorageEngine for ViperEngine {
         // Get input files from hints or use default empty list
         let input_files = params.hints.get("input_files")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_deref()).map(|s| s.to_string()).collect::<Vec<String>>())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).map(|s| s.to_string()).collect::<Vec<String>>())
             .clone();
         info!("🗜️ VIPER Engine: Starting compaction for collection {} with {} hinted input files", 
-              collection_id, input_files.len());
+              collection_id, input_files.as_ref().map_or(0, |f| f.len()));
         debug!("🗜️ VIPER input files: {:?}", input_files);
         // Use the modular compaction manager to compact Parquet files
         // If no input files specified, the compaction manager will discover them
@@ -1037,7 +1036,7 @@ impl UnifiedStorageEngine for ViperEngine {
         debug!("🗜️ VIPER calling compaction.compact_parquet_files");
         debug!("🗜️ VIPER collection_config present: {}", params.collection_config.is_some());
         let compaction_result = self.compaction
-            .compact_parquet_files(collection_id, input_files.clone(), params.collection_config.as_ref())
+            .compact_parquet_files(collection_id, input_files.clone().unwrap_or_default(), params.collection_config.as_ref())
             .await;
         match &compaction_result {
             Ok(result) => {
@@ -1052,13 +1051,13 @@ impl UnifiedStorageEngine for ViperEngine {
         let compaction_result = compaction_result?;
         let duration_ms = start_time.elapsed().as_millis() as u64;
         // Calculate bytes reclaimed (this is an approximation)
-        let bytes_reclaimed = input_files.len() as u64 * 1024 * 1024; // Estimate 1MB per file
+        let bytes_reclaimed = input_files.as_ref().map_or(0, |f| f.len()) as u64 * 1024 * 1024; // Estimate 1MB per file
         // Calculate entries processed - estimate based on input files
         let _entries_processed = if input_files.is_none() {
             0
         } else {
             // Estimate entries per file (this could be more accurate with metadata)
-            input_files.len() as u64 * 100 // Assume ~100 entries per file for tests
+            input_files.as_ref().map_or(0, |f| f.len()) as u64 * 100 // Assume ~100 entries per file for tests
         };
         // Update compaction metrics atomically
         self.stats.compaction_operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1265,7 +1264,7 @@ impl UnifiedStorageEngine for ViperEngine {
                         name: col.name.clone(),
                         data_type: crate::core::search::ColumnData::String, // Default to string
                         is_indexed: false,
-                        cardinality: None,
+                        estimated_cardinality: None,
                     }
                 }).collect())
                 .unwrap_or_else(Vec::new),
@@ -1277,27 +1276,101 @@ impl UnifiedStorageEngine for ViperEngine {
             ], // VIPER supports all quantization levels
         };
         
-        // Use unified search engine
-        debug!("Calling search engine with context: collection_id={}, file_count={}", 
-               search_context.collection_id, search_context.storage_info.file_count);
-        let result_set = match self.search_engine.search_unified(
-                &search_context,
-                &search_params,
-                &crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                None, // TODO: Add quantization engine when needed
-            ).await {
-            Ok(rs) => rs,
-            Err(e) => {
-                error!("Search engine error: {}", e);
-                return Err(e);
+        // Use UnifiedParquetReader for actual search with predicate pushdown
+        debug!("Using UnifiedParquetReader for collection: {}", search_context.collection_id);
+        
+        // Get IntelligentFilesystem for VIPER - critical for cloud storage performance
+        // Caches Parquet metadata, bloom filters, and frequently accessed blocks
+        let intelligent_fs = self.filesystem.get_intelligent_filesystem(
+            storage_url,
+            collection_id.to_string(),
+            crate::storage::engines::ENGINE_VIPER.to_string(),
+        ).map_err(|e| anyhow!("Failed to create intelligent filesystem: {}", e))?;
+        
+        // Create the Parquet reader - it will use filesystem factory internally
+        // TODO: Update UnifiedParquetReader to accept IntelligentFilesystem for better caching
+        let parquet_reader = crate::storage::engines::core::formats::columnar::parquet_query_engine::UnifiedParquetReader::new(
+            self.filesystem.clone()
+        ).await?;
+        
+        // Create collection context for the reader
+        let collection_context = crate::storage::engines::core::formats::columnar::parquet_query_engine::CollectionContext {
+            collection_id: collection_id.to_string(),
+            file_paths: parquet_files.clone(),
+            filterable_columns: vec![], // TODO: Get from collection config
+            quantization_columns: vec![],
+            estimated_size_mb: 0.0,
+            estimated_document_count: 0,
+            is_cloud_storage: storage_url.starts_with("s3://") || storage_url.starts_with("gs://") || storage_url.starts_with("azure://"),
+            io_optimization_hints: None,
+        };
+        
+        // Create search params
+        let search_params = crate::core::search::SearchParams {
+            query_vectors: None,
+            vector: Some(query_vector.to_vec()),
+            top_k: Some(k),
+            filter_expression: filter_expression.cloned(),
+            distance_metric: Some(distance_metric.clone()),
+            filters: None,
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: None,
+            enable_two_stage: None,
+            quantization_hint: None,
+            enable_clustering_hint: None,
+            runtime_hints: None,
+            enable_metadata_filtering_hint: None,
+            custom_hints: Some(HashMap::new()),
+            requires_ordering: None,
+            enable_progressive_search: None,
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: None,
+        };
+        
+        // Perform search using the reader's search_vectors method
+        let search_results = parquet_reader.search_vectors(&search_params, &collection_context).await?;
+        
+        // Convert SearchVectorRecord to the expected result type
+        let all_results: Vec<crate::core::search::InternalSearchResult> = search_results.into_iter().map(|r| {
+            crate::core::search::InternalSearchResult {
+                id: r.id,
+                vector_id: None,
+                score: r.score,
+                similarity: r.similarity,
+                vector: Some(r.vector),
+                metadata: r.metadata.into_iter().map(|(k, v)| (k, v)).collect(),
+                debug_info: None,
+                version: r.version,
+                timestamp: r.timestamp,
+                updated_at: None,
+                expires_at: None,
+                source: r.source,
+                expanded_context: r.expanded_context,
+                engine_stats: None,
+                semantic_similarity: None,
+                quantization_info: None,
+                index_path: None,
             }
+        }).collect();
+        
+        let result_set = crate::core::search::SearchResultSet {
+            results: Arc::from(all_results.clone()),
+            total_count: all_results.len() as u64,
+            query_id: None,
+            processing_time_us: search_start.elapsed().as_micros() as u64,
+            algorithm: "viper".to_string(),
+            metadata: HashMap::new(),
         };
         debug!("Search engine returned {} results", result_set.results.len());
-        if !result_set.results.is_none() {
+        if !result_set.results.is_empty() {
             trace!("First result metadata: {:?}", result_set.results[0].metadata);
         }
-        // Apply include flags and return native search results
-        let mut results: Vec<crate::proto::proximadb::SearchResult> = result_set.results.iter().cloned().collect();
+        // Return the internal search results - conversion to proto happens at service boundary
+        let mut results = result_set.results.to_vec();
+        
+        // Apply include flags at the internal level if needed
         if !include_vectors {
             for result in &mut results {
                 result.vector = None;
@@ -1305,7 +1378,7 @@ impl UnifiedStorageEngine for ViperEngine {
         }
         if !include_metadata {
             for result in &mut results {
-                result.metadata = HashMap::new();
+                result.metadata.clear();
             }
         }
         // ========================================================================
@@ -1347,7 +1420,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 );
                 
                 // Log metadata details for first result (columnar-specific)
-                if i == 0 && !result.metadata.is_none() {
+                if i == 0 && !result.metadata.is_empty() {
                     debug!("    📋 VIPER Metadata sample: {:?}", 
                            result.metadata.iter()
                                .take(3)

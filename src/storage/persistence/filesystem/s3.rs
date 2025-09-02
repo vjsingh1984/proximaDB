@@ -462,6 +462,10 @@ impl S3Client {
 
 #[async_trait]
 impl FileSystem for S3FileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let (bucket, key) = self.parse_s3_url(path)?;
         let credentials = self.credential_provider.get_credentials().await?;

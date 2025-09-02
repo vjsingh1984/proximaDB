@@ -1,15 +1,15 @@
 //! Storage format abstractions
 //! 
-//! Provides row-based and columnar storage formats shared by multiple engines
+//! Provides FastLanes block-columnar and pure columnar storage formats shared by multiple engines
 
-pub mod row_based;
+pub mod fastlanes_blocks;
 pub mod columnar;
 
-// Row-based formats are used by SST and SWIFT
-// Columnar formats are used by VIPER and NOVA
+// FastLanes block-columnar formats are used by SST and SWIFT (vectors are columnar-encoded within blocks)
+// Pure columnar formats are used by VIPER and NOVA (Parquet-based)
 
-pub use row_based::{
-    DataBlock, BlockMetadata, RowBasedUtilities,
+pub use fastlanes_blocks::{
+    FastLanesDataBlock, FastLanesBlockMetadata,
     SstIOLayer,
 };
 

@@ -424,7 +424,11 @@ impl QuantizedColumns {
             binary_data.push(bytes);
         }
         
-        Ok(Arc::new(BinaryArray::from(binary_data)))
+        // Convert Vec<Vec<u8>> to BinaryArray
+        let binary_array: BinaryArray = binary_data.into_iter()
+            .map(|v| Some(v))
+            .collect();
+        Ok(Arc::new(binary_array))
     }
     
     fn int8_to_arrow(&self, int8: &Int8QuantizedColumn) -> Result<(ArrayRef, ArrayRef, ArrayRef)> {
@@ -443,11 +447,10 @@ impl QuantizedColumns {
         }
         
         // Convert to Arrow arrays
-        let int8_array = Arc::new(BinaryArray::from(
-            int8_data.into_iter().map(|v| {
-                v.into_iter().map(|x| x as u8).collect::<Vec<u8>>()
-            }).collect::<Vec<_>>()
-        ));
+        let int8_binary: BinaryArray = int8_data.into_iter()
+            .map(|v| Some(v.into_iter().map(|x| x as u8).collect::<Vec<u8>>()))
+            .collect();
+        let int8_array = Arc::new(int8_binary);
         
         let scale_array = Arc::new(Float32Array::from(scales));
         let zp_array = Arc::new(Int8Array::from(zero_points));
@@ -462,7 +465,11 @@ impl QuantizedColumns {
             pq_data.push(code.codes.clone());
         }
         
-        Ok(Arc::new(BinaryArray::from(pq_data)))
+        // Convert Vec<Vec<u8>> to BinaryArray
+        let pq_binary: BinaryArray = pq_data.into_iter()
+            .map(|v| Some(v))
+            .collect();
+        Ok(Arc::new(pq_binary))
     }
     
     /// Calculate compression ratio

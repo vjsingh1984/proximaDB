@@ -264,8 +264,8 @@ impl ZeroCopyIOSystem {
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self, ProximaDBError> {
         // Import all engine serializers
-        use crate::storage::engines::core::formats::row_based::sst_metadata::SstMetadataSerializer;
-        use crate::storage::engines::core::formats::row_based::swift_metadata::SwiftMetadataSerializer;
+        use crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::SstMetadataSerializer;
+        use crate::storage::engines::core::formats::fastlanes_blocks::swift_metadata::SwiftMetadataSerializer;
         use crate::storage::engines::core::formats::columnar::parquet_metadata::ParquetMetadataSerializer;
         use crate::storage::engines::core::formats::columnar::nova_metadata::NovaMetadataSerializer;
         

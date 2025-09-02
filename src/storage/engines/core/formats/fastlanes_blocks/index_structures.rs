@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::core::bloom::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig, BloomFilterBuilder};
-use super::block_structures::{BlockLocation, RowBasedDataBlock};
+use super::block_structures::{BlockLocation, FastLanesDataBlock};
 
 /// Row-based ID indexing with multiple strategies
 pub struct RowBasedIdIndex {

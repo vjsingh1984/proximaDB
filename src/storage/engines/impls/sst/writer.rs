@@ -12,7 +12,7 @@
 //!
 //! FASTLANES ENCODING INTEGRATION:
 //! ================================
-//! This writer intelligently chooses encoding schemes per DataBlock based on data analysis:
+//! This writer intelligently chooses encoding schemes per FastLanesDataBlock based on data analysis:
 //!
 //! 1. ENCODING DECISION PROCESS:
 //!    - Analyze vector statistics (range, deltas, patterns)
@@ -61,7 +61,8 @@ use crate::storage::persistence::filesystem::{
     atomic_strategy::{AtomicWriteExecutorFactory}
 };
 
-use super::{DataBlock, IndexEntry};  // OPTIMIZED: Removed SstRecord import
+use super::IndexEntry;
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::core::VectorRecord;  // OPTIMIZED: Direct VectorRecord usage
 use crate::core::bloom::{BloomFilterConfig, HashAlgorithm, BloomFilterStrategy};
 use crate::core::bloom::factory::BloomFilterFactory;
@@ -189,7 +190,7 @@ impl SstableWriter {
     /// This eliminates duplicate compression logic and provides adaptive selection
     fn compress_block_streaming(
         &self,
-        data_block: &DataBlock,
+        data_block: &FastLanesDataBlock,
         algorithm: crate::core::compression::CompressionAlgorithm,
         level: u8,
     ) -> Result<Vec<u8>> {
@@ -408,8 +409,8 @@ impl SstableWriter {
             stats,
         );
         
-        // Use shared SST metadata serializer from row_based module
-        use crate::storage::engines::core::formats::row_based::sst_metadata::{SstGlobalHeader, SstBlockHeader, SstMetadata};
+        // Use shared SST metadata serializer from fastlanes_blocks module
+        use crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::{SstGlobalHeader, SstBlockHeader, SstMetadata};
         
         // Calculate offsets manually since atomic writer doesn't track position
         let mut current_offset = 0u64;
@@ -505,7 +506,7 @@ impl SstableWriter {
     #[inline(always)]
     fn finalize_vector_block(
         &self,
-        data_blocks: &mut Vec<DataBlock>,
+        data_blocks: &mut Vec<FastLanesDataBlock>,
         index_entries: &mut Vec<IndexEntry>,
         current_block: &[VectorRecord],
         block_id: u32,
@@ -514,14 +515,14 @@ impl SstableWriter {
         // Build block-level bloom filters
         let (block_key_bloom, block_metadata_bloom) = self.build_vector_block_bloom_filters(current_block, block_id);
         
-        // Create DataBlock with VectorRecord 
-        // Note: The DataBlock's encode_with_fastlanes method will handle:
+        // Create FastLanesDataBlock with VectorRecord 
+        // Note: The FastLanesDataBlock's encode_with_fastlanes method will handle:
         // 1. Transposing vectors to columnar format for better compression
         // 2. Using FastLanes encoding for SIMD-optimized operations
         // The SST writer has a quantization_engine field that can be used for
         // quantization before creating blocks, but for now we keep FP32 vectors
         // and let FastLanes handle the encoding optimization
-        let mut data_block = DataBlock::new(
+        let mut data_block = FastLanesDataBlock::new(
             block_id,
             current_block.to_vec()
         );
@@ -714,17 +715,17 @@ impl SstableWriter {
     #[inline(always)]
     fn finalize_block(
         &self,
-        data_blocks: &mut Vec<DataBlock>,
+        data_blocks: &mut Vec<FastLanesDataBlock>,
         index_entries: &mut Vec<IndexEntry>,
         current_block: &[VectorRecord],
         block_id: u32,
         _current_block_size: usize,
     ) -> Result<()> {
-        // NEW: Build block-level bloom filters first (needed for DataBlock creation)
+        // NEW: Build block-level bloom filters first (needed for FastLanesDataBlock creation)
         let (block_key_bloom, block_metadata_bloom) = self.build_block_bloom_filters(current_block, block_id);
         
-        // Create DataBlock with hierarchical metadata
-        let mut data_block = DataBlock::new(
+        // Create FastLanesDataBlock with hierarchical metadata
+        let mut data_block = FastLanesDataBlock::new(
             block_id,
             current_block.to_vec()
         );
@@ -809,7 +810,7 @@ impl SstableWriter {
                 metadata_min_values,
                 metadata_max_values,
                 metadata_null_counts,
-                // NEW: Hierarchical bloom filters (reuse from DataBlock)
+                // NEW: Hierarchical bloom filters (reuse from FastLanesDataBlock)
                 block_key_bloom: block_key_bloom.clone(),
                 block_metadata_bloom: block_metadata_bloom.clone(),
                 // NEW: Vector format optimization
@@ -983,7 +984,7 @@ impl SstableWriter {
     }
     
     /// NEW: Analyze vector format across the entire file
-    fn analyze_file_vector_format(&self, data_blocks: &[super::DataBlock]) -> super::VectorFormat {
+    fn analyze_file_vector_format(&self, data_blocks: &[super::FastLanesDataBlock]) -> super::VectorFormat {
         if data_blocks.is_empty() {
             return super::VectorFormat::Variable;
         }
@@ -1025,7 +1026,7 @@ impl SstableWriter {
     // Overall compression ratio is now stored only in SstableHeader
     
     /// Count unique metadata columns across all blocks
-    fn count_metadata_columns(&self, data_blocks: &[super::DataBlock]) -> u32 {
+    fn count_metadata_columns(&self, data_blocks: &[super::FastLanesDataBlock]) -> u32 {
         let mut metadata_columns = std::collections::HashSet::new();
         
         for block in data_blocks {
@@ -1055,8 +1056,8 @@ impl SstableWriter {
         }
     }
 
-    /// Encode DataBlock using FastLanes with intelligent scheme selection
-    fn encode_block_with_fastlanes(&self, data_block: &DataBlock) -> Result<DataBlock> {
+    /// Encode FastLanesDataBlock using FastLanes with intelligent scheme selection
+    fn encode_block_with_fastlanes(&self, data_block: &FastLanesDataBlock) -> Result<FastLanesDataBlock> {
         if data_block.records.is_empty() {
             return Ok(data_block.clone());
         }

@@ -61,6 +61,7 @@
 
 pub mod parquet_query_engine;  // High-level query logic (formerly parquet_reader)
 pub mod parquet_writer;
+pub mod unified_columnar_io;  // NEW: Consolidated Parquet and Arrow IPC operations
 pub mod optimization;
 pub mod id_index;
 // Quantization now handled by unified compute module

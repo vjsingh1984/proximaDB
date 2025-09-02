@@ -46,7 +46,8 @@ enum Advice {
     Sequential,
 }
 
-use super::{SwiftFile, DataBlock}; // SearchCandidate - temporarily disabled, may not exist
+use super::SwiftFile;
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use super::progressive_search::ProgressiveSearchConfig;
 
 /// Optimized SST operations using existing infrastructure
@@ -269,7 +270,7 @@ impl OptimizedSwiftOperations {
         sst_path: &str,
         superblock_idx:u32,
         block_idx: u32,
-    ) -> Result<DataBlock> {
+    ) -> Result<FastLanesDataBlock> {
         // Get memory-mapped file from pool
         let mmap = self.mmap_pool.get(sst_path)?;
         
@@ -281,7 +282,7 @@ impl OptimizedSwiftOperations {
         let block_data = mmap.slice(block_offset..block_offset + block_size)?;
         
         // Deserialize block (placeholder)
-        let block = deserialize_block(block_data)?;
+        let block = FastLanesDataBlock::deserialize(block_data)?;
         
         Ok(block)
     }
@@ -309,56 +310,7 @@ impl OptimizedSwiftOperations {
     }
 }
 
-/// Placeholder for block deserialization
-fn deserialize_block(_data: &[u8]) -> Result<DataBlock> {
-    use crate::storage::engines::core::formats::row_based::block_structures::{
-        RowBasedBlockMetadata, BlockCompressionConfig, QuantizationStatistics, BlockStatistics
-    };
-    use crate::core::compression::CompressionAlgorithm;
-    use std::collections::HashMap;
-    
-    // In real implementation, would deserialize from bytes
-    Ok(DataBlock {
-        encoding_marker: 0x00, // Raw/Uncompressed format
-        encoding_metadata: None, // No FastLanes metadata for raw format
-        block_id: 0,
-        records: Vec::new(),
-        quantized_vectors: None,
-        quantization_level: None,
-        quantized_section: None,
-        metadata: RowBasedBlockMetadata {
-            record_count: 0,
-            size_bytes: 0,
-            compressed_size: 0,
-            timestamp: 0,
-            compaction_level: 0,
-            has_deletes: false,
-            has_updates: false,
-            version_range: (0, 0),
-            column_stats: HashMap::new(),
-            quantization_stats: QuantizationStatistics::default(),
-            data_checksum: 0,
-            metadata_checksum: 0,
-        },
-        compression_config: BlockCompressionConfig {
-            algorithm: CompressionAlgorithm::None,
-            compression_level: 0,
-            enable_vector_compression: false,
-            enable_metadata_compression: false,
-            compression_threshold_bytes: 0,
-            dictionary_compression: false,
-        },
-        compression_algorithm: CompressionAlgorithm::None,
-        uncompressed_size: 0,
-        bloom_filter: None,
-        block_bloom_filter: None,
-        id_range: (String::new(), String::new()),
-        timestamp_range: (0, 0),
-        statistics: BlockStatistics::default(),
-        metadata_stats: None,
-        has_deletes: false,
-    })
-}
+// Removed wrapper - use FastLanesDataBlock::deserialize() directly
 
 /// Performance statistics for monitoring
 #[derive(Debug, Clone)]

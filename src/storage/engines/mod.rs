@@ -24,6 +24,7 @@
 //!
 //! ## Module Organization
 //!
+//! - **`constants`**: Engine type constants and magic bytes
 //! - **`core/`**: Shared infrastructure used by all engines
 //!   - `formats/`: Row-based and columnar format implementations
 //!   - `io/`: Zero-copy I/O system with prefetching
@@ -98,6 +99,7 @@
 //! )?;
 //! ```
 
+pub mod constants;
 pub mod core;
 pub mod impls;
 
@@ -124,6 +126,9 @@ pub use impls::{
     prism::PrismEngine,
     raptor::RaptorEngine,
 };
+
+// Re-export constants
+pub use constants::*;
 
 // Re-export factory
 pub use factory::{

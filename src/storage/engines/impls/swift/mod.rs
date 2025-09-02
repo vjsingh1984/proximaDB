@@ -3,8 +3,8 @@
 //!
 //! ## How SWIFT Leverages Common Modules
 //!
-//! ### 1. Row-Based Module Integration (`row_based::`)
-//! - **Hierarchical Blocks**: Uses `SuperBlock` and `DataBlock` from row_based for
+//! ### 1. Row-Based Module Integration (`fastlanes_blocks::`)
+//! - **Hierarchical Blocks**: Uses `SuperBlock` and `DataBlock` from fastlanes_blocks for
 //!   its unique three-tier hierarchy (SuperBlock → DataBlock → Records)
 //! - **Index Structures**: Leverages `HierarchicalIndex` and `MultiLevelIndex` for
 //!   efficient navigation of its deep block structure
@@ -62,9 +62,9 @@ use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
-// Import row-based common structures
-use crate::storage::engines::core::formats::row_based::block_structures::{
-    RowBasedDataBlock as DataBlock,
+// Import FastLanes common structures (SWIFT uses hierarchical structure)
+use crate::storage::engines::core::formats::fastlanes_blocks::{
+    FastLanesDataBlock,
     SuperBlock,
 };
 
@@ -218,7 +218,7 @@ pub struct Codebook {
     pub distance_table: Vec<Vec<f32>>,
 }
 
-// SuperBlock and DataBlock are now imported from row_based common module
+// SuperBlock and DataBlock are now imported from fastlanes_blocks common module
 // Additional SWIFT-specific fields can be added via composition if needed
 
 /// Column statistics for metadata filtering
@@ -255,10 +255,10 @@ impl SwiftFile {
         
         for chunk in records.chunks(records_per_block) {
             // Create compression config
-            let compression_config = crate::storage::engines::core::formats::row_based::block_structures::BlockCompressionConfig::default();
+            let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
             
             // Use row-based DataBlock constructor
-            let mut block = DataBlock::new(
+            let mut block = FastLanesDataBlock::new(
                 chunk.to_vec(),
                 compression_config,
             );
@@ -390,10 +390,10 @@ impl SwiftFile {
         
         for chunk in records.chunks(records_per_block) {
             // Create compression config
-            let compression_config = crate::storage::engines::core::formats::row_based::block_structures::BlockCompressionConfig::default();
+            let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
             
             // Use row-based DataBlock constructor
-            let mut block = DataBlock::new(
+            let mut block = FastLanesDataBlock::new(
                 chunk.to_vec(),
                 compression_config,
             );
@@ -540,7 +540,7 @@ impl SwiftFile {
     /// FASTLANES: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
     fn finalize_superblock_encoding(&mut self) {
-        use crate::storage::engines::core::formats::row_based::block_structures::FastLanesMetadata;
+        use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesMetadata;
         use crate::core::hardware_capabilities::HardwareCapabilities;
         
         let hw_caps = HardwareCapabilities::get_instance();

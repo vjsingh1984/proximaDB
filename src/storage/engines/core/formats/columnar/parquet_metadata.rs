@@ -287,7 +287,7 @@ impl ParquetMetadataSerializer {
         // Should use the parquet crate's FileMetaData parsing
         
         // For now, return error indicating this needs implementation
-        Err(ProximaDBError::NotImplemented(
+        Err(ProximaDBError::Internal(
             "Parquet footer parsing needs real implementation using parquet crate".to_string()
         ))
     }

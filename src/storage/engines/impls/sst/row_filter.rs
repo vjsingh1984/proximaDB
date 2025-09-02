@@ -9,7 +9,7 @@ use tracing::{debug, info};
 
 use crate::core::VectorRecord;  // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::FilterExpression;
-use crate::storage::engines::impls::sst::DataBlock;  // OPTIMIZED: Removed SstRecord import (DataBlock now contains VectorRecord)
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Fast in-memory filter evaluator for row-oriented SST data
 pub struct SSTRowFilterEvaluator {
@@ -85,13 +85,13 @@ impl SSTRowFilterEvaluator {
         Ok(qualifying_indices)
     }
     
-    /// Filter entire DataBlock efficiently
+    /// Filter entire FastLanesDataBlock efficiently
     pub fn filter_data_block(
         &mut self,
-        block: &DataBlock,
+        block: &FastLanesDataBlock,
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
-        info!("SST Row Filter: Filtering DataBlock {} with {} records", 
+        info!("SST Row Filter: Filtering FastLanesDataBlock {} with {} records", 
               block.block_id, block.records.len());
         
         self.filter_records_fast(&block.records, filter_expr)
@@ -100,7 +100,7 @@ impl SSTRowFilterEvaluator {
     /// Parallel block filtering for high-performance workloads
     pub async fn filter_blocks_parallel(
         &mut self,
-        blocks: &[DataBlock],
+        blocks: &[FastLanesDataBlock],
         filter_expr: &FilterExpression,
     ) -> Result<HashMap<u32, Vec<usize>>> {
         let mut block_results = HashMap::new();

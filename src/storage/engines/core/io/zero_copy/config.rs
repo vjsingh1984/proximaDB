@@ -411,7 +411,7 @@ impl ZeroCopyIOSystemBuilder {
     
     fn register_default_serializers(&mut self, filesystem: Arc<FilesystemFactory>) -> Result<(), ProximaDBError> {
         // Register SST serializer
-        let sst_serializer = crate::storage::engines::core::formats::row_based::sst_metadata::SstMetadataSerializer::new(filesystem.clone());
+        let sst_serializer = crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::SstMetadataSerializer::new(filesystem.clone());
         self.serializers.push(Box::new(sst_serializer));
         
         // Register Parquet serializer

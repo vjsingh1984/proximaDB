@@ -150,9 +150,9 @@ pub mod pipeline;
 pub mod pipeline_tests; // Pipeline tests module
 // Quantization now handled by unified compute module
 pub mod utilities;
-pub mod indexed_reader;
+// Removed indexed_reader - use columnar/parquet_query_engine instead
+// Removed vector_writer - use columnar/parquet_writer instead
 pub mod column_filter;
-pub mod vector_writer;
 
 // New modular structure for better maintainability
 pub mod types;

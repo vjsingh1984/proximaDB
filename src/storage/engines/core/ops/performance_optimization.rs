@@ -195,6 +195,7 @@ impl Default for UniversalIOConfig {
 }
 
 /// Universal performance optimization provider for all storage engines
+#[derive(Debug)]
 pub struct UniversalPerformanceOptimizer {
     /// I/O configuration
     io_config: UniversalIOConfig,

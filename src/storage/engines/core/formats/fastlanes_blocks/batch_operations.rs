@@ -9,7 +9,7 @@ use tokio::sync::Semaphore;
 
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 use crate::core::memory::pool::VectorMemoryPool;
-use super::block_structures::{RowBasedDataBlock, BlockLocation, SuperBlock};
+use super::block_structures::{FastLanesDataBlock, BlockLocation, SuperBlock};
 use super::index_structures::RowBasedIdIndex;
 // Quantization now handled by unified compute module
 
@@ -173,7 +173,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_read_by_ids(
         &self,
         ids: Vec<String>,
-        blocks: &[RowBasedDataBlock],
+        blocks: &[FastLanesDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_read_{}", uuid::Uuid::new_v4());
@@ -268,7 +268,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_write_records(
         &self,
         records: Vec<VectorRecord>,
-        blocks: &mut Vec<RowBasedDataBlock>,
+        blocks: &mut Vec<FastLanesDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_write_{}", uuid::Uuid::new_v4());
@@ -327,7 +327,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_update_records(
         &self,
         updates: Vec<(String, VectorRecord)>,
-        blocks: &mut [RowBasedDataBlock],
+        blocks: &mut [FastLanesDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_update_{}", uuid::Uuid::new_v4());
@@ -404,7 +404,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_delete_records(
         &self,
         ids: Vec<String>,
-        blocks: &mut [RowBasedDataBlock],
+        blocks: &mut [FastLanesDataBlock],
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_delete_{}", uuid::Uuid::new_v4());
@@ -534,12 +534,12 @@ impl RowBasedBatchOperations {
     async fn process_batches_parallel<F, Fut>(
         &self,
         batches: Vec<Vec<String>>,
-        blocks: &[RowBasedDataBlock],
+        blocks: &[FastLanesDataBlock],
         index: &RowBasedIdIndex,
         processor: F,
     ) -> Result<Vec<BatchResult>>
     where
-        F: Fn(Vec<String>, &[RowBasedDataBlock], &RowBasedIdIndex) -> Fut,
+        F: Fn(Vec<String>, &[FastLanesDataBlock], &RowBasedIdIndex) -> Fut,
         Fut: std::future::Future<Output = Result<BatchResult>>,
     {
         use futures::future::join_all;
@@ -564,7 +564,7 @@ impl RowBasedBatchOperations {
     async fn process_read_batch(
         &self,
         ids: Vec<String>,
-        blocks: &[RowBasedDataBlock],
+        blocks: &[FastLanesDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let start_time = std::time::Instant::now();
@@ -644,7 +644,7 @@ impl RowBasedBatchOperations {
     async fn process_write_batch(
         &self,
         records: Vec<VectorRecord>,
-        blocks: &mut Vec<RowBasedDataBlock>,
+        blocks: &mut Vec<FastLanesDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         // Implementation would write records to appropriate blocks
@@ -670,7 +670,7 @@ impl RowBasedBatchOperations {
         &self,
         id: &str,
         updated_record: VectorRecord,
-        blocks: &mut [RowBasedDataBlock],
+        blocks: &mut [FastLanesDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<Option<VectorRecord>> {
         if let Some(location) = index.lookup(id).await {
@@ -689,7 +689,7 @@ impl RowBasedBatchOperations {
     async fn delete_single_record(
         &self,
         id: &str,
-        blocks: &mut [RowBasedDataBlock],
+        blocks: &mut [FastLanesDataBlock],
         index: &mut RowBasedIdIndex,
     ) -> Result<bool> {
         // Implementation would mark record as deleted or remove it

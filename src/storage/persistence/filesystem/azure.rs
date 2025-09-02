@@ -429,6 +429,10 @@ impl AzureClient {
 
 #[async_trait]
 impl FileSystem for AzureFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 Azure read: {}", path);
         let (container, blob_path) = self.parse_azure_url(path)?;

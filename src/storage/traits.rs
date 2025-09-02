@@ -188,6 +188,149 @@ pub trait UnifiedStorageEngine: Send + Sync {
         
         self.do_compact(&params).await
     }
+    
+    /// Create a scan iterator based on the unified scan strategy pattern
+    /// This follows the successful pattern from RAPTOR's scan_vectors_with_strategy
+    /// and is implemented differently by each engine:
+    /// - SST: Uses modular block readers with bloom filters
+    /// - VIPER: Uses columnar predicate pushdown
+    /// - NOVA: Uses progressive quantization stages
+    /// - RAPTOR: Uses tier-aware consolidated reading
+    /// 
+    /// Default implementation returns an error - engines should override
+    async fn create_scan(
+        &self,
+        collection_id: &str,
+        strategy: crate::storage::unified_scan_strategy::ScanStrategy,
+        collection_config: Option<&Collection>,
+    ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
+        // Default implementation - engines should override with their specific implementation
+        Err(anyhow::anyhow!(
+            "{} engine does not yet implement unified scan strategy. Use search_vectors_unified for now.",
+            self.engine_name()
+        ))
+    }
+    
+    /// Get scan capabilities for this engine
+    /// Each engine reports its specific optimization capabilities
+    fn scan_capabilities(&self) -> crate::storage::unified_scan_strategy::ScanCapabilities {
+        use crate::storage::unified_scan_strategy::ScanCapabilities;
+        
+        match self.strategy() {
+            StorageEngineStrategy::Lsm => ScanCapabilities {
+                // SST capabilities
+                supports_predicate_pushdown: false,
+                supports_column_projection: false,
+                supports_row_group_pruning: false,
+                supports_parallel_column_evaluation: false,
+                supports_bloom_filters: true,
+                supports_block_cache: true,
+                supports_range_scans: true,
+                supports_index_scans: true,
+                supports_progressive_quantization: false,
+                supports_zone_maps: false,
+                supports_streaming: false,
+                supports_tier_aware_scanning: false,
+                supports_consolidated_reading: false,
+            },
+            StorageEngineStrategy::Viper => ScanCapabilities {
+                // VIPER capabilities
+                supports_predicate_pushdown: true,
+                supports_column_projection: true,
+                supports_row_group_pruning: true,
+                supports_parallel_column_evaluation: true,
+                supports_bloom_filters: false,
+                supports_block_cache: false,
+                supports_range_scans: false,
+                supports_index_scans: false,
+                supports_progressive_quantization: false,
+                supports_zone_maps: true,
+                supports_streaming: true,
+                supports_tier_aware_scanning: false,
+                supports_consolidated_reading: false,
+            },
+            StorageEngineStrategy::Nova => ScanCapabilities {
+                // NOVA capabilities
+                supports_predicate_pushdown: true,
+                supports_column_projection: true,
+                supports_row_group_pruning: true,
+                supports_parallel_column_evaluation: true,
+                supports_bloom_filters: false,
+                supports_block_cache: false,
+                supports_range_scans: false,
+                supports_index_scans: false,
+                supports_progressive_quantization: true,
+                supports_zone_maps: true,
+                supports_streaming: true,
+                supports_tier_aware_scanning: false,
+                supports_consolidated_reading: false,
+            },
+            StorageEngineStrategy::Raptor => ScanCapabilities {
+                // RAPTOR capabilities
+                supports_predicate_pushdown: true,
+                supports_column_projection: true,
+                supports_row_group_pruning: true,
+                supports_parallel_column_evaluation: false,
+                supports_bloom_filters: true,
+                supports_block_cache: false,
+                supports_range_scans: false,
+                supports_index_scans: false,
+                supports_progressive_quantization: false,
+                supports_zone_maps: false,
+                supports_streaming: true,
+                supports_tier_aware_scanning: true,
+                supports_consolidated_reading: true,
+            },
+            StorageEngineStrategy::Swift => ScanCapabilities {
+                // SWIFT capabilities - hierarchical superblock architecture
+                supports_predicate_pushdown: false,
+                supports_column_projection: false,
+                supports_row_group_pruning: false,
+                supports_parallel_column_evaluation: false,
+                supports_bloom_filters: true,
+                supports_block_cache: true,
+                supports_range_scans: true,
+                supports_index_scans: true,
+                supports_progressive_quantization: false,
+                supports_zone_maps: false,
+                supports_streaming: false,
+                supports_tier_aware_scanning: true,
+                supports_consolidated_reading: false,
+            },
+            StorageEngineStrategy::Prism => ScanCapabilities {
+                // PRISM capabilities - tree-based with FastLanes
+                supports_predicate_pushdown: false,
+                supports_column_projection: false,
+                supports_row_group_pruning: false,
+                supports_parallel_column_evaluation: false,
+                supports_bloom_filters: false,
+                supports_block_cache: true,
+                supports_range_scans: true,
+                supports_index_scans: true,
+                supports_progressive_quantization: false,
+                supports_zone_maps: false,
+                supports_streaming: false,
+                supports_tier_aware_scanning: true,
+                supports_consolidated_reading: false,
+            },
+            _ => ScanCapabilities {
+                // Default minimal capabilities
+                supports_predicate_pushdown: false,
+                supports_column_projection: false,
+                supports_row_group_pruning: false,
+                supports_parallel_column_evaluation: false,
+                supports_bloom_filters: false,
+                supports_block_cache: false,
+                supports_range_scans: false,
+                supports_index_scans: false,
+                supports_progressive_quantization: false,
+                supports_zone_maps: false,
+                supports_streaming: false,
+                supports_tier_aware_scanning: false,
+                supports_consolidated_reading: false,
+            },
+        }
+    }
 
     // =============================================================================
     // ENGINE CAPABILITIES - Can be overridden, sensible defaults provided

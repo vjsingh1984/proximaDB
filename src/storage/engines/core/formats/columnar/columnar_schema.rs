@@ -11,6 +11,7 @@ use tracing::{debug, info};
 use super::{QuantizationConfig, ColumnarFileMetadata};
 
 /// Schema operations for columnar storage with quantization support
+#[derive(Debug)]
 pub struct ColumnarSchema {
     /// Cached schemas by collection ID
     schema_cache: Arc<RwLock<HashMap<String, CachedSchema>>>,

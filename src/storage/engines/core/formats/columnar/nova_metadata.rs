@@ -176,6 +176,10 @@ impl EngineMetadata for NovaMetadata {
                 // Mixed operations - use moderate selectivity
                 0.3
             }
+            QueryType::VectorSearch | QueryType::FullScan => {
+                // Vector search and full scan have different selectivity
+                1.0
+            }
         }
     }
 
@@ -209,6 +213,8 @@ impl EngineMetadata for NovaMetadata {
             QueryType::SimilaritySearch => true, // Excellent for similarity search
             QueryType::MetadataFilter => true,   // Excellent for metadata filtering
             QueryType::Batch => true,           // Supports batch operations
+            QueryType::VectorSearch => true,    // Supports vector search
+            QueryType::FullScan => true,        // Supports full scan
         }
     }
 
@@ -272,6 +278,11 @@ impl NovaMetadata {
                 // Conservative: need all groups
                 (0..self.column_groups.len() as u32).collect()
             }
+            
+            QueryType::VectorSearch | QueryType::FullScan => {
+                // Vector search and full scan need all groups
+                (0..self.column_groups.len() as u32).collect()
+            }
         }
     }
 
@@ -328,6 +339,14 @@ impl NovaMetadata {
 
             QueryType::Batch => {
                 // Need all column types
+                for (group_idx, columns) in self.columns.iter().enumerate() {
+                    let all_cols: Vec<u32> = (0..columns.len() as u32).collect();
+                    required_columns.insert(group_idx as u32, all_cols);
+                }
+            }
+            
+            QueryType::VectorSearch | QueryType::FullScan => {
+                // Need all columns for vector search and full scan
                 for (group_idx, columns) in self.columns.iter().enumerate() {
                     let all_cols: Vec<u32> = (0..columns.len() as u32).collect();
                     required_columns.insert(group_idx as u32, all_cols);
@@ -750,6 +769,11 @@ impl MetadataSerializer for NovaMetadataSerializer {
 
             QueryType::Batch => {
                 // Conservative approach for batch queries
+                false
+            }
+            
+            QueryType::VectorSearch | QueryType::FullScan => {
+                // Cannot skip file for vector search or full scan
                 false
             }
         }

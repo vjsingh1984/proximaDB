@@ -111,7 +111,7 @@ impl PartialOrd for SearchCandidate {
 
 impl Ord for SearchCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other)
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -812,8 +812,8 @@ impl NovaColumnarSearch {
         
         // Extract other fields as needed
         Ok(Some(VectorRecord {
-            id,
-            vector,
+            id: id.unwrap_or_else(|| format!("unknown_{}", row_idx)),
+            vector: vector.unwrap_or_default(),
             metadata: vec![],
             timestamp: 0,
             updated_at: None,

@@ -10,14 +10,14 @@ use uuid::Uuid;
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use super::{RowBasedConfig, RowBasedDataBlock};
+use super::{RowBasedConfig, FastLanesDataBlock};
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
 
 impl RowBasedUtilities {
     /// Calculate memory usage for a collection of blocks
-    pub fn calculate_memory_usage(blocks: &[RowBasedDataBlock]) -> MemoryUsageReport {
+    pub fn calculate_memory_usage(blocks: &[FastLanesDataBlock]) -> MemoryUsageReport {
         let mut total_records = 0;
         let mut total_vector_bytes = 0;
         let mut total_metadata_bytes = 0;

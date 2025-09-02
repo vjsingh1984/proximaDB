@@ -502,6 +502,10 @@ impl HdfsClient {
 
 #[async_trait]
 impl FileSystem for HdfsFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 HDFS read: {}", path);
         let normalized_path = self.normalize_path(path);

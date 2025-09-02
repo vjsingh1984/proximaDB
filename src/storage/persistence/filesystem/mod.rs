@@ -167,6 +167,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
+use std::sync::Arc;
 use url::Url;
 use tracing::{debug, error, info};
 
@@ -181,6 +182,7 @@ pub mod manager;
 pub mod s3;
 pub mod write_strategy;
 pub mod zero_copy_filesystem;
+pub mod intelligent_filesystem;
 
 #[cfg(test)]
 pub mod tests;
@@ -524,6 +526,9 @@ pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
 /// Abstract filesystem trait for strategy pattern
 #[async_trait]
 pub trait FileSystem: Send + Sync + std::fmt::Debug {
+    /// Get self as Any for downcasting to concrete types
+    fn as_any(&self) -> &dyn std::any::Any;
+    
     /// Read file contents
     async fn read(&self, path: &str) -> FsResult<Vec<u8>>;
     
@@ -823,7 +828,7 @@ impl Default for FilesystemConfig {
 /// Abstract factory for creating filesystem instances
 pub struct FilesystemFactory {
     config: FilesystemConfig,
-    filesystems: HashMap<String, Box<dyn FileSystem>>,
+    filesystems: HashMap<String, Arc<dyn FileSystem>>,
     tier_mapping: HashMap<StorageTier, String>,
 }
 
@@ -860,31 +865,33 @@ impl FilesystemFactory {
         if let Some(local_config) = &self.config.local {
             let local_fs = LocalFileSystem::new(local_config.clone()).await?;
             self.filesystems
-                .insert("file".to_string(), Box::new(local_fs));
+                .insert("file".to_string(), Arc::new(local_fs));
         } else {
             // Create default local filesystem without root restriction
             let default_config = local::LocalConfig::default();
             let local_fs = LocalFileSystem::new(default_config).await?;
             self.filesystems
-                .insert("file".to_string(), Box::new(local_fs));
+                .insert("file".to_string(), Arc::new(local_fs));
         }
 
         // 🔴 UNUSED CLOUD STORAGE - Never actually used in production
         // Initialize S3 filesystem
         if let Some(s3_config) = &self.config.s3 {
             let s3_fs = S3FileSystem::new(s3_config.clone()).await?;
-            self.filesystems.insert("s3".to_string(), Box::new(s3_fs));
+            self.filesystems.insert("s3".to_string(), Arc::new(s3_fs));
         }
 
         // Initialize Azure filesystem
         if let Some(azure_config) = &self.config.azure {
             let azure_fs_adls = AzureFileSystem::new(azure_config.clone()).await?;
             let azure_fs_abfs = AzureFileSystem::new(azure_config.clone()).await?;
+            let azure_arc = Arc::new(azure_fs_adls);
             self.filesystems
-                .insert("adls".to_string(), Box::new(azure_fs_adls));
+                .insert("adls".to_string(), Arc::clone(&azure_arc));
             // ABFS is the same as ADLS Gen2 - just different URL scheme
+            // Share the same Arc instance
             self.filesystems
-                .insert("abfs".to_string(), Box::new(azure_fs_abfs));
+                .insert("abfs".to_string(), azure_arc);
         }
 
         // Initialize GCS filesystem
@@ -893,22 +900,26 @@ impl FilesystemFactory {
             let gcs_fs1 = GcsFileSystem::new(gcs_config.clone()).await?;
             let gcs_fs2 = GcsFileSystem::new(gcs_config.clone()).await?;
             // Register under both "gcs" and "gs" schemes for compatibility
-            self.filesystems.insert("gcs".to_string(), Box::new(gcs_fs1));
-            self.filesystems.insert("gs".to_string(), Box::new(gcs_fs2));
+            let gcs_arc = Arc::new(gcs_fs1);
+            self.filesystems.insert("gcs".to_string(), Arc::clone(&gcs_arc));
+            self.filesystems.insert("gs".to_string(), gcs_arc);
         }
 
         // Initialize HDFS filesystem
         if let Some(hdfs_config) = &self.config.hdfs {
             let hdfs_fs = HdfsFileSystem::new(hdfs_config.clone()).await?;
             self.filesystems
-                .insert("hdfs".to_string(), Box::new(hdfs_fs));
+                .insert("hdfs".to_string(), Arc::new(hdfs_fs));
         }
 
         Ok(())
     }
 
     /// Get filesystem instance for URL scheme (cached instances)
-    pub fn get_filesystem(&self, url: &str) -> FsResult<&dyn FileSystem> {
+    /// Get filesystem instance for URL scheme (returns Arc for safe sharing).
+    /// 
+    /// Use this when you need raw filesystem access without caching.
+    pub fn get_filesystem(&self, url: &str) -> FsResult<Arc<dyn FileSystem>> {
         // Handle URLs without schemes by prepending file://
         let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
@@ -920,8 +931,55 @@ impl FilesystemFactory {
 
         self.filesystems
             .get(&scheme)
-            .map(|fs| fs.as_ref())
+            .cloned()
             .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme))
+    }
+    
+    /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
+    /// 
+    /// This is the RECOMMENDED method for engines to get filesystems.
+    /// It automatically:
+    /// 1. Selects the right filesystem based on URL scheme
+    /// 2. Wraps it with IntelligentFilesystem for caching
+    /// 3. Returns a ready-to-use cached filesystem
+    /// 
+    /// ## Benefits
+    /// 
+    /// - **Cloud Storage**: Dramatically reduces API calls through metadata caching
+    /// - **Local Storage**: Adds bloom filter and block caching
+    /// - **All Storage**: Access pattern learning and predictive prefetching
+    /// 
+    /// ## Example
+    /// 
+    /// ```rust
+    /// // Instead of:
+    /// let fs = factory.get_filesystem("s3://bucket")?;
+    /// let cached_fs = IntelligentFilesystem::new(fs, collection_id, engine_type);
+    /// 
+    /// // Just do:
+    /// let cached_fs = factory.get_intelligent_filesystem(
+    ///     "s3://bucket",
+    ///     collection_id,
+    ///     engine_type,
+    /// )?;
+    /// ```
+    pub fn get_intelligent_filesystem(
+        &self,
+        url: &str,
+        collection_id: String,
+        engine_type: String,
+    ) -> FsResult<Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>> {
+        // Get the appropriate filesystem for this URL
+        let fs = self.get_filesystem(url)?;
+        
+        // Wrap it with IntelligentFilesystem for caching
+        let intelligent_fs = crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem::new(
+            fs,
+            collection_id,
+            engine_type,
+        );
+        
+        Ok(Arc::new(intelligent_fs))
     }
 
     /// Cross-storage atomic operations - handles full URLs for source and destination

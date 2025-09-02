@@ -7,7 +7,10 @@ use std::collections::{HashMap, HashSet, BTreeMap};
 use std::sync::Arc;
 
 use crate::core::VectorRecord;
-use super::{SuperBlock, DataBlock, ColumnStats};
+use super::ColumnStats;
+use crate::storage::engines::core::formats::fastlanes_blocks::{
+    FastLanesDataBlock, SuperBlock,
+};
 
 /// Metadata index for efficient filtering
 #[derive(Debug)]
@@ -210,7 +213,7 @@ impl MetadataIndex {
     }
     
     /// Index a single block's metadata
-    fn index_block(&mut self, sb_idx: usize, b_idx: usize, block: &DataBlock) -> Result<()> {
+    fn index_block(&mut self, sb_idx: usize, b_idx: usize, block: &FastLanesDataBlock) -> Result<()> {
         let block_id = sb_idx * 64 + b_idx;
         
         // Process each record's metadata
@@ -453,7 +456,7 @@ mod tests {
         index.filterable_columns.insert("price".to_string());
         
         // Create test block
-        let block = DataBlock {
+        let block = FastLanesDataBlock {
             id: 0,
             offset_in_superblock: 0,
             compressed_size: 0,

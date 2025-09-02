@@ -422,6 +422,10 @@ impl GcsClient {
 
 #[async_trait]
 impl FileSystem for GcsFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 GCS read: {}", path);
         let (bucket, object_path) = self.parse_gcs_url(path)?;

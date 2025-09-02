@@ -142,6 +142,7 @@ pub struct StageMetrics {
 }
 
 /// Common storage quantization engine
+#[derive(Debug)]
 pub struct StorageQuantizationEngine {
     /// Underlying unified quantization engine
     unified_engine: Arc<UnifiedQuantizationEngine>,

@@ -573,7 +573,7 @@ impl PrismEngine {
         use crate::storage::persistence::filesystem::StorageTier as FsStorageTier;
         let tier = match infrastructure_tier {
             FsStorageTier::Memory => StorageTier::Unflushed,
-            FsStorageTier::NVMe | FsStorageTier::SSD | FsStorageTier::HDD | FsStorageTier::S3Express | FsStorageTier::S3Standard | FsStorageTier::S3GlacierInstant | FsStorageTier::AzurePremium | FsStorageTier::AzureStandard | FsStorageTier::GcsStandard | FsStorageTier::GcsNearline => StorageTier::Compacted,
+            FsStorageTier::NVMe | FsStorageTier::SSD | FsStorageTier::HDD | FsStorageTier::S3Express | FsStorageTier::S3Standard | FsStorageTier::S3GlacierInstant | FsStorageTier::AzurePremium | FsStorageTier::AzureStandard | FsStorageTier::GcsSSD | FsStorageTier::GcsHDD => StorageTier::Compacted,
         };
         
         Ok(tier)

@@ -107,6 +107,10 @@ impl NovaEngine {
             UniversalOptimizationStrategy::Balanced,
         ).await?;
         
+        // NOVA benefits from IntelligentFilesystem for caching hierarchical stats
+        // We'll create collection-specific instances during operations since we need
+        // the actual storage path to get the right filesystem from the factory
+        
         Ok(Self {
             filesystem,
             optimized_ops,
@@ -143,10 +147,17 @@ impl NovaEngine {
     
     /// Load NOVA files for collection from storage
     async fn load_collection_files(&self, collection_id: &str, storage_path: &str) -> Result<Vec<super::NovaFile>> {
+        // Get IntelligentFilesystem for NOVA - caches hierarchical stats and Parquet metadata
+        let intelligent_fs = self.filesystem.get_intelligent_filesystem(
+            storage_path,
+            collection_id.to_string(),
+            crate::storage::engines::ENGINE_NOVA.to_string(),
+        ).map_err(|e| anyhow!("Failed to create intelligent filesystem: {}", e))?;
+        
         // In production, this would:
         // 1. List all files in {storage_path}/{collection_id}/data/
         // 2. Filter out *.stats files and other non-data files  
-        // 3. Load Parquet files with statistics from metadata properties
+        // 3. Load Parquet files with statistics from metadata properties using intelligent_fs
         // 4. Statistics are embedded in Parquet metadata for atomicity
         // For now, return empty vec as placeholder
         Ok(Vec::new())
@@ -161,7 +172,7 @@ impl NovaEngine {
     }
     
     /// Compute enhanced row group statistics (optimized NOVA design)
-    fn compute_enhanced_row_group_stats(&self, records: &[VectorRecord], dimension: usize) -> Result<Vec<HashMap<String, String>>> {
+    fn compute_enhanced_row_group_stats(&self, records: &[VectorRecord], dimension: usize) -> Result<Vec<super::hierarchical_stats::EnhancedRowGroupStats>> {
         if records.is_empty() {
             return Ok(Vec::new());
         }
@@ -421,8 +432,8 @@ impl UnifiedStorageEngine for NovaEngine {
         // Get dimension from collection config or use default
         let dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension)
-             as usize;
+            .map(|cfg| cfg.dimension as usize)
+            .unwrap_or(1536); // Default dimension
         // Use default compression for Parquet
         let compression_algorithm = CompressionAlgorithm::Zstd;
         debug!("NOVA: Using compression: {:?}", compression_algorithm);
@@ -433,8 +444,8 @@ impl UnifiedStorageEngine for NovaEngine {
         let zone_maps = self.compute_basic_zone_maps(&params.vector_records, dimension)?;
         
         let nova_file = NovaFile {
-            quantized_columns: HashMap::new(),
-            schema: None,
+            quantized_columns: super::quantized_columns::QuantizedColumnMetadata::default(),
+            schema: Arc::new(arrow_schema::Schema::empty()),
             metadata: crate::storage::engines::core::formats::columnar::ColumnarFileMetadata {
                 collection_id: collection_id.to_string(),
                 num_vectors: params.vector_records.len() as u64,
@@ -635,7 +646,7 @@ impl UnifiedStorageEngine for NovaEngine {
             info!("🎯 NOVA: Using intelligent search orchestration");
             
             // Create mock services for orchestration
-            let axis_manager = match self.mock_axis_manager() {
+            let axis_manager = match self.get_axis_manager() {
                 Ok(manager) => manager,
                 Err(e) => {
                     tracing::warn!("⚠️ Failed to get AXIS manager: {}, falling back to direct search", e);
@@ -765,7 +776,7 @@ impl UnifiedStorageEngine for NovaEngine {
         })
     }
     
-    async fn supports_feature(&self, feature: &str) -> bool {
+    fn supports_feature(&self, feature: &str) -> bool {
         match feature {
             "id_lookup" => true,
             "similarity_search" => true,
@@ -786,7 +797,7 @@ impl NovaFile {
     pub fn load_record_at_location(&self, location: &crate::storage::engines::core::formats::columnar::id_index::ParquetLocation) -> Result<VectorRecord> {
         // In production, would load from Parquet row group
         Ok(VectorRecord {
-            id: Some(format!("vec_rg{}_row{}", location.row_group_id, location.row_offset)),
+            id: format!("vec_rg{}_row{}", location.row_group_id, location.row_offset),
             vector: vec![0.0; self.metadata.dimension],
             metadata: vec![],
             timestamp: 0,
@@ -794,7 +805,7 @@ impl NovaFile {
             expires_at: None,
             version: None,
             quantized_vector: None,
-            source: None, // No source information in current implementation
+            source: None,
         })
     }
 }
@@ -879,30 +890,32 @@ impl NovaEngine {
     /// Helper methods for search orchestration
     /// These create mock services for orchestration functionality
     
-    fn mock_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
-        // Create a mock AXIS manager
-        Err(anyhow!("AXIS manager not available in mock implementation"))
+    fn get_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
+        // Get real AXIS manager from the system
+        crate::index::axis::management::manager::AxisManager::get_instance()
     }
     
-    fn mock_collection_service(&self) -> Arc<crate::services::collection::manager::CollectionService> {
-        // Create a mock collection service
+    fn get_collection_service(&self) -> Arc<crate::services::collection::manager::CollectionService> {
+        // Get real collection service from configuration
+        let metadata_url = std::env::var("METADATA_STORE_URL")
+            .unwrap_or_else(|_| "file:///data/metadata".to_string());
         Arc::new(crate::services::collection::manager::CollectionService::new(
-            "mock://collections".to_string(),
-            None, // No metadata provider for mock
+            metadata_url,
+            None, // Metadata provider will be initialized internally
         ))
     }
     
-    fn mock_distance_engine(&self) -> Arc<crate::compute::distance_computation::UnifiedDistanceCompute> {
-        // Return the existing distance engine
-        self.distance_engine.clone()
+    fn get_distance_engine(&self) -> Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
+        // Return real distance engine with hardware acceleration
+        Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::with_hardware_detection())
     }
     
-    fn mock_quantization_engine(&self) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
-        // Return the existing quantization engine
-        self.quantization_engine.clone()
+    fn get_quantization_engine(&self) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        // Extract the unified engine from our storage quantization engine
+        self.quantization_engine.get_unified_engine()
     }
     
-    fn mock_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
+    fn get_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
         // Return self as the storage engine
         Arc::new(NovaEngine {
             optimized_ops: self.optimized_ops.clone(),

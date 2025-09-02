@@ -49,8 +49,9 @@ use crate::core::search::{SearchParams, FilterExpression};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::core::bloom::SstableBloomFilter;
-use crate::storage::engines::core::formats::row_based::sst_io_layer::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
-use crate::storage::engines::impls::sst::{SstableHeader, DataBlock, IndexEntry, VectorFormat};  // OPTIMIZED: Removed SstRecord import
+use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
+use crate::storage::engines::impls::sst::{SstableHeader, IndexEntry, VectorFormat};  // OPTIMIZED: Removed SstRecord import
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::bloom::BloomFilterConfig;
 use super::block_filter::{IntelligentBlockFilter, BlockFilter};
@@ -131,7 +132,7 @@ impl std::fmt::Debug for UnifiedSstableReader {
 /// Block cache for frequently accessed data blocks
 #[derive(Debug)]
 pub struct BlockCache {
-    cache: Arc<tokio::sync::RwLock<lru::LruCache<BlockCacheKey, Arc<DataBlock>>>>,
+    cache: Arc<tokio::sync::RwLock<lru::LruCache<BlockCacheKey, Arc<FastLanesDataBlock>>>>,
     max_size: usize,
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
@@ -277,7 +278,7 @@ pub trait BlockReader {
     async fn read_header(&mut self) -> Result<SstableHeader>;
     async fn read_bloom_filter(&mut self, skip: bool) -> Result<Option<SstableBloomFilter>>;
     async fn read_index_block(&mut self, strategy: &ReadStrategy) -> Result<SstableIndex>;
-    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock>;
+    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<FastLanesDataBlock>;
 }
 
 /// Implement BlockReader trait for ModularBlockReader
@@ -295,7 +296,7 @@ impl BlockReader for ModularBlockReader {
         self.read_index_block_async(search_strategy).await
     }
     
-    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
+    async fn read_data_block(&mut self, block_id: u64, mode: ReadMode) -> Result<FastLanesDataBlock> {
         self.read_data_block_async(block_id, mode).await
     }
 }
@@ -393,8 +394,8 @@ impl ModularBlockReader {
         // Future optimization: Read only the quantized portion
         let block_data = self.read_range(block_offset + 4, estimated_block_size as usize).await?;
         
-        let data_block = crate::storage::engines::impls::sst::DataBlock::deserialize(&block_data)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize DataBlock for quantized section: {}", e))?;
+        let data_block = FastLanesDataBlock::deserialize(&block_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize FastLanesDataBlock for quantized section: {}", e))?;
         
         // Return the quantized vectors and level if present
         if let (Some(vectors), Some(level)) = (data_block.quantized_vectors, data_block.quantization_level) {
@@ -842,18 +843,18 @@ impl ModularBlockReader {
         Ok(bloom_filter)
     }
     
-    pub async fn read_data_block_at_offset(&self, offset: u64, size: usize) -> Result<DataBlock> {
+    pub async fn read_data_block_at_offset(&self, offset: u64, size: usize) -> Result<FastLanesDataBlock> {
         debug!("Reading hierarchical data block at offset {} with size {} for file: {}", offset, size, self.file_path);
         
         // Read the block data
         let block_data = self.read_range(offset, size).await?;
         
         // NEW: Use hierarchical deserialization with automatic compression detection
-        DataBlock::deserialize(&block_data)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical DataBlock at offset {}: {}", offset, e))
+        FastLanesDataBlock::deserialize(&block_data)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical FastLanesDataBlock at offset {}: {}", offset, e))
     }
     
-    async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<DataBlock> {
+    async fn read_data_block_async(&mut self, block_id: u64, mode: ReadMode) -> Result<FastLanesDataBlock> {
         let header = self.read_header_async().await
             .map_err(|e| anyhow::anyhow!("TRACE-008: Failed to read header for block {}: {}", block_id, e))?;
         
@@ -901,12 +902,12 @@ impl ModularBlockReader {
         match mode {
             ReadMode::Direct => {
                 // Use hierarchical deserialization for correct format handling
-                DataBlock::deserialize(&block_data)
+                FastLanesDataBlock::deserialize(&block_data)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical DataBlock: {}", e))
             }
             ReadMode::Buffered | ReadMode::Streaming => {
                 // Use hierarchical deserialization with automatic compression detection
-                DataBlock::deserialize(&block_data)
+                FastLanesDataBlock::deserialize(&block_data)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize hierarchical DataBlock in buffered mode: {}", e))
             }
         }
@@ -1015,9 +1016,9 @@ impl Iterator for BlockIterator<VectorRecord> {
         
         // Deserialize the DataBlock using the proper DataBlock::deserialize method
         debug!("🔍 VectorRecord STREAMING: Attempting to deserialize DataBlock from {} bytes", block_data.len());
-        match DataBlock::deserialize(&block_data) {
+        match FastLanesDataBlock::deserialize(&block_data) {
             Ok(data_block) => {
-                debug!("🔍 VectorRecord STREAMING: Successfully deserialized DataBlock with {} records", data_block.records.len());
+                debug!("🔍 VectorRecord STREAMING: Successfully deserialized FastLanesDataBlock with {} records", data_block.records.len());
                 // OPTIMIZED: Extract all VectorRecords from the DataBlock (no conversion needed)
                 self.buffer = data_block.records;
                 self.position = 0;
@@ -1027,7 +1028,7 @@ impl Iterator for BlockIterator<VectorRecord> {
                 self.next()
             }
             Err(e) => {
-                error!("❌ VectorRecord STREAMING ERROR: Failed to deserialize DataBlock: {:?}", e);
+                error!("❌ VectorRecord STREAMING ERROR: Failed to deserialize FastLanesDataBlock: {:?}", e);
                 debug!("🔍 VectorRecord STREAMING: Block data preview (first 32 bytes): {:?}", &block_data[..std::cmp::min(32, block_data.len())]);
                 Some(Err(anyhow::Error::from(e)))
             }
@@ -1574,7 +1575,7 @@ impl UnifiedSstableReader {
     /// This is extracted from the main search logic to support dual strategy patterns
     async fn perform_vector_search_on_blocks(
         &self,
-        blocks: &[DataBlock],
+        blocks: &[FastLanesDataBlock],
         params: &SearchParams,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         // Create distance compute locally per query to avoid cross-query contamination
@@ -1661,7 +1662,7 @@ impl UnifiedSstableReader {
         strategy: &'a SstableReadingStrategy,
         params: &'a SearchParams,
         context: &'a CollectionContext,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<DataBlock>>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<FastLanesDataBlock>>> + Send + 'a>> {
         Box::pin(async move {
         match strategy {
             SstableReadingStrategy::FullScan { use_block_cache } => {
@@ -1701,7 +1702,7 @@ impl UnifiedSstableReader {
         enable_bloom_filters: bool,
         enable_cache_lookup: bool,
         enable_metadata_cache: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 SST SELECTIVE CACHE: Processing {} files with range_reads={}, bloom={}, cache={}, metadata_cache={}", 
                context.sstable_files.len(), use_range_reads, enable_bloom_filters, enable_cache_lookup, enable_metadata_cache);
         
@@ -1756,7 +1757,7 @@ impl UnifiedSstableReader {
         bypass_write_cache: bool,
         use_disk_cache_if_exists: bool,
         sequential_io: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         info!("🔥 SST COMPACTION FULL READ: Processing {} files with optimizations: bloom={}, index={}, write_cache={}, disk_cache={}, sequential={}", 
               context.sstable_files.len(), !skip_bloom_filters, !skip_indexes, !bypass_write_cache, use_disk_cache_if_exists, sequential_io);
         
@@ -1820,7 +1821,7 @@ impl UnifiedSstableReader {
         file_path: &str,
         enable_bloom_filters: bool,
         enable_metadata_cache: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("📊 RANGE OPTIMIZATION: Reading {} with bloom={}, metadata_cache={}", 
                file_path, enable_bloom_filters, enable_metadata_cache);
         
@@ -1843,7 +1844,7 @@ impl UnifiedSstableReader {
     async fn search_in_blocks(
         &self,
         params: &SearchParams,
-        blocks: &[DataBlock],
+        blocks: &[FastLanesDataBlock],
         distance_compute: &UnifiedDistanceCompute,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let query_vector = params.first_query_vector()
@@ -1948,7 +1949,7 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
         use_block_cache: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 Full scan strategy for {} files (cache={})", context.sstable_files.len(), use_block_cache);
         
         // Use parallel processing for multiple files
@@ -1998,7 +1999,7 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
         use_block_cache: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         
         use tokio::sync::Semaphore;
         use std::sync::Arc;
@@ -2065,7 +2066,7 @@ impl UnifiedSstableReader {
         start_block: usize,
         end_block: usize,
         use_bloom: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 Index range scan search_strategy for {} files (blocks {}-{}, bloom={})", 
                  context.sstable_files.len(), start_block, end_block, use_bloom);
         
@@ -2091,7 +2092,7 @@ impl UnifiedSstableReader {
         params: &SearchParams,
         blocks: &[usize],
         skip_bloom: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 Using metadata filtered strategy for {} files", context.sstable_files.len());
         
         let mut all_blocks = Vec::new();
@@ -2283,7 +2284,7 @@ impl UnifiedSstableReader {
     }
 
     /// Load a specific block with caching
-    async fn load_block_with_cache(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
+    async fn load_block_with_cache(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<FastLanesDataBlock>> {
         let _cache_key = BlockCacheKey {
             file_path: context.file_path.clone(),
             block_id: block_idx as u32,
@@ -2330,7 +2331,7 @@ impl UnifiedSstableReader {
     }
 
     /// Load a block from disk with cloud-optimized range requests
-    async fn load_block_from_disk(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<DataBlock>> {
+    async fn load_block_from_disk(&self, context: &CollectionContext, block_idx: usize) -> Result<Option<FastLanesDataBlock>> {
         // Extract scheme from file path for proper filesystem selection
         let scheme = if context.file_path.contains("://") {
             context.file_path.split("://").next().unwrap_or("file")
@@ -2413,7 +2414,7 @@ impl UnifiedSstableReader {
         
         // Read the block data
         let block_data = fs.read_range(&context.file_path, block_offset + 4, block_len).await?;
-        let block: DataBlock = DataBlock::deserialize(&block_data)?;
+        let block: FastLanesDataBlock = FastLanesDataBlock::deserialize(&block_data)?;
         
         debug!("Loaded block {} from SSTable using range request ({} bytes)", block_idx, block_len);
         Ok(Some(block))
@@ -2852,7 +2853,7 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
         blocks: &[usize],
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         let mut loaded_blocks = Vec::new();
         
         for &block_idx in blocks {
@@ -2864,7 +2865,7 @@ impl UnifiedSstableReader {
         Ok(loaded_blocks)
     }
     
-    async fn read_file_with_cache(&self, path: &str) -> Result<Vec<DataBlock>> {
+    async fn read_file_with_cache(&self, path: &str) -> Result<Vec<FastLanesDataBlock>> {
         // Use zero-copy system for metadata caching
         // Load index directly when needed
         let index = {
@@ -2930,7 +2931,7 @@ impl UnifiedSstableReader {
         skip_indexes: bool,
         bypass_cache: bool,
         sequential_io: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         info!("🚀 COMPACTION OPTIMIZED: Reading {} files with optimizations: bloom={}, index={}, cache={}, sequential={}", 
               context.sstable_files.len(), !skip_bloom_filters, !skip_indexes, !bypass_cache, sequential_io);
         
@@ -2992,7 +2993,7 @@ impl UnifiedSstableReader {
         skip_bloom_filters: bool,
         skip_indexes: bool,
         sequential_io: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔥 COMPACTION DIRECT: Reading {} with optimizations (bloom={}, index={}, sequential={})", 
                path, !skip_bloom_filters, !skip_indexes, sequential_io);
         
@@ -3064,7 +3065,7 @@ impl UnifiedSstableReader {
             
             let block_data = &data[offset..offset + block_len];
             
-            match DataBlock::deserialize(block_data) {
+            match FastLanesDataBlock::deserialize(block_data) {
                 Ok(block) => {
                     debug!("✅ COMPACTION: Deserialized block with {} records", block.records.len());
                     blocks.push(block);
@@ -3081,11 +3082,11 @@ impl UnifiedSstableReader {
         Ok(blocks)
     }
 
-    async fn read_file_direct(&self, path: &str) -> Result<Vec<DataBlock>> {
+    async fn read_file_direct(&self, path: &str) -> Result<Vec<FastLanesDataBlock>> {
         self.read_file_direct_with_strategy(path, &ReadStrategy::FullScan).await
     }
     
-    async fn read_file_direct_with_strategy(&self, path: &str, search_strategy: &ReadStrategy) -> Result<Vec<DataBlock>> {
+    async fn read_file_direct_with_strategy(&self, path: &str, search_strategy: &ReadStrategy) -> Result<Vec<FastLanesDataBlock>> {
         // Load index directly without caching (true direct access)
         let index = Arc::new(self.load_index_optimized(path).await?);
         
@@ -3215,7 +3216,7 @@ impl UnifiedSstableReader {
             }
             
             debug!("🔍 Deserializing block {} data of {} bytes", entry.block_id, block_data.len());
-            match DataBlock::deserialize(block_data) {
+            match FastLanesDataBlock::deserialize(block_data) {
                 Ok(block) => {
                     debug!("✅ Successfully deserialized block {} with {} records", entry.block_id, block.records.len());
                     // Debug: Print sample record IDs for debugging
@@ -3290,7 +3291,7 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
         use_cache: bool,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 Full scan modular strategy for {} files", context.sstable_files.len());
         let mut all_blocks = Vec::new();
         
@@ -3355,7 +3356,7 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
         filter: &FilterExpression,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 Filtered scan modular strategy with filter: {:?}", filter);
         let mut all_blocks = Vec::new();
         
@@ -3398,7 +3399,7 @@ impl UnifiedSstableReader {
     async fn compaction_direct_strategy_modular(
         &self,
         context: &CollectionContext,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         info!("🚀 Direct compaction modular search_strategy - zero-copy SST operations");
         
         let direct_reader = SstDirectReader::new(
@@ -3431,7 +3432,7 @@ impl UnifiedSstableReader {
         &self,
         context: &CollectionContext,
         search_params: &SearchParams,
-    ) -> Result<Vec<DataBlock>> {
+    ) -> Result<Vec<FastLanesDataBlock>> {
         debug!("🔍 Search-optimized modular search_strategy");
         let mut relevant_blocks = Vec::new();
         
@@ -3484,19 +3485,19 @@ impl UnifiedSstableReader {
         true // For now, read all blocks
     }
     
-    fn vector_records_to_data_blocks(&self, records: Vec<VectorRecord>) -> Result<Vec<DataBlock>> {
+    fn vector_records_to_data_blocks(&self, records: Vec<VectorRecord>) -> Result<Vec<FastLanesDataBlock>> {
         // Group records into blocks (temporary conversion for compatibility)
         let block_size = 1000; // Default block size
         let mut blocks = Vec::new();
         let mut block_id = 0u32;
         
         for chunk in records.chunks(block_size) {
-            use crate::storage::engines::core::formats::row_based::block_structures::{
+            use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
                 BlockCompressionConfig, QuantizationStatistics, BlockStatistics
             };
             use std::collections::HashMap;
             
-            blocks.push(DataBlock {
+            blocks.push(FastLanesDataBlock {
                 encoding_marker: 0x00, // Raw/Uncompressed
                 encoding_metadata: None,
                 block_id,
@@ -3504,7 +3505,7 @@ impl UnifiedSstableReader {
                 quantized_vectors: None,
                 quantization_level: None,
                 quantized_section: None,
-                metadata: crate::storage::engines::impls::sst::DataBlockMetadata::default(),
+                metadata: crate::storage::engines::core::formats::fastlanes_blocks::FastLanesBlockMetadata::default(),
                 compression_config: BlockCompressionConfig {
                     algorithm: CompressionAlgorithm::None,
                     compression_level: 0,
@@ -3535,7 +3536,7 @@ impl UnifiedSstableReader {
         (0.._index_blocks.len()).collect()
     }
     
-    fn is_hot_data(&self, data_block: &DataBlock) -> bool {
+    fn is_hot_data(&self, data_block: &FastLanesDataBlock) -> bool {
         // Simple heuristic: blocks with many non-tombstone records are hot
         let active_records = data_block.records.iter()
             .filter(|r| !r/* REMOVED: is_tombstone field no longer exists */)

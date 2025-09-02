@@ -55,7 +55,7 @@ impl ZeroCopyFilesystem {
     /// 
     /// This eliminates the need for AtomicCoordinator to handle staging since
     /// the zero-copy filesystem automatically handles optimal write strategies
-    async fn write_with_intelligent_staging(&self, path: &str, data: &[u8], options: &FileOptions) -> FsResult<()> {
+    pub async fn write_with_intelligent_staging(&self, path: &str, data: &[u8], options: &FileOptions) -> FsResult<()> {
         let file_size = data.len();
         let is_cloud_storage = self.is_cloud_storage(path);
         
@@ -412,6 +412,10 @@ impl ZeroCopyFilesystem {
 
 #[async_trait]
 impl FileSystem for ZeroCopyFilesystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     /// Read file with zero-copy optimization and cache-first strategy
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         self.optimized_read(path, RequestPriority::Normal).await

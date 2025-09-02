@@ -131,7 +131,7 @@ impl PrismFastLanesSerializer {
                     .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::pq4(16))
                     .await?;
                 let data = self.encode_quantized_batch(&quantized)?;
-                (data, FastLanesScheme::Dictionary { dict_size: 16, indices_bits: 4 })
+                (data, FastLanesScheme::Dictionary)
             },
             ResolutionLevel::PQ8 => {
                 // Use unified PQ8 quantization
@@ -139,7 +139,7 @@ impl PrismFastLanesSerializer {
                     .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::pq8(16))
                     .await?;
                 let data = self.encode_quantized_batch(&quantized)?;
-                (data, FastLanesScheme::Dictionary { dict_size: 256, indices_bits: 8 })
+                (data, FastLanesScheme::Dictionary)
             },
             ResolutionLevel::FP16 => {
                 // FP16 not implemented in unified engine, fallback to FP32
@@ -280,7 +280,9 @@ impl PrismFastLanesSerializer {
             },
             ResolutionLevel::FP16 | ResolutionLevel::FP32 => {
                 // Decode FP32 data using FastLanes
-                let flattened = self.fp32_decoder.decode_f32(&data[offset..offset + encoded_len])?;
+                // Calculate number of floats to decode (dimension * num_vectors)
+                let num_floats = encoded_len / 4; // Assuming 4 bytes per float
+                let flattened = self.fp32_decoder.decode_f32(&data[offset..offset + encoded_len], num_floats)?;
                 
                 // Reshape into vectors
                 let mut vectors = Vec::new();
@@ -408,8 +410,8 @@ impl PrismFastLanesSerializer {
         match level {
             ResolutionLevel::Binary => FastLanesScheme::BitPacked { bits: 1 },
             ResolutionLevel::INT8 => FastLanesScheme::Delta { base: 0 },
-            ResolutionLevel::PQ4 => FastLanesScheme::Dictionary { dict_size: 16, indices_bits: 4 },
-            ResolutionLevel::PQ8 => FastLanesScheme::Dictionary { dict_size: 256, indices_bits: 8 },
+            ResolutionLevel::PQ4 => FastLanesScheme::Dictionary,
+            ResolutionLevel::PQ8 => FastLanesScheme::Dictionary,
             ResolutionLevel::FP16 => FastLanesScheme::FrameOfReference { reference: 0, bits: 16 },
             ResolutionLevel::FP32 => FastLanesScheme::FrameOfReference { reference: 0, bits: 32 },
         }

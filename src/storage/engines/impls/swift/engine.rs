@@ -34,15 +34,15 @@ use crate::core::compression::{
 };
 
 use super::{
-    SwiftFile, SuperBlock, DataBlock,
+    SwiftFile,
     progressive_search,
     optimized_operations::OptimizedSwiftOperations,
 };
 
-// Import row-based structures for hierarchical operations
-use crate::storage::engines::core::formats::row_based::block_structures::{
-    RowBasedDataBlock as SwiftDataBlock,
-    SuperBlock as SwiftSuperBlock,
+// Import FastLanes structures for SWIFT's hierarchical operations
+use crate::storage::engines::core::formats::fastlanes_blocks::{
+    FastLanesDataBlock,
+    SuperBlock,
 };
 
 // SWIFT-specific optimization structures removed - now using universal module
@@ -235,7 +235,7 @@ impl SwiftEngine {
     }
     
     /// Hierarchical distance computation using unified distance compute engine (delegates to universal optimizer)
-    async fn compute_hierarchical_distances(&self, query: &[f32], superblocks: &[Arc<SwiftSuperBlock>], metric: DistanceMetric) -> Result<Vec<f32>> {
+    async fn compute_hierarchical_distances(&self, query: &[f32], superblocks: &[Arc<SuperBlock>], metric: DistanceMetric) -> Result<Vec<f32>> {
         // Extract centroids from superblocks for distance computation
         let centroids: Vec<Vec<f32>> = superblocks.iter()
             .map(|sb| sb.centroid.as_ref().map(|c| c.clone()).unwrap_or_else(|| vec![0.0; query.len()]))
@@ -292,7 +292,7 @@ impl SwiftEngine {
     }
     
     /// Progressive quantization search optimized for hierarchical access
-    async fn progressive_hierarchical_search(&self, query: &[f32], superblocks: &[Arc<SwiftSuperBlock>], top_k: usize) -> Result<Vec<(String, f32)>> {
+    async fn progressive_hierarchical_search(&self, query: &[f32], superblocks: &[Arc<SuperBlock>], top_k: usize) -> Result<Vec<(String, f32)>> {
         // Phase 1: Superblock-level filtering using centroids
         let superblock_distances = self.compute_hierarchical_distances(query, superblocks, DistanceMetric::Euclidean).await?;
         
@@ -656,8 +656,8 @@ impl UnifiedStorageEngine for SwiftEngine {
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
         
-        // Convert to core SearchResult format
-        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> = all_results.into_iter()
+        // Convert to InternalSearchResult format
+        let search_results: Vec<crate::core::search::InternalSearchResult> = all_results.into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
                 // Create SimilarityResult manually for Euclidean distance
@@ -669,33 +669,35 @@ impl UnifiedStorageEngine for SwiftEngine {
                     rank_value: distance, // For euclidean, rank_value = raw distance
                 };
                 
-                crate::proto::proximadb::SearchVectorRecord {
+                crate::core::search::InternalSearchResult {
                     id: if record.id.is_empty() { format!("unknown_{}", idx) } else { record.id.clone() },
+                    vector_id: None,
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
-                    vector: record.vector,
-                    metadata: record.metadata,
+                    vector: Some(record.vector),
+                    metadata: record.metadata.into_iter()
+                        .map(|item| (item.key, serde_json::Value::String(item.value.map(|v| format!("{:?}", v)).unwrap_or_default())))
+                        .collect(),
+                    debug_info: None,
                     version: record.version,
                     timestamp: record.timestamp,
-                    debug_info: None,
-                    quantization_info: None,
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: None,
                     engine_stats: None,
+                    partition_info: None,
                 }
             })
             .collect();
         
-        let search_results = vec![crate::proto::proximadb::SearchResult {
-            results: search_vector_records,
-            total_found: all_results.len() as i64,
-            collection_id: Some(collection_id.to_string()),
-        }];
-        
         // Track bytes processed for metrics
         if let Some(ref mut timer) = timer {
-            let bytes_processed = search_results.len() * query_vector.len() * 4; // Approximate
+            let bytes_processed = all_results.len() * query_vector.len() * 4; // Approximate
             timer.set_bytes_processed(bytes_processed as u64);
         }
         
+        // Return InternalSearchResult - proto conversion happens at service boundary
         Ok(search_results)
     }
     

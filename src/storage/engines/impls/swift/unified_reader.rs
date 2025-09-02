@@ -61,13 +61,16 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::compute::distance_computation::DistanceMetric;
 // INTEGRATION: Use SharedSstFormatReader for file operations (SWIFT extends SST format)
-use crate::storage::engines::core::formats::row_based::sst_io_layer::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
+use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
 use super::{
-    SwiftFile, SuperBlock, DataBlock, MetadataFilter,
+    SwiftFile, MetadataFilter,
     id_index::RecordLocation,
     hierarchical_blocks::BitSet,
+};
+use crate::storage::engines::core::formats::fastlanes_blocks::{
+    FastLanesDataBlock, SuperBlock,
 };
 
 /// Reading strategy for SWIFT files

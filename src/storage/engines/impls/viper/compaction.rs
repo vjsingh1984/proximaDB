@@ -10,7 +10,11 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
-use parquet::arrow::ArrowWriter;
+// Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
+use crate::storage::engines::core::formats::columnar::{
+    StreamingParquetWriter, ParquetWriterConfig,
+    QuantizationConfig as ColumnarQuantizationConfig
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -121,7 +125,7 @@ pub struct Compaction {
 impl std::fmt::Debug for Compaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Compaction")
-            .field("schema_manager", &self.schema_manager)
+            .field("schema", &self.schema)
             .field("collection_service", &self.collection_service)
             .field("filesystem_factory", &self.filesystem_factory)
             .field("atomic_coordinator", &self.atomic_coordinator)
@@ -892,104 +896,197 @@ impl Compaction {
                 end_idx - 1
             );
             
-            // Build Parquet data for this file
-            let mut parquet_data = Vec::new();
+            // Create a temporary file for StreamingParquetWriter
+            let temp_dir = std::env::temp_dir();
+            let temp_file_path = temp_dir.join(format!("viper_compaction_{}.parquet.tmp", uuid::Uuid::new_v4()));
+            debug!("Creating temporary compacted Parquet file: {:?}", temp_file_path);
+            
             {
-                debug!("🔍 VIPER COMPACTION: Creating ArrowWriter with compression");
+                debug!("🔍 VIPER COMPACTION: Creating StreamingParquetWriter with bloom filters");
                 debug!("📊 VIPER COMPACTION PATH ANALYSIS:");
                 debug!("   - Input: Streaming Parquet files from multiple sources");
                 debug!("   - Processing: Merge → MVCC resolution → Quantize → Columnar layout");
-                debug!("   - Output: Consolidated Parquet files with optimized layout");
-                debug!("   - Quantization: Collection config passed to writer");
+                debug!("   - Output: Consolidated Parquet files with optimized layout and bloom filters");
+                debug!("   - Bloom filters: Enabled for efficient ID lookups");
                 debug!("   - Compression: Collection config drives Parquet compression");
                 
                 // Extract compression configuration from collection metadata
-                let writer_props = if let Some(ref collection) = collection_config {
+                let compression_algorithm = if let Some(ref collection) = collection_config {
                     if let Some(ref config) = collection.config {
                         if let Some(ref storage_config) = config.storage_config {
                             if let Some(ref compression) = storage_config.compression {
-                            use crate::proto::proximadb::CompressionAlgorithm;
-                            use parquet::file::properties::WriterProperties;
-                            
-                            debug!("   ✅ Found compression config: algorithm={}, level={:?}",
-                                compression.algorithm, compression.level);
-                            
-                            // Convert proto compression to Parquet compression
-                            let parquet_compression = match CompressionAlgorithm::try_from(compression.algorithm) {
-                                Ok(CompressionAlgorithm::CompressionZstd) => {
-                                    let level = compression.level.unwrap_or(3);
-                                    parquet::basic::Compression::ZSTD(
-                                        parquet::basic::ZstdLevel::try_new(level)?
-                                    )
+                                use crate::proto::proximadb::CompressionAlgorithm;
+                                
+                                debug!("   ✅ Found compression config: algorithm={}, level={:?}",
+                                    compression.algorithm, compression.level);
+                                
+                                // Convert proto compression to core compression algorithm
+                                match CompressionAlgorithm::try_from(compression.algorithm) {
+                                    Ok(CompressionAlgorithm::CompressionZstd) => 
+                                        crate::core::compression::CompressionAlgorithm::Zstd,
+                                    Ok(CompressionAlgorithm::CompressionLz4) => 
+                                        crate::core::compression::CompressionAlgorithm::Lz4,
+                                    Ok(CompressionAlgorithm::CompressionSnappy) => 
+                                        crate::core::compression::CompressionAlgorithm::Snappy,
+                                    Ok(CompressionAlgorithm::CompressionGzip) => 
+                                        crate::core::compression::CompressionAlgorithm::Gzip,
+                                    Ok(CompressionAlgorithm::CompressionBrotli) => 
+                                        crate::core::compression::CompressionAlgorithm::Brotli,
+                                    _ => {
+                                        debug!("   ⚠️ Unknown compression algorithm, using Zstd");
+                                        crate::core::compression::CompressionAlgorithm::Zstd
+                                    }
                                 }
-                                Ok(CompressionAlgorithm::CompressionLz4) => {
-                                    parquet::basic::Compression::LZ4
-                                }
-                                Ok(CompressionAlgorithm::CompressionSnappy) => {
-                                    parquet::basic::Compression::SNAPPY
-                                }
-                                Ok(CompressionAlgorithm::CompressionGzip) => {
-                                    let level = compression.level.unwrap_or(6) as u32;
-                                    parquet::basic::Compression::GZIP(
-                                        parquet::basic::GzipLevel::try_new(level)?
-                                    )
-                                }
-                                Ok(CompressionAlgorithm::CompressionBrotli) => {
-                                    let level = compression.level.unwrap_or(6) as u32;
-                                    parquet::basic::Compression::BROTLI(
-                                        parquet::basic::BrotliLevel::try_new(level)?
-                                    )
-                                }
-                                _ => {
-                                    debug!("   ⚠️ Unknown or unsupported compression algorithm: {:?}, using UNCOMPRESSED", compression.algorithm);
-                                    parquet::basic::Compression::UNCOMPRESSED
-                                }
-                            };
-                            
-                            debug!("   Selected Parquet compression: {:?}", parquet_compression);
-                            
-                            Some(WriterProperties::builder()
-                                .set_compression(parquet_compression)
-                                .build())
                             } else {
-                                debug!("   ⚠️ No compression config in storage_config");
-                                None
+                                crate::core::compression::CompressionAlgorithm::Zstd
                             }
                         } else {
-                            debug!("   ⚠️ No storage config in collection");
-                            None
+                            crate::core::compression::CompressionAlgorithm::Zstd
                         }
                     } else {
-                        debug!("   ⚠️ No config field in collection");
-                        None
+                        crate::core::compression::CompressionAlgorithm::Zstd
                     }
                 } else {
-                    debug!("   ⚠️ No collection_config provided");
-                    None
+                    crate::core::compression::CompressionAlgorithm::Zstd
                 };
                 
-                // Use the first input schema as a template (all should be compatible)
-                let arrow_schema = input_schemas.first()
-                    .ok_or_else(|| anyhow::anyhow!("No input schemas available for writing"))?
-                    .clone();
+                // Check if quantization is enabled
+                let has_quantization = collection_config.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .and_then(|cfg| cfg.quantization.as_ref())
+                    .map(|q| q.enabled)
+                    .unwrap_or(false);
                 
-                let mut writer = ArrowWriter::try_new(&mut parquet_data, arrow_schema.clone(), writer_props)
-                    .with_context(|| format!("Failed to create Arrow writer for file {}", file_idx))?;
+                // Configure ParquetWriterConfig for compaction
+                let writer_config = ParquetWriterConfig {
+                    row_group_size: 100000,  // Larger row groups for compacted files
+                    enable_bloom_filters: true,  // Essential for efficient ID lookups
+                    bloom_filter_fpp: 0.01,
+                    expected_ndv: Some(file_record_count),
+                    bloom_filter_columns: vec!["id".to_string()],
+                    compression: compression_algorithm,
+                    enable_column_statistics: true,
+                    enable_page_index: true,
+                    enable_column_index: true,
+                    enable_offset_index: true,
+                    page_index_granularity: 10000,
+                    enable_dictionary: true,
+                    dictionary_threshold: 0.5,
+                    enable_delta_encoding: true,
+                    quantization: ColumnarQuantizationConfig {
+                        enabled: has_quantization,
+                        strategy: 0, // SMART_DEFAULTS
+                        custom_levels: vec![],
+                        enable_progressive_search: true,
+                        binary_filter_selectivity: 0.3,
+                        int8_ranking_selectivity: 0.1,
+                        pq_ranking_selectivity: 0.05,
+                        training_sample_size: 10000,
+                        quality_threshold: 0.95,
+                        enable_adaptive_training: true,
+                        optimize_for_storage: false,
+                        optimize_for_memory: false,
+                        enable_simd_acceleration: true,
+                        enable_binary: false,
+                        enable_int8: has_quantization,
+                        enable_pq: has_quantization,
+                        pq_segments: 32,
+                        pq_bits: 8,
+                        pq_codebooks: vec![],
+                        binary_threshold: 0.5,
+                        int8_threshold: 0.3,
+                        pq_threshold: 0.1,
+                    },
+                    id_less_storage: false,  // Keep IDs for customer APIs
+                    write_batch_size: 10000,
+                    page_size: 1024 * 1024,  // 1MB pages
+                    enable_byte_stream_split: !has_quantization,
+                    enable_pq_sorting: true,  // Enable sorting for better compression in compaction
+                    pq_sorting_segments: 16,
+                    pq_sorting_codebook_size: 256,
+                    enable_native_metadata: true,
+                    metadata_inference_samples: 100,
+                };
                 
-                // Extract row data from records for this file
-                let row_data_vec: Vec<HashMap<String, serde_json::Value>> = file_records.iter()
-                    .map(|r| r.row_data.clone())
+                // Get dimension from collection metadata config - REQUIRED
+                let dimension = collection_config.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|cfg| cfg.dimension as usize)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Collection dimension not found in config for compaction. \
+                            Collection config must include dimension to ensure correct vector processing."
+                        )
+                    })?;
+                
+                // Create StreamingParquetWriter with temp file
+                let mut writer = StreamingParquetWriter::new(
+                    &temp_file_path,
+                    dimension,
+                    writer_config,
+                )?;
+                
+                // Convert RecordData to VectorRecord for writing
+                let vector_records: Vec<VectorRecord> = file_records.iter()
+                    .filter_map(|record| {
+                        // Extract vector from row_data
+                        let vector = record.row_data.get("vector")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                    .collect::<Vec<f32>>()
+                            })
+                            .unwrap_or_default();
+                        
+                        // Convert metadata
+                        let metadata = record.row_data.iter()
+                            .filter(|(k, _)| *k != "vector")
+                            .map(|(k, v)| {
+                                let mut item = crate::proto::proximadb::MetadataItem::default();
+                                item.key = k.clone();
+                                item.value = Some(crate::proto::proximadb::metadata_item::Value::StringValue(v.to_string()));
+                                item
+                            })
+                            .collect();
+                        
+                        Some(VectorRecord {
+                            id: record.id.clone().unwrap_or_default(),
+                            vector,
+                            metadata,
+                            version: Some(record.version as u32),
+                            updated_at: record.timestamp.map(|t| t as u32),
+                            expires_at: None,
+                            quantized_vector: None,
+                            source: None,
+                            timestamp: record.timestamp.unwrap_or(0) as u32,
+                        })
+                    })
                     .collect();
                 
-                let batch = self.build_record_batch_from_data(arrow_schema, &row_data_vec)?;
+                // Write records using StreamingParquetWriter's batch method
+                // This provides bloom filters and optimized columnar layout
+                writer.write_batch(&vector_records).await?;
                 
-                if batch.num_rows() != file_record_count {
-                    error!("❌ RecordBatch row count mismatch for file {}! Expected {}, got {}", 
-                           file_idx, file_record_count, batch.num_rows());
-                }
+                // Finalize the writer to flush all data and get statistics
+                let stats = writer.finalize().await?;
                 
-                writer.write(&batch)?;
-                writer.close()?;
+                debug!("   ✅ VIPER Compaction: Wrote file {} with StreamingParquetWriter", file_idx);
+                debug!("      Records: {}", stats.total_records);
+                debug!("      Row groups: {}", stats.total_row_groups);
+                debug!("      File size: {} bytes", stats.file_size);
+                debug!("      Compression ratio: {:.2}", stats.compression_ratio);
+                debug!("      Bloom filters: {}", stats.bloom_filter_count);
+            }
+            
+            // Read the temporary file into a buffer for atomic write
+            // TODO: Refactor write_parquet_atomic to accept file path directly
+            let parquet_data = std::fs::read(&temp_file_path)
+                .context("Failed to read temporary compacted Parquet file")?;
+            
+            // Clean up temporary file after reading
+            if let Err(e) = std::fs::remove_file(&temp_file_path) {
+                debug!("Failed to remove temporary file: {}", e);
             }
             
             // Generate output filename using unified compactor format
@@ -1301,7 +1398,7 @@ impl Compaction {
             for (field, values) in &mut column_builders {
                 let value = record.get(field)
                     .cloned()
-                    ;
+                    .unwrap_or(serde_json::Value::Null);
                 values.push(value);
             }
         }
@@ -1315,7 +1412,7 @@ impl Compaction {
             let array: Arc<dyn arrow_array::Array> = match field.data_type() {
                 DataType::Utf8 => {
                     let string_values: Vec<Option<String>> = values.iter()
-                        .map(|v| if v.is_null() { None } else { v.as_deref().map(|s| s.to_string()) })
+                        .map(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
                         .collect();
                     Arc::new(StringArray::from(string_values))
                 }
@@ -1391,7 +1488,7 @@ impl Compaction {
                                     for item in metadata_array {
                                         if let Some(obj) = item.as_object() {
                                             if let (Some(key), Some(val)) = (obj.get("key"), obj.get("value")) {
-                                                if let (Some(key_str), Some(val_str)) = (key.as_deref(), val.as_deref()) {
+                                                if let (Some(key_str), Some(val_str)) = (key.as_str(), val.as_str()) {
                                                     struct_builder.field_builder::<StringBuilder>(0)
                                                         .unwrap()
                                                         .append_value(key_str);
