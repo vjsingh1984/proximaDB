@@ -1,0 +1,13 @@
+# ProximaDB Core Architecture Diagrams
+
+## System Architecture
+
+## Data Flow
+
+## Storage Engine Selection
+
+## Hardware Acceleration
+
+## Index Types (AXIS)
+
+## Deployment Architecture

@@ -982,8 +982,8 @@ impl UnifiedStorageEngine for ViperEngine {
         ).await?;
         // Update engine statistics using atomic operations (lock-free)
         self.stats.flush_operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.stats.total_vectors.fetch_add(flush_result.entries_flushed, std::sync::atomic::Ordering::Relaxed);
-        self.stats.total_size_bytes.fetch_add(flush_result.bytes_written, std::sync::atomic::Ordering::Relaxed);
+        self.stats.total_vectors.fetch_add(flush_result.entries_flushed.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+        self.stats.total_size_bytes.fetch_add(flush_result.bytes_written.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
         // Add engine-specific metrics
         flush_result.engine_metrics.insert(
             "engine_version".to_string(),
@@ -1064,13 +1064,13 @@ impl UnifiedStorageEngine for ViperEngine {
         Ok(crate::storage::traits::CompactionResult {
             success: true,
             collections_affected: vec![collection_id.clone()],
-            entries_processed: compaction_result.entries_processed,
-            entries_removed: compaction_result.entries_removed,
-            bytes_read: compaction_result.bytes_read,
-            bytes_written: compaction_result.bytes_written,
-            input_files: compaction_result.input_files.len() as u64,
-            output_files: compaction_result.output_files.len() as u64,
-            duration_ms,
+            entries_processed: Some(compaction_result.entries_processed),
+            entries_removed: Some(compaction_result.entries_removed),
+            bytes_read: Some(compaction_result.bytes_read),
+            bytes_written: Some(compaction_result.bytes_written),
+            input_files: Some(compaction_result.input_files.len() as u64),
+            output_files: Some(compaction_result.output_files.len() as u64),
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: {
                 let mut metrics = HashMap::new();

@@ -75,6 +75,7 @@ pub struct CachedSuperBlockMetadata {
     
     /// Access patterns for tree optimization
     pub access_frequency: u64,
+    #[serde(skip)]
     pub last_access: Instant,
     pub hot_datablocks: Vec<u32>,
     
@@ -203,6 +204,7 @@ pub struct QuantizationSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataBlockAccessStats {
     pub access_count: u64,
+    #[serde(skip)]
     pub last_access: Instant,
     pub avg_response_time_us: u64,
     pub cache_hit_rate: f32,

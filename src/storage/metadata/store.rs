@@ -14,6 +14,11 @@ use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+// Import CollectionMetadata from the appropriate location
+use crate::storage::engines::core::formats::fastlanes_blocks::header_metadata::CollectionMetadata;
+// Import AccessPattern from proto
+use crate::proto::proximadb::AccessPattern;
+
 use super::{
     write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog},
     MetadataFilter, MetadataOperation, MetadataStorageStats,
@@ -493,7 +498,7 @@ impl MetadataStoreInterface for MetadataStore {
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
-                    access_pattern: super::AccessPattern::Normal,
+                    access_pattern: AccessPattern::Normal,
                     retention_policy: None,
                     tags: versioned.tags,
                     owner: versioned.owner,
@@ -576,7 +581,7 @@ impl MetadataStoreInterface for MetadataStore {
                     vector_count: versioned.vector_count,
                     total_size_bytes: versioned.total_size_bytes,
                     config: versioned.config,
-                    access_pattern: super::AccessPattern::Normal,
+                    access_pattern: AccessPattern::Normal,
                     retention_policy: None,
                     tags: versioned.tags,
                     owner: versioned.owner,

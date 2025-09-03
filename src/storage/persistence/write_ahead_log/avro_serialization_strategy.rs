@@ -95,8 +95,9 @@ impl AvroSerializationStrategy {
         
         // Create recovery manager
         let recovery_manager = Arc::new(RecoveryManager::new(
-            disk_manager.clone(),
-            flush_coordinator.clone(),
+            config.clone(),
+            Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::default()),
+            filesystem_factory.clone(),
         ));
         
         Ok(Self {
@@ -299,10 +300,10 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             return Ok(FlushResult {
                 success: true,
                 collections_affected: vec![],
-                entries_flushed: 0,
-                bytes_written: 0,
-                files_created: 0,
-                duration_ms: 0,
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
@@ -541,19 +542,19 @@ impl AvroSerializationStrategy {
         let mut affected_collections = Vec::new();
         for collection_id in collections {
             let result = self.flush_collection(&collection_id).await?;
-            total_vectors += result.entries_flushed;
-            total_bytes += result.bytes_written;
-            total_duration += result.duration_ms;
+            total_vectors += result.entries_flushed.unwrap_or(0);
+            total_bytes += result.bytes_written.unwrap_or(0);
+            total_duration += result.duration_ms.unwrap_or(0);
             affected_collections.push(collection_id);
         }
         
         Ok(FlushResult {
             success: true,
             collections_affected: affected_collections,
-            entries_flushed: total_vectors,
-            bytes_written: total_bytes,
-            files_created: 0,
-            duration_ms: total_duration,
+            entries_flushed: Some(total_vectors),
+            bytes_written: Some(total_bytes),
+            files_created: Some(0),
+            duration_ms: Some(total_duration),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,

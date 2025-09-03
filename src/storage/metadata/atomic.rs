@@ -26,8 +26,8 @@ use super::{
 };
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Strategy configuration is imported through metadata module
-use crate::storage::strategy::CollectionStrategyConfig;
+// Import CollectionMetadata from fastlanes
+use crate::storage::engines::core::formats::fastlanes_blocks::header_metadata::CollectionMetadata;
 
 /// Transaction identifier
 pub type TransactionId = Uuid;
@@ -289,10 +289,19 @@ impl AtomicMetadataStore {
             match operation {
                 MetadataOperation::CreateCollection(collection) => {
                     let versioned = VersionedCollectionMetadata {
-                        metadata: collection.clone(),
-                        version: version,
-                        timestamp: Utc::now().timestamp_micros(),
-                        is_deleted: false,
+                        id: collection.collection_id.clone(),
+                        name: collection.collection_name.clone().unwrap_or_default(),
+                        dimension: collection.dimension,
+                        distance_metric: format!("{:?}", collection.distance_metric),
+                        indexing_algorithm: "HNSW".to_string(), // Default
+                        timestamp: Utc::now().timestamp() as u32,
+                        version: Some(version),
+                        vector_count: collection.collection_statistics.total_vectors,
+                        total_size_bytes: collection.collection_statistics.total_size_bytes,
+                        config: std::collections::HashMap::new(), // TODO: Convert from collection config
+                        description: None,
+                        tags: Vec::new(),
+                        owner: None,
                     };
 
                     // Write to write buffer
@@ -730,5 +739,39 @@ impl MetadataStoreInterface for AtomicMetadataStore {
             wal_entries: write_buffer_stats.write_buffer_writes,
             wal_size_bytes: 0, // TODO: Calculate
         })
+    }
+
+    // Missing trait implementations
+    async fn begin_transaction(&self) -> Result<Option<String>> {
+        let transaction_id = Uuid::new_v4().to_string();
+        Ok(Some(transaction_id))
+    }
+
+    async fn commit_transaction(&self, _transaction_id: &str) -> Result<()> {
+        // TODO: Implement transaction commit logic
+        Ok(())
+    }
+
+    async fn rollback_transaction(&self, _transaction_id: &str) -> Result<()> {
+        // TODO: Implement transaction rollback logic
+        Ok(())
+    }
+
+    async fn backup(&self, location: &str) -> Result<String> {
+        let backup_id = Uuid::new_v4().to_string();
+        // TODO: Implement backup logic
+        tracing::info!("Backup requested to location: {}, backup_id: {}", location, backup_id);
+        Ok(backup_id)
+    }
+
+    async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
+        // TODO: Implement restore logic
+        tracing::info!("Restore requested from backup_id: {}, location: {}", backup_id, location);
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<()> {
+        // TODO: Implement cleanup logic
+        Ok(())
     }
 }

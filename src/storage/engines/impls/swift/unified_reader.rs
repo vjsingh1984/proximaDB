@@ -803,10 +803,6 @@ impl UnifiedSwiftReader {
     
     // Helper methods
     
-    fn deserialize_header(&self, data: &[u8]) -> Result<super::SwiftHeader> {
-        // Implementation depends on header serialization format
-        unimplemented!("Header deserialization")
-    }
     
     fn parse_records_from_chunk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
         // Implementation depends on data format

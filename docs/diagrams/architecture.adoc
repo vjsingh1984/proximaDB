@@ -1,0 +1,15 @@
+# ProximaDB Architecture Diagrams
+
+## System Architecture
+
+## Write Path Flow
+
+## Search Path Flow
+
+## Storage Engine Selection
+
+## Hardware Acceleration
+
+## Data Tiering
+
+## Deployment Options

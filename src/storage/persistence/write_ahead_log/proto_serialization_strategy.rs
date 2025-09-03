@@ -280,10 +280,10 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             return Ok(FlushResult {
                 success: true,
                 collections_affected: vec![],
-                entries_flushed: 0,
-                bytes_written: 0,
-                files_created: 0,
-                duration_ms: 0,
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
@@ -341,7 +341,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
-            duration_ms,
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
@@ -521,10 +521,10 @@ impl ProtoSerializationStrategy {
         Ok(FlushResult {
             success: true,
             collections_affected: affected_collections,
-            entries_flushed: 0, // TODO: Track actual entries
-            bytes_written: 0, // TODO: Track actual bytes
-            files_created: 0,
-            duration_ms: 0,
+            entries_flushed: Some(0), // TODO: Track actual entries
+            bytes_written: Some(0), // TODO: Track actual bytes
+            files_created: Some(0),
+            duration_ms: Some(0),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,

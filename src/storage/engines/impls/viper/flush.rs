@@ -1369,13 +1369,23 @@ impl Flush {
             let optimal_algorithm = optimal_compression_for_column(&data_type);
             
             // Convert to Parquet compression
-            if let Some(parquet_compression) = map_to_parquet_compression(&optimal_algorithm) {
+            if let Some(compression_algo) = map_to_parquet_compression(&optimal_algorithm) {
                 let column_path = parquet::schema::types::ColumnPath::from(name.as_str());
                 
                 debug!("🔧 VIPER Mixed: {} -> {:?} (type: {:?})", 
                        name, optimal_algorithm, data_type);
                 
-                // Apply per-column compression
+                // Apply per-column compression - convert our compression to the parquet crate's compression
+                let parquet_compression = match compression_algo {
+                    parquet::basic::Compression::UNCOMPRESSED => parquet::basic::Compression::UNCOMPRESSED,
+                    parquet::basic::Compression::SNAPPY => parquet::basic::Compression::SNAPPY,
+                    parquet::basic::Compression::GZIP(level) => parquet::basic::Compression::GZIP(level),
+                    parquet::basic::Compression::LZO => parquet::basic::Compression::LZO,
+                    parquet::basic::Compression::BROTLI(level) => parquet::basic::Compression::BROTLI(level),
+                    parquet::basic::Compression::LZ4 => parquet::basic::Compression::LZ4,
+                    parquet::basic::Compression::ZSTD(level) => parquet::basic::Compression::ZSTD(level),
+                    parquet::basic::Compression::LZ4_RAW => parquet::basic::Compression::LZ4_RAW,
+                };
                 props_builder = props_builder.set_column_compression(column_path, parquet_compression);
                 
                 // Apply optimal encoding based on column type

@@ -1478,6 +1478,8 @@ impl WriteAheadLogManager {
         if self.should_sync_to_disk(&collection_id).await? {
             debug!("🔄 Sync mode enabled - triggering disk persistence for collection: {}", collection_id);
             // Trigger flush by calling flush_all_vectors which will write to disk
+            let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+            let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
             let _ = wal_behavior.flush_all_vectors().await?;
         }
 

@@ -166,10 +166,10 @@ impl BackgroundMaintenanceManager {
                         "✅ [COMPACTION] {} compaction completed for collection {}: {} entries processed, {} files {} → {}",
                         engine.engine_name(),
                         context.collection_id,
-                        result.entries_processed,
-                        result.input_files,
-                        result.output_files,
-                        result.duration_ms
+                        result.entries_processed.unwrap_or(0),
+                        result.input_files.unwrap_or(0),
+                        result.output_files.unwrap_or(0),
+                        result.duration_ms.unwrap_or(0)
                     );
                     
                     // 📊 METRICS: Record compaction operation metrics (non-blocking)
