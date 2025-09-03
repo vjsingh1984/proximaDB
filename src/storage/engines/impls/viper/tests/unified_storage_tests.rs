@@ -11,10 +11,12 @@ use tempfile::TempDir;
 use tokio;
 
 use crate::core::VectorRecord;
-use crate::storage::transaction_coordinator::{TransactionCoordinator, ViperTransactionalOperations};
 use crate::storage::engines::impls::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
+use crate::storage::transaction_coordinator::{
+    TransactionCoordinator, ViperTransactionalOperations,
+};
 
 /// Create test filesystem and VIPER engine
 async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
@@ -27,7 +29,9 @@ async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
     };
 
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let viper_engine = ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem).await?;
+    let viper_engine =
+        ViperEngine::from_core_config(crate::core::config::ViperConfig::default(), filesystem)
+            .await?;
 
     Ok((viper_engine, temp_dir))
 }
@@ -43,11 +47,15 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 metadata: vec![
                     crate::proto::proximadb::MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(format!("category_{}", i % 3))),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                            format!("category_{}", i % 3),
+                        )),
                     },
                     crate::proto::proximadb::MetadataItem {
                         key: "priority".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(i.to_string())),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                            i.to_string(),
+                        )),
                     },
                 ],
                 timestamp: now as u32,
@@ -69,7 +77,10 @@ async fn test_viper_unified_storage_engine_traits() -> Result<()> {
 
     // Test engine identification
     assert_eq!(viper_engine.engine_name(), "VIPER");
-    assert_eq!(viper_engine.engine_version(), crate::version::PROXIMADB_VERSION);
+    assert_eq!(
+        viper_engine.engine_version(),
+        crate::version::PROXIMADB_VERSION
+    );
     assert_eq!(viper_engine.strategy(), StorageEngineStrategy::Viper);
 
     // Test engine capabilities
@@ -92,7 +103,8 @@ async fn test_viper_do_flush_implementation() -> Result<()> {
         force: true,
         synchronous: true,
         collection_config: None,
-        ..Default::default()};
+        ..Default::default()
+    };
 
     let result = viper_engine.do_flush(&flush_params).await?;
 
@@ -118,7 +130,8 @@ async fn test_viper_flush_with_high_level_trait_method() -> Result<()> {
         synchronous: true,
         trigger_compaction: false,
         collection_config: None,
-        ..Default::default()};
+        ..Default::default()
+    };
 
     let result = viper_engine.flush(flush_params).await?;
 
@@ -188,7 +201,8 @@ async fn test_dynamic_storage_engine_flush() -> Result<()> {
         force: true,
         synchronous: true,
         collection_config: None,
-        ..Default::default()};
+        ..Default::default()
+    };
 
     let result = storage_engine.flush(flush_params).await?;
 
@@ -232,14 +246,17 @@ async fn test_flush_parameter_validation() -> Result<()> {
     let invalid_params = FlushParameters {
         collection_id: None, // VIPER requires collection ID
         collection_config: None,
-        ..Default::default()};
+        ..Default::default()
+    };
 
     let result = viper_engine.do_flush(&invalid_params).await;
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains_hash("Collection ID required"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains_hash("Collection ID required")
+    );
 
     Ok(())
 }

@@ -3,26 +3,20 @@
 //! Provides unified quantization APIs that work across all storage engines.
 //! Includes support for various quantization levels and hardware acceleration.
 
+pub mod compile_time;
+pub mod hardware_accelerated;
+pub mod smart_defaults;
+pub mod storage_engine;
 pub mod types;
 pub mod unified;
-pub mod storage_engine;
-pub mod smart_defaults;
-pub mod hardware_accelerated;
-pub mod compile_time;
 
 pub use unified::{
-    UnifiedQuantizationLevel, QuantizationLevel,
-    UniformQuantization, ProductQuantization, ScalarQuantization, 
-    BinaryQuantization, CustomQuantization, NoQuantization,
-    UnifiedQuantizationEngine, CodebookStore, Codebook, 
-    TrainingConfig, CodebookData, QuantizedVector, 
-    QuantizationMetadata, InMemoryCodebookStore
+    BinaryQuantization, Codebook, CodebookData, CodebookStore, CustomQuantization,
+    InMemoryCodebookStore, NoQuantization, ProductQuantization, QuantizationLevel,
+    QuantizationMetadata, QuantizedVector, ScalarQuantization, TrainingConfig,
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel, UniformQuantization,
 };
 
-pub use storage_engine::{
-    StorageQuantizationEngine, StorageQuantizationConfig, 
-};
+pub use storage_engine::{StorageQuantizationConfig, StorageQuantizationEngine};
 
-pub use smart_defaults::{
-    QuantizationSmartDefaults,
-};
+pub use smart_defaults::QuantizationSmartDefaults;

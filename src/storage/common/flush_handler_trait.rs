@@ -15,7 +15,7 @@
  */
 
 //! Unified flush handler trait for all storage engines
-//! 
+//!
 //! This trait provides a common interface for checking if files can be compacted
 //! and performing compaction operations across all storage engines.
 
@@ -27,10 +27,15 @@ use async_trait::async_trait;
 pub trait FlushHandler: Send + Sync {
     /// Check if the given files can be compacted
     async fn can_compact_files(&self, collection_id: &str, files: &[String]) -> Result<bool>;
-    
+
     /// Perform compaction on the given files
-    async fn compact_files(&self, collection_id: &str, files: &[String], output_path: &str) -> Result<()>;
-    
+    async fn compact_files(
+        &self,
+        collection_id: &str,
+        files: &[String],
+        output_path: &str,
+    ) -> Result<()>;
+
     /// Get the engine name
     fn engine_name(&self) -> &'static str;
 }
@@ -40,7 +45,9 @@ pub struct FlushHandlerFactory;
 
 impl FlushHandlerFactory {
     /// Create a flush handler for the specified engine type
-    pub fn create(engine_type: super::compaction_utils::StorageEngineType) -> Box<dyn FlushHandler> {
+    pub fn create(
+        engine_type: super::compaction_utils::StorageEngineType,
+    ) -> Box<dyn FlushHandler> {
         match engine_type {
             super::compaction_utils::StorageEngineType::SST => {
                 Box::new(SstFlushHandlerAdapter::new())
@@ -48,15 +55,9 @@ impl FlushHandlerFactory {
             super::compaction_utils::StorageEngineType::VIPER => {
                 Box::new(ViperFlushHandlerAdapter::new())
             }
-            super::compaction_utils::StorageEngineType::NOVA => {
-                Box::new(NovaFlushHandler::new())
-            }
-            super::compaction_utils::StorageEngineType::SWIFT => {
-                Box::new(SwiftFlushHandler::new())
-            }
-            super::compaction_utils::StorageEngineType::PRISM => {
-                Box::new(PrismFlushHandler::new())
-            }
+            super::compaction_utils::StorageEngineType::NOVA => Box::new(NovaFlushHandler::new()),
+            super::compaction_utils::StorageEngineType::SWIFT => Box::new(SwiftFlushHandler::new()),
+            super::compaction_utils::StorageEngineType::PRISM => Box::new(PrismFlushHandler::new()),
             super::compaction_utils::StorageEngineType::RAPTOR => {
                 Box::new(RaptorFlushHandler::new())
             }
@@ -83,18 +84,23 @@ impl FlushHandler for SstFlushHandlerAdapter {
         // SST handler takes &[String] and returns bool
         Ok(self.inner.can_compact_files(collection_id, files).await)
     }
-    
-    async fn compact_files(&self, _collection_id: &str, _files: &[String], _output_path: &str) -> Result<()> {
+
+    async fn compact_files(
+        &self,
+        _collection_id: &str,
+        _files: &[String],
+        _output_path: &str,
+    ) -> Result<()> {
         // TODO: Implement actual compaction
         Ok(())
     }
-    
+
     fn engine_name(&self) -> &'static str {
         "SST"
     }
 }
 
-// Adapter for VIPER engine  
+// Adapter for VIPER engine
 struct ViperFlushHandlerAdapter {
     inner: crate::storage::engines::impls::viper::eventlog_flush::ViperFlushHandler,
 }
@@ -113,12 +119,17 @@ impl FlushHandler for ViperFlushHandlerAdapter {
         // ViperFlushNotifier's can_compact_files returns bool
         Ok(self.inner.can_compact_files(collection_id, files).await)
     }
-    
-    async fn compact_files(&self, _collection_id: &str, _files: &[String], _output_path: &str) -> Result<()> {
+
+    async fn compact_files(
+        &self,
+        _collection_id: &str,
+        _files: &[String],
+        _output_path: &str,
+    ) -> Result<()> {
         // TODO: Implement actual compaction
         Ok(())
     }
-    
+
     fn engine_name(&self) -> &'static str {
         "VIPER"
     }
@@ -140,12 +151,17 @@ impl FlushHandler for NovaFlushHandler {
         // For now, all files are compactable
         Ok(true)
     }
-    
-    async fn compact_files(&self, _collection_id: &str, _files: &[String], _output_path: &str) -> Result<()> {
+
+    async fn compact_files(
+        &self,
+        _collection_id: &str,
+        _files: &[String],
+        _output_path: &str,
+    ) -> Result<()> {
         // TODO: Implement Nova-specific compaction
         Ok(())
     }
-    
+
     fn engine_name(&self) -> &'static str {
         "NOVA"
     }
@@ -167,12 +183,17 @@ impl FlushHandler for SwiftFlushHandler {
         // For now, all files are compactable
         Ok(true)
     }
-    
-    async fn compact_files(&self, _collection_id: &str, _files: &[String], _output_path: &str) -> Result<()> {
+
+    async fn compact_files(
+        &self,
+        _collection_id: &str,
+        _files: &[String],
+        _output_path: &str,
+    ) -> Result<()> {
         // TODO: Implement Swift-specific compaction
         Ok(())
     }
-    
+
     fn engine_name(&self) -> &'static str {
         "SWIFT"
     }
@@ -194,12 +215,17 @@ impl FlushHandler for PrismFlushHandler {
         // For now, all files are compactable
         Ok(true)
     }
-    
-    async fn compact_files(&self, _collection_id: &str, _files: &[String], _output_path: &str) -> Result<()> {
+
+    async fn compact_files(
+        &self,
+        _collection_id: &str,
+        _files: &[String],
+        _output_path: &str,
+    ) -> Result<()> {
         // TODO: Implement Prism-specific compaction
         Ok(())
     }
-    
+
     fn engine_name(&self) -> &'static str {
         "PRISM"
     }
@@ -221,12 +247,17 @@ impl FlushHandler for RaptorFlushHandler {
         // For now, all files are compactable
         Ok(true)
     }
-    
-    async fn compact_files(&self, _collection_id: &str, _files: &[String], _output_path: &str) -> Result<()> {
+
+    async fn compact_files(
+        &self,
+        _collection_id: &str,
+        _files: &[String],
+        _output_path: &str,
+    ) -> Result<()> {
         // TODO: Implement Raptor-specific compaction
         Ok(())
     }
-    
+
     fn engine_name(&self) -> &'static str {
         "RAPTOR"
     }

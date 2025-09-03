@@ -8,9 +8,8 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 
 use crate::compute::distance_computation::{
-    DistanceMetric, UnifiedDistanceCompute, SimilarityResult,
-    QuantizedDistanceResult, QuantizedVectorData, SelectedFormat,
-    ComputationMethod, DistanceMetrics,
+    ComputationMethod, DistanceMetric, DistanceMetrics, QuantizedDistanceResult,
+    QuantizedVectorData, SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
 };
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
@@ -38,21 +37,21 @@ impl UniversalQuantizedCalculator {
         _hardware: &HardwareCapabilities,
     ) -> Result<Self> {
         debug!("Initializing universal quantized calculator");
-        
+
         // Create the inner unified distance compute engine with default metric
         // The actual metric will be provided per query or from collection config
         let inner = Arc::new(UnifiedDistanceCompute::default());
-        
+
         Ok(Self { inner })
     }
-    
+
     /// Compute distances using quantized vectors
-    /// 
+    ///
     /// Supports all 13 distance metrics from ProximaDB:
     /// - Core: Cosine, Euclidean, DotProduct
-    /// - Extended: Manhattan, Hamming, Jaccard, Chebyshev, Canberra, 
+    /// - Extended: Manhattan, Hamming, Jaccard, Chebyshev, Canberra,
     ///   Minkowski, Angular, BrayCurtis, Hellinger, Custom
-    /// 
+    ///
     /// The metric can come from:
     /// 1. Query parameters (highest priority)
     /// 2. Collection configuration (default for collection)
@@ -69,10 +68,10 @@ impl UniversalQuantizedCalculator {
             candidates.len(),
             format
         );
-        
+
         // Use the inner calculator's batch computation
         let mut results = Vec::with_capacity(candidates.len());
-        
+
         for candidate in candidates {
             // Compute distance based on available format
             let similarity_score = if let Some(ref fp32_data) = candidate.fp32 {
@@ -81,7 +80,9 @@ impl UniversalQuantizedCalculator {
                 result.normalized_score
             } else if let Some(ref int8_data) = candidate.int8 {
                 // Convert INT8 to f32 for distance computation
-                let fp32_vec: Vec<f32> = int8_data.values.iter()
+                let fp32_vec: Vec<f32> = int8_data
+                    .values
+                    .iter()
                     .map(|&v| (v as f32) * int8_data.scale + int8_data.zero_point as f32)
                     .collect();
                 let result = self.inner.calculate_distance(query, &fp32_vec, metric);
@@ -93,11 +94,13 @@ impl UniversalQuantizedCalculator {
                 0.5 // Placeholder similarity
             } else if let Some(ref binary_data) = candidate.binary {
                 // Binary distance computation - Hamming distance
-                let hamming = binary_data.iter()
+                let hamming = binary_data
+                    .iter()
                     .zip(query.chunks(8))
                     .map(|(byte, chunk)| {
-                        let query_byte = chunk.iter().enumerate()
-                            .fold(0u8, |acc, (i, &v)| if v > 0.0 { acc | (1 << i) } else { acc });
+                        let query_byte = chunk.iter().enumerate().fold(0u8, |acc, (i, &v)| {
+                            if v > 0.0 { acc | (1 << i) } else { acc }
+                        });
                         (byte ^ query_byte).count_ones() as f32
                     })
                     .sum::<f32>();
@@ -106,7 +109,7 @@ impl UniversalQuantizedCalculator {
             } else {
                 return Err(anyhow::anyhow!("No quantized data available"));
             };
-            
+
             results.push(QuantizedDistanceResult {
                 similarity: similarity_score,
                 quality_estimate: self.estimate_quality(format),
@@ -126,10 +129,10 @@ impl UniversalQuantizedCalculator {
                 },
             });
         }
-        
+
         Ok(results)
     }
-    
+
     /// Estimate quality based on quantization format
     fn estimate_quality(&self, format: &SelectedFormat) -> f32 {
         match format {

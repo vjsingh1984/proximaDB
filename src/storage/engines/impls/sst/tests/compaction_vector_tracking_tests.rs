@@ -10,11 +10,11 @@
 #[cfg(test)]
 mod tests {
     use super::super::super::*;
-    use crate::core::{SstConfig, VectorRecord, VectorId};
+    use crate::core::{SstConfig, VectorId, VectorRecord};
     use crate::storage::transaction_coordinator::TransactionCoordinator;
     use std::collections::{BTreeMap, HashMap};
-    use std::sync::Arc;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn create_test_config() -> SstConfig {
@@ -35,8 +35,8 @@ mod tests {
             mmap_enabled: false,
             prefetch_enabled: false,
             prefetch_size_kb: 64,
-        decompression_cache_config: None,
-    }
+            decompression_cache_config: None,
+        }
     }
 
     fn create_test_sst_record(id: &str, is_tombstone: bool, expires_at: Option<u32>) -> SstRecord {
@@ -59,7 +59,7 @@ mod tests {
     async fn test_enhanced_compaction_tracks_deleted_vectors() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config();
-        
+
         // Create a compaction task with test files
         let task = CompactionTask {
             level: 0,
@@ -69,50 +69,53 @@ mod tests {
             ],
             output_file: temp_dir.path().join("output.sstable"),
             priority: CompactionPriority::Medium,
-            block_size_kb: None, // Use server default for tests
+            block_size_kb: None,      // Use server default for tests
             compression_config: None, // Use server default for tests
         };
-        
+
         // Create test data with expired and tombstoned records
         let current_time = chrono::Utc::now().timestamp() as u32;
         let mut merged_data = BTreeMap::new();
-        
+
         // Regular vector
         merged_data.insert(
             VectorId::from("vec_1".to_string()),
             create_test_sst_record("vec_1", false, None),
         );
-        
+
         // Expired vector
         merged_data.insert(
             VectorId::from("vec_2".to_string()),
             create_test_sst_record("vec_2", false, Some(current_time - 1)),
         );
-        
+
         // Tombstone (old enough to be removed)
         let mut tombstone = create_test_sst_record("vec_3", true, None);
         tombstone.timestamp = current_time - (2 * 60 * 60); // 2 hours old
         merged_data.insert(VectorId::from("vec_3".to_string()), tombstone);
-        
+
         // Recent tombstone (should be kept)
         let recent_tombstone = create_test_sst_record("vec_4", true, None);
         merged_data.insert(VectorId::from("vec_4".to_string()), recent_tombstone);
-        
+
         // For testing, we'll mock the perform_compaction_enhanced function behavior
         // In a real test, we'd need to set up actual SSTable files
-        
+
         let mut deleted_vector_ids = Vec::new();
         let mut merged_vectors = Vec::new();
-        
+
         // Simulate the compaction logic
         for (id, record) in &merged_data {
             if let Some(expires_at) = record.expires_at {
                 if expires_at < current_time {
                     deleted_vector_ids.push(id.to_string());
                 }
-            } else if record/* REMOVED: is_tombstone field no longer exists */ {
+            } else if record
+            /* REMOVED: is_tombstone field no longer exists */
+            {
                 let age = current_time - record.timestamp;
-                if age >= (60 * 60) { // 1 hour in seconds
+                if age >= (60 * 60) {
+                    // 1 hour in seconds
                     deleted_vector_ids.push(id.to_string());
                 }
             } else {
@@ -120,12 +123,12 @@ mod tests {
                 merged_vectors.push(vector_record);
             }
         }
-        
+
         // Verify tracking
         assert_eq!(deleted_vector_ids.len(), 2); // vec_2 (expired) and vec_3 (old tombstone)
         assert!(deleted_vector_ids.contains_hash(&"vec_2".to_string()));
         assert!(deleted_vector_ids.contains_hash(&"vec_3".to_string()));
-        
+
         assert_eq!(merged_vectors.len(), 1); // Only vec_1 is kept as active data
         assert_eq!(merged_vectors[0].id.as_ref().unwrap(), "vec_1");
     }
@@ -160,8 +163,7 @@ mod tests {
                     // rank removed -  None,
                     similarity: None,
                     similarity: None,
-                
-        },
+                },
                 VectorRecord {
                     id: Some("vec_5".to_string()),
                     vector: vec![2.0; 128],
@@ -173,12 +175,11 @@ mod tests {
                     // rank removed -  None,
                     similarity: None,
                     similarity: None,
-                
-        },
+                },
             ],
             recommend_full_rebuild: false,
         };
-        
+
         assert_eq!(stats.deleted_vector_ids.len(), 3);
         assert_eq!(stats.merged_vectors.len(), 2);
         assert_eq!(stats.base_stats.expired_records_deleted, 5);
@@ -204,8 +205,7 @@ mod tests {
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             VectorRecord {
                 id: Some("vec_a".to_string()),
                 vector: vec![1.0; 128],
@@ -217,8 +217,7 @@ mod tests {
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             VectorRecord {
                 id: Some("vec_b".to_string()),
                 vector: vec![2.0; 128],
@@ -230,14 +229,13 @@ mod tests {
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
         ];
-        
+
         // The actual sorting would happen in Compaction::sort_vectors_for_compaction
         // For this test, we'll sort by ID as metadata is empty
         vector_records.sort_by(|a, b| a.id.cmp(&b.id));
-        
+
         // Verify sorting order by ID
         assert_eq!(vector_records[0].id.as_ref().unwrap(), "vec_a");
         assert_eq!(vector_records[1].id.as_ref().unwrap(), "vec_b");
@@ -250,7 +248,7 @@ mod tests {
         // Create a mock SST tree for testing
         // In a real scenario, we'd need a proper LsmTree instance
         // For this test, we'll verify the structure of CompactionResult
-        
+
         // Create test parameters
         let params = crate::storage::traits::CompactionParameters {
             collection_id: Some("test_collection".to_string()),
@@ -261,7 +259,7 @@ mod tests {
             priority: crate::storage::traits::OperationPriority::Medium,
             collection_config: None,
         };
-        
+
         // Create a mock CompactionResult to verify the expected structure
         let mut result = crate::storage::traits::CompactionResult {
             success: true,
@@ -276,7 +274,7 @@ mod tests {
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
         };
-        
+
         // Add vector tracking data to engine_metrics
         result.engine_metrics.insert(
             "deleted_vector_ids".to_string(),
@@ -284,19 +282,21 @@ mod tests {
                 serde_json::Value::String("vec_1".to_string()),
                 serde_json::Value::String("vec_2".to_string()),
                 serde_json::Value::String("vec_3".to_string()),
-            ])
+            ]),
         );
         result.engine_metrics.insert(
             "merged_vectors_count".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(7))
+            serde_json::Value::Number(serde_json::Number::from(7)),
         );
-        
+
         // Verify engine_metrics contains vector tracking data
         assert!(result.engine_metrics.contains_key("deleted_vector_ids"));
         assert!(result.engine_metrics.contains_key("merged_vectors_count"));
-        
+
         // Verify we can extract the data
-        let deleted_ids = result.engine_metrics.get(key)
+        let deleted_ids = result
+            .engine_metrics
+            .get(key)
             .and_then(|v| v.as_array())
             .unwrap();
         assert_eq!(deleted_ids.len(), 3);

@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::proto::proximadb::Collection as Collection;
+use crate::proto::proximadb::Collection;
 
 /// Fast lookup result for metadata queries
 #[derive(Debug, Clone)]
@@ -46,13 +46,29 @@ impl From<&Collection> for CollectionLookupResult {
     fn from(record: &Collection) -> Self {
         Self {
             uuid: record.id.clone(),
-            name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| "unknown".to_string()),
-            dimension: record.config.as_ref().map(|c| c.dimension as i32).unwrap_or(0),
+            name: record
+                .config
+                .as_ref()
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            dimension: record
+                .config
+                .as_ref()
+                .map(|c| c.dimension as i32)
+                .unwrap_or(0),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
-            indexing_algorithm: record.config.as_ref().and_then(|c| c.primary_index.clone()).unwrap_or_else(|| "None".to_string()),
+            indexing_algorithm: record
+                .config
+                .as_ref()
+                .and_then(|c| c.primary_index.clone())
+                .unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
             vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
+            total_size_bytes: record
+                .stats
+                .as_ref()
+                .map(|s| s.data_size_bytes)
+                .unwrap_or(0),
             timestamp: record.created_at,
             updated_at: record.updated_at,
         }
@@ -480,8 +496,7 @@ impl MetadataMemoryIndexes {
     /// Estimate memory usage for monitoring
     fn estimate_memory_usage(&self) -> usize {
         // Rough estimation - would need more precise calculation in production
-        let uuid_index_size =
-            self.uuid_to_record.len() * (32 + std::mem::size_of::<Collection>());
+        let uuid_index_size = self.uuid_to_record.len() * (32 + std::mem::size_of::<Collection>());
         let name_index_size = self.name_to_uuid.len() * 64; // Approximate
 
         uuid_index_size + name_index_size + 1024 // Add overhead for secondary indexes

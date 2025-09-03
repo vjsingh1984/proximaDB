@@ -104,12 +104,19 @@ where
         let old_count = data.len();
         let key_exists = data.contains_key(&key);
 
-        tracing::info!("🌲 BTree Memtable Insert: key={:?}, old_count={}, key_exists={}", 
-                      key, old_count, key_exists);
+        tracing::info!(
+            "🌲 BTree Memtable Insert: key={:?}, old_count={}, key_exists={}",
+            key,
+            old_count,
+            key_exists
+        );
 
         let old_size = if key_exists {
             let old_entry_size = Self::estimate_entry_size(&key, data.get(&key).unwrap());
-            tracing::info!("🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)", old_entry_size);
+            tracing::info!(
+                "🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)",
+                old_entry_size
+            );
             old_entry_size
         } else {
             tracing::info!("🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: New entry insertion");
@@ -332,7 +339,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_btree_basic_operations() {
@@ -390,10 +397,12 @@ use tracing::{debug, error, info};
 
         // Insert test data
         for i in 1..=5 {
-            assert!(memtable
-                .insert(i as u64, format!("value{}", i))
-                .await
-                .is_ok());
+            assert!(
+                memtable
+                    .insert(i as u64, format!("value{}", i))
+                    .await
+                    .is_ok()
+            );
         }
 
         assert_eq!(memtable.len().await, 5);

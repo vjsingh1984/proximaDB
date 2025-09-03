@@ -469,7 +469,7 @@ impl FilesystemManager {
 
             if full_path.starts_with(base_path) {
                 Ok(full_path.strip_prefix(base_path)
-                    
+
                     .trim_start_matches('/')
                     .to_string())
             } else {

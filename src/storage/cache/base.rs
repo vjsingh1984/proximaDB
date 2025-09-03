@@ -1,4 +1,6 @@
-use crate::storage::cache::backend::{CacheTier, MemoryBackend, NvmeBackend, NetworkBackend, StorageBackend};
+use crate::storage::cache::backend::{
+    CacheTier, MemoryBackend, NetworkBackend, NvmeBackend, StorageBackend,
+};
 use crate::storage::cache::eviction::{CacheState, EvictionStrategy, LRUStrategy};
 use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
@@ -8,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Base implementation that specialized caches can build upon
-pub struct BaseCacheImpl<K, V> 
+pub struct BaseCacheImpl<K, V>
 where
     K: CacheKey,
     V: CacheValue,
@@ -17,13 +19,13 @@ where
     l1_backend: Arc<MemoryBackend<K, CacheEntry<V>>>,
     l2_backend: Option<Arc<NvmeBackend<K, CacheEntry<V>>>>,
     l3_backend: Option<Arc<NetworkBackend<K, CacheEntry<V>>>>,
-    
+
     // Eviction strategy
     eviction_strategy: Arc<RwLock<Box<dyn EvictionStrategy<Key = K> + Send + Sync>>>,
-    
+
     // Metrics
     metrics: Arc<CacheMetrics>,
-    
+
     // Configuration
     promotion_threshold: u32,
     max_entry_size_for_l1: usize,
@@ -45,17 +47,17 @@ where
             max_entry_size_for_l1: 1024 * 1024, // 1MB
         }
     }
-    
+
     pub fn with_l2(mut self, path: &str, max_size_gb: usize) -> Self {
         self.l2_backend = Some(Arc::new(NvmeBackend::new(path, max_size_gb)));
         self
     }
-    
+
     pub fn with_l3(mut self, endpoint: String) -> Self {
         self.l3_backend = Some(Arc::new(NetworkBackend::new(endpoint)));
         self
     }
-    
+
     pub fn with_eviction_strategy<E>(mut self, strategy: E) -> Self
     where
         E: EvictionStrategy<Key = K> + Send + Sync + 'static,
@@ -73,7 +75,7 @@ where
 {
     type Key = K;
     type Value = V;
-    
+
     async fn check_l1(&self, key: &Self::Key) -> Option<Self::Value> {
         if let Some(mut entry) = self.l1_backend.get(key).await {
             entry.touch();
@@ -84,7 +86,7 @@ where
             None
         }
     }
-    
+
     async fn check_l2(&self, key: &Self::Key) -> Option<Self::Value> {
         if let Some(ref l2) = self.l2_backend {
             if let Some(mut entry) = l2.get(key).await {
@@ -98,7 +100,7 @@ where
             None
         }
     }
-    
+
     async fn check_l3(&self, key: &Self::Key) -> Option<Self::Value> {
         if let Some(ref l3) = self.l3_backend {
             if let Some(mut entry) = l3.get(key).await {
@@ -112,10 +114,10 @@ where
             None
         }
     }
-    
+
     async fn put_l1(&self, key: Self::Key, value: Self::Value) {
         let entry = CacheEntry::new(value.clone());
-        
+
         // Try to insert
         match self.l1_backend.put(key.clone(), entry.clone()).await {
             Ok(_) => {
@@ -136,7 +138,7 @@ where
                     };
                     strategy.select_victim(&cache_state)
                 };
-                
+
                 // If we found a victim, evict it
                 if let Some(victim) = victim_key {
                     // Remove the victim
@@ -145,7 +147,7 @@ where
                         let mut strategy = self.eviction_strategy.write().await;
                         strategy.update_on_evict(&victim);
                         self.metrics.record_eviction();
-                        
+
                         // Now try to insert the new entry
                         if self.l1_backend.put(key.clone(), entry).await.is_ok() {
                             strategy.update_on_insert(&key, 0);
@@ -171,7 +173,7 @@ where
             }
         }
     }
-    
+
     async fn put_l2(&self, key: Self::Key, value: Self::Value) {
         if let Some(ref l2) = self.l2_backend {
             let entry = CacheEntry::new(value);
@@ -179,7 +181,7 @@ where
             self.metrics.record_put();
         }
     }
-    
+
     async fn put_l3(&self, key: Self::Key, value: Self::Value) {
         if let Some(ref l3) = self.l3_backend {
             let entry = CacheEntry::new(value);
@@ -187,11 +189,11 @@ where
             self.metrics.record_put();
         }
     }
-    
+
     async fn invalidate_l1(&self, key: &Self::Key) -> bool {
         self.l1_backend.remove(key).await
     }
-    
+
     async fn invalidate_l2(&self, key: &Self::Key) -> bool {
         if let Some(ref l2) = self.l2_backend {
             l2.remove(key).await
@@ -199,7 +201,7 @@ where
             false
         }
     }
-    
+
     async fn invalidate_l3(&self, key: &Self::Key) -> bool {
         if let Some(ref l3) = self.l3_backend {
             l3.remove(key).await
@@ -207,28 +209,28 @@ where
             false
         }
     }
-    
+
     async fn promote_to_l1(&self, key: &Self::Key, value: &Self::Value) {
         // Check if value is small enough for L1
         if value.size_bytes() <= self.max_entry_size_for_l1 {
             self.put_l1(key.clone(), value.clone()).await;
         }
     }
-    
+
     async fn promote_to_l2(&self, key: &Self::Key, value: &Self::Value) {
         // First try to promote to L1
         self.promote_to_l1(key, value).await;
-        
+
         // Also ensure it's in L2
         if self.l2_backend.is_some() {
             self.put_l2(key.clone(), value.clone()).await;
         }
     }
-    
+
     async fn select_tier(&self, _key: &Self::Key, value: &Self::Value) -> CacheTier {
         // Simple tier selection based on size
         let size = value.size_bytes();
-        
+
         if size <= self.max_entry_size_for_l1 {
             CacheTier::L1
         } else if self.l2_backend.is_some() && size <= 10 * 1024 * 1024 {
@@ -239,7 +241,7 @@ where
             CacheTier::L1 // Fallback to L1
         }
     }
-    
+
     fn metrics(&self) -> &CacheMetrics {
         &self.metrics
     }

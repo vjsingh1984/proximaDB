@@ -5,9 +5,9 @@
 
 pub mod conversion;
 pub mod engine;
+pub mod int8_simd;
 pub mod platform;
-pub mod quantized; // Unified quantized distance computation for all engines
-pub mod int8_simd; // Native INT8 SIMD distance computation
+pub mod quantized; // Unified quantized distance computation for all engines // Native INT8 SIMD distance computation
 
 // INTERNAL: UnifiedDistanceCompute provides all distance implementations with hardware acceleration
 // The core module is not needed as UnifiedDistanceCompute already handles:
@@ -36,17 +36,16 @@ pub mod benchmark; // Benchmarking code (moved from distance/benchmark.rs)
 
 // Re-export main types from engine
 pub use engine::{
-    DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
-    DistanceMode, MetricProperties, DistanceMetric
+    DistanceComputeProvider, DistanceMetric, DistanceMode, MetricProperties, SimilarityResult,
+    UnifiedDistanceCompute,
 };
 
 // Re-export quantized distance computation types
 pub use quantized::{
+    ApproximationConfig, CacheEvictionPolicy, ComputationMethod, DistanceCacheConfig,
+    DistanceMetrics, HardwarePreferences, InstructionSet, Int8VectorData, PQVectorData,
     QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedDistanceResult,
-    QuantizedVectorData, Int8VectorData, PQVectorData, SelectedFormat,
-    ComputationMethod, DistanceMetrics, SIMDOptimization, InstructionSet,
-    VectorizationStrategy, DistanceCacheConfig, CacheEvictionPolicy,
-    ApproximationConfig, HardwarePreferences,
+    QuantizedVectorData, SIMDOptimization, SelectedFormat, VectorizationStrategy,
 };
 
 // DEPRECATED: These exports from core are deprecated. Use UnifiedDistanceCompute instead.

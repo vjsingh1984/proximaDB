@@ -153,7 +153,9 @@ impl ProximaDB {
 
         // Step 2: Create SharedServices FIRST (owns all services)
         // This avoids duplicate CollectionService creation
-        tracing::info!("🔧 ProximaDB::new - Creating SharedServices FIRST to avoid circular dependency");
+        tracing::info!(
+            "🔧 ProximaDB::new - Creating SharedServices FIRST to avoid circular dependency"
+        );
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),
             &config.storage,
@@ -162,11 +164,18 @@ impl ProximaDB {
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
 
         // Step 3: Create StorageEngine using the CollectionService from SharedServices
-        tracing::debug!("🔧 ProximaDB::new - Creating storage engine with injected CollectionService...");
-        let storage_engine = storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
+        tracing::debug!(
+            "🔧 ProximaDB::new - Creating storage engine with injected CollectionService..."
+        );
+        let storage_engine =
+            storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
         // Inject the collection service from SharedServices (no duplicate!)
-        storage_engine.set_metadata_provider(collection_service.clone()).await;
-        tracing::info!("✅ ProximaDB::new - Storage engine created with SharedServices' CollectionService");
+        storage_engine
+            .set_metadata_provider(collection_service.clone())
+            .await;
+        tracing::info!(
+            "✅ ProximaDB::new - Storage engine created with SharedServices' CollectionService"
+        );
         let storage = Arc::new(RwLock::new(storage_engine));
 
         // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
@@ -191,7 +200,11 @@ impl ProximaDB {
             format!("{}:{}", config.server.bind_address, config.api.grpc_port)
                 .parse()
                 .map_err(|e| format!("Invalid gRPC address: {}", e))?;
-        tracing::debug!("🔧 ProximaDB::new - REST address: {}, gRPC address: {}", rest_addr, grpc_addr);
+        tracing::debug!(
+            "🔧 ProximaDB::new - REST address: {}, gRPC address: {}",
+            rest_addr,
+            grpc_addr
+        );
 
         tracing::debug!("🔧 ProximaDB::new - Building multi-server configuration...");
         let mut builder = network::MultiServerBuilder::custom()
@@ -233,29 +246,42 @@ impl ProximaDB {
 
     pub async fn start(&mut self) -> Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
-        
+
         // Step 1: Start storage engine (recovers collections from metadata)
-        tracing::info!("📦 ProximaDB::start - Step 1: Starting storage engine for collection recovery...");
+        tracing::info!(
+            "📦 ProximaDB::start - Step 1: Starting storage engine for collection recovery..."
+        );
         {
             let mut storage = self.storage.write().await;
             storage.start().await?;
         }
-        tracing::info!("✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info");
+        tracing::info!(
+            "✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info"
+        );
 
         // Step 2: Recover assignments from collection metadata
-        tracing::info!("🗺️ ProximaDB::start - Step 2: Recovering assignments from collection metadata...");
+        tracing::info!(
+            "🗺️ ProximaDB::start - Step 2: Recovering assignments from collection metadata..."
+        );
         // TODO: When AssignmentService is added to SharedServices, call:
         // self.multi_server.as_ref().unwrap().shared_services.assignment_service.recover_assignments().await?;
-        tracing::info!("✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)");
+        tracing::info!(
+            "✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)"
+        );
 
         // Step 3: Recover vectors from write buffer
         tracing::info!("🔄 ProximaDB::start - Step 3: Recovering vectors from write buffer...");
         if let Some(ref multi_server) = self.multi_server {
-            multi_server.shared_services.recover_vectors_from_write_buffer(&self.storage).await?;
+            multi_server
+                .shared_services
+                .recover_vectors_from_write_buffer(&self.storage)
+                .await?;
         }
-        
+
         // Step 4: Start multi-server (HTTP and gRPC on separate ports)
-        tracing::info!("🌐 ProximaDB::start - Step 4: Starting multi-server (gRPC:5679 + REST:5678)...");
+        tracing::info!(
+            "🌐 ProximaDB::start - Step 4: Starting multi-server (gRPC:5679 + REST:5678)..."
+        );
         if let Some(ref mut multi_server) = self.multi_server {
             multi_server
                 .start()
@@ -264,10 +290,12 @@ impl ProximaDB {
         }
         tracing::info!("✅ ProximaDB::start - Multi-server started successfully");
 
-        tracing::info!("🎉 ProximaDB::start - Database startup complete with proper recovery order!");
+        tracing::info!(
+            "🎉 ProximaDB::start - Database startup complete with proper recovery order!"
+        );
         tracing::info!("📋 Recovery Order Summary:");
         tracing::info!("  1️⃣ Collections: Recovered from metadata snapshots");
-        tracing::info!("  2️⃣ Assignments: Recovered from collection metadata_info"); 
+        tracing::info!("  2️⃣ Assignments: Recovered from collection metadata_info");
         tracing::info!("  3️⃣ Vectors: Recovered from write buffer");
         tracing::info!("  4️⃣ Services: HTTP/gRPC servers started");
         Ok(())

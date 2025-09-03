@@ -3,11 +3,11 @@
 //! This module defines the WALBatchStrategy trait for batch-oriented operations.
 //! The batch-oriented approach provides:
 //! - Better performance through batch operations
-//! - Zero-copy Avro serialization 
+//! - Zero-copy Avro serialization
 //! - Native batch storage in memtables
 //! - Simplified consistency guarantees
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
 
 /// Modern batch-oriented Write Buffer strategy trait
-/// 
+///
 /// This trait focuses on batch operations for optimal performance:
 /// - All vector operations work with WALVectorBatch
 /// - No individual entry operations (use batches of size 1)
@@ -56,11 +56,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Validate URL format before proceeding
             fs.validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
-            
+
             // Serialize vector records to bytes (deref Arc)
             let batch_bytes = bincode::serialize(&*batch.vector_records)
                 .context("Failed to serialize batch for cloud storage")?;
-            
+
             // Generate unique filename for the batch with timestamp
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
             let batch_filename = format!(
@@ -69,40 +69,44 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 timestamp,
                 batch.batch_id.to_base62()
             );
-            
+
             // Construct full cloud URL
             let full_url = if cloud_url.ends_with('/') {
                 format!("{}{}", cloud_url, batch_filename)
             } else {
                 format!("{}/{}", cloud_url, batch_filename)
             };
-            
+
             // Validate the constructed URL
             fs.validate_url(&full_url)
                 .context("Invalid constructed cloud URL")?;
-            
+
             // Get filesystem for URL and write atomically
-            let filesystem = fs.get_filesystem(&full_url)
+            let filesystem = fs
+                .get_filesystem(&full_url)
                 .context("Failed to get filesystem for cloud URL")?;
-            
+
             let path = FilesystemFactory::resolve_path(&full_url)
                 .context("Failed to extract path from cloud URL")?;
-            
+
             let options = Some(crate::storage::persistence::filesystem::FileOptions {
                 create_dirs: true,
                 overwrite: true,
                 ..Default::default()
             });
-            
-            filesystem.write_atomic(&path, &batch_bytes, options).await
+
+            filesystem
+                .write_atomic(&path, &batch_bytes, options)
+                .await
                 .context("Failed to write batch to cloud storage")?;
-            
+
             // Log detailed information for monitoring
-            let bucket = fs.extract_bucket_from_url(&full_url)
+            let bucket = fs
+                .extract_bucket_from_url(&full_url)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
-            
+
             tracing::info!(
                 "☁️ CLOUD_WRITE: Wrote batch {} ({} bytes) to {} [bucket: {}]",
                 batch.batch_id.to_base62(),
@@ -110,41 +114,47 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 full_url,
                 bucket
             );
-            
+
             Ok(full_url)
         } else {
-            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+            Err(anyhow::anyhow!(
+                "Filesystem not initialized for cloud operations"
+            ))
         }
     }
 
     /// Read Write Buffer batch from cloud storage with URL-based routing
-    async fn read_batch_from_cloud(
-        &self,
-        cloud_url: &str,
-    ) -> Result<WALVectorBatch> {
+    async fn read_batch_from_cloud(&self, cloud_url: &str) -> Result<WALVectorBatch> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
             fs.validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
-            
-            let filesystem = fs.get_filesystem(cloud_url)
+
+            let filesystem = fs
+                .get_filesystem(cloud_url)
                 .context("Failed to get filesystem for cloud URL")?;
-            
+
             let path = FilesystemFactory::resolve_path(cloud_url)
                 .context("Failed to extract path from cloud URL")?;
-            
-            let batch_bytes = filesystem.read(&path).await
+
+            let batch_bytes = filesystem
+                .read(&path)
+                .await
                 .context("Failed to read batch from cloud storage")?;
-            
+
             let vector_records: Vec<VectorRecord> = bincode::deserialize(&batch_bytes)
                 .context("Failed to deserialize batch from cloud storage")?;
-            
+
             // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
             let _collection_id = {
                 if let Some(filename) = cloud_url.split('/').last() {
                     let path_parts: Vec<&str> = filename.split('_').collect();
-                    if path_parts.len() >= 4 && path_parts[0] == "write" && path_parts[1] == "buffer" && path_parts[2] == "batch" {
+                    if path_parts.len() >= 4
+                        && path_parts[0] == "write"
+                        && path_parts[1] == "buffer"
+                        && path_parts[2] == "batch"
+                    {
                         path_parts[3].to_string()
                     } else {
                         "unknown".to_string()
@@ -153,7 +163,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     "unknown".to_string()
                 }
             };
-            
+
             // Reconstruct WALVectorBatch from deserialized vector records with proper collection_id
             use super::BatchId;
             let batch = WALVectorBatch {
@@ -162,15 +172,16 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes: batch_bytes.len(),
                 is_flushed: false,
-            metadata_bloom_filter: None,
+                metadata_bloom_filter: None,
             };
-            
+
             // Log detailed information for monitoring
-            let bucket = fs.extract_bucket_from_url(cloud_url)
+            let bucket = fs
+                .extract_bucket_from_url(cloud_url)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
-            
+
             tracing::info!(
                 "☁️ CLOUD_READ: Read batch {} ({} bytes) from {} [bucket: {}]",
                 batch.batch_id.to_base62(),
@@ -178,10 +189,12 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 cloud_url,
                 bucket
             );
-            
+
             Ok(batch)
         } else {
-            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+            Err(anyhow::anyhow!(
+                "Filesystem not initialized for cloud operations"
+            ))
         }
     }
 
@@ -197,30 +210,41 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<super::WALOperation> {
         tracing::debug!(
             "📝 Unified write: collection={}, format={}, payload_size={}",
-            collection_id, payload_format, payload.len()
+            collection_id,
+            payload_format,
+            payload.len()
         );
-        
+
         // Step 1: Deserialize payload to common VectorRecord format
         let vector_records = match payload_format {
             "avro" => {
-                use crate::storage::persistence::write_ahead_log::serialization::{AvroSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_ahead_log::serialization::{
+                    AvroSerializer, VectorBatchSerializer,
+                };
                 let serializer = AvroSerializer::new();
-                serializer.deserialize_batch(payload)
+                serializer
+                    .deserialize_batch(payload)
                     .context("Failed to deserialize Avro payload")?
             }
             "proto" => {
-                use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+                use crate::storage::persistence::write_ahead_log::serialization::{
+                    ProtocolBuffersSerializer, VectorBatchSerializer,
+                };
                 let serializer = ProtocolBuffersSerializer::new();
-                serializer.deserialize_batch(payload)
+                serializer
+                    .deserialize_batch(payload)
                     .context("Failed to deserialize Proto payload")?
             }
-            "bincode" => {
-                bincode::deserialize::<Vec<VectorRecord>>(payload)
-                    .context("Failed to deserialize Bincode payload")?
+            "bincode" => bincode::deserialize::<Vec<VectorRecord>>(payload)
+                .context("Failed to deserialize Bincode payload")?,
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported payload format: {}",
+                    payload_format
+                ));
             }
-            _ => return Err(anyhow::anyhow!("Unsupported payload format: {}", payload_format)),
         };
-        
+
         // Step 2: Create WALVectorBatch and write to memtable
         let batch = WALVectorBatch {
             batch_id: super::BatchId::new(),
@@ -230,9 +254,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             is_flushed: false,
             metadata_bloom_filter: None,
         };
-        
-        let sequences = self.write_native_batch(batch.clone(), collection_id).await?;
-        
+
+        let sequences = self
+            .write_native_batch(batch.clone(), collection_id)
+            .await?;
+
         // Step 3: Create WALOperation using strategy-specific serialization
         let strategy_payload = self.serialize_vectors_for_disk(&batch.vector_records)?;
         let wal_operation = super::WALOperation {
@@ -241,24 +267,28 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             payload_format: self.strategy_name().to_lowercase(),
             vector_count: batch.vector_records.len(),
         };
-        
+
         // Step 4: Persist to disk (unified logic)
-        self.persist_to_disk_unified(collection_id, &wal_operation, &sequences).await?;
-        
+        self.persist_to_disk_unified(collection_id, &wal_operation, &sequences)
+            .await?;
+
         Ok(wal_operation)
     }
 
-
     /// Primary method: Write native WALVectorBatch directly to memtable
     /// This is the core method that all others delegate to
-    async fn write_native_batch(&self, batch: WALVectorBatch, collection_id: &str) -> Result<Vec<u64>>;
+    async fn write_native_batch(
+        &self,
+        batch: WALVectorBatch,
+        collection_id: &str,
+    ) -> Result<Vec<u64>>;
 
     /// Write vector batch with immediate disk sync for durability
     async fn write_vector_batch_with_sync(
-        &self, 
+        &self,
         batch: WALVectorBatch,
         collection_id: &str,
-        immediate_sync: bool
+        immediate_sync: bool,
     ) -> Result<Vec<u64>>;
 
     /// Read all vector batches for a collection
@@ -280,10 +310,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             if let Some(wal_record) = wal_behavior.vector_by_id(collection_id, vector_id).await? {
                 // Check if not expired
                 let current_time = chrono::Utc::now().timestamp() as u32;
-                let is_expired = wal_record.expires_at
+                let is_expired = wal_record
+                    .expires_at
                     .map(|expires| expires < current_time)
                     .unwrap_or(false);
-                
+
                 if !is_expired {
                     return Ok(Some(wal_record));
                 }
@@ -307,32 +338,63 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Convert CoreDistanceMetric to unified DistanceMetric (they're the same due to alias)
             let unified_metric = distance_metric.map(|m| match m {
-                CoreDistanceMetric::Unspecified => crate::compute::distance_computation::DistanceMetric::Cosine, // Default fallback
-                CoreDistanceMetric::Cosine => crate::compute::distance_computation::DistanceMetric::Cosine,
-                CoreDistanceMetric::Euclidean => crate::compute::distance_computation::DistanceMetric::Euclidean,
-                CoreDistanceMetric::DotProduct => crate::compute::distance_computation::DistanceMetric::DotProduct,
-                CoreDistanceMetric::Manhattan => crate::compute::distance_computation::DistanceMetric::Manhattan,
-                CoreDistanceMetric::Hamming => crate::compute::distance_computation::DistanceMetric::Hamming,
-                CoreDistanceMetric::Jaccard => crate::compute::distance_computation::DistanceMetric::Jaccard,
-                CoreDistanceMetric::Chebyshev => crate::compute::distance_computation::DistanceMetric::Chebyshev,
-                CoreDistanceMetric::Canberra => crate::compute::distance_computation::DistanceMetric::Canberra,
-                CoreDistanceMetric::Minkowski => crate::compute::distance_computation::DistanceMetric::Minkowski,
-                CoreDistanceMetric::Angular => crate::compute::distance_computation::DistanceMetric::Angular,
-                CoreDistanceMetric::BrayCurtis => crate::compute::distance_computation::DistanceMetric::BrayCurtis,
-                CoreDistanceMetric::Hellinger => crate::compute::distance_computation::DistanceMetric::Hellinger,
-                CoreDistanceMetric::Custom => crate::compute::distance_computation::DistanceMetric::Custom,
+                CoreDistanceMetric::Unspecified => {
+                    crate::compute::distance_computation::DistanceMetric::Cosine
+                } // Default fallback
+                CoreDistanceMetric::Cosine => {
+                    crate::compute::distance_computation::DistanceMetric::Cosine
+                }
+                CoreDistanceMetric::Euclidean => {
+                    crate::compute::distance_computation::DistanceMetric::Euclidean
+                }
+                CoreDistanceMetric::DotProduct => {
+                    crate::compute::distance_computation::DistanceMetric::DotProduct
+                }
+                CoreDistanceMetric::Manhattan => {
+                    crate::compute::distance_computation::DistanceMetric::Manhattan
+                }
+                CoreDistanceMetric::Hamming => {
+                    crate::compute::distance_computation::DistanceMetric::Hamming
+                }
+                CoreDistanceMetric::Jaccard => {
+                    crate::compute::distance_computation::DistanceMetric::Jaccard
+                }
+                CoreDistanceMetric::Chebyshev => {
+                    crate::compute::distance_computation::DistanceMetric::Chebyshev
+                }
+                CoreDistanceMetric::Canberra => {
+                    crate::compute::distance_computation::DistanceMetric::Canberra
+                }
+                CoreDistanceMetric::Minkowski => {
+                    crate::compute::distance_computation::DistanceMetric::Minkowski
+                }
+                CoreDistanceMetric::Angular => {
+                    crate::compute::distance_computation::DistanceMetric::Angular
+                }
+                CoreDistanceMetric::BrayCurtis => {
+                    crate::compute::distance_computation::DistanceMetric::BrayCurtis
+                }
+                CoreDistanceMetric::Hellinger => {
+                    crate::compute::distance_computation::DistanceMetric::Hellinger
+                }
+                CoreDistanceMetric::Custom => {
+                    crate::compute::distance_computation::DistanceMetric::Custom
+                }
             });
-            
-            let results = wal_behavior.search_unflushed_vectors(
-                collection_id,
-                query_vector,
-                k,
-                unified_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
-                None, // No metadata filters
-                true, // Include vectors
-                true, // Include metadata
-            ).await?;
-            
+
+            let results = wal_behavior
+                .search_unflushed_vectors(
+                    collection_id,
+                    query_vector,
+                    k,
+                    unified_metric
+                        .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+                    None, // No metadata filters
+                    true, // Include vectors
+                    true, // Include metadata
+                )
+                .await?;
+
             // Convert SearchResult objects to the expected format
             let converted_results: Vec<(VectorId, f32, VectorRecord)> = results
                 .into_iter()
@@ -352,7 +414,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     (search_result.id, search_result.score, vector_record)
                 })
                 .collect();
-                
+
             Ok(converted_results)
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -367,13 +429,13 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Get all unflushed batches for the collection
             let batches = wal_behavior.get_unflushed_batches(collection_id).await?;
-            
+
             // Extract all vector records from batches
             let mut vectors = Vec::new();
             for batch in batches {
                 vectors.extend(batch.vector_records.iter().cloned());
             }
-            
+
             Ok(vectors)
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -387,7 +449,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
-            wal_behavior.drop_collection(&collection_id.to_string()).await?;
+            wal_behavior
+                .drop_collection(&collection_id.to_string())
+                .await?;
             Ok(())
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -410,24 +474,35 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         // Strategies that implement disk persistence should override this
         // to read Write Buffer files from disk and deserialize using deserialize_vectors_from_disk
         tracing::info!("🔄 Starting Write Buffer recovery from global memtable (in-memory only)");
-        
+
         if let Some(wal_behavior) = self.get_wal_behavior() {
             match wal_behavior.stats().await {
                 Ok(stats) => {
-                    let total_vectors: usize = stats.values().map(|s| s.total_entries as usize).sum();
-                    tracing::info!("✅ Write Buffer recovery: Found {} vectors in {} collections in global memtable", 
-                          total_vectors, stats.len());
-                    
+                    let total_vectors: usize =
+                        stats.values().map(|s| s.total_entries as usize).sum();
+                    tracing::info!(
+                        "✅ Write Buffer recovery: Found {} vectors in {} collections in global memtable",
+                        total_vectors,
+                        stats.len()
+                    );
+
                     // Log collection details for debugging
                     for (collection_id, collection_stats) in stats {
-                        tracing::debug!("   Collection '{}': {} vectors, {} bytes", 
-                               collection_id, collection_stats.total_entries, collection_stats.memory_size_bytes);
+                        tracing::debug!(
+                            "   Collection '{}': {} vectors, {} bytes",
+                            collection_id,
+                            collection_stats.total_entries,
+                            collection_stats.memory_size_bytes
+                        );
                     }
-                    
+
                     Ok(total_vectors as u64)
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Write Buffer recovery: Failed to get memtable stats: {}", e);
+                    tracing::warn!(
+                        "⚠️ Write Buffer recovery: Failed to get memtable stats: {}",
+                        e
+                    );
                     Ok(0)
                 }
             }
@@ -436,9 +511,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             Ok(0)
         }
     }
-    
+
     // 🎯 DISK PERSISTENCE (Common implementation for all strategies)
-    
+
     /// ✅ UNIFIED DISK PERSISTENCE: Single method for all strategies  
     /// Uses strategy-specific serialization via serialize_vectors_for_disk()
     async fn persist_to_disk_unified(
@@ -452,56 +527,68 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         if let Some(filesystem) = self.get_filesystem() {
             // ✅ UNIFIED DISK PERSISTENCE: Common implementation for all strategies
             // Each strategy provides their own serialize_vectors_for_disk/deserialize_vectors_from_disk
-            
+
             tracing::debug!(
                 "💾 Persisting Write Buffer operation to disk for collection {} ({} sequences)",
                 collection_id,
                 sequences.len()
             );
-            
+
             // TODO: Get storage location from collection metadata
             // For now, use a default path structure
             let base_location = "file:///data";
             let wal_dir = format!("{}/{}/write_ahead_log/logs", base_location, collection_id);
             let sequence_start = sequences.first().copied().unwrap_or(0);
             let sequence_end = sequences.last().copied().unwrap_or(0);
-            let wal_file = format!("{}/batch_{:010}_{:010}.wal", wal_dir, sequence_start, sequence_end);
-            
+            let wal_file = format!(
+                "{}/batch_{:010}_{:010}.wal",
+                wal_dir, sequence_start, sequence_end
+            );
+
             // Get filesystem for this storage URL
             if let Ok(fs) = filesystem.get_filesystem(base_location) {
-                    // Ensure Write Buffer directory exists
-                    if let Err(_) = fs.create_dir_all(&wal_dir).await {
-                        tracing::warn!("Failed to create Write Buffer directory: {}", wal_dir);
-                    }
-                    
-                    // Serialize the complete Write Buffer operation (common format)
-                    let serialized_data = bincode::serialize(wal_operation)
-                        .context("Failed to serialize Write Buffer operation for disk")?;
-                    
-                    // Write to disk atomically (simple implementation)
-                    let temp_file = format!("{}.tmp", wal_file);
-                    
-                    if let Err(e) = fs.write(&temp_file, &serialized_data, None).await {
-                        tracing::warn!("Failed to write Write Buffer temp file {}: {}", temp_file, e);
-                        return Ok(()); // Continue - memory write succeeded
-                    }
-                    
-                    if let Err(e) = fs.move_file(&temp_file, &wal_file).await {
-                        tracing::warn!("Failed to rename Write Buffer file {} -> {}: {}", temp_file, wal_file, e);
-                        // Try to clean up temp file
-                        let _ = fs.delete(&temp_file).await;
-                        return Ok(()); // Continue - memory write succeeded
-                    }
-                    
-                    tracing::debug!(
-                        "✅ Write Buffer operation persisted to disk: {} bytes written to {}",
-                        serialized_data.len(),
-                        wal_file
-                    );
-                } else {
-                    tracing::debug!("No filesystem available for storage URL: {}", base_location);
+                // Ensure Write Buffer directory exists
+                if let Err(_) = fs.create_dir_all(&wal_dir).await {
+                    tracing::warn!("Failed to create Write Buffer directory: {}", wal_dir);
                 }
-            
+
+                // Serialize the complete Write Buffer operation (common format)
+                let serialized_data = bincode::serialize(wal_operation)
+                    .context("Failed to serialize Write Buffer operation for disk")?;
+
+                // Write to disk atomically (simple implementation)
+                let temp_file = format!("{}.tmp", wal_file);
+
+                if let Err(e) = fs.write(&temp_file, &serialized_data, None).await {
+                    tracing::warn!(
+                        "Failed to write Write Buffer temp file {}: {}",
+                        temp_file,
+                        e
+                    );
+                    return Ok(()); // Continue - memory write succeeded
+                }
+
+                if let Err(e) = fs.move_file(&temp_file, &wal_file).await {
+                    tracing::warn!(
+                        "Failed to rename Write Buffer file {} -> {}: {}",
+                        temp_file,
+                        wal_file,
+                        e
+                    );
+                    // Try to clean up temp file
+                    let _ = fs.delete(&temp_file).await;
+                    return Ok(()); // Continue - memory write succeeded
+                }
+
+                tracing::debug!(
+                    "✅ Write Buffer operation persisted to disk: {} bytes written to {}",
+                    serialized_data.len(),
+                    wal_file
+                );
+            } else {
+                tracing::debug!("No filesystem available for storage URL: {}", base_location);
+            }
+
             Ok(())
         } else {
             tracing::debug!("No filesystem factory available, skipping disk persistence");
@@ -516,25 +603,32 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         wal_operation: &super::WALOperation,
         sequences: &[u64],
     ) -> Result<()> {
-        self.persist_to_disk_unified(collection_id, wal_operation, sequences).await
+        self.persist_to_disk_unified(collection_id, wal_operation, sequences)
+            .await
     }
-    
+
     // 🎯 STRATEGY-SPECIFIC SERIALIZATION (Only methods strategies need to implement)
-    
+
     /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Serialize vectors in strategy format
     /// - Bincode: bincode::serialize(vectors)
-    /// - Avro: serialize_avro_vector_batch(vectors) 
+    /// - Avro: serialize_avro_vector_batch(vectors)
     /// - Proto: serialize_proto_vector_batch(vectors)
     fn serialize_vectors_for_disk(&self, _vectors: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Default implementation - strategies must override 
-        Err(anyhow::anyhow!("serialize_vectors_for_disk not implemented for {}", self.strategy_name()))
+        // Default implementation - strategies must override
+        Err(anyhow::anyhow!(
+            "serialize_vectors_for_disk not implemented for {}",
+            self.strategy_name()
+        ))
     }
-    
+
     /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize vectors from strategy format
     /// Used during recovery to load Write Buffer files back into memtable
     fn deserialize_vectors_from_disk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
         // Default implementation - strategies must override
-        Err(anyhow::anyhow!("deserialize_vectors_from_disk not implemented for {}", self.strategy_name()))
+        Err(anyhow::anyhow!(
+            "deserialize_vectors_from_disk not implemented for {}",
+            self.strategy_name()
+        ))
     }
 
     /// Close and cleanup resources
@@ -544,14 +638,20 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
         // Default implementation - placeholder for now
         // TODO: Integrate with AtomicWalSync when fully enabled
-        tracing::debug!("🔄 Force sync requested for collection: {:?}", collection_id);
-        
+        tracing::debug!(
+            "🔄 Force sync requested for collection: {:?}",
+            collection_id
+        );
+
         if let Some(collection_id) = collection_id {
-            tracing::debug!("Force sync would be performed for collection: {}", collection_id);
+            tracing::debug!(
+                "Force sync would be performed for collection: {}",
+                collection_id
+            );
         } else {
             tracing::debug!("Force sync would be performed for all collections");
         }
-        
+
         // For now, this is a no-op as disk persistence happens through
         // automatic memory flush triggers
         Ok(())
@@ -564,7 +664,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         // Default implementation
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // For now, just clear old entries
-            wal_behavior.clear_flushed(collection_id).await
+            wal_behavior
+                .clear_flushed(collection_id)
+                .await
                 .map(|count| count as u64)
         } else {
             // No Write Buffer behavior, return 0
@@ -574,7 +676,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     }
 
     /// Get Write Buffer behavior wrapper for specialized operations
-    fn get_wal_behavior(&self) -> Option<&crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>;
+    fn get_wal_behavior(
+        &self,
+    ) -> Option<&crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>;
 
     /// Migrate Write Buffer batch from local to cloud storage
     async fn migrate_batch_to_cloud(
@@ -586,26 +690,33 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<String> {
         if let Some(fs) = self.get_filesystem() {
             // Write to cloud first
-            let cloud_batch_url = self.write_batch_to_cloud(collection_id, batch, cloud_url).await?;
-            
+            let cloud_batch_url = self
+                .write_batch_to_cloud(collection_id, batch, cloud_url)
+                .await?;
+
             // Verify cloud write by reading back
-            let _verified_batch = self.read_batch_from_cloud(&cloud_batch_url).await
+            let _verified_batch = self
+                .read_batch_from_cloud(&cloud_batch_url)
+                .await
                 .context("Failed to verify cloud write during migration")?;
-            
+
             // Remove local file after successful cloud write
-            let local_fs = fs.get_filesystem(&format!("file://{}", local_path))
+            let local_fs = fs
+                .get_filesystem(&format!("file://{}", local_path))
                 .context("Failed to get local filesystem")?;
-            
-            local_fs.delete(local_path).await
+
+            local_fs
+                .delete(local_path)
+                .await
                 .context("Failed to delete local file after migration")?;
-            
+
             tracing::info!(
                 "🔄 MIGRATION: Migrated batch {} from {} to {}",
                 batch.batch_id.to_base62(),
                 local_path,
                 cloud_batch_url
             );
-            
+
             Ok(cloud_batch_url)
         } else {
             Err(anyhow::anyhow!("Filesystem not initialized for migration"))
@@ -622,24 +733,27 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Validate URL format before proceeding
             fs.validate_url(cloud_base_url)
                 .context("Invalid cloud base URL format")?;
-            
-            let filesystem = fs.get_filesystem(cloud_base_url)
+
+            let filesystem = fs
+                .get_filesystem(cloud_base_url)
                 .context("Failed to get filesystem for cloud URL")?;
-            
+
             let base_path = FilesystemFactory::resolve_path(cloud_base_url)
                 .context("Failed to extract path from cloud URL")?;
-            
-            let entries = filesystem.list(&base_path).await
+
+            let entries = filesystem
+                .list(&base_path)
+                .await
                 .context("Failed to list cloud directory")?;
-            
+
             // Filter for Write Buffer batch files for this collection with multiple patterns
             let batch_prefix = format!("write_buffer_batch_{}_", collection_id);
             let batch_urls: Vec<String> = entries
                 .iter()
                 .filter(|entry| {
-                    !entry.metadata.is_directory && 
-                    entry.name.starts_with(&batch_prefix) &&
-                    entry.name.ends_with(".bin")
+                    !entry.metadata.is_directory
+                        && entry.name.starts_with(&batch_prefix)
+                        && entry.name.ends_with(".bin")
                 })
                 .map(|entry| {
                     if cloud_base_url.ends_with('/') {
@@ -649,13 +763,14 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     }
                 })
                 .collect();
-            
+
             // Log detailed information for monitoring
-            let bucket = fs.extract_bucket_from_url(cloud_base_url)
+            let bucket = fs
+                .extract_bucket_from_url(cloud_base_url)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
-            
+
             tracing::debug!(
                 "☁️ CLOUD_LIST: Found {} Write Buffer batches for collection {} in {} [bucket: {}]",
                 batch_urls.len(),
@@ -663,81 +778,101 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 cloud_base_url,
                 bucket
             );
-            
+
             Ok(batch_urls)
         } else {
-            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+            Err(anyhow::anyhow!(
+                "Filesystem not initialized for cloud operations"
+            ))
         }
     }
 
     /// Delete Write Buffer batch from cloud storage
-    async fn delete_cloud_batch(
-        &self,
-        cloud_url: &str,
-    ) -> Result<()> {
+    async fn delete_cloud_batch(&self, cloud_url: &str) -> Result<()> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
             fs.validate_url(cloud_url)
                 .context("Invalid cloud URL format")?;
-            
-            let filesystem = fs.get_filesystem(cloud_url)
+
+            let filesystem = fs
+                .get_filesystem(cloud_url)
                 .context("Failed to get filesystem for cloud URL")?;
-            
+
             let path = FilesystemFactory::resolve_path(cloud_url)
                 .context("Failed to extract path from cloud URL")?;
-            
-            filesystem.delete(&path).await
+
+            filesystem
+                .delete(&path)
+                .await
                 .context("Failed to delete batch from cloud storage")?;
-            
+
             // Log detailed information for monitoring
-            let bucket = fs.extract_bucket_from_url(cloud_url)
+            let bucket = fs
+                .extract_bucket_from_url(cloud_url)
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "unknown".to_string());
-            
-            tracing::info!("🗑️ CLOUD_DELETE: Deleted batch from {} [bucket: {}]", cloud_url, bucket);
-            
+
+            tracing::info!(
+                "🗑️ CLOUD_DELETE: Deleted batch from {} [bucket: {}]",
+                cloud_url,
+                bucket
+            );
+
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Filesystem not initialized for cloud operations"))
+            Err(anyhow::anyhow!(
+                "Filesystem not initialized for cloud operations"
+            ))
         }
     }
 
     /// Check if cloud storage is available and accessible
-    async fn check_cloud_health(
-        &self,
-        cloud_base_url: &str,
-    ) -> Result<bool> {
+    async fn check_cloud_health(&self, cloud_base_url: &str) -> Result<bool> {
         if let Some(fs) = self.get_filesystem() {
             // Validate URL format before proceeding
             match fs.validate_url(cloud_base_url) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
-                    tracing::warn!("❌ CLOUD_HEALTH: Invalid URL format {}: {}", cloud_base_url, e);
+                    tracing::warn!(
+                        "❌ CLOUD_HEALTH: Invalid URL format {}: {}",
+                        cloud_base_url,
+                        e
+                    );
                     return Ok(false);
                 }
             }
-            
-            let filesystem = fs.get_filesystem(cloud_base_url)
+
+            let filesystem = fs
+                .get_filesystem(cloud_base_url)
                 .context("Failed to get filesystem for cloud URL")?;
-            
+
             let base_path = FilesystemFactory::resolve_path(cloud_base_url)
                 .context("Failed to extract path from cloud URL")?;
-            
+
             // Try to list the directory to check accessibility
             match filesystem.list(&base_path).await {
                 Ok(_) => {
                     // Log detailed information for monitoring
-                    let bucket = fs.extract_bucket_from_url(cloud_base_url)
+                    let bucket = fs
+                        .extract_bucket_from_url(cloud_base_url)
                         .ok()
                         .flatten()
                         .unwrap_or_else(|| "unknown".to_string());
-                    
-                    tracing::debug!("✅ CLOUD_HEALTH: Cloud storage accessible at {} [bucket: {}]", cloud_base_url, bucket);
+
+                    tracing::debug!(
+                        "✅ CLOUD_HEALTH: Cloud storage accessible at {} [bucket: {}]",
+                        cloud_base_url,
+                        bucket
+                    );
                     Ok(true)
                 }
                 Err(e) => {
-                    tracing::warn!("❌ CLOUD_HEALTH: Cloud storage not accessible at {}: {}", cloud_base_url, e);
+                    tracing::warn!(
+                        "❌ CLOUD_HEALTH: Cloud storage not accessible at {}: {}",
+                        cloud_base_url,
+                        e
+                    );
                     Ok(false)
                 }
             }
@@ -763,7 +898,6 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // rank removed -  None,
             quantized_vector: None,
             source: None,
-            
         };
 
         // Create single-vector batch for deletion
@@ -804,7 +938,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     }
 
     /// Atomically retrieve and mark Write Buffer batches for flush operation
-    /// 
+    ///
     /// This method:
     /// 1. Retrieves unflushed batches from GlobalPartitionedMemtable with deserialized data
     /// 2. Marks batches for flush to prevent concurrent access
@@ -819,19 +953,19 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Retrieve unflushed batches from global memtable (already deserialized)
             let unflushed_batches = wal_behavior.get_unflushed_batches(collection_id).await?;
-            
+
             // Extract vector records and batch IDs for atomic operations
             let mut all_vector_records = Vec::new();
             let mut batch_ids = Vec::new();
             let mut marked_sequences = Vec::new();
-            
+
             for batch in &unflushed_batches {
                 all_vector_records.extend(batch.vector_records.iter().cloned());
                 batch_ids.push(batch.batch_id.clone());
                 // CompactBatchId doesn't have sequence_range, use a placeholder
                 marked_sequences.push((0, 0));
             }
-            
+
             tracing::info!(
                 "🔄 Atomic flush retrieval: {} batches, {} vectors for collection {} (flush_id: {})",
                 unflushed_batches.len(),
@@ -839,7 +973,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 collection_id,
                 flush_id
             );
-            
+
             // Create flush cycle with batch-oriented data
             Ok(super::FlushCycle {
                 flush_id: flush_id.to_string(),
@@ -855,7 +989,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Fallback for strategies without Write Buffer behavior wrapper
             let vector_records = self.get_collection_vectors(collection_id).await?;
             let record_count = vector_records.len() as u64;
-            
+
             Ok(super::FlushCycle {
                 flush_id: flush_id.to_string(),
                 collection_id: collection_id.to_string(),
@@ -871,42 +1005,58 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
     /// Complete flush cycle - cleanup GlobalPartitionedMemtable and disk Write Buffer files
     /// Called after successful storage engine flush to atomically clean up Write Buffer data
-    async fn complete_flush_cycle(&self, flush_cycle: super::FlushCycle) -> Result<super::FlushCompletionResult> {
+    async fn complete_flush_cycle(
+        &self,
+        flush_cycle: super::FlushCycle,
+    ) -> Result<super::FlushCompletionResult> {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Atomically clear flushed batches from GlobalPartitionedMemtable
-            let cleared_count = wal_behavior.clear_flushed(&flush_cycle.collection_id).await?;
-            
+            let cleared_count = wal_behavior
+                .clear_flushed(&flush_cycle.collection_id)
+                .await?;
+
             // Cleanup disk Write Buffer files for the flushed batches
             if let Some(fs) = self.get_filesystem() {
                 for batch_id in &flush_cycle.batch_ids {
                     // Try to clean up local Write Buffer files if they exist
-                    let local_wal_path = format!("write_buffer_batch_{}_{}.bin", 
-                        flush_cycle.collection_id, batch_id.to_base62());
-                    
+                    let local_wal_path = format!(
+                        "write_buffer_batch_{}_{}.bin",
+                        flush_cycle.collection_id,
+                        batch_id.to_base62()
+                    );
+
                     if let Ok(local_fs) = fs.get_filesystem(&format!("file://{}", local_wal_path)) {
                         let _ = local_fs.delete(&local_wal_path).await; // Ignore errors - file might not exist
                     }
                 }
             }
-            
+
             tracing::info!(
                 "✅ Flush completion: {} batches cleared from memtable for collection {} (flush_id: {})",
                 cleared_count,
                 flush_cycle.collection_id,
                 flush_cycle.flush_id
             );
-            
+
             Ok(super::FlushCompletionResult {
                 entries_removed: cleared_count,
                 segments_cleaned: flush_cycle.marked_segments.len(),
-                bytes_reclaimed: flush_cycle.vector_records.iter().map(|v| (v.vector.len() * 4 + 256) as u64).sum(),
+                bytes_reclaimed: flush_cycle
+                    .vector_records
+                    .iter()
+                    .map(|v| (v.vector.len() * 4 + 256) as u64)
+                    .sum(),
             })
         } else {
             // Fallback for strategies without Write Buffer behavior wrapper
             Ok(super::FlushCompletionResult {
                 entries_removed: flush_cycle.vector_records.len(),
                 segments_cleaned: 0,
-                bytes_reclaimed: flush_cycle.vector_records.iter().map(|v| (v.vector.len() * 4 + 256) as u64).sum(),
+                bytes_reclaimed: flush_cycle
+                    .vector_records
+                    .iter()
+                    .map(|v| (v.vector.len() * 4 + 256) as u64)
+                    .sum(),
             })
         }
     }
@@ -917,15 +1067,16 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Get collection statistics from GlobalPartitionedMemtable
             let stats = wal_behavior.stats().await?;
-            
+
             if let Some(collection_stats) = stats.get(collection_id) {
                 // Check thresholds: memory size, entry count, or time-based
                 let memory_threshold_mb = 100; // 100MB threshold
                 let entry_threshold = 10000; // 10K entries threshold
-                
-                let should_flush = collection_stats.memory_size_bytes > (memory_threshold_mb * 1024 * 1024) ||
-                                 collection_stats.total_entries > entry_threshold;
-                
+
+                let should_flush = collection_stats.memory_size_bytes
+                    > (memory_threshold_mb * 1024 * 1024)
+                    || collection_stats.total_entries > entry_threshold;
+
                 if should_flush {
                     tracing::info!(
                         "🚨 Flush threshold reached for collection {}: {} MB, {} entries",
@@ -934,7 +1085,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         collection_stats.total_entries
                     );
                 }
-                
+
                 Ok(should_flush)
             } else {
                 Ok(false) // No data for collection
@@ -944,7 +1095,6 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         }
     }
 }
-
 
 /// Write Buffer disk entry structure for persistence
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -958,4 +1108,3 @@ pub struct WriteBufferDiskEntry {
     pub vector_count: usize,
     pub timestamp: i64,
 }
-

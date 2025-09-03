@@ -39,7 +39,7 @@ pub struct CollectionMetrics {
     pub dimension: i32,
     pub index_size_bytes: i64,
     pub data_size_bytes: i64,
-    
+
     // === Operation Counts ===
     pub total_inserts: i64,
     pub total_updates: i64,
@@ -47,72 +47,72 @@ pub struct CollectionMetrics {
     pub total_searches: i64,
     pub total_flushes: i64,
     pub total_compactions: i64,
-    
+
     // === Performance Metrics (microseconds) ===
     pub avg_insert_latency_us: f64,
     pub avg_search_latency_us: f64,
     pub p50_search_latency_us: f64,
     pub p95_search_latency_us: f64,
     pub p99_search_latency_us: f64,
-    
+
     // === Storage Layer Metrics ===
-    pub parquet_file_count: i32,      // VIPER engine files
-    pub sstable_file_count: i32,      // SST engine files
-    pub wal_size_bytes: i64,          // Write-ahead log size
-    pub memtable_size_bytes: i64,     // In-memory buffer size
-    pub last_flush_timestamp: i64,     // Unix timestamp in millis
+    pub parquet_file_count: i32,   // VIPER engine files
+    pub sstable_file_count: i32,   // SST engine files
+    pub wal_size_bytes: i64,       // Write-ahead log size
+    pub memtable_size_bytes: i64,  // In-memory buffer size
+    pub last_flush_timestamp: i64, // Unix timestamp in millis
     pub last_flush_duration_ms: i64,
     pub last_compaction_timestamp: i64,
     pub last_compaction_duration_ms: i64,
-    
+
     // === Data Characteristics (for optimization) ===
-    pub sparsity_ratio: f32,          // Percentage of zero/null dimensions (0.0-1.0)
-    pub avg_vector_magnitude: f32,    // Average L2 norm of vectors
-    pub distinct_metadata_keys: i32,   // Number of unique metadata fields
-    pub avg_metadata_size_bytes: i32,  // Average metadata size per vector
-    
+    pub sparsity_ratio: f32, // Percentage of zero/null dimensions (0.0-1.0)
+    pub avg_vector_magnitude: f32, // Average L2 norm of vectors
+    pub distinct_metadata_keys: i32, // Number of unique metadata fields
+    pub avg_metadata_size_bytes: i32, // Average metadata size per vector
+
     // === Filterable Column Statistics ===
     pub filterable_column_stats: HashMap<String, FilterableColumnStats>,
-    
+
     // === Index Characteristics ===
     pub available_indexes: Vec<IndexInfo>,
     pub primary_index: String,
-    pub bloom_filter_size_bytes: i64,  // For SST engine
-    pub bloom_filter_fpp: f64,         // False positive probability
-    
+    pub bloom_filter_size_bytes: i64, // For SST engine
+    pub bloom_filter_fpp: f64,        // False positive probability
+
     // === Cache Statistics ===
-    pub cache_hit_ratio: f32,          // 0.0-1.0
+    pub cache_hit_ratio: f32, // 0.0-1.0
     pub cache_size_bytes: i64,
     pub cache_entry_count: i64,
-    
+
     // === Timestamps ===
-    pub timestamp: i64,               // Unix timestamp in millis
-    pub updated_at: i64,               // Unix timestamp in millis
+    pub timestamp: i64,  // Unix timestamp in millis
+    pub updated_at: i64, // Unix timestamp in millis
 }
 
 /// Statistics for a filterable column
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilterableColumnStats {
     pub column_name: String,
-    pub data_type: String,             // Data type of the column
-    pub cardinality: i64,              // Number of distinct values
-    pub null_count: i64,               // Number of null values
-    pub selectivity: f32,              // cardinality / total_count (0.0-1.0)
+    pub data_type: String, // Data type of the column
+    pub cardinality: i64,  // Number of distinct values
+    pub null_count: i64,   // Number of null values
+    pub selectivity: f32,  // cardinality / total_count (0.0-1.0)
     pub min_value: Option<serde_json::Value>,
     pub max_value: Option<serde_json::Value>,
     pub most_common_values: Vec<(serde_json::Value, i64)>, // Top 10 values with counts
-    pub histogram_bounds: Option<Vec<serde_json::Value>>,   // For range queries
+    pub histogram_bounds: Option<Vec<serde_json::Value>>,  // For range queries
 }
 
 /// Information about an available index
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexInfo {
     pub index_name: String,
-    pub algorithm: String,             // "HNSW", "IVF", "FLAT", etc.
+    pub algorithm: String, // "HNSW", "IVF", "FLAT", etc.
     pub build_status: IndexBuildStatus,
     pub size_bytes: i64,
     pub vector_count: i64,
-    pub last_updated: i64,             // Unix timestamp in millis
+    pub last_updated: i64, // Unix timestamp in millis
     pub parameters: HashMap<String, serde_json::Value>, // Algorithm-specific params
 }
 
@@ -181,11 +181,11 @@ pub enum HintType {
 /// Priority level for hints
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HintPriority {
-    Critical,  // Severely impacting performance
-    High,      // Significant improvement possible
-    Medium,    // Moderate improvement
-    Low,       // Minor optimization
-    Info,      // Informational only
+    Critical, // Severely impacting performance
+    High,     // Significant improvement possible
+    Medium,   // Moderate improvement
+    Low,      // Minor optimization
+    Info,     // Informational only
 }
 
 /// Estimated improvement from applying the hint
@@ -204,35 +204,35 @@ impl CollectionMetrics {
             self.sparsity_ratio = (zero_count as f32) / (total_dimensions as f32);
         }
     }
-    
+
     /// Update latency percentiles
     pub fn update_latency_percentiles(&mut self, latencies: &[f64]) {
         if latencies.is_empty() {
             return;
         }
-        
+
         let mut sorted = latencies.to_vec();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        
+
         let len = sorted.len();
         // Calculate percentile indices correctly
         // For n items, p50 should be at index (n-1)*0.5
         let p50_idx = ((len - 1) * 50 / 100).min(len.saturating_sub(1));
         let p95_idx = ((len - 1) * 95 / 100).min(len.saturating_sub(1));
         let p99_idx = ((len - 1) * 99 / 100).min(len.saturating_sub(1));
-        
+
         self.p50_search_latency_us = sorted[p50_idx];
         self.p95_search_latency_us = sorted[p95_idx];
         self.p99_search_latency_us = sorted[p99_idx];
-        
+
         let sum: f64 = sorted.iter().sum();
         self.avg_search_latency_us = sum / (len as f64);
     }
-    
+
     /// Generate query optimization hints based on current metrics
     pub fn generate_hints(&self, config: &super::MetricsConfig) -> Vec<OptimizationHint> {
         let mut hints = Vec::new();
-        
+
         // Parallel scan hint
         if self.parquet_file_count > config.parallel_scan_threshold as i32 {
             hints.push(OptimizationHint {
@@ -245,8 +245,7 @@ impl CollectionMetrics {
                 ),
                 reason: format!(
                     "Collection has {} files exceeding threshold of {}",
-                    self.parquet_file_count,
-                    config.parallel_scan_threshold
+                    self.parquet_file_count, config.parallel_scan_threshold
                 ),
                 estimated_improvement: Some(ImprovementEstimate {
                     latency_reduction_percent: Some(60.0),
@@ -258,7 +257,7 @@ impl CollectionMetrics {
                 applicable_queries: vec!["full_scan".to_string(), "large_result_set".to_string()],
             });
         }
-        
+
         // Sparsity optimization hint
         if self.sparsity_ratio > config.sparsity_threshold {
             hints.push(OptimizationHint {
@@ -279,15 +278,15 @@ impl CollectionMetrics {
                 applicable_queries: vec!["all".to_string()],
             });
         }
-        
+
         // Quantization hint
         if self.data_size_bytes > config.quantization_size_threshold as i64 {
             let benefit_score = calculate_quantization_benefit(
                 self.data_size_bytes,
                 self.dimension,
-                self.avg_vector_magnitude
+                self.avg_vector_magnitude,
             );
-            
+
             if benefit_score > 0.7 {
                 hints.push(OptimizationHint {
                     hint_type: HintType::Quantization,
@@ -309,7 +308,7 @@ impl CollectionMetrics {
                 });
             }
         }
-        
+
         // Filter optimization hints
         for (column_name, stats) in &self.filterable_column_stats {
             if stats.selectivity < 0.1 {
@@ -321,7 +320,8 @@ impl CollectionMetrics {
                         column_name,
                         stats.selectivity * 100.0
                     ),
-                    reason: "Low cardinality column ideal for filtering before vector search".to_string(),
+                    reason: "Low cardinality column ideal for filtering before vector search"
+                        .to_string(),
                     estimated_improvement: Some(ImprovementEstimate {
                         latency_reduction_percent: Some((1.0 - stats.selectivity) * 100.0 * 0.8),
                         throughput_increase_percent: Some((1.0 - stats.selectivity) * 100.0),
@@ -333,19 +333,22 @@ impl CollectionMetrics {
                 });
             }
         }
-        
+
         // Compaction hint
         let fragmentation_ratio = if self.parquet_file_count > 0 {
             (self.parquet_file_count as f32 - 1.0) / (self.parquet_file_count as f32)
         } else {
             0.0
         };
-        
+
         if fragmentation_ratio > 0.8 && self.parquet_file_count > 20 {
             hints.push(OptimizationHint {
                 hint_type: HintType::CompactionNeeded,
                 priority: HintPriority::High,
-                recommendation: format!("Run compaction to merge {} small files", self.parquet_file_count),
+                recommendation: format!(
+                    "Run compaction to merge {} small files",
+                    self.parquet_file_count
+                ),
                 reason: "High file fragmentation reducing query performance".to_string(),
                 estimated_improvement: Some(ImprovementEstimate {
                     latency_reduction_percent: Some(40.0),
@@ -357,7 +360,7 @@ impl CollectionMetrics {
                 applicable_queries: vec!["all".to_string()],
             });
         }
-        
+
         hints
     }
 }
@@ -371,11 +374,11 @@ fn calculate_quantization_benefit(size_bytes: i64, dimension: i32, avg_magnitude
     } else {
         1.0
     };
-    
+
     // Score based on size, dimension, and magnitude
     let score = (size_gb / 10.0).min(1.0) * 0.5
         + (dimension_factor / 2.0) * 0.3
         + (magnitude_factor / 2.0) * 0.2;
-    
+
     score.min(1.0)
 }

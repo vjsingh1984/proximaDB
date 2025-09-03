@@ -7,24 +7,20 @@
 
 //! Comprehensive tests for SST compression with self-describing block markers
 
-use crate::storage::engines::impls::sst::{
-    DataBlock, DataBlockCompressionConfig, SstRecord,
-};
-use crate::core::compression::{CompressionAlgorithm as UnifiedCompressionAlgorithm};
-use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm, MetadataItem};
+use crate::core::compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
+use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig, MetadataItem};
+use crate::storage::engines::impls::sst::{DataBlock, DataBlockCompressionConfig, SstRecord};
 
 fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
     SstRecord {
         id: id.to_string(),
         vector: vec![1.0; vector_dim],
-        metadata: vec![
-            MetadataItem {
-                key: "test_key".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                    "test_value".to_string()
-                )),
-            }
-        ],
+        metadata: vec![MetadataItem {
+            key: "test_key".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                "test_value".to_string(),
+            )),
+        }],
         timestamp: 1000,
         updated_at: Some(1000),
         expires_at: None,
@@ -41,7 +37,7 @@ fn test_uncompressed_block() {
         create_test_record("test1", 128),
         create_test_record("test2", 128),
     ];
-    
+
     let block = DataBlock::new(1, records.clone());
     let config = DataBlockCompressionConfig {
         compression: false,
@@ -51,14 +47,14 @@ fn test_uncompressed_block() {
         // vector_config removed -  Default::default(),
         collection_compression: None,
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     use crate::core::compression::markers::MARKER_UNCOMPRESSED;
-    
+
     // Check for uncompressed marker
     assert_eq!(serialized[0], MARKER_UNCOMPRESSED);
-    
+
     // Deserialize and verify
     let deserialized = DataBlock::deserialize(&serialized).unwrap();
     assert_eq!(deserialized.block_id, 1);
@@ -73,7 +69,7 @@ fn test_zstd_compression() {
         create_test_record("test2", 256),
         create_test_record("test3", 256),
     ];
-    
+
     let block = DataBlock::new(1, records.clone());
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -89,12 +85,12 @@ fn test_zstd_compression() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     // Check for ZSTD marker
     assert_eq!(serialized[0], MARKER_ZSTD);
-    
+
     // Deserialize and verify
     let deserialized = DataBlock::deserialize(&serialized).unwrap();
     assert_eq!(deserialized.block_id, 1);
@@ -108,7 +104,7 @@ fn test_lz4_compression() {
         create_test_record("test1", 512),
         create_test_record("test2", 512),
     ];
-    
+
     let block = DataBlock::new(2, records.clone());
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -124,14 +120,14 @@ fn test_lz4_compression() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     use crate::core::compression::markers::MARKER_LZ4;
-    
+
     // Check for LZ4 marker
     assert_eq!(serialized[0], MARKER_LZ4);
-    
+
     // Deserialize and verify
     let deserialized = DataBlock::deserialize(&serialized).unwrap();
     assert_eq!(deserialized.block_id, 2);
@@ -141,7 +137,7 @@ fn test_lz4_compression() {
 #[test]
 fn test_snappy_compression() {
     let records = vec![create_test_record("test1", 384)];
-    
+
     let block = DataBlock::new(3, records.clone());
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -157,14 +153,14 @@ fn test_snappy_compression() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     use crate::core::compression::markers::MARKER_SNAPPY;
-    
+
     // Check for Snappy marker
     assert_eq!(serialized[0], MARKER_SNAPPY);
-    
+
     // Deserialize and verify
     let deserialized = DataBlock::deserialize(&serialized).unwrap();
     assert_eq!(deserialized.block_id, 3);
@@ -177,7 +173,7 @@ fn test_gzip_compression() {
         create_test_record("gzip_test1", 128),
         create_test_record("gzip_test2", 128),
     ];
-    
+
     let block = DataBlock::new(4, records.clone());
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -192,12 +188,12 @@ fn test_gzip_compression() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     // Check for GZIP marker
     assert_eq!(serialized[0], MARKER_GZIP);
-    
+
     // Deserialize and verify
     let deserialized = DataBlock::deserialize(&serialized).unwrap();
     assert_eq!(deserialized.block_id, 4);
@@ -207,7 +203,7 @@ fn test_gzip_compression() {
 #[test]
 fn test_brotli_compression() {
     let records = vec![create_test_record("brotli_test", 256)];
-    
+
     let block = DataBlock::new(5, records.clone());
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -222,12 +218,12 @@ fn test_brotli_compression() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     // Check for Brotli marker
     assert_eq!(serialized[0], MARKER_BROTLI);
-    
+
     // Deserialize and verify
     let deserialized = DataBlock::deserialize(&serialized).unwrap();
     assert_eq!(deserialized.block_id, 5);
@@ -241,7 +237,7 @@ fn test_all_compression_algorithms() {
         create_test_record("test1", 128),
         create_test_record("test2", 128),
     ];
-    
+
     // Test each algorithm
     let algorithms = vec![
         (CompressionAlgorithm::CompressionZstd, MARKER_ZSTD, 3),
@@ -256,7 +252,7 @@ fn test_all_compression_algorithms() {
         (CompressionAlgorithm::CompressionLz4hc, MARKER_LZ4HC, 0),
         (CompressionAlgorithm::CompressionLzma, MARKER_LZMA, 6),
     ];
-    
+
     for (algo, expected_marker, level) in algorithms {
         let block = DataBlock::new(100, records.clone());
         let config = DataBlockCompressionConfig {
@@ -272,16 +268,16 @@ fn test_all_compression_algorithms() {
                 adaptive: false,
             }),
         };
-        
+
         let serialized = block.serialize_with_config(&config).unwrap();
-        
+
         // Check marker
         assert_eq!(
             serialized[0], expected_marker,
             "Algorithm {:?} should have marker {:02x} but got {:02x}",
             algo, expected_marker, serialized[0]
         );
-        
+
         // Deserialize and verify
         let deserialized = DataBlock::deserialize(&serialized).unwrap();
         assert_eq!(deserialized.block_id, 100);
@@ -294,7 +290,7 @@ fn test_all_compression_algorithms() {
 #[test]
 fn test_compression_threshold() {
     let records = vec![create_test_record("small", 4)]; // Very small record
-    
+
     let block = DataBlock::new(6, records.clone());
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -310,9 +306,9 @@ fn test_compression_threshold() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     // Should not compress due to threshold
     assert_eq!(serialized[0], MARKER_UNCOMPRESSED);
 }
@@ -322,7 +318,7 @@ fn test_compression_ratio_check() {
     // Create highly compressible data (repeated values)
     let mut record = create_test_record("compress_test", 1000);
     record.vector = vec![1.0; 1000]; // Highly compressible
-    
+
     let block = DataBlock::new(7, vec![record]);
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -338,19 +334,19 @@ fn test_compression_ratio_check() {
             adaptive: false,
         }),
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     // Should compress well
     assert_eq!(serialized[0], MARKER_ZSTD);
-    
+
     // Compressed size should be much smaller than uncompressed
     let uncompressed_config = DataBlockCompressionConfig {
         compression: false,
         ..config
     };
     let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
-    
+
     assert!(
         serialized.len() < uncompressed.len() / 2,
         "Compressed size {} should be much less than uncompressed {}",
@@ -368,13 +364,13 @@ fn test_mixed_compression_deserialization() {
         (CompressionAlgorithm::CompressionLz4, MARKER_LZ4),
         (CompressionAlgorithm::CompressionSnappy, MARKER_SNAPPY),
     ];
-    
+
     let mut serialized_blocks = Vec::new();
-    
+
     for (i, (algo, _expected_marker)) in blocks_data.iter().enumerate() {
         let records = vec![create_test_record(&format!("test_{}", i), 128)];
         let block = DataBlock::new(i as u32, records);
-        
+
         let config = DataBlockCompressionConfig {
             compression: *algo != CompressionAlgorithm::CompressionNone,
             compression_threshold: 100,
@@ -392,11 +388,11 @@ fn test_mixed_compression_deserialization() {
                 None
             },
         };
-        
+
         let serialized = block.serialize_with_config(&config).unwrap();
         serialized_blocks.push(serialized);
     }
-    
+
     // Deserialize all blocks and verify
     for (i, serialized) in serialized_blocks.iter().enumerate() {
         let deserialized = DataBlock::deserialize(serialized).unwrap();
@@ -410,10 +406,10 @@ fn test_backward_compatibility() {
     // Test that old bincode format can still be deserialized
     let records = vec![create_test_record("legacy", 64)];
     let block = DataBlock::new(99, records);
-    
+
     // Use bincode directly (old format)
     let legacy_data = bincode::serialize(&block).unwrap();
-    
+
     // Should still deserialize
     let deserialized = DataBlock::deserialize(&legacy_data).unwrap();
     assert_eq!(deserialized.block_id, 99);

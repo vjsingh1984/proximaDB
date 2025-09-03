@@ -19,22 +19,22 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::storage::persistence::filesystem::{
+    FilesystemFactory,
     atomic_strategy::{AtomicWriteConfig, AtomicWriteExecutor, AtomicWriteExecutorFactory},
     write_strategy::{MetadataWriteStrategy, WriteStrategyFactory},
-    FilesystemFactory,
 };
 
 // Re-export metadata transaction types for backward compatibility
 pub use crate::storage::metadata::atomic::{
-    AtomicMetadataStore, MetadataTransaction, IsolationLevel,
+    AtomicMetadataStore, IsolationLevel, MetadataTransaction,
 };
 // Note: TransactionState is defined locally to avoid conflicts
 
@@ -213,7 +213,10 @@ pub enum RollbackAction {
     /// Remove entry from memtable by key
     RemoveFromMemtable { key: String },
     /// Restore previous value in memtable
-    RestoreMemtableValue { key: String, previous_value: Vec<u8> },
+    RestoreMemtableValue {
+        key: String,
+        previous_value: Vec<u8>,
+    },
     /// Remove entry from secondary index
     RemoveFromSecondaryIndex { name: String, uuid: String },
     /// Delete file from disk
@@ -357,10 +360,10 @@ impl TransactionCoordinator {
             cleanup_handle: Arc::new(Mutex::new(None)),
             config,
         };
-        
+
         // Start cleanup task for expired transactions
         coordinator.start_cleanup_task();
-        
+
         Ok(coordinator)
     }
 
@@ -372,8 +375,12 @@ impl TransactionCoordinator {
         let operation_id = Uuid::new_v4().to_string();
 
         info!("🚀 Beginning atomic operation: {}", operation_id);
-        info!("📋 Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}", 
-            staging_config.base_url, staging_config.operation_type, staging_config.custom_staging_dir);
+        info!(
+            "📋 Staging config: base_url={}, operation_type={:?}, custom_staging_dir={:?}",
+            staging_config.base_url,
+            staging_config.operation_type,
+            staging_config.custom_staging_dir
+        );
 
         // Build staging and final URLs
         let (staging_url, final_url) = self.build_operation_urls(staging_config, &operation_id)?;
@@ -388,7 +395,7 @@ impl TransactionCoordinator {
             .create_dir_all(&staging_url)
             .await
             .context("Failed to create staging directory")?;
-            
+
         info!("📂 Creating final directory: {}", final_url);
         self.filesystem
             .create_dir_all(&final_url)
@@ -408,7 +415,8 @@ impl TransactionCoordinator {
         };
 
         // Track operation using DashMap
-        self.active_operations.insert(operation_id.clone(), metadata.clone());
+        self.active_operations
+            .insert(operation_id.clone(), metadata.clone());
 
         info!("✅ Atomic operation prepared: {}", operation_id);
         Ok(metadata)
@@ -447,9 +455,13 @@ impl TransactionCoordinator {
         };
 
         // Track operation using DashMap
-        self.active_operations.insert(operation_id.clone(), metadata.clone());
+        self.active_operations
+            .insert(operation_id.clone(), metadata.clone());
 
-        info!("✅ Zero-copy managed atomic operation prepared: {}", operation_id);
+        info!(
+            "✅ Zero-copy managed atomic operation prepared: {}",
+            operation_id
+        );
         Ok(metadata)
     }
 
@@ -464,9 +476,10 @@ impl TransactionCoordinator {
         info!("    operation_id: {}", operation_id);
         info!("    relative_path: {}", relative_path);
         info!("    data size: {} bytes", data.len());
-        
+
         // Get operation metadata from DashMap
-        let metadata = self.active_operations
+        let metadata = self
+            .active_operations
             .get(operation_id)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
@@ -489,7 +502,7 @@ impl TransactionCoordinator {
         // Create file options using write strategy
         let fs = self.filesystem.get_filesystem(&staging_file_url)?;
         info!("    filesystem type: {}", fs.filesystem_type());
-        
+
         let file_options = self
             .write_strategy
             .create_file_options(fs.as_ref(), &staging_file_url)?;
@@ -500,14 +513,11 @@ impl TransactionCoordinator {
 
         // Write to staging using atomic executor
         info!("    Calling write_atomic...");
-        match self.atomic_executor
-            .write_atomic(
-                fs.as_ref(),
-                &staging_path,
-                data,
-                Some(file_options),
-            )
-            .await {
+        match self
+            .atomic_executor
+            .write_atomic(fs.as_ref(), &staging_path, data, Some(file_options))
+            .await
+        {
             Ok(_) => {
                 info!("✅ Written to staging: {}", staging_file_url);
                 Ok(())
@@ -525,7 +535,8 @@ impl TransactionCoordinator {
         debug!("🔄 [DEBUG] Finalizing atomic operation: {}", operation_id);
 
         // Get operation metadata from DashMap
-        let metadata = self.active_operations
+        let metadata = self
+            .active_operations
             .get(operation_id)
             .ok_or_else(|| anyhow::anyhow!("Operation not found: {}", operation_id))?
             .clone();
@@ -537,7 +548,7 @@ impl TransactionCoordinator {
         info!("    operation_type: {:?}", metadata.operation_type);
         info!("    collection_id: {:?}", metadata.collection_id);
         info!("    zero_copy_managed: {}", metadata.zero_copy_managed);
-        
+
         debug!("📋 [DEBUG] Operation metadata:");
         debug!("    staging_url: {}", metadata.staging_url);
         debug!("    final_url: {}", metadata.final_url);
@@ -545,16 +556,18 @@ impl TransactionCoordinator {
 
         // Check if this operation is managed by ZeroCopyFilesystem
         if metadata.zero_copy_managed {
-            info!("🚀 [DEBUG] Operation is managed by ZeroCopyFilesystem - skipping staging operations");
+            info!(
+                "🚀 [DEBUG] Operation is managed by ZeroCopyFilesystem - skipping staging operations"
+            );
             debug!("🚀 [DEBUG] ZeroCopyFilesystem has already handled staging and atomic move");
-            
+
             // Update status directly to completed since ZeroCopyFilesystem handled the operation
             self.update_operation_status(operation_id, TransactionalOperationStatus::Completed)
                 .await?;
-            
+
             // Remove from active operations
             self.active_operations.remove(operation_id);
-            
+
             info!("🎉 Zero-copy managed operation completed: {}", operation_id);
             return Ok(());
         }
@@ -564,21 +577,39 @@ impl TransactionCoordinator {
             .await?;
 
         // List all files in staging directory
-        info!("📂 [DEBUG] Listing staging directory: {}", metadata.staging_url);
-        debug!("📂 [DEBUG] Listing staging directory: {}", metadata.staging_url);
-        
+        info!(
+            "📂 [DEBUG] Listing staging directory: {}",
+            metadata.staging_url
+        );
+        debug!(
+            "📂 [DEBUG] Listing staging directory: {}",
+            metadata.staging_url
+        );
+
         let staging_entries = self
             .filesystem
             .list(&metadata.staging_url)
             .await
             .context("Failed to list staging directory")?;
 
-        info!("📂 [DEBUG] Found {} files in staging", staging_entries.len());
-        debug!("📂 [DEBUG] Found {} files in staging", staging_entries.len());
-        
+        info!(
+            "📂 [DEBUG] Found {} files in staging",
+            staging_entries.len()
+        );
+        debug!(
+            "📂 [DEBUG] Found {} files in staging",
+            staging_entries.len()
+        );
+
         for (idx, entry) in staging_entries.iter().enumerate() {
-            info!("    [{}] name={}, url={}, is_dir={}", idx, entry.name, entry.url, entry.metadata.is_directory);
-            debug!("    [{}] name={}, url={}, is_dir={}", idx, entry.name, entry.url, entry.metadata.is_directory);
+            info!(
+                "    [{}] name={}, url={}, is_dir={}",
+                idx, entry.name, entry.url, entry.metadata.is_directory
+            );
+            debug!(
+                "    [{}] name={}, url={}, is_dir={}",
+                idx, entry.name, entry.url, entry.metadata.is_directory
+            );
         }
 
         // Move each file atomically from staging to final location
@@ -601,30 +632,40 @@ impl TransactionCoordinator {
                 debug!("    To (final):     {}", final_file_url);
 
                 // Use FilesystemFactory's atomic move which handles cross-storage scenarios
-                match self.filesystem
+                match self
+                    .filesystem
                     .move_atomic(&staging_file_url, &final_file_url)
-                    .await {
+                    .await
+                {
                     Ok(_) => {
                         info!("    ✅ [DEBUG] Move successful");
                         info!("    ✅ [DEBUG] Move successful");
                         // Verify the file exists at the final location
                         if let Ok(fs) = self.filesystem.get_filesystem(&final_file_url) {
                             if let Ok(exists) = fs.exists(&final_file_url).await {
-                                info!("    ✅ [DEBUG] Verified file exists at final location: {}", exists);
-                                info!("    ✅ [DEBUG] Verified file exists at final location: {}", exists);
+                                info!(
+                                    "    ✅ [DEBUG] Verified file exists at final location: {}",
+                                    exists
+                                );
+                                info!(
+                                    "    ✅ [DEBUG] Verified file exists at final location: {}",
+                                    exists
+                                );
                             } else {
                                 warn!("    ⚠️ [DEBUG] Could not verify file at final location");
                             }
                         } else {
                             warn!("    ⚠️ [DEBUG] Could not get filesystem for verification");
                         }
-                    },
+                    }
                     Err(e) => {
                         error!("    ❌ [DEBUG] Move failed: {}", e);
                         error!("    ❌ [DEBUG] Move failed: {}", e);
                         return Err(anyhow::anyhow!(
                             "Failed to move {} to {}: {}",
-                            staging_file_url, final_file_url, e
+                            staging_file_url,
+                            final_file_url,
+                            e
                         ));
                     }
                 }
@@ -650,11 +691,17 @@ impl TransactionCoordinator {
         self.active_operations.remove(operation_id);
 
         // List the final directory to confirm files are there
-        info!("📂 Listing final directory after operation: {}", metadata.final_url);
+        info!(
+            "📂 Listing final directory after operation: {}",
+            metadata.final_url
+        );
         if let Ok(final_entries) = self.filesystem.list(&metadata.final_url).await {
             info!("📂 Found {} files in final location", final_entries.len());
             for (idx, entry) in final_entries.iter().enumerate() {
-                info!("    [{}] {} (size: {} bytes)", idx, entry.name, entry.metadata.size);
+                info!(
+                    "    [{}] {} (size: {} bytes)",
+                    idx, entry.name, entry.metadata.size
+                );
             }
         }
 
@@ -674,7 +721,10 @@ impl TransactionCoordinator {
         );
 
         // Get operation metadata from DashMap
-        let metadata = self.active_operations.get(operation_id).map(|entry| entry.clone());
+        let metadata = self
+            .active_operations
+            .get(operation_id)
+            .map(|entry| entry.clone());
 
         if let Some(metadata) = metadata {
             // Update status to failed
@@ -686,7 +736,9 @@ impl TransactionCoordinator {
 
             // Check if this operation is managed by ZeroCopyFilesystem
             if metadata.zero_copy_managed {
-                info!("🚀 [DEBUG] Abort operation is managed by ZeroCopyFilesystem - skipping staging cleanup");
+                info!(
+                    "🚀 [DEBUG] Abort operation is managed by ZeroCopyFilesystem - skipping staging cleanup"
+                );
                 debug!("🚀 [DEBUG] ZeroCopyFilesystem will handle its own cleanup if needed");
             } else {
                 // Cleanup staging directory for traditional operations
@@ -706,12 +758,17 @@ impl TransactionCoordinator {
         &self,
         operation_id: &OperationId,
     ) -> Option<TransactionalOperationStatus> {
-        self.active_operations.get(operation_id).map(|entry| entry.status.clone())
+        self.active_operations
+            .get(operation_id)
+            .map(|entry| entry.status.clone())
     }
 
     /// List active operations
     pub async fn list_active_operations(&self) -> Vec<TransactionalOperationMetadata> {
-        self.active_operations.iter().map(|entry| entry.value().clone()).collect()
+        self.active_operations
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 
     /// Cleanup orphaned operations older than configured age
@@ -765,26 +822,27 @@ impl TransactionCoordinator {
         participants: Vec<String>,
     ) -> Result<TransactionHandle> {
         info!("🔄 Beginning transaction: {}", tx_id);
-        
+
         // Check if transaction already exists
         if self.transactions.contains_key(tx_id) {
             return Err(anyhow::anyhow!("Transaction {} already exists", tx_id));
         }
-        
+
         // Create new transaction
-        let mut transaction = ActiveTransaction::new(tx_id.to_string(), Some(self.default_timeout_ms));
-        
+        let mut transaction =
+            ActiveTransaction::new(tx_id.to_string(), Some(self.default_timeout_ms));
+
         // Register participants
         for participant in participants {
             transaction.add_participant(participant, None);
         }
-        
+
         transaction.state = TransactionState::Initialized;
-        
+
         // Store transaction
         let tx_arc = Arc::new(RwLock::new(transaction));
         self.transactions.insert(tx_id.to_string(), tx_arc.clone());
-        
+
         Ok(TransactionHandle {
             id: tx_id.to_string(),
             coordinator: self,
@@ -796,34 +854,43 @@ impl TransactionCoordinator {
     pub async fn prepare_transaction(&self, tx_id: &str) -> Result<bool> {
         let tx = self.get_transaction(tx_id).await?;
         let mut tx_guard = tx.write().await;
-        
+
         // Check current state
         match &tx_guard.state {
             TransactionState::Initialized => {
                 tx_guard.state = TransactionState::Preparing;
             }
-            _ => return Err(anyhow::anyhow!("Transaction {} not in correct state for prepare", tx_id)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Transaction {} not in correct state for prepare",
+                    tx_id
+                ));
+            }
         }
-        
+
         // Mark all participants as preparing
         let participant_ids: Vec<String> = tx_guard.participants.keys().cloned().collect();
         for pid in &participant_ids {
             tx_guard.update_participant_state(pid, ParticipantState::Preparing)?;
         }
-        
+
         drop(tx_guard); // Release lock during preparation
-        
+
         // Simulate prepare phase (in real implementation, would call each participant)
-        info!("📝 Preparing {} participants for transaction {}", participant_ids.len(), tx_id);
-        
+        info!(
+            "📝 Preparing {} participants for transaction {}",
+            participant_ids.len(),
+            tx_id
+        );
+
         // Re-acquire lock and check results
         let mut tx_guard = tx.write().await;
-        
+
         // Mark all participants as prepared (in real implementation, based on actual results)
         for pid in &participant_ids {
             tx_guard.update_participant_state(pid, ParticipantState::Prepared)?;
         }
-        
+
         // Update transaction state
         if tx_guard.all_participants_in_state(&ParticipantState::Prepared) {
             tx_guard.state = TransactionState::Prepared;
@@ -839,37 +906,46 @@ impl TransactionCoordinator {
     pub async fn commit_transaction(&self, tx_id: &str) -> Result<()> {
         let tx = self.get_transaction(tx_id).await?;
         let mut tx_guard = tx.write().await;
-        
+
         // Check current state
         match &tx_guard.state {
             TransactionState::Prepared => {
                 tx_guard.state = TransactionState::Committing;
             }
-            _ => return Err(anyhow::anyhow!("Transaction {} not prepared for commit", tx_id)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Transaction {} not prepared for commit",
+                    tx_id
+                ));
+            }
         }
-        
+
         // Mark all participants as committing
         let participant_ids: Vec<String> = tx_guard.participants.keys().cloned().collect();
         for pid in &participant_ids {
             tx_guard.update_participant_state(pid, ParticipantState::Committing)?;
         }
-        
+
         drop(tx_guard); // Release lock during commit
-        
+
         // Simulate commit phase
-        info!("💾 Committing {} participants for transaction {}", participant_ids.len(), tx_id);
-        
+        info!(
+            "💾 Committing {} participants for transaction {}",
+            participant_ids.len(),
+            tx_id
+        );
+
         // Re-acquire lock and mark as committed
         let mut tx_guard = tx.write().await;
-        
+
         // Mark all participants as committed
         for pid in &participant_ids {
             tx_guard.update_participant_state(pid, ParticipantState::Committed)?;
         }
-        
+
         tx_guard.state = TransactionState::Committed;
         info!("✅ Transaction {} committed successfully", tx_id);
-        
+
         // Remove from active transactions after short delay
         let transactions = self.transactions.clone();
         let tx_id_clone = tx_id.to_string();
@@ -877,7 +953,7 @@ impl TransactionCoordinator {
             tokio::time::sleep(Duration::from_secs(5)).await;
             transactions.remove(&tx_id_clone);
         });
-        
+
         Ok(())
     }
 
@@ -885,61 +961,75 @@ impl TransactionCoordinator {
     pub async fn rollback_transaction(&self, tx_id: &str) -> Result<()> {
         let tx = self.get_transaction(tx_id).await?;
         let mut tx_guard = tx.write().await;
-        
+
         info!("🔙 Rolling back transaction: {}", tx_id);
         tx_guard.state = TransactionState::Aborting;
-        
+
         // Get rollback actions
         let rollback_actions: Vec<(String, Option<RollbackAction>)> = tx_guard
             .participants
             .values()
             .map(|p| (p.id.clone(), p.rollback_action.clone()))
             .collect();
-        
+
         // Mark participants as rolling back
         for (pid, _) in &rollback_actions {
             tx_guard.update_participant_state(pid, ParticipantState::RollingBack)?;
         }
-        
+
         drop(tx_guard); // Release lock during rollback
-        
+
         // Execute rollback actions
         for (pid, action) in rollback_actions {
             if let Some(action) = action {
                 self.execute_rollback_action(&pid, action).await?;
             }
         }
-        
+
         // Mark transaction as aborted
         let mut tx_guard = tx.write().await;
         for pid in tx_guard.participants.keys().cloned().collect::<Vec<_>>() {
             tx_guard.update_participant_state(&pid, ParticipantState::RolledBack)?;
         }
-        
+
         tx_guard.state = TransactionState::Aborted;
         info!("✅ Transaction {} rolled back successfully", tx_id);
-        
+
         // Remove from active transactions
         self.transactions.remove(tx_id);
-        
+
         Ok(())
     }
 
     /// Execute a rollback action
-    async fn execute_rollback_action(&self, participant_id: &str, action: RollbackAction) -> Result<()> {
+    async fn execute_rollback_action(
+        &self,
+        participant_id: &str,
+        action: RollbackAction,
+    ) -> Result<()> {
         match action {
             RollbackAction::RemoveFromMemtable { key } => {
                 debug!("🔙 Rolling back memtable: removing key {}", key);
                 // In real implementation, would call memtable remove
                 Ok(())
             }
-            RollbackAction::RestoreMemtableValue { key, previous_value } => {
-                debug!("🔙 Rolling back memtable: restoring key {} with {} bytes", key, previous_value.len());
+            RollbackAction::RestoreMemtableValue {
+                key,
+                previous_value,
+            } => {
+                debug!(
+                    "🔙 Rolling back memtable: restoring key {} with {} bytes",
+                    key,
+                    previous_value.len()
+                );
                 // In real implementation, would call memtable restore
                 Ok(())
             }
             RollbackAction::RemoveFromSecondaryIndex { name, uuid } => {
-                debug!("🔙 Rolling back secondary index: removing {} -> {}", name, uuid);
+                debug!(
+                    "🔙 Rolling back secondary index: removing {} -> {}",
+                    name, uuid
+                );
                 // In real implementation, would call secondary index remove
                 Ok(())
             }
@@ -950,10 +1040,15 @@ impl TransactionCoordinator {
                 Ok(())
             }
             RollbackAction::RestoreFile { path, content } => {
-                debug!("🔙 Rolling back disk: restoring file {} with {} bytes", path, content.len());
+                debug!(
+                    "🔙 Rolling back disk: restoring file {} with {} bytes",
+                    path,
+                    content.len()
+                );
                 // Use filesystem to restore
                 let fs = self.filesystem.get_filesystem(&path)?;
-                fs.write(&FilesystemFactory::resolve_path(&path)?, &content, None).await?;
+                fs.write(&FilesystemFactory::resolve_path(&path)?, &content, None)
+                    .await?;
                 Ok(())
             }
             RollbackAction::Custom(desc) => {
@@ -972,12 +1067,16 @@ impl TransactionCoordinator {
     ) -> Result<()> {
         let tx = self.get_transaction(tx_id).await?;
         let mut tx_guard = tx.write().await;
-        
+
         if let Some(participant) = tx_guard.participants.get_mut(participant_id) {
             participant.rollback_action = Some(action);
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Participant {} not found in transaction {}", participant_id, tx_id))
+            Err(anyhow::anyhow!(
+                "Participant {} not found in transaction {}",
+                participant_id,
+                tx_id
+            ))
         }
     }
 
@@ -1001,10 +1100,10 @@ impl TransactionCoordinator {
         let transactions = self.transactions.clone();
         let handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30)); // Optimized: 5s -> 30s
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Find and clean up expired transactions
                 let mut expired = Vec::new();
                 for entry in transactions.iter() {
@@ -1013,24 +1112,25 @@ impl TransactionCoordinator {
                         let tx_guard = tx.read().await;
                         tx_guard.is_expired()
                     };
-                    
+
                     if is_expired {
                         expired.push(entry.key().clone());
                     }
                 }
-                
+
                 // Abort expired transactions
                 for tx_id in expired {
                     warn!("🕐 Transaction {} expired, aborting", tx_id);
                     if let Some((_, tx)) = transactions.remove(&tx_id) {
                         let mut tx_guard = tx.write().await;
-                        tx_guard.state = TransactionState::Failed("Transaction expired".to_string());
+                        tx_guard.state =
+                            TransactionState::Failed("Transaction expired".to_string());
                         // In production, we'd trigger rollback here
                     }
                 }
             }
         });
-        
+
         let cleanup_handle = self.cleanup_handle.clone();
         tokio::spawn(async move {
             *cleanup_handle.lock().await = Some(handle);
@@ -1073,13 +1173,14 @@ impl TransactionCoordinator {
 
         // For metadata operations with custom staging dir containing path separators,
         // we need special handling
-        let (staging_url, final_url) = if config.operation_type == TransactionStageType::Metadata 
-            && staging_dir.starts_with("../") {
+        let (staging_url, final_url) = if config.operation_type == TransactionStageType::Metadata
+            && staging_dir.starts_with("../")
+        {
             info!("    Using metadata with relative staging path");
             // For relative paths like "../staging", we need to resolve them properly
             // base_url is like "file:///path/to/metadata/current"
             // We want staging to be "file:///path/to/metadata/staging/{operation_id}"
-            
+
             // Parse the base URL to extract scheme and path
             if let Some((scheme, path)) = base_url.split_once("://") {
                 // Remove the last path component (e.g., "current")
@@ -1088,14 +1189,20 @@ impl TransactionCoordinator {
                 } else {
                     path
                 };
-                
+
                 // Extract the staging directory name (remove "../")
                 let staging_dirname = staging_dir.trim_start_matches("../");
-                
-                let staging_url = format!("{}://{}/{}/{}", scheme, parent_path, staging_dirname, operation_id);
+
+                let staging_url = format!(
+                    "{}://{}/{}/{}",
+                    scheme, parent_path, staging_dirname, operation_id
+                );
                 let final_url = base_url.to_string();
-                
-                info!("    Resolved URLs: staging='{}', final='{}'", staging_url, final_url);
+
+                info!(
+                    "    Resolved URLs: staging='{}', final='{}'",
+                    staging_url, final_url
+                );
                 (staging_url, final_url)
             } else {
                 // Fallback for non-URL paths
@@ -1119,7 +1226,10 @@ impl TransactionCoordinator {
                 (staging_url, final_url)
             } else {
                 // Standard behavior: use UUID subdirectory for operation isolation
-                let staging_url = format!("{}{}/{}/{}", base_url, collection_path, staging_dir, operation_id);
+                let staging_url = format!(
+                    "{}{}/{}/{}",
+                    base_url, collection_path, staging_dir, operation_id
+                );
                 let final_url = format!("{}{}", base_url, collection_path);
                 (staging_url, final_url)
             }
@@ -1149,7 +1259,7 @@ impl TransactionCoordinator {
     fn generate_final_url(&self, config: &StagingConfig) -> String {
         match &config.collection_id {
             Some(collection) => format!("{}/{}", config.base_url, collection),
-            None => config.base_url.clone()
+            None => config.base_url.clone(),
         }
     }
 
@@ -1165,7 +1275,6 @@ impl TransactionCoordinator {
         }
         Ok(())
     }
-
 }
 
 /// Handle for an active transaction
@@ -1197,7 +1306,9 @@ impl<'a> TransactionHandle<'a> {
         participant_id: &str,
         action: RollbackAction,
     ) -> Result<()> {
-        self.coordinator.register_rollback(&self.id, participant_id, action).await
+        self.coordinator
+            .register_rollback(&self.id, participant_id, action)
+            .await
     }
 
     /// Get transaction ID
@@ -1213,7 +1324,7 @@ pub fn generate_transaction_id(prefix: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    format!("{}_{}_{}",  prefix, timestamp, counter)
+    format!("{}_{}_{}", prefix, timestamp, counter)
 }
 
 /// Convenience wrapper for VIPER-specific atomic operations
@@ -1237,7 +1348,7 @@ impl ViperTransactionalOperations {
             collection_id: Some(collection_id.to_string()),
             operation_type: TransactionStageType::Flush,
             auto_cleanup: true,
-            skip_uuid_subdir: true,  // Avoid creating subdirectories that get left behind
+            skip_uuid_subdir: true, // Avoid creating subdirectories that get left behind
             ..Default::default()
         };
 
@@ -1283,7 +1394,10 @@ impl WalTransactionalOperations {
     }
 
     /// Begin WAL segment rotation operation
-    pub async fn begin_segment_rotation(&self, write_buffer_url: &str) -> Result<TransactionalOperationMetadata> {
+    pub async fn begin_segment_rotation(
+        &self,
+        write_buffer_url: &str,
+    ) -> Result<TransactionalOperationMetadata> {
         let config = StagingConfig {
             base_url: write_buffer_url.to_string(),
             collection_id: None,
@@ -1331,9 +1445,7 @@ mod tests {
         };
 
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-        let coordinator = TransactionCoordinator::new(filesystem, None)
-            .await
-            .unwrap();
+        let coordinator = TransactionCoordinator::new(filesystem, None).await.unwrap();
 
         (coordinator, temp_dir)
     }
@@ -1375,10 +1487,12 @@ mod tests {
             .unwrap();
 
         // Operation should be removed from active operations
-        assert!(coordinator
-            .get_operation_status(&metadata.operation_id)
-            .await
-            .is_none());
+        assert!(
+            coordinator
+                .get_operation_status(&metadata.operation_id)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -1391,7 +1505,10 @@ mod tests {
 
         // Begin flush operation
         let metadata = viper_ops
-            .begin_flush_operation(&"test_collection".to_string(), &format!("file://{}", temp_path))
+            .begin_flush_operation(
+                &"test_collection".to_string(),
+                &format!("file://{}", temp_path),
+            )
             .await
             .unwrap();
 
@@ -1436,22 +1553,27 @@ mod tests {
             .unwrap();
 
         // Operation should be removed
-        assert!(coordinator
-            .get_operation_status(&metadata.operation_id)
-            .await
-            .is_none());
+        assert!(
+            coordinator
+                .get_operation_status(&metadata.operation_id)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn test_acid_transaction_lifecycle() {
         let (coordinator, _temp_dir) = create_test_coordinator().await;
-        
+
         // Begin transaction
         let tx = coordinator
-            .begin_transaction("test_tx_1", vec!["memtable".to_string(), "disk".to_string()])
+            .begin_transaction(
+                "test_tx_1",
+                vec!["memtable".to_string(), "disk".to_string()],
+            )
             .await
             .unwrap();
-        
+
         // Register rollback actions
         tx.register_rollback(
             "memtable",
@@ -1461,29 +1583,32 @@ mod tests {
         )
         .await
         .unwrap();
-        
+
         // Prepare
         let prepared = tx.prepare().await.unwrap();
         assert!(prepared);
-        
+
         // Commit
         tx.commit().await.unwrap();
-        
+
         // Verify state
-        let state = coordinator.get_transaction_state("test_tx_1").await.unwrap();
+        let state = coordinator
+            .get_transaction_state("test_tx_1")
+            .await
+            .unwrap();
         assert_eq!(state, TransactionState::Committed);
     }
 
     #[tokio::test]
     async fn test_acid_transaction_rollback() {
         let (coordinator, _temp_dir) = create_test_coordinator().await;
-        
+
         // Begin transaction
         let tx = coordinator
             .begin_transaction("test_tx_2", vec!["memtable".to_string()])
             .await
             .unwrap();
-        
+
         // Register rollback action
         tx.register_rollback(
             "memtable",
@@ -1494,13 +1619,13 @@ mod tests {
         )
         .await
         .unwrap();
-        
+
         // Prepare
         tx.prepare().await.unwrap();
-        
+
         // Rollback instead of commit
         tx.rollback().await.unwrap();
-        
+
         // Transaction should be removed after rollback
         let result = coordinator.get_transaction_state("test_tx_2").await;
         assert!(result.is_err());
@@ -1510,10 +1635,10 @@ mod tests {
     async fn test_generate_transaction_id() {
         let id1 = generate_transaction_id("collection");
         let id2 = generate_transaction_id("collection");
-        
+
         // IDs should be unique
         assert_ne!(id1, id2);
-        
+
         // IDs should follow expected format
         assert!(id1.starts_with("collection_"));
         assert!(id2.starts_with("collection_"));

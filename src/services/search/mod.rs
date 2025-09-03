@@ -1,5 +1,5 @@
 //! Search services
-//! 
+//!
 //! Various search implementations including streaming and batch search
 
 pub mod streaming;
@@ -8,10 +8,7 @@ pub mod streaming;
 pub mod comprehensive_test;
 
 pub use streaming::{
-    StreamingSearchService as StreamingSearch,
-    StreamingSearchConfig as StreamConfig,
-    StreamingSearchStats as StreamStats,
-    SearchResultStream as ResultStream,
-    SearchResultBatch as ResultBatch,
-    SearchMetadata as Metadata,
+    SearchMetadata as Metadata, SearchResultBatch as ResultBatch,
+    SearchResultStream as ResultStream, StreamingSearchConfig as StreamConfig,
+    StreamingSearchService as StreamingSearch, StreamingSearchStats as StreamStats,
 };

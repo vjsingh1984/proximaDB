@@ -48,19 +48,19 @@ fn convert_proto_value_to_json(value: metadata_item::Value) -> serde_json::Value
 pub struct StreamingSearchConfig {
     /// Maximum number of results to buffer in memory
     pub buffer_size: usize,
-    
+
     /// Enable concurrent search across storage layers
     pub concurrent_search: bool,
-    
+
     /// Maximum concurrent search tasks
     pub max_concurrent_tasks: usize,
-    
+
     /// Enable result deduplication
     pub enable_deduplication: bool,
-    
+
     /// Result streaming batch size
     pub batch_size: usize,
-    
+
     /// Timeout for individual search operations (ms)
     pub search_timeout_ms: u64,
 }
@@ -82,13 +82,13 @@ impl Default for StreamingSearchConfig {
 pub struct StreamingSearchService {
     /// Direct vector service for optimized access
     direct_service: Arc<VectorOperationsService>,
-    
+
     /// Configuration
     config: StreamingSearchConfig,
-    
+
     /// Unified distance computation
     distance_compute: UnifiedDistanceCompute,
-    
+
     /// Search statistics
     stats: Arc<tokio::sync::RwLock<StreamingSearchStats>>,
 }
@@ -98,16 +98,16 @@ pub struct StreamingSearchService {
 pub struct StreamingSearchStats {
     /// Total searches performed
     pub total_searches: u64,
-    
+
     /// Total results streamed
     pub total_results_streamed: u64,
-    
+
     /// Average streaming latency (ms)
     pub avg_streaming_latency_ms: f64,
-    
+
     /// Current active streams
     pub active_streams: u32,
-    
+
     /// Memory pressure events
     pub memory_pressure_events: u64,
 }
@@ -116,7 +116,7 @@ pub struct StreamingSearchStats {
 pub struct SearchResultStream {
     /// Result receiver channel
     receiver: mpsc::Receiver<SearchResultBatch>,
-    
+
     /// Search metadata
     metadata: SearchMetadata,
 }
@@ -126,13 +126,13 @@ pub struct SearchResultStream {
 pub struct SearchResultBatch {
     /// Results in this batch
     pub results: Vec<InternalSearchResult>,
-    
+
     /// Whether this is the final batch
     pub is_final: bool,
-    
+
     /// Batch sequence number
     pub batch_id: u64,
-    
+
     /// Batch creation timestamp
     pub timestamp: i64,
 }
@@ -142,16 +142,16 @@ pub struct SearchResultBatch {
 pub struct SearchMetadata {
     /// Search request ID
     pub request_id: String,
-    
+
     /// Collection being searched
     pub collection_id: String,
-    
+
     /// Number of results requested
     pub k: usize,
-    
+
     /// Distance metric used
     pub distance_metric: DistanceMetric,
-    
+
     /// Search start time
     pub start_time: std::time::Instant,
 }
@@ -166,12 +166,12 @@ impl StreamingSearchService {
         let buffer_size = config.as_ref().map(|c| c.buffer_size).unwrap_or(1000);
         let concurrent_search = config.as_ref().map(|c| c.concurrent_search).unwrap_or(true);
         let max_concurrent_tasks = config.as_ref().map(|c| c.max_concurrent_tasks).unwrap_or(8);
-        
+
         info!(
             "🚀 StreamingSearchService: Initializing with buffer_size={}, concurrent_search={}, max_tasks={}",
             buffer_size, concurrent_search, max_concurrent_tasks
         );
-        
+
         Self {
             direct_service,
             config: config.unwrap_or_default(),
@@ -179,7 +179,7 @@ impl StreamingSearchService {
             stats: Arc::new(tokio::sync::RwLock::new(StreamingSearchStats::default())),
         }
     }
-    
+
     /// Perform lock-free streaming search
     pub async fn search_stream(
         &self,
@@ -190,22 +190,22 @@ impl StreamingSearchService {
     ) -> Result<SearchResultStream> {
         let start_time = std::time::Instant::now();
         let request_id = uuid::Uuid::new_v4().to_string();
-        
+
         info!(
             "🔍 STREAMING_SEARCH: Starting for collection={}, k={}, metric={:?}, request={}",
             collection_id, k, distance_metric, request_id
         );
-        
+
         // Update statistics
         {
             let mut stats = self.stats.write().await;
             stats.total_searches += 1;
             stats.active_streams += 1;
         }
-        
+
         // Create result channel with configured buffer size
         let (tx, rx) = mpsc::channel(self.config.buffer_size);
-        
+
         // Create search metadata
         let metadata = SearchMetadata {
             request_id: request_id.clone(),
@@ -214,32 +214,35 @@ impl StreamingSearchService {
             distance_metric,
             start_time,
         };
-        
+
         // Clone required data for the async task
         let service = self.clone();
         let collection_id_clone = collection_id;
         let query_vector_clone = query_vector;
-        
+
         // Spawn search task
         tokio::spawn(async move {
-            if let Err(e) = service.execute_streaming_search(
-                collection_id_clone,
-                query_vector_clone,
-                k,
-                distance_metric,
-                tx,
-                request_id,
-            ).await {
+            if let Err(e) = service
+                .execute_streaming_search(
+                    collection_id_clone,
+                    query_vector_clone,
+                    k,
+                    distance_metric,
+                    tx,
+                    request_id,
+                )
+                .await
+            {
                 warn!("⚠️ STREAMING_SEARCH: Task failed: {}", e);
             }
         });
-        
+
         Ok(SearchResultStream {
             receiver: rx,
             metadata,
         })
     }
-    
+
     /// Execute the streaming search with proper multi-tier deduplication
     async fn execute_streaming_search(
         &self,
@@ -253,23 +256,25 @@ impl StreamingSearchService {
         let start_time = std::time::Instant::now();
         let mut batch_id = 0u64;
         let mut total_results = 0usize;
-        
+
         // Track seen IDs for deduplication across tiers (if enabled)
         let mut seen_ids = if self.config.enable_deduplication {
             Some(std::collections::HashSet::<String>::new())
         } else {
             None
         };
-        
+
         debug!(
             "🚀 STREAMING_TASK: Starting execution for request {} (dedup: {})",
             request_id, self.config.enable_deduplication
         );
-        
+
         // Phase 1: Stream results from WAL (unflushed data)
-        let wal_results = self.search_wal_streaming(&collection_id, &query_vector, k, distance_metric).await?;
+        let wal_results = self
+            .search_wal_streaming(&collection_id, &query_vector, k, distance_metric)
+            .await?;
         let mut deduped_wal_results = Vec::new();
-        
+
         if !wal_results.is_empty() {
             // Process each InternalSearchResult
             for search_result in wal_results {
@@ -282,46 +287,49 @@ impl StreamingSearchService {
                 } else {
                     true // No deduplication
                 };
-                
+
                 if should_include {
                     deduped_wal_results.push(search_result);
                 }
             }
-            
+
             if !deduped_wal_results.is_empty() {
                 batch_id += 1;
                 total_results += deduped_wal_results.len();
-                
+
                 let batch = SearchResultBatch {
                     results: deduped_wal_results,
                     is_final: false,
                     batch_id,
                     timestamp: chrono::Utc::now().timestamp_millis(),
                 };
-                
+
                 if tx.send(batch).await.is_err() {
                     debug!("🔚 STREAMING_TASK: Receiver dropped, stopping");
                     return Ok(());
                 }
             }
         }
-        
+
         // Phase 2: Stream results from storage engines with deduplication
         if total_results < k {
             let remaining_k = k - total_results;
-            
+
             // Request more results to account for potential duplicates
             let search_k = ((remaining_k as f32) * 1.5).ceil() as usize;
-            
+
             // Search using unified method
-            let results = self.direct_service.unified_search(
-                &collection_id,
-                query_vector.clone(),
-                search_k,
-                None, // No filter
-                None, // Default config
-            ).await?;
-            
+            let results = self
+                .direct_service
+                .unified_search(
+                    &collection_id,
+                    query_vector.clone(),
+                    search_k,
+                    None, // No filter
+                    None, // Default config
+                )
+                .await?;
+
             // Convert search results to SearchResult format
             let mut all_records = Vec::new();
             for search_result in results {
@@ -330,12 +338,14 @@ impl StreamingSearchService {
                     all_records.push(record);
                 }
             }
-            
+
             // Sort by score (higher is better)
             all_records.sort_by(|a, b| {
-                b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
-            
+
             // Deduplicate storage results against WAL results if enabled
             let mut deduped_storage_records = Vec::new();
             for record in all_records {
@@ -348,7 +358,7 @@ impl StreamingSearchService {
                 } else {
                     true // No deduplication
                 };
-                
+
                 if should_include {
                     // Convert SearchVectorRecord to InternalSearchResult
                     let internal_result = InternalSearchResult {
@@ -357,18 +367,21 @@ impl StreamingSearchService {
                         score: record.score,
                         similarity: Some(record.similarity.unwrap_or(record.score)),
                         vector: Some(record.vector.clone()),
-                        metadata: record.metadata.clone()
+                        metadata: record
+                            .metadata
+                            .clone()
                             .into_iter()
                             .filter_map(|item| {
-                                item.value.map(|v| (item.key, convert_proto_value_to_json(v)))
+                                item.value
+                                    .map(|v| (item.key, convert_proto_value_to_json(v)))
                             })
                             .collect(),
                         debug_info: None,
                         version: record.version,
                         timestamp: record.timestamp,
-                        updated_at: None,  // SearchVectorRecord doesn't have this
-                        expires_at: None,  // SearchVectorRecord doesn't have this
-                        source: None,      // TODO: Convert source if needed
+                        updated_at: None, // SearchVectorRecord doesn't have this
+                        expires_at: None, // SearchVectorRecord doesn't have this
+                        source: None,     // TODO: Convert source if needed
                         expanded_context: Vec::new(),
                         semantic_similarity: None,
                         quantization_info: None,
@@ -381,24 +394,24 @@ impl StreamingSearchService {
                     }
                 }
             }
-            
+
             if !deduped_storage_records.is_empty() {
                 batch_id += 1;
                 total_results += deduped_storage_records.len();
-                
+
                 let batch = SearchResultBatch {
                     results: deduped_storage_records,
                     is_final: false,
                     batch_id,
                     timestamp: chrono::Utc::now().timestamp_millis(),
                 };
-                
+
                 if tx.send(batch).await.is_err() {
                     return Ok(());
                 }
             }
         }
-        
+
         // Send final batch
         batch_id += 1;
         let final_batch = SearchResultBatch {
@@ -407,29 +420,30 @@ impl StreamingSearchService {
             batch_id,
             timestamp: chrono::Utc::now().timestamp_millis(),
         };
-        
+
         let _ = tx.send(final_batch).await;
-        
+
         // Update statistics
         let duration = start_time.elapsed();
         {
             let mut stats = self.stats.write().await;
             stats.total_results_streamed += total_results as u64;
             stats.active_streams = stats.active_streams.saturating_sub(1);
-            
+
             // Update average latency
             let total_latency = stats.avg_streaming_latency_ms * (stats.total_searches - 1) as f64;
-            stats.avg_streaming_latency_ms = (total_latency + duration.as_millis() as f64) / stats.total_searches as f64;
+            stats.avg_streaming_latency_ms =
+                (total_latency + duration.as_millis() as f64) / stats.total_searches as f64;
         }
-        
+
         info!(
             "✅ STREAMING_TASK: Completed request {} - {} results in {:?}",
             request_id, total_results, duration
         );
-        
+
         Ok(())
     }
-    
+
     /// Search WAL with streaming
     async fn search_wal_streaming(
         &self,
@@ -439,17 +453,20 @@ impl StreamingSearchService {
         distance_metric: DistanceMetric,
     ) -> Result<Vec<InternalSearchResult>> {
         debug!("🔍 STREAMING_WAL: Searching unflushed vectors");
-        
+
         // Get direct access to WAL memtable
-        // TODO: Implement WAL behavior integration 
-        if false { // let Some(wal_behavior) = self.direct_service.get_wal_behavior_wrapper() {
+        // TODO: Implement WAL behavior integration
+        if false {
+            // let Some(wal_behavior) = self.direct_service.get_wal_behavior_wrapper() {
             // let unflushed_batches = wal_behavior
             //     .get_unflushed_batches(collection_id)
             //     .await?;
-            let unflushed_batches: Vec<crate::storage::memtable::specialized::wal_behavior::WALVectorBatch> = vec![]; // Stub
-            
+            let unflushed_batches: Vec<
+                crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+            > = vec![]; // Stub
+
             let mut results = Vec::new();
-            
+
             for batch in unflushed_batches {
                 for record in batch.vector_records.iter() {
                     // Calculate similarity
@@ -458,7 +475,7 @@ impl StreamingSearchService {
                         query_vector,
                         &distance_metric,
                     );
-                    
+
                     // Create InternalSearchResult directly with all VectorRecord information
                     let search_result = InternalSearchResult {
                         id: record.id.clone(),
@@ -466,10 +483,13 @@ impl StreamingSearchService {
                         score: similarity.normalized_score,
                         similarity: Some(similarity.rank_value),
                         vector: Some(record.vector.clone()),
-                        metadata: record.metadata.clone()
+                        metadata: record
+                            .metadata
+                            .clone()
                             .into_iter()
                             .filter_map(|item| {
-                                item.value.map(|v| (item.key, convert_proto_value_to_json(v)))
+                                item.value
+                                    .map(|v| (item.key, convert_proto_value_to_json(v)))
                             })
                             .collect(),
                         debug_info: None,
@@ -477,22 +497,26 @@ impl StreamingSearchService {
                         timestamp: Some(record.timestamp),
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
-                        source: None,  // TODO: Convert source if needed
-                        expanded_context: Vec::new(),   // No expanded context from WAL
+                        source: None,                 // TODO: Convert source if needed
+                        expanded_context: Vec::new(), // No expanded context from WAL
                         semantic_similarity: Some(similarity),
                         quantization_info: None,
                         engine_stats: None,
                         index_path: None,
                     };
-                    
+
                     results.push(search_result);
                 }
             }
-            
+
             // Sort by score
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(k);
-            
+
             debug!("✅ STREAMING_WAL: Found {} results", results.len());
             Ok(results)
         } else {
@@ -500,12 +524,12 @@ impl StreamingSearchService {
             Ok(Vec::new())
         }
     }
-    
+
     /// Get streaming search statistics
     pub async fn stats(&self) -> StreamingSearchStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Reset statistics
     pub async fn reset_stats(&self) {
         *self.stats.write().await = StreamingSearchStats::default();
@@ -526,7 +550,7 @@ impl Clone for StreamingSearchService {
 /// Stream implementation for search results
 impl Stream for SearchResultStream {
     type Item = Result<SearchResultBatch>;
-    
+
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.receiver.poll_recv(cx) {
             Poll::Ready(Some(batch)) => Poll::Ready(Some(Ok(batch))),
@@ -541,32 +565,32 @@ impl SearchResultStream {
     pub fn metadata(&self) -> &SearchMetadata {
         &self.metadata
     }
-    
+
     /// Collect all results (consumes the stream)
     pub async fn collect_all(mut self) -> Result<Vec<InternalSearchResult>> {
         let mut all_results = Vec::new();
-        
+
         while let Some(batch) = self.receiver.recv().await {
             if batch.is_final {
                 break;
             }
             all_results.extend(batch.results);
         }
-        
+
         Ok(all_results)
     }
-    
+
     /// Take first N results (consumes the stream)
     pub async fn take(mut self, n: usize) -> Result<Vec<InternalSearchResult>> {
         let mut results = Vec::with_capacity(n);
-        
+
         while results.len() < n {
             match self.receiver.recv().await {
                 Some(batch) => {
                     if batch.is_final {
                         break;
                     }
-                    
+
                     for result in batch.results {
                         if results.len() < n {
                             results.push(result);
@@ -578,27 +602,26 @@ impl SearchResultStream {
                 None => break,
             }
         }
-        
+
         Ok(results)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    
-    
+
     #[tokio::test]
     async fn test_streaming_search_basic() {
         // TODO: Implement comprehensive tests
         assert!(true);
     }
-    
+
     #[tokio::test]
     async fn test_streaming_search_batching() {
         // TODO: Test search result batching
         assert!(true);
     }
-    
+
     #[tokio::test]
     async fn test_concurrent_streaming() {
         // TODO: Test concurrent streaming

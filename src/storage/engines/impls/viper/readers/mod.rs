@@ -19,13 +19,22 @@ pub mod tests;
 
 // Re-export from columnar module to maintain API compatibility
 pub use crate::storage::engines::core::formats::columnar::{
-    UnifiedParquetReader, ReadingStrategy, SchemaMapping, CollectionContext,
+    CollectionContext,
+    FilterValue,
+    QuantizationMethod,
     // All VIPER types now consolidated in columnar module
-    ReaderConfig, FilterValue, QuantizationMethod, SeekRange, VectorPosition,
-    Stage2Strategy, SearchType, RowGroupAccessPattern,
+    ReaderConfig,
+    ReadingStrategy,
+    RowGroupAccessPattern,
     // Note: MetadataFilter is already in columnar module
+    SchemaMapping,
+    SearchType,
+    SeekRange,
+    Stage2Strategy,
+    UnifiedParquetReader,
+    VectorPosition,
 };
 
 // Supporting types
 pub use parquet_reconstructor::{ParquetReconstructor, ReconstructedParquetData};
-pub use test_data_generator::{ParquetTestDataGenerator, TestDataConfig, QuantizationType};
+pub use test_data_generator::{ParquetTestDataGenerator, QuantizationType, TestDataConfig};

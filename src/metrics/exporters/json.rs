@@ -12,7 +12,7 @@ impl JsonExporter {
     pub fn new() -> Self {
         Self { pretty: false }
     }
-    
+
     pub fn pretty() -> Self {
         Self { pretty: true }
     }
@@ -26,11 +26,11 @@ impl MetricsExporter for JsonExporter {
             Ok(serde_json::to_string(metrics)?)
         }
     }
-    
+
     fn content_type(&self) -> &'static str {
         "application/json"
     }
-    
+
     fn format_name(&self) -> &'static str {
         "json"
     }

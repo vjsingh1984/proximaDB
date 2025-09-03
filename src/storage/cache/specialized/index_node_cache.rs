@@ -1,8 +1,8 @@
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::traits::{BaseCache, CacheValue};
 use crate::storage::cache::metrics::CacheMetrics;
-use serde::{Deserialize, Serialize};
+use crate::storage::cache::traits::{BaseCache, CacheValue};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Index node that can be cached
@@ -32,28 +32,28 @@ impl IndexNodeCache {
             base: BaseCacheImpl::new(max_memory_mb * 1024 * 1024),
         }
     }
-    
+
     /// Delegate put_with_hooks to base cache
     pub async fn put_with_hooks(&self, key: String, value: IndexNode) {
         BaseCache::put_with_hooks(&self.base, key, value).await;
     }
-    
+
     /// Delegate get_with_hooks to base cache
     pub async fn get_with_hooks(&self, key: &String) -> Option<IndexNode> {
         BaseCache::get_with_hooks(&self.base, key).await
     }
-    
+
     /// Prefetch index path for a vector
     pub async fn prefetch_vector_index_path(&self, _vector_id: &str) {
         // TODO: Implement prefetching logic based on index structure
         // This would traverse the index tree and cache hot nodes
     }
-    
+
     /// Invalidate a cached index node
     pub async fn invalidate(&self, key: &str) -> bool {
         BaseCache::invalidate(&self.base, &key.to_string()).await
     }
-    
+
     /// Get cache metrics
     pub fn metrics(&self) -> &CacheMetrics {
         self.base.metrics()
@@ -104,34 +104,30 @@ impl CacheValue for SstableIndex {
 
 impl IndexNodeCache {
     /// Cache an SSTable index
-    pub async fn cache_sstable_index(
-        &self,
-        file_path: &str,
-        index: SstableIndex,
-    ) -> Result<()> {
+    pub async fn cache_sstable_index(&self, file_path: &str, index: SstableIndex) -> Result<()> {
         // Convert SSTable index to IndexNode for storage
         let index_data = bincode::serialize(&index)?;
-        
+
         let node = IndexNode {
             id: format!("sst_index_{}", file_path),
             level: 0, // SSTable indices are flat
             children: index.entries.iter().map(|e| e.key.clone()).collect(),
             data: index_data,
         };
-        
+
         self.put_with_hooks(node.id.clone(), node).await;
         Ok(())
     }
-    
+
     /// Retrieve an SSTable index from cache
     pub async fn get_sstable_index(&self, file_path: &str) -> Option<SstableIndex> {
         let key = format!("sst_index_{}", file_path);
         let node = self.get_with_hooks(&key).await?;
-        
+
         // Deserialize from node data
         bincode::deserialize(&node.data).ok()
     }
-    
+
     /// Cache multiple SSTable indices as a batch
     pub async fn cache_sstable_indices_batch(
         &self,
@@ -142,23 +138,23 @@ impl IndexNodeCache {
         }
         Ok(())
     }
-    
+
     /// Get indices for multiple SSTable files
     pub async fn get_sstable_indices(
         &self,
         file_paths: &[String],
     ) -> HashMap<String, SstableIndex> {
         let mut results = HashMap::new();
-        
+
         for file_path in file_paths {
             if let Some(index) = self.get_sstable_index(file_path).await {
                 results.insert(file_path.clone(), index);
             }
         }
-        
+
         results
     }
-    
+
     /// Find blocks that might contain a specific key
     pub async fn find_blocks_for_key(
         &self,
@@ -166,29 +162,24 @@ impl IndexNodeCache {
         search_key: &str,
     ) -> Option<Vec<SstIndexEntry>> {
         let index = self.get_sstable_index(file_path).await?;
-        
+
         // Binary search or range scan to find relevant blocks
         let mut matching_blocks = Vec::new();
         for entry in index.entries {
-            if entry.min_key <= search_key.to_string() && 
-               entry.max_key >= search_key.to_string() {
+            if entry.min_key <= search_key.to_string() && entry.max_key >= search_key.to_string() {
                 matching_blocks.push(entry);
             }
         }
-        
+
         if matching_blocks.is_empty() {
             None
         } else {
             Some(matching_blocks)
         }
     }
-    
+
     /// Cache hot index entries separately for faster access
-    pub async fn cache_hot_entries(
-        &self,
-        file_path: &str,
-        hot_keys: Vec<String>,
-    ) -> Result<()> {
+    pub async fn cache_hot_entries(&self, file_path: &str, hot_keys: Vec<String>) -> Result<()> {
         if let Some(index) = self.get_sstable_index(file_path).await {
             for key in hot_keys {
                 // Find and cache individual entries
@@ -196,14 +187,14 @@ impl IndexNodeCache {
                     if entry.key == key {
                         let entry_key = format!("sst_entry_{}_{}", file_path, key);
                         let entry_data = bincode::serialize(&entry)?;
-                        
+
                         let node = IndexNode {
                             id: entry_key.clone(),
                             level: 1, // Individual entries are level 1
                             children: vec![],
                             data: entry_data,
                         };
-                        
+
                         self.put_with_hooks(entry_key, node).await;
                         break;
                     }

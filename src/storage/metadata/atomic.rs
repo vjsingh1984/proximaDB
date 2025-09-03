@@ -11,7 +11,7 @@
 //! - Optimistic concurrency control
 //! - Atomic batch operations
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -20,9 +20,11 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use super::{
-    write_ahead_log::{AccessPattern, MetadataWALConfig, MetadataWriteAheadLog, VersionedCollectionMetadata},
-    MetadataFilter, MetadataOperation, MetadataStorageStats,
-    MetadataStoreInterface, SystemMetadata,
+    MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
+    SystemMetadata,
+    write_ahead_log::{
+        AccessPattern, MetadataWALConfig, MetadataWriteAheadLog, VersionedCollectionMetadata,
+    },
 };
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -290,14 +292,30 @@ impl AtomicMetadataStore {
                 MetadataOperation::CreateCollection(collection) => {
                     let versioned = VersionedCollectionMetadata {
                         id: collection.id.clone(),
-                        name: collection.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+                        name: collection
+                            .config
+                            .as_ref()
+                            .map(|c| c.name.clone())
+                            .unwrap_or_default(),
                         dimension: collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
-                        distance_metric: collection.config.as_ref().map(|c| format!("{:?}", c.distance_metric)).unwrap_or_default(),
+                        distance_metric: collection
+                            .config
+                            .as_ref()
+                            .map(|c| format!("{:?}", c.distance_metric))
+                            .unwrap_or_default(),
                         indexing_algorithm: "HNSW".to_string(), // Default
                         timestamp: Utc::now().timestamp() as u32,
                         version: Some(version as u32),
-                        vector_count: collection.stats.as_ref().map(|s| s.vector_count as u64).unwrap_or(0),
-                        total_size_bytes: collection.stats.as_ref().map(|s| s.data_size_bytes as u64).unwrap_or(0),
+                        vector_count: collection
+                            .stats
+                            .as_ref()
+                            .map(|s| s.vector_count as u64)
+                            .unwrap_or(0),
+                        total_size_bytes: collection
+                            .stats
+                            .as_ref()
+                            .map(|s| s.data_size_bytes as u64)
+                            .unwrap_or(0),
                         config: std::collections::HashMap::new(), // TODO: Convert from collection config
                         description: None,
                         tags: Vec::new(),
@@ -319,16 +337,19 @@ impl AtomicMetadataStore {
                     metadata,
                 } => {
                     // Fetch existing metadata and update it
-                    let existing = self.write_buffer_manager
+                    let existing = self
+                        .write_buffer_manager
                         .get_collection(&collection_id)
                         .await?
-                        .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-                    
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Collection not found: {}", collection_id)
+                        })?;
+
                     let mut versioned = existing;
                     versioned.version = Some(version as u32);
                     versioned.timestamp = Utc::now().timestamp() as u32;
                     // Update fields from metadata if needed
-                    
+
                     // Write to write buffer
                     self.write_buffer_manager
                         .upsert_collection(versioned.clone())
@@ -339,7 +360,9 @@ impl AtomicMetadataStore {
 
                 MetadataOperation::DeleteCollection(collection_id) => {
                     // Write delete to write buffer
-                    self.write_buffer_manager.delete_collection(collection_id).await?;
+                    self.write_buffer_manager
+                        .delete_collection(collection_id)
+                        .await?;
 
                     // Remove from version store
                     let mut version_store = self.version_store.write().await;
@@ -375,7 +398,7 @@ impl AtomicMetadataStore {
                         name: versioned_metadata.name.clone(),
                         dimension: versioned_metadata.dimension as u32,
                         distance_metric: 0, // TODO: Parse from string
-                        storage_engine: 0, // TODO: Parse from config
+                        storage_engine: 0,  // TODO: Parse from config
                         ..Default::default()
                     }),
                     stats: Some(crate::proto::proximadb::CollectionStats {
@@ -387,7 +410,7 @@ impl AtomicMetadataStore {
                     updated_at: versioned_metadata.timestamp as i64,
                     storage_assignment: None,
                 };
-                
+
                 let version_info = VersionInfo {
                     version,
                     transaction_id: *transaction_id,
@@ -616,9 +639,11 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     ..Default::default()
                 }),
                 created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                    .unwrap_or_else(|| Utc::now()).timestamp_micros(),
+                    .unwrap_or_else(|| Utc::now())
+                    .timestamp_micros(),
                 updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                    .unwrap_or_else(|| Utc::now()).timestamp_micros(),
+                    .unwrap_or_else(|| Utc::now())
+                    .timestamp_micros(),
                 storage_assignment: None, // TODO: Convert storage_assignment
             };
 
@@ -677,7 +702,10 @@ impl MetadataStoreInterface for AtomicMetadataStore {
             }) as Box<dyn Fn(&VersionedCollectionMetadata) -> bool + Send>
         });
 
-        let versioned_list = self.write_buffer_manager.list_collections(write_buffer_filter).await?;
+        let versioned_list = self
+            .write_buffer_manager
+            .list_collections(write_buffer_filter)
+            .await?;
 
         // Convert to regular metadata format
         let metadata_list = versioned_list
@@ -697,9 +725,11 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                         ..Default::default()
                     }),
                     created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                        .unwrap_or_else(|| Utc::now()).timestamp_micros(),
+                        .unwrap_or_else(|| Utc::now())
+                        .timestamp_micros(),
                     updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
-                        .unwrap_or_else(|| Utc::now()).timestamp_micros(),
+                        .unwrap_or_else(|| Utc::now())
+                        .timestamp_micros(),
                     storage_assignment: None, // TODO: Convert storage_assignment
                 }
             })
@@ -755,7 +785,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
             total_collections: write_buffer_stats.total_collections,
             total_metadata_size_bytes: 0, // TODO: Calculate
             cache_hit_rate: if write_buffer_stats.cache_hits + write_buffer_stats.cache_misses > 0 {
-                write_buffer_stats.cache_hits as f64 / (write_buffer_stats.cache_hits + write_buffer_stats.cache_misses) as f64
+                write_buffer_stats.cache_hits as f64
+                    / (write_buffer_stats.cache_hits + write_buffer_stats.cache_misses) as f64
             } else {
                 0.0
             },
@@ -786,13 +817,21 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn backup(&self, location: &str) -> Result<String> {
         let backup_id = Uuid::new_v4().to_string();
         // TODO: Implement backup logic
-        tracing::info!("Backup requested to location: {}, backup_id: {}", location, backup_id);
+        tracing::info!(
+            "Backup requested to location: {}, backup_id: {}",
+            location,
+            backup_id
+        );
         Ok(backup_id)
     }
 
     async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
         // TODO: Implement restore logic
-        tracing::info!("Restore requested from backup_id: {}, location: {}", backup_id, location);
+        tracing::info!(
+            "Restore requested from backup_id: {}, location: {}",
+            backup_id,
+            location
+        );
         Ok(())
     }
 

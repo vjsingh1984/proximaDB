@@ -4,37 +4,37 @@ use std::time::Duration;
 
 #[test]
 fn test_metrics_recording() {
-        // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let metrics = CacheMetrics::new();
-    
+
     // Record some hits
     metrics.record_hit(CacheTier::L1);
     metrics.record_hit(CacheTier::L1);
     metrics.record_hit(CacheTier::L2);
     metrics.record_hit(CacheTier::L3);
-    
+
     // Record misses
     metrics.record_miss();
     metrics.record_miss();
-    
+
     // Record operations
     metrics.record_put();
     metrics.record_invalidation();
     metrics.record_eviction();
-    
+
     // Record latencies
     metrics.record_get_latency(Duration::from_micros(100));
     metrics.record_get_latency(Duration::from_micros(200));
     metrics.record_put_latency(Duration::from_micros(150));
-    
+
     // Update size
     metrics.update_size(100, 1024 * 1024);
-    
+
     // Get snapshot
     let snapshot = metrics.snapshot();
-    
+
     assert_eq!(snapshot.l1_hits, 2);
     assert_eq!(snapshot.l2_hits, 1);
     assert_eq!(snapshot.l3_hits, 1);
@@ -47,7 +47,7 @@ fn test_metrics_recording() {
     assert_eq!(snapshot.total_bytes, 1024 * 1024);
     assert_eq!(snapshot.avg_get_latency_us, 150); // (100 + 200) / 2
     assert_eq!(snapshot.avg_put_latency_us, 150);
-    
+
     // Check hit rate calculation
     let expected_hit_rate = 4.0 / 6.0; // 4 hits out of 6 gets
     assert!((snapshot.hit_rate_percent - expected_hit_rate).abs() < 0.001);
@@ -55,25 +55,25 @@ fn test_metrics_recording() {
 
 #[test]
 fn test_metrics_reset() {
-        // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let metrics = CacheMetrics::new();
-    
+
     // Record some operations
     metrics.record_hit(CacheTier::L1);
     metrics.record_miss();
     metrics.record_put();
-    
+
     // Verify they were recorded
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.l1_hits, 1);
     assert_eq!(snapshot.misses, 1);
     assert_eq!(snapshot.total_puts, 1);
-    
+
     // Reset
     metrics.reset();
-    
+
     // Verify reset
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.l1_hits, 0);
@@ -84,11 +84,11 @@ fn test_metrics_reset() {
 
 #[test]
 fn test_metrics_summary_print() {
-        // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    // Initialize hardware capabilities for testing
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let metrics = CacheMetrics::new();
-    
+
     // Set up some metrics
     for _ in 0..70 {
         metrics.record_hit(CacheTier::L1);
@@ -102,14 +102,14 @@ fn test_metrics_summary_print() {
     for _ in 0..5 {
         metrics.record_miss();
     }
-    
+
     metrics.update_size(1000, 10 * 1024 * 1024);
-    
+
     let snapshot = metrics.snapshot();
-    
+
     // Test that summary can be printed without panic
     snapshot.print_summary();
-    
+
     // Verify percentages
     assert_eq!(snapshot.total_gets, 100);
     assert_eq!(snapshot.hit_rate_percent, 0.95); // 95% hit rate

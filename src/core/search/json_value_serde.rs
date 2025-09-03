@@ -56,7 +56,7 @@ pub fn serialize_json_value<W: Write>(value: &Value, writer: &mut W) -> Result<(
 pub fn deserialize_json_value<R: Read>(reader: &mut R) -> Result<Value> {
     let mut type_tag = [0u8; 1];
     reader.read_exact(&mut type_tag)?;
-    
+
     match type_tag[0] {
         0 => Ok(Value::Null),
         1 => {
@@ -109,7 +109,7 @@ pub fn deserialize_json_value<R: Read>(reader: &mut R) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_json_value_roundtrip() {
         let test_cases = vec![
@@ -121,14 +121,14 @@ mod tests {
             Value::Number(serde_json::Number::from_f64(3.14).unwrap()),
             Value::String("hello world".to_string()),
         ];
-        
+
         for value in test_cases {
             let mut buffer = Vec::new();
             serialize_json_value(&value, &mut buffer).unwrap();
-            
+
             let mut cursor = std::io::Cursor::new(buffer);
             let deserialized = deserialize_json_value(&mut cursor).unwrap();
-            
+
             assert_eq!(value, deserialized);
         }
     }

@@ -1,14 +1,14 @@
 //! Type-safe metadata filtering using collection metadata
-//! 
+//!
 //! This module provides type-aware filtering that leverages collection metadata
 //! to perform comparisons without cast operators, improving performance for both
 //! SST and VIPER engines.
 
-use std::collections::HashMap;
-use std::cmp::Ordering;
-use crate::proto::proximadb::{MetadataItem, metadata_item::Value as MetadataValue};
+use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::proto::proximadb::{FilterableColumnSpec, FilterableDataType};
-use crate::core::search::{FilterExpression, ComparisonOperator};
+use crate::proto::proximadb::{MetadataItem, metadata_item::Value as MetadataValue};
+use std::cmp::Ordering;
+use std::collections::HashMap;
 
 /// Type-safe filter evaluator that uses collection metadata for datatype information
 pub struct TypeSafeFilterEvaluator {
@@ -27,10 +27,10 @@ impl TypeSafeFilterEvaluator {
                     .map(|dt| (col.name.clone(), dt))
             })
             .collect();
-        
+
         Self { column_types }
     }
-    
+
     /// Evaluate a filter expression against MetadataItem values with type safety
     pub fn evaluate(&self, expr: &FilterExpression, metadata: &[MetadataItem]) -> bool {
         // Convert MetadataItem slice to a HashMap for efficient lookup
@@ -38,12 +38,16 @@ impl TypeSafeFilterEvaluator {
             .iter()
             .map(|item| (item.key.as_str(), item))
             .collect();
-        
+
         self.evaluate_recursive(expr, &metadata_map)
     }
-    
+
     /// Recursively evaluate filter expressions
-    fn evaluate_recursive(&self, expr: &FilterExpression, metadata: &HashMap<&str, &MetadataItem>) -> bool {
+    fn evaluate_recursive(
+        &self,
+        expr: &FilterExpression,
+        metadata: &HashMap<&str, &MetadataItem>,
+    ) -> bool {
         match expr {
             FilterExpression::And(exprs) => {
                 exprs.iter().all(|e| self.evaluate_recursive(e, metadata))
@@ -51,41 +55,56 @@ impl TypeSafeFilterEvaluator {
             FilterExpression::Or(exprs) => {
                 exprs.iter().any(|e| self.evaluate_recursive(e, metadata))
             }
-            FilterExpression::Not(e) => {
-                !self.evaluate_recursive(e, metadata)
-            }
-            FilterExpression::Comparison { field, operator, value } => {
+            FilterExpression::Not(e) => !self.evaluate_recursive(e, metadata),
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 // Get the field's expected data type from collection metadata
                 let expected_type = self.column_types.get(field).copied();
-                
+
                 // Get the actual metadata value
                 let metadata_item = metadata.get(field.as_str());
-                
+
                 match (metadata_item, operator) {
                     (Some(item), ComparisonOperator::Equals) => {
-                        self.compare_typed_values(&item.value, value, expected_type) == Some(Ordering::Equal)
+                        self.compare_typed_values(&item.value, value, expected_type)
+                            == Some(Ordering::Equal)
                     }
                     (Some(item), ComparisonOperator::NotEquals) => {
-                        self.compare_typed_values(&item.value, value, expected_type) != Some(Ordering::Equal)
+                        self.compare_typed_values(&item.value, value, expected_type)
+                            != Some(Ordering::Equal)
                     }
                     (Some(item), ComparisonOperator::LessThan) => {
-                        matches!(self.compare_typed_values(&item.value, value, expected_type), Some(Ordering::Less))
+                        matches!(
+                            self.compare_typed_values(&item.value, value, expected_type),
+                            Some(Ordering::Less)
+                        )
                     }
                     (Some(item), ComparisonOperator::LessThanOrEqual) => {
-                        matches!(self.compare_typed_values(&item.value, value, expected_type), 
-                                Some(Ordering::Less) | Some(Ordering::Equal))
+                        matches!(
+                            self.compare_typed_values(&item.value, value, expected_type),
+                            Some(Ordering::Less) | Some(Ordering::Equal)
+                        )
                     }
                     (Some(item), ComparisonOperator::GreaterThan) => {
-                        matches!(self.compare_typed_values(&item.value, value, expected_type), Some(Ordering::Greater))
+                        matches!(
+                            self.compare_typed_values(&item.value, value, expected_type),
+                            Some(Ordering::Greater)
+                        )
                     }
                     (Some(item), ComparisonOperator::GreaterThanOrEqual) => {
-                        matches!(self.compare_typed_values(&item.value, value, expected_type), 
-                                Some(Ordering::Greater) | Some(Ordering::Equal))
+                        matches!(
+                            self.compare_typed_values(&item.value, value, expected_type),
+                            Some(Ordering::Greater) | Some(Ordering::Equal)
+                        )
                     }
                     (Some(item), ComparisonOperator::In) => {
                         if let serde_json::Value::Array(values) = value {
                             values.iter().any(|v| {
-                                self.compare_typed_values(&item.value, v, expected_type) == Some(Ordering::Equal)
+                                self.compare_typed_values(&item.value, v, expected_type)
+                                    == Some(Ordering::Equal)
                             })
                         } else {
                             false
@@ -94,31 +113,41 @@ impl TypeSafeFilterEvaluator {
                     (Some(item), ComparisonOperator::NotIn) => {
                         if let serde_json::Value::Array(values) = value {
                             !values.iter().any(|v| {
-                                self.compare_typed_values(&item.value, v, expected_type) == Some(Ordering::Equal)
+                                self.compare_typed_values(&item.value, v, expected_type)
+                                    == Some(Ordering::Equal)
                             })
                         } else {
                             true
                         }
                     }
                     (Some(item), ComparisonOperator::Contains) => {
-                        if let (Some(MetadataValue::StringValue(s)), serde_json::Value::String(pattern)) = 
-                            (&item.value, value) {
+                        if let (
+                            Some(MetadataValue::StringValue(s)),
+                            serde_json::Value::String(pattern),
+                        ) = (&item.value, value)
+                        {
                             s.contains(pattern)
                         } else {
                             false
                         }
                     }
                     (Some(item), ComparisonOperator::StartsWith) => {
-                        if let (Some(MetadataValue::StringValue(s)), serde_json::Value::String(pattern)) = 
-                            (&item.value, value) {
+                        if let (
+                            Some(MetadataValue::StringValue(s)),
+                            serde_json::Value::String(pattern),
+                        ) = (&item.value, value)
+                        {
                             s.starts_with(pattern)
                         } else {
                             false
                         }
                     }
                     (Some(item), ComparisonOperator::EndsWith) => {
-                        if let (Some(MetadataValue::StringValue(s)), serde_json::Value::String(pattern)) = 
-                            (&item.value, value) {
+                        if let (
+                            Some(MetadataValue::StringValue(s)),
+                            serde_json::Value::String(pattern),
+                        ) = (&item.value, value)
+                        {
                             s.ends_with(pattern)
                         } else {
                             false
@@ -128,11 +157,19 @@ impl TypeSafeFilterEvaluator {
                         if let serde_json::Value::Array(bounds) = value {
                             if bounds.len() == 2 {
                                 let ge_lower = matches!(
-                                    self.compare_typed_values(&item.value, &bounds[0], expected_type),
+                                    self.compare_typed_values(
+                                        &item.value,
+                                        &bounds[0],
+                                        expected_type
+                                    ),
                                     Some(Ordering::Greater) | Some(Ordering::Equal)
                                 );
                                 let le_upper = matches!(
-                                    self.compare_typed_values(&item.value, &bounds[1], expected_type),
+                                    self.compare_typed_values(
+                                        &item.value,
+                                        &bounds[1],
+                                        expected_type
+                                    ),
                                     Some(Ordering::Less) | Some(Ordering::Equal)
                                 );
                                 ge_lower && le_upper
@@ -152,7 +189,7 @@ impl TypeSafeFilterEvaluator {
             }
         }
     }
-    
+
     /// Compare MetadataItem value with JSON value using type information
     fn compare_typed_values(
         &self,
@@ -169,9 +206,13 @@ impl TypeSafeFilterEvaluator {
                     None
                 }
             }
-            
+
             // Number comparison - no casting needed, direct type comparison
-            (Some(MetadataValue::NumberValue(n)), Some(FilterableDataType::FilterableInteger) | Some(FilterableDataType::FilterableFloat)) => {
+            (
+                Some(MetadataValue::NumberValue(n)),
+                Some(FilterableDataType::FilterableInteger)
+                | Some(FilterableDataType::FilterableFloat),
+            ) => {
                 match json_value {
                     serde_json::Value::Number(jn) => {
                         // Direct numeric comparison without conversion
@@ -183,10 +224,10 @@ impl TypeSafeFilterEvaluator {
                             None
                         }
                     }
-                    _ => None
+                    _ => None,
                 }
             }
-            
+
             // Boolean comparison
             (Some(MetadataValue::BoolValue(b)), Some(FilterableDataType::FilterableBoolean)) => {
                 if let serde_json::Value::Bool(jb) = json_value {
@@ -195,7 +236,7 @@ impl TypeSafeFilterEvaluator {
                     None
                 }
             }
-            
+
             // Cross-type conversions when metadata doesn't match expected type
             // This can happen with flexible schemas or type mismatches
             (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableInteger)) => {
@@ -210,7 +251,7 @@ impl TypeSafeFilterEvaluator {
                     None
                 }
             }
-            
+
             (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableFloat)) => {
                 // Try to parse string as float
                 if let (Ok(sf), serde_json::Value::Number(jn)) = (s.parse::<f64>(), json_value) {
@@ -223,7 +264,7 @@ impl TypeSafeFilterEvaluator {
                     None
                 }
             }
-            
+
             (Some(MetadataValue::NumberValue(n)), Some(FilterableDataType::FilterableString)) => {
                 // Convert number to string for comparison
                 if let serde_json::Value::String(js) = json_value {
@@ -232,8 +273,8 @@ impl TypeSafeFilterEvaluator {
                     None
                 }
             }
-            
-            _ => None
+
+            _ => None,
         }
     }
 }
@@ -250,7 +291,8 @@ pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_j
                     serde_json::Value::Number(serde_json::Number::from(*n as i64))
                 } else {
                     serde_json::Value::Number(
-                        serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))
+                        serde_json::Number::from_f64(*n)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
                     )
                 }
             }
@@ -285,27 +327,35 @@ fn extract_conditions_recursive(
     conditions: &mut HashMap<String, TypedCondition>,
 ) {
     match expr {
-        FilterExpression::Comparison { field, operator, value } => {
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => {
             if let Some(&data_type) = column_types.get(field) {
                 // Convert JSON value to typed MetadataValue
                 let typed_value = match (data_type, value) {
                     (FilterableDataType::FilterableString, serde_json::Value::String(s)) => {
                         Some(MetadataValue::StringValue(s.clone()))
                     }
-                    (FilterableDataType::FilterableInteger | FilterableDataType::FilterableFloat, serde_json::Value::Number(n)) => {
-                        n.as_f64().map(MetadataValue::NumberValue)
-                    }
+                    (
+                        FilterableDataType::FilterableInteger | FilterableDataType::FilterableFloat,
+                        serde_json::Value::Number(n),
+                    ) => n.as_f64().map(MetadataValue::NumberValue),
                     (FilterableDataType::FilterableBoolean, serde_json::Value::Bool(b)) => {
                         Some(MetadataValue::BoolValue(*b))
                     }
                     _ => None,
                 };
-                
+
                 if let Some(tv) = typed_value {
-                    conditions.insert(field.clone(), TypedCondition {
-                        operator: operator.clone(),
-                        value: tv,
-                    });
+                    conditions.insert(
+                        field.clone(),
+                        TypedCondition {
+                            operator: operator.clone(),
+                            value: tv,
+                        },
+                    );
                 }
             }
         }
@@ -321,66 +371,58 @@ fn extract_conditions_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_type_safe_string_comparison() {
-        let columns = vec![
-            FilterableColumnSpec {
-                name: "category".to_string(),
-                data_type: FilterableDataType::FilterableString as i32,
-                indexed: true,
-                supports_range: false,
-                estimated_cardinality: Some(100),
-                encoding_hint: None,
-            }
-        ];
-        
+        let columns = vec![FilterableColumnSpec {
+            name: "category".to_string(),
+            data_type: FilterableDataType::FilterableString as i32,
+            indexed: true,
+            supports_range: false,
+            estimated_cardinality: Some(100),
+            encoding_hint: None,
+        }];
+
         let evaluator = TypeSafeFilterEvaluator::new(&columns);
-        
-        let metadata = vec![
-            MetadataItem {
-                key: "category".to_string(),
-                value: Some(MetadataValue::StringValue("electronics".to_string())),
-            }
-        ];
-        
+
+        let metadata = vec![MetadataItem {
+            key: "category".to_string(),
+            value: Some(MetadataValue::StringValue("electronics".to_string())),
+        }];
+
         let filter = FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
             value: serde_json::json!("electronics"),
         };
-        
+
         assert!(evaluator.evaluate(&filter, &metadata));
     }
-    
+
     #[test]
     fn test_type_safe_numeric_comparison() {
-        let columns = vec![
-            FilterableColumnSpec {
-                name: "price".to_string(),
-                data_type: FilterableDataType::FilterableFloat as i32,
-                indexed: true,
-                supports_range: true,
-                estimated_cardinality: None,
-                encoding_hint: None,
-            }
-        ];
-        
+        let columns = vec![FilterableColumnSpec {
+            name: "price".to_string(),
+            data_type: FilterableDataType::FilterableFloat as i32,
+            indexed: true,
+            supports_range: true,
+            estimated_cardinality: None,
+            encoding_hint: None,
+        }];
+
         let evaluator = TypeSafeFilterEvaluator::new(&columns);
-        
-        let metadata = vec![
-            MetadataItem {
-                key: "price".to_string(),
-                value: Some(MetadataValue::NumberValue(99.99)),
-            }
-        ];
-        
+
+        let metadata = vec![MetadataItem {
+            key: "price".to_string(),
+            value: Some(MetadataValue::NumberValue(99.99)),
+        }];
+
         let filter = FilterExpression::Comparison {
             field: "price".to_string(),
             operator: ComparisonOperator::LessThan,
             value: serde_json::json!(100.0),
         };
-        
+
         assert!(evaluator.evaluate(&filter, &metadata));
     }
 }

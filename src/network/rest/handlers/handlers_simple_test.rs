@@ -3,7 +3,7 @@ mod tests {
     use super::*;
     use crate::core::proto_metadata_helper;
     use crate::proto::proximadb::{MetadataItem, metadata_item};
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     #[test]
     fn test_metadata_conversion_issue() {
@@ -22,24 +22,24 @@ use tracing::{debug, error, info};
                 value: Some(metadata_item::Value::BoolValue(true)),
             },
         ];
-        
+
         // Convert using the function used in REST handler
         let converted = proto_metadata_helper::proto_metadata_to_hashmap(&proto_metadata);
-        
+
         debug!("Original metadata: {:?}", proto_metadata);
         debug!("Converted metadata: {:?}", converted);
-        
+
         // Check conversion
         assert_eq!(converted.get(key), Some(&"electronics".to_string()));
         assert_eq!(converted.get(key), Some(&"99.99".to_string()));
         assert_eq!(converted.get(key), Some(&"true".to_string()));
     }
-    
+
     #[test]
     fn test_empty_metadata_conversion() {
         let empty_metadata: Vec<MetadataItem> = vec![];
         let converted = proto_metadata_helper::proto_metadata_to_hashmap(&empty_metadata);
-        
+
         debug!("Empty metadata conversion: {:?}", converted);
         assert!(converted.is_none());
     }

@@ -1,5 +1,5 @@
 //! Index-Based Filter Evaluation Framework
-//! 
+//!
 //! This module implements a sophisticated filtering approach where:
 //! 1. Filter evaluation returns qualifying ROW INDICES
 //! 2. Top-level orchestrator uses indices for engine-specific optimizations
@@ -7,8 +7,8 @@
 //! 4. VIPER: Uses indices to selectively read parquet rows/columns
 //! 5. Empty indices = skip entire blocks/row groups (early termination)
 
-use std::collections::{HashMap, HashSet};
 use anyhow::Result;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
 use crate::core::VectorRecord;
@@ -41,9 +41,9 @@ pub struct IndexMetadata {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterComplexity {
-    Simple,      // Single equality condition
-    Moderate,    // AND/OR with multiple conditions  
-    Complex,     // Nested expressions with mixed operators
+    Simple,   // Single equality condition
+    Moderate, // AND/OR with multiple conditions
+    Complex,  // Nested expressions with mixed operators
 }
 
 impl FilterIndices {
@@ -51,12 +51,12 @@ impl FilterIndices {
     pub fn should_skip_block(&self) -> bool {
         self.indices.is_empty()
     }
-    
+
     /// Check if full block should be read (high selectivity)
     pub fn should_read_full_block(&self) -> bool {
         self.metadata.selectivity > 0.9 // If >90% of rows qualify, read everything
     }
-    
+
     /// Get optimization recommendation for engine
     pub fn get_read_strategy(&self) -> ReadStrategy {
         if self.should_skip_block() {
@@ -89,16 +89,16 @@ pub enum ReadStrategy {
 pub trait MetadataSource: Send + Sync {
     /// Get row count for this data source
     fn get_row_count(&self) -> usize;
-    
+
     /// Get column metadata for filtering optimization
     fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata>;
-    
+
     /// Extract metadata value for a specific row and column
     fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value>;
-    
+
     /// Get source identifier (file path, block ID, etc.)
     fn get_source_id(&self) -> String;
-    
+
     /// Check if this source supports selective row reading
     fn supports_selective_reading(&self) -> bool;
 }
@@ -131,7 +131,7 @@ pub trait FilterIndexEvaluator: Send + Sync {
         filter_expr: &FilterExpression,
         metadata_source: &(dyn MetadataSource + Send + Sync),
     ) -> Result<FilterIndices>;
-    
+
     /// Optional: Batch evaluation across multiple sources
     async fn evaluate_batch_indices(
         &self,
@@ -157,13 +157,9 @@ pub trait IndexBasedDataReader: Send + Sync {
         read_strategy: &ReadStrategy,
         metadata_source: &(dyn MetadataSource + Send + Sync),
     ) -> Result<Vec<VectorRecord>>;
-    
+
     /// Estimate the cost/benefit of selective reading vs full reading
-    fn estimate_selective_read_benefit(
-        &self,
-        indices: &[usize],
-        total_rows: usize,
-    ) -> f32 {
+    fn estimate_selective_read_benefit(&self, indices: &[usize], total_rows: usize) -> f32 {
         // Default implementation: benefit = 1 - selectivity
         1.0 - (indices.len() as f32 / total_rows as f32)
     }
@@ -190,82 +186,104 @@ where
             data_reader,
         }
     }
-    
+
     /// Main entry point for index-based filtered search
     pub async fn execute_filtered_search(
         &self,
         filter_expr: &FilterExpression,
         sources: &[&(dyn MetadataSource + Send + Sync)],
     ) -> Result<Vec<VectorRecord>> {
-        info!("Index-based filtering: {} sources to evaluate", sources.len());
-        
+        info!(
+            "Index-based filtering: {} sources to evaluate",
+            sources.len()
+        );
+
         // Step 1: Evaluate filter indices across all sources
-        let filter_indices_batch = self.index_evaluator
+        let filter_indices_batch = self
+            .index_evaluator
             .evaluate_batch_indices(filter_expr, sources)
             .await?;
-        
+
         // Step 2: Analyze results and plan data reading
         let mut read_plans = Vec::new();
         let mut total_indices = 0;
         let mut skipped_sources = 0;
-        
+
         for (source, indices) in sources.iter().zip(filter_indices_batch.iter()) {
             let read_strategy = indices.get_read_strategy();
-            
+
             match &read_strategy {
                 ReadStrategy::SkipBlock => {
                     skipped_sources += 1;
-                    debug!("Skipping source {} - no qualifying rows", indices.metadata.source_id);
+                    debug!(
+                        "Skipping source {} - no qualifying rows",
+                        indices.metadata.source_id
+                    );
                     continue;
                 }
-                ReadStrategy::SelectiveRead { indices, estimated_benefit } => {
+                ReadStrategy::SelectiveRead {
+                    indices,
+                    estimated_benefit,
+                } => {
                     total_indices += indices.len();
-                    debug!("Selective read: {} indices, {:.1}% benefit", 
-                           indices.len(), estimated_benefit * 100.0);
+                    debug!(
+                        "Selective read: {} indices, {:.1}% benefit",
+                        indices.len(),
+                        estimated_benefit * 100.0
+                    );
                 }
                 ReadStrategy::ReadFullBlock => {
                     debug!("Full read - high selectivity");
                 }
             }
-            
+
             read_plans.push((source, read_strategy));
         }
-        
-        info!("Index evaluation complete: {} indices across {} sources, {} sources skipped", 
-              total_indices, read_plans.len(), skipped_sources);
-        
+
+        info!(
+            "Index evaluation complete: {} indices across {} sources, {} sources skipped",
+            total_indices,
+            read_plans.len(),
+            skipped_sources
+        );
+
         // Step 3: Execute optimized data reading based on indices
         let mut all_results = Vec::new();
-        
+
         for (source, read_strategy) in read_plans {
-            let source_results = self.data_reader
+            let source_results = self
+                .data_reader
                 .read_data_by_indices(&source.get_source_id(), &read_strategy, *source)
                 .await?;
-            
+
             all_results.extend(source_results);
         }
-        
-        info!("Index-based filtering complete: {} total results", all_results.len());
+
+        info!(
+            "Index-based filtering complete: {} total results",
+            all_results.len()
+        );
         Ok(all_results)
     }
-    
+
     /// Get filtering statistics for performance analysis
     pub async fn get_filter_statistics(
         &self,
         filter_expr: &FilterExpression,
         sources: &[&(dyn MetadataSource + Send + Sync)],
     ) -> Result<FilterStatistics> {
-        let filter_indices_batch = self.index_evaluator
+        let filter_indices_batch = self
+            .index_evaluator
             .evaluate_batch_indices(filter_expr, sources)
             .await?;
-        
+
         let mut stats = FilterStatistics::default();
-        
+
         for indices in filter_indices_batch {
             stats.total_sources += 1;
             stats.total_rows += indices.total_rows;
             stats.qualifying_rows += indices.indices.len();
-            
+
             if indices.should_skip_block() {
                 stats.skipped_sources += 1;
             } else if indices.should_read_full_block() {
@@ -274,7 +292,7 @@ where
                 stats.selective_read_sources += 1;
             }
         }
-        
+
         stats.calculate_ratios();
         Ok(stats)
     }
@@ -288,7 +306,7 @@ pub struct FilterStatistics {
     pub skipped_sources: usize,
     pub full_read_sources: usize,
     pub selective_read_sources: usize,
-    
+
     // Calculated ratios
     pub overall_selectivity: f32,
     pub skip_ratio: f32,
@@ -300,10 +318,11 @@ impl FilterStatistics {
         if self.total_rows > 0 {
             self.overall_selectivity = self.qualifying_rows as f32 / self.total_rows as f32;
         }
-        
+
         if self.total_sources > 0 {
             self.skip_ratio = self.skipped_sources as f32 / self.total_sources as f32;
-            self.selective_read_ratio = self.selective_read_sources as f32 / self.total_sources as f32;
+            self.selective_read_ratio =
+                self.selective_read_sources as f32 / self.total_sources as f32;
         }
     }
 }
@@ -320,42 +339,51 @@ impl FilterIndexEvaluator for BaseFilterIndexEvaluator {
     ) -> Result<FilterIndices> {
         let total_rows = metadata_source.get_row_count();
         let source_id = metadata_source.get_source_id();
-        
-        debug!("Evaluating filter indices for {}: {} rows", source_id, total_rows);
-        
+
+        debug!(
+            "Evaluating filter indices for {}: {} rows",
+            source_id, total_rows
+        );
+
         let mut qualifying_indices = Vec::new();
         let mut columns_evaluated = HashSet::new();
-        
+
         // Extract columns needed for filtering
-        let filter_columns = crate::core::search::filter_extraction::extract_filter_columns(filter_expr);
+        let filter_columns =
+            crate::core::search::filter_extraction::extract_filter_columns(filter_expr);
         columns_evaluated.extend(filter_columns);
-        
+
         // Evaluate each row
         for row_idx in 0..total_rows {
             // Build metadata map for this row
             let mut row_metadata = HashMap::new();
-            
+
             for column_name in &columns_evaluated {
                 if let Some(value) = metadata_source.get_metadata_value(row_idx, column_name) {
                     row_metadata.insert(column_name.clone(), value);
                 }
             }
-            
+
             // Use centralized filter evaluation for consistency
             if crate::core::search::json_comparison::evaluate_filter(filter_expr, &row_metadata) {
                 qualifying_indices.push(row_idx);
             }
         }
-        
+
         let selectivity = if total_rows > 0 {
             qualifying_indices.len() as f32 / total_rows as f32
         } else {
             0.0
         };
-        
-        debug!("Filter evaluation for {}: {}/{} rows qualify ({:.1}% selectivity)", 
-               source_id, qualifying_indices.len(), total_rows, selectivity * 100.0);
-        
+
+        debug!(
+            "Filter evaluation for {}: {}/{} rows qualify ({:.1}% selectivity)",
+            source_id,
+            qualifying_indices.len(),
+            total_rows,
+            selectivity * 100.0
+        );
+
         Ok(FilterIndices {
             indices: qualifying_indices,
             total_rows,

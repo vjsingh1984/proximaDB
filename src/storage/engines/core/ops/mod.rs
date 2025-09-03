@@ -4,14 +4,14 @@
 // Core operations modules
 // NOTE: search modules moved to core/search
 // NOTE: quantization modules removed - use compute module directly
-pub mod compression_common;
 pub mod compression_adapter;
+pub mod compression_common;
 /// Universal performance optimization module for all storage engines
 pub mod performance_optimization;
 
 // Import common types used across the module
-use serde::{Deserialize, Serialize};
 use crate::core::search::FilterExpression;
+use serde::{Deserialize, Serialize};
 
 /// Filterable metadata column configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,40 +47,44 @@ pub mod zero_copy_reader_integration;
 pub mod fastlanes_encoding;
 
 /// Common utility function for estimating vector record size in bytes
-/// 
+///
 /// This function calculates the storage size of a vector record based on:
 /// - Vector dimension (known upfront from collection metadata)
 /// - Quantization level (if any)
 /// - 10% overhead for metadata, IDs, and file structure
-/// 
+///
 /// # Arguments
 /// * `dimension` - The vector dimension
 /// * `quantization` - Optional quantization type (e.g., "int8", "pq8", "pq4")
 /// * `num_vectors` - Number of vectors to estimate total size for
-/// 
+///
 /// # Returns
 /// Estimated total size in bytes
-pub fn estimate_vector_storage_size(dimension: usize, quantization: Option<&str>, num_vectors: u64) -> u64 {
+pub fn estimate_vector_storage_size(
+    dimension: usize,
+    quantization: Option<&str>,
+    num_vectors: u64,
+) -> u64 {
     // Base size: fp32 = 4 bytes per dimension
     let base_vector_size = dimension * 4;
-    
+
     // Adjust for quantization if enabled
     let vector_size = if let Some(quant) = quantization {
         match quant {
-            "int8" | "INT8" => dimension, // 1 byte per dimension
-            "pq8" | "PQ8" => dimension / 8, // Product quantization with 8 subvectors
-            "pq4" | "PQ4" => dimension / 16, // Product quantization with 16 subvectors
-            "pq16" | "PQ16" => dimension / 4, // Product quantization with 4 subvectors
+            "int8" | "INT8" => dimension,         // 1 byte per dimension
+            "pq8" | "PQ8" => dimension / 8,       // Product quantization with 8 subvectors
+            "pq4" | "PQ4" => dimension / 16,      // Product quantization with 16 subvectors
+            "pq16" | "PQ16" => dimension / 4,     // Product quantization with 4 subvectors
             "binary" | "BINARY" => dimension / 8, // Binary quantization (1 bit per dimension)
-            _ => base_vector_size, // Default to fp32
+            _ => base_vector_size,                // Default to fp32
         }
     } else {
         base_vector_size
     };
-    
+
     // Add 10% overhead for metadata, IDs, and file structure
     let bytes_per_vector = (vector_size as f64 * 1.1) as u64;
-    
+
     // Calculate total size
     num_vectors * bytes_per_vector
 }
@@ -104,19 +108,18 @@ pub mod fastlanes_tensor_encoding;
 // Removed deprecated metadata_filters module - import from crate::query::unified_query_optimizer instead
 // NOTE: Quantization exports removed - use compute::quantization module directly
 pub use compression_common::{
-    UniversalCompressionConfig, CompressionCapabilities, CompressionStrategy,
-    CompressionStats, AdaptiveCompressionSettings,
+    AdaptiveCompressionSettings, CompressionCapabilities, CompressionStats, CompressionStrategy,
+    UniversalCompressionConfig,
 };
 // Search mode types moved to core/search module
 
 // Universal performance optimization exports
 pub use performance_optimization::{
-    UniversalPerformanceOptimizer, UniversalOptimizationStrategy, UniversalIOConfig,
-    UniversallyOptimized, AccessStats,
+    AccessStats, UniversalIOConfig, UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
+    UniversallyOptimized,
 };
 
 // Duplicate zero-copy I/O system export removed - see consolidated version above
-
 
 // Legacy exports removed - use zero_copy_io_system instead
 // pub use validation_common::{
@@ -138,25 +141,23 @@ pub use performance_optimization::{
 
 // Synergy adapter re-exports
 pub use compression_adapter::{
-    UniversalCompressionAdapter, CompressedData, CompressionMetadata,
-    CompressionPerformanceStats,
+    CompressedData, CompressionMetadata, CompressionPerformanceStats, UniversalCompressionAdapter,
 };
 // Quantization now handled by unified compute module
 
 // Search pipeline re-exports
 pub use crate::storage::engines::core::search::search_common::{
-    UniversalSearchPipeline, SearchConfig, ProgressiveConfig,
-    SearchableFile, SearchableBlock, FileSearcher,
-    FilterProcessor, ResultManager,
+    FileSearcher, FilterProcessor, ProgressiveConfig, ResultManager, SearchConfig, SearchableBlock,
+    SearchableFile, UniversalSearchPipeline,
 };
 
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;
+use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 // Temporary placeholder types until modules are created
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -185,30 +186,30 @@ pub struct UniversalEngineConfig {
     pub engine_name: String,
     pub engine_type: EngineType,
     pub engine_version: String,
-    
+
     /// Collection configuration
     pub collection_id: String,
     pub dimension: usize,
     pub distance_metric: DistanceMetric,
-    
+
     /// Storage organization
     pub storage_config: UniversalStorageConfig,
-    
+
     /// Performance optimization
     pub performance: UniversalPerformanceConfig,
-    
+
     /// Quantization settings
     pub quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig,
-    
+
     /// Compression settings
     pub compression: UniversalCompressionConfig,
-    
+
     /// Validation settings
     pub validation: UniversalValidationConfig,
-    
+
     /// Batch operation settings
     pub batch_operations: UniversalBatchConfig,
-    
+
     /// Engine-specific extensions
     pub extensions: HashMap<String, serde_json::Value>,
 }
@@ -233,13 +234,13 @@ pub enum EngineType {
 pub struct UniversalStorageConfig {
     /// Data organization
     pub organization: StorageOrganization,
-    
+
     /// Block/chunk configuration
     pub block_config: UniversalBlockConfig,
-    
+
     /// Index configuration
     pub index_config: UniversalIndexConfig,
-    
+
     /// Schema configuration
     pub schema_config: UniversalSchemaConfig,
 }
@@ -289,11 +290,11 @@ pub struct UniversalBlockConfig {
     pub target_block_size: u64,
     pub min_block_size: u64,
     pub max_block_size: u64,
-    
+
     /// Block alignment
     pub alignment_bytes: usize,
     pub enable_padding: bool,
-    
+
     /// Block-level features
     pub compression: bool,
     pub enable_checksums: bool,
@@ -306,16 +307,16 @@ pub struct UniversalBlockConfig {
 pub struct UniversalIndexConfig {
     /// Index types to enable
     pub index_types: Vec<Index>,
-    
+
     /// ID index configuration
     pub id_index: IdIndexConfig,
-    
+
     /// Secondary index configuration
     pub secondary_indexes: Vec<SecondaryIndexConfig>,
-    
+
     /// Bloom filter configuration
     pub bloom_filters: BloomFilterConfig,
-    
+
     /// Index maintenance
     pub maintenance_config: IndexMaintenanceConfig,
 }
@@ -398,10 +399,10 @@ pub struct IndexMaintenanceConfig {
 pub struct UniversalSchemaConfig {
     /// Core vector schema
     pub vector_schema: VectorSchemaConfig,
-    
+
     /// Metadata schema
     pub metadata_schema: MetadataSchemaConfig,
-    
+
     /// Schema evolution settings
     pub evolution: SchemaEvolutionConfig,
 }
@@ -461,26 +462,26 @@ pub struct SchemaEvolutionConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SchemaMigrationStrategy {
-    Strict,        // No changes allowed
-    Compatible,    // Only compatible changes
-    Automatic,     // Automatic migration
-    Manual,        // Manual migration required
+    Strict,     // No changes allowed
+    Compatible, // Only compatible changes
+    Automatic,  // Automatic migration
+    Manual,     // Manual migration required
 }
 
 /// Universal engine capabilities trait
 pub trait UniversalEngineCapabilities {
     /// Get engine configuration
     fn get_config(&self) -> &UniversalEngineConfig;
-    
+
     /// Get supported engine features
     fn get_capabilities(&self) -> EngineCapabilities;
-    
+
     /// Check if feature is supported
     fn supports_feature(&self, feature: &str) -> bool;
-    
+
     /// Get performance characteristics
     fn get_performance_profile(&self) -> PerformanceProfile;
-    
+
     // TODO: Restore when ResourceRequirements is available
     // fn get_resource_requirements(&self) -> ResourceRequirements;
 }
@@ -493,25 +494,25 @@ pub struct EngineCapabilities {
     pub supports_similarity_search: bool,
     pub supports_range_queries: bool,
     pub supports_full_text_search: bool,
-    
+
     /// Advanced capabilities
     pub supports_transactions: bool,
     pub supports_multi_tenancy: bool,
     pub supports_replication: bool,
     pub supports_sharding: bool,
-    
+
     /// Performance capabilities
     pub supports_parallel_operations: bool,
     pub supports_streaming: bool,
     pub supports_batch_operations: bool,
     pub supports_caching: bool,
-    
+
     /// Storage capabilities
     pub supports_compression: bool,
     pub supports_quantization: bool,
     pub supports_encryption: bool,
     pub supports_backup_restore: bool,
-    
+
     /// Integration capabilities
     pub supports_cloud_storage: bool,
     pub supports_external_indexes: bool,
@@ -526,17 +527,17 @@ pub struct PerformanceProfile {
     pub read_throughput_ops_per_sec: f64,
     pub write_throughput_ops_per_sec: f64,
     pub search_throughput_ops_per_sec: f64,
-    
+
     /// Latency characteristics
     pub avg_read_latency_ms: f64,
     pub avg_write_latency_ms: f64,
     pub avg_search_latency_ms: f64,
-    
+
     /// Scalability characteristics
     pub max_collections: u64,
     pub max_vectors_per_collection: u64,
     pub max_concurrent_operations: usize,
-    
+
     /// Resource characteristics
     pub memory_overhead_percent: f32,
     pub storage_overhead_percent: f32,
@@ -550,7 +551,7 @@ pub trait UniversalEngineOperations {
     async fn get_vectors(&self, ids: &[String]) -> Result<Vec<Option<VectorRecord>>>;
     async fn update_vectors(&self, updates: Vec<(String, VectorRecord)>) -> Result<usize>;
     async fn delete_vectors(&self, ids: &[String]) -> Result<usize>;
-    
+
     /// Search operations
     async fn search_vectors(
         &self,
@@ -558,9 +559,9 @@ pub trait UniversalEngineOperations {
         top_k: usize,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<VectorRecord>>;
-    
+
     /// Batch operations
-    // TODO: Restore when BatchResult is available  
+    // TODO: Restore when BatchResult is available
     // async fn batch_insert(&self, vectors: Vec<VectorRecord>) -> Result<BatchResult>;
     async fn batch_search(
         &self,
@@ -568,7 +569,7 @@ pub trait UniversalEngineOperations {
         top_k: usize,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<Vec<VectorRecord>>>;
-    
+
     /// Administrative operations
     async fn optimize(&self) -> Result<()>;
     async fn compact(&self) -> Result<()>;
@@ -642,7 +643,8 @@ impl Default for UniversalEngineConfig {
             distance_metric: DistanceMetric::Cosine,
             storage_config: UniversalStorageConfig::default(),
             performance: UniversalPerformanceConfig::default(),
-            quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
+            quantization:
+                crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
             compression: UniversalCompressionConfig::default(),
             validation: UniversalValidationConfig::default(),
             batch_operations: UniversalBatchConfig::default(),
@@ -786,14 +788,14 @@ impl Default for SchemaEvolutionConfig {
 /// Utility functions for universal engine configuration
 pub mod utils {
     use super::*;
-    
+
     /// Create configuration optimized for a specific workload
     pub fn create_config_for_workload(
         workload: WorkloadType,
         hardware: &HardwareCapabilities,
     ) -> UniversalEngineConfig {
         let mut config = UniversalEngineConfig::default();
-        
+
         match workload {
             WorkloadType::HighThroughput => {
                 config.storage_config.organization = StorageOrganization::Hierarchical {
@@ -823,25 +825,28 @@ pub mod utils {
             }
             WorkloadType::RealTime => {
                 config.storage_config.organization = StorageOrganization::Adaptive {
-                    workload_hints: vec![WorkloadHint::RealTimeHeavy, WorkloadHint::PointQueryHeavy],
+                    workload_hints: vec![
+                        WorkloadHint::RealTimeHeavy,
+                        WorkloadHint::PointQueryHeavy,
+                    ],
                     adaptation_frequency: 60000, // 1 minute
                 };
                 config.performance.max_concurrent_operations = 16;
             }
         }
-        
+
         // Hardware-specific optimizations
         if hardware.memory.total_memory / (1024 * 1024 * 1024) > 64 {
             config.performance.cache_size_bytes = 8 * 1024 * 1024 * 1024; // 8GB
         }
-        
+
         if hardware.cpu.physical_cores > 16 {
             config.performance.max_concurrent_operations = hardware.cpu.physical_cores;
         }
-        
+
         config
     }
-    
+
     /// Validate configuration compatibility
     pub fn validate_config_compatibility(config: &UniversalEngineConfig) -> Result<()> {
         // Validate engine type matches storage organization
@@ -857,20 +862,20 @@ pub mod utils {
                 ));
             }
         }
-        
+
         // Validate dimension consistency
         if config.dimension != config.storage_config.schema_config.vector_schema.dimension {
             return Err(anyhow::anyhow!("Dimension mismatch in configuration"));
         }
-        
+
         // Validate performance settings
         if config.performance.max_concurrent_operations == 0 {
             return Err(anyhow::anyhow!("Max concurrent operations must be > 0"));
         }
-        
+
         Ok(())
     }
-    
+
     #[derive(Debug, Clone)]
     pub enum WorkloadType {
         HighThroughput,
@@ -882,60 +887,57 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::utils::*;
-    
+    use super::*;
+
     #[test]
     fn test_universal_config_creation() {
         let config = UniversalEngineConfig::default();
-        
+
         assert_eq!(config.engine_name, "universal");
         assert_eq!(config.dimension, 768);
         assert!(matches!(config.engine_type, EngineType::RowBased));
         assert!(config.storage_config.block_config.enable_compression);
     }
-    
+
     #[test]
     fn test_workload_specific_config() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        
-        let high_throughput_config = create_config_for_workload(
-            WorkloadType::HighThroughput,
-            &hardware,
-        );
-        
-        if let StorageOrganization::Hierarchical { records_per_block, .. } = 
-            high_throughput_config.storage_config.organization {
+
+        let high_throughput_config =
+            create_config_for_workload(WorkloadType::HighThroughput, &hardware);
+
+        if let StorageOrganization::Hierarchical {
+            records_per_block, ..
+        } = high_throughput_config.storage_config.organization
+        {
             assert_eq!(records_per_block, 4000);
         } else {
             panic!("Expected hierarchical organization for high throughput");
         }
-        
-        let analytics_config = create_config_for_workload(
-            WorkloadType::Analytics,
-            &hardware,
-        );
-        
+
+        let analytics_config = create_config_for_workload(WorkloadType::Analytics, &hardware);
+
         assert!(matches!(analytics_config.engine_type, EngineType::Columnar));
     }
-    
+
     #[test]
     fn test_config_validation() {
         let mut config = UniversalEngineConfig::default();
-        
+
         // Valid config should pass
         assert!(validate_config_compatibility(&config).is_ok());
-        
+
         // Mismatched dimensions should fail
         config.storage_config.schema_config.vector_schema.dimension = 512;
         assert!(validate_config_compatibility(&config).is_err());
-        
+
         // Fix dimension and test invalid concurrent operations
         config.storage_config.schema_config.vector_schema.dimension = 768;
         config.performance.max_concurrent_operations = 0;
         assert!(validate_config_compatibility(&config).is_err());
     }
-    
+
     #[test]
     fn test_engine_capabilities() {
         let capabilities = EngineCapabilities {
@@ -960,7 +962,7 @@ mod tests {
             supports_custom_extensions: true,
             supports_metrics_export: true,
         };
-        
+
         assert!(capabilities.supports_id_lookup);
         assert!(capabilities.supports_similarity_search);
         assert!(capabilities.supports_compression);

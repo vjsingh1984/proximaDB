@@ -7,21 +7,19 @@
 mod tests {
     use super::super::unified_handlers::*;
     use crate::proto::proximadb::{
-        CollectionConfig, CollectionRequest,
-        VectorBatchRequest, VectorSearchRequest,
-        CollectionOperation, VectorOperation, VectorRecord,
-        SearchQuery, IncludeFields,
+        CollectionConfig, CollectionOperation, CollectionRequest, IncludeFields, SearchQuery,
+        VectorBatchRequest, VectorOperation, VectorRecord, VectorSearchRequest,
     };
-    use std::sync::Arc;
+    use chrono::Utc;
     use std::collections::HashMap;
+    use std::sync::Arc;
     use tempfile::TempDir;
     use uuid::Uuid;
-    use chrono::Utc;
 
     /// Helper to create test collection config
     fn create_test_collection_config(name: &str) -> CollectionConfig {
-        use crate::proto::proximadb::{DistanceMetric, StorageEngine, IndexingAlgorithm};
-        
+        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+
         CollectionConfig {
             name: name.to_string(),
             dimension: 128,
@@ -55,7 +53,6 @@ mod tests {
             // rank removed -  None,
             similarity: None,
             similarity: None,
-        
         }
     }
 
@@ -70,19 +67,19 @@ mod tests {
             ("id".to_string(), "string".to_string()),
             ("name".to_string(), "string".to_string()),
         ];
-        
+
         let result = SqlQueryResult {
             rows: rows.clone(),
             columns: columns.clone(),
             row_count: 2,
         };
-        
+
         assert_eq!(result.rows.len(), 2);
         assert_eq!(result.columns.len(), 2);
         assert_eq!(result.row_count, 2);
         assert_eq!(result.columns[0].0, "id");
         assert_eq!(result.columns[1].0, "name");
-        
+
         // Test Debug implementation
         let debug_str = format!("{:?}", result);
         assert!(debug_str.contains_hash("SqlQueryResult"));
@@ -90,11 +87,11 @@ mod tests {
 
     #[test]
     fn test_collection_config_creation() {
-        use crate::proto::proximadb::{DistanceMetric, StorageEngine, IndexingAlgorithm};
-        
+        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+
         // Test collection config creation helper
         let config = create_test_collection_config("test_collection");
-        
+
         assert_eq!(config.name, "test_collection");
         assert_eq!(config.dimension, 128);
         assert_eq!(config.distance_metric, DistanceMetric::Cosine as i32);
@@ -113,7 +110,7 @@ mod tests {
     fn test_vector_record_creation() {
         // Test vector record creation helper
         let record = create_test_vector_record("test_id", 128);
-        
+
         assert_eq!(record.id.unwrap(), "test_id");
         assert_eq!(record.vector.len(), 128);
         assert_eq!(record.version, Some(1));
@@ -129,7 +126,7 @@ mod tests {
         let list_op = CollectionOperation::CollectionList as i32;
         let update_op = CollectionOperation::CollectionUpdate as i32;
         let delete_op = CollectionOperation::CollectionDelete as i32;
-        
+
         // These should be different values
         assert_ne!(create_op, get_op);
         assert_ne!(get_op, list_op);
@@ -143,7 +140,7 @@ mod tests {
         let batch_op = VectorOperation::VectorBatch as i32;
         let search_op = VectorOperation::VectorSearch as i32;
         let get_op = VectorOperation::VectorGet as i32;
-        
+
         // These should be different values
         assert_ne!(batch_op, search_op);
         assert_ne!(search_op, get_op);
@@ -157,13 +154,13 @@ mod tests {
             id: Some("search_id".to_string()),
             metadata_filter: None,
         };
-        
+
         assert_eq!(query.vector.len(), 4);
         assert_eq!(query.id.unwrap(), "search_id");
         assert!(query.metadata_filter.is_none());
     }
 
-    #[test] 
+    #[test]
     fn test_include_fields_structure() {
         // Test IncludeFields structure
         let fields = IncludeFields {
@@ -172,7 +169,7 @@ mod tests {
             similarity: true,
             // rank removed -  true,
         };
-        
+
         assert!(fields.vector);
         assert!(!fields.metadata);
         assert!(fields.score);
@@ -191,8 +188,11 @@ mod tests {
             options: HashMap::new(),
             migration_config: HashMap::new(),
         };
-        
-        assert_eq!(request.operation, CollectionOperation::CollectionCreate as i32);
+
+        assert_eq!(
+            request.operation,
+            CollectionOperation::CollectionCreate as i32
+        );
         assert_eq!(request.collection_id.unwrap(), "test_collection");
         assert!(request.collection_config.is_some());
     }
@@ -204,14 +204,14 @@ mod tests {
             create_test_vector_record("vec1", 128),
             create_test_vector_record("vec2", 128),
         ];
-        
+
         let request = VectorBatchRequest {
             collection_id: "test_collection".to_string(),
             vectors,
             batch_timeout_ms: Some(5000),
             request_id: Some("test_request".to_string()),
         };
-        
+
         assert_eq!(request.collection_id, "test_collection");
         assert_eq!(request.vectors.len(), 2);
         assert_eq!(request.batch_timeout_ms.unwrap(), 5000);
@@ -226,7 +226,7 @@ mod tests {
             id: None,
             metadata_filter: None,
         };
-        
+
         let request = VectorSearchRequest {
             collection_id: "test_collection".to_string(),
             queries: vec![query],
@@ -241,7 +241,7 @@ mod tests {
             }),
             search_optimization: None,
         };
-        
+
         assert_eq!(request.collection_id, "test_collection");
         assert_eq!(request.queries.len(), 1);
         assert_eq!(request.top_k, 10);
@@ -262,9 +262,8 @@ mod tests {
             // rank removed -  Some(1),
             similarity: Some(0.95),
             similarity: Some(0.1),
-        
         };
-        
+
         assert_eq!(record.id.unwrap(), "test_id");
         assert_eq!(record.vector.len(), 3);
         assert_eq!(record.timestamp, 1234567890);
@@ -280,8 +279,8 @@ mod tests {
     #[test]
     fn test_collection_config_optional_fields() {
         // Test CollectionConfig with different optional field configurations
-        use crate::proto::proximadb::{DistanceMetric, StorageEngine, IndexingAlgorithm};
-        
+        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+
         let mut config = CollectionConfig {
             name: "test".to_string(),
             dimension: 256,
@@ -296,23 +295,23 @@ mod tests {
             description: None,
             tags: vec![],
             owner: None,
-                compression: None,
-                optimization_hints: None,
-                storage_location: None,
-            };
-        
+            compression: None,
+            optimization_hints: None,
+            storage_location: None,
+        };
+
         assert_eq!(config.dimension, 256);
         assert_eq!(config.distance_metric, DistanceMetric::Euclidean as i32);
         assert!(config.description.is_none());
         assert!(config.tags.is_none());
         assert!(config.owner.is_none());
         assert!(!config.auto_index_selection);
-        
+
         // Test setting optional fields
         config.description = Some("Updated description".to_string());
         config.owner = Some("new_owner".to_string());
         config.auto_index_selection = true;
-        
+
         assert_eq!(config.description.unwrap(), "Updated description");
         assert_eq!(config.owner.unwrap(), "new_owner");
         assert!(config.auto_index_selection);
@@ -338,7 +337,7 @@ mod tests {
                 metadata_filter: None,
             },
         ];
-        
+
         let request = VectorSearchRequest {
             collection_id: "multi_query_collection".to_string(),
             queries,
@@ -348,7 +347,7 @@ mod tests {
             include_fields: None,
             search_optimization: None,
         };
-        
+
         assert_eq!(request.queries.len(), 3);
         assert_eq!(request.queries[0].id.as_ref().unwrap(), "query1");
         assert_eq!(request.queries[1].id.as_ref().unwrap(), "query2");
@@ -364,11 +363,11 @@ mod tests {
             create_test_vector_record("vec_128", 128),
             create_test_vector_record("vec_256", 256),
         ];
-        
+
         assert_eq!(vectors[0].vector.len(), 64);
         assert_eq!(vectors[1].vector.len(), 128);
         assert_eq!(vectors[2].vector.len(), 256);
-        
+
         // Each vector should have expected value pattern
         assert_eq!(vectors[0].vector[0], 0.0);
         assert_eq!(vectors[0].vector[1], 0.1);
@@ -379,8 +378,8 @@ mod tests {
     #[test]
     fn test_collection_tags_handling() {
         // Test collection config with tags
-        use crate::proto::proximadb::{DistanceMetric, StorageEngine, IndexingAlgorithm};
-        
+        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+
         let config = CollectionConfig {
             name: "metadata_test".to_string(),
             dimension: 100,
@@ -395,11 +394,11 @@ mod tests {
             description: Some("Collection with tags".to_string()),
             tags: vec!["production".to_string(), "v1".to_string()],
             owner: Some("test_owner".to_string()),
-                compression: None,
-                optimization_hints: None,
-                storage_location: None,
-            };
-        
+            compression: None,
+            optimization_hints: None,
+            storage_location: None,
+        };
+
         assert_eq!(config.tags.len(), 2);
         assert!(config.tags.contains_hash(&"production".to_string()));
         assert!(config.tags.contains_hash(&"v1".to_string()));
@@ -416,7 +415,7 @@ mod tests {
             (CollectionOperation::CollectionUpdate, "update"),
             (CollectionOperation::CollectionDelete, "delete"),
         ];
-        
+
         for (op, name) in operations {
             let op_value = op as i32;
             assert!(op_value >= 0);
@@ -427,7 +426,9 @@ mod tests {
                 CollectionOperation::CollectionList as i32,
                 CollectionOperation::CollectionUpdate as i32,
                 CollectionOperation::CollectionDelete as i32,
-            ].into_iter().collect();
+            ]
+            .into_iter()
+            .collect();
             assert_eq!(unique_ops.len(), 5); // All should be unique
         }
     }
@@ -436,15 +437,15 @@ mod tests {
     fn test_edge_case_vector_values() {
         // Test vector with edge case values
         let edge_vector = vec![
-            0.0,           // Zero
-            1.0,           // One
-            -1.0,          // Negative
-            0.000001,      // Very small positive
-            -0.000001,     // Very small negative
-            999999.0,      // Very large positive
-            -999999.0,     // Very large negative
+            0.0,       // Zero
+            1.0,       // One
+            -1.0,      // Negative
+            0.000001,  // Very small positive
+            -0.000001, // Very small negative
+            999999.0,  // Very large positive
+            -999999.0, // Very large negative
         ];
-        
+
         let record = VectorRecord {
             id: Some("edge_case_vector".to_string()),
             vector: edge_vector.clone(),
@@ -456,9 +457,8 @@ mod tests {
             // rank removed -  None,
             similarity: None,
             similarity: None,
-        
         };
-        
+
         assert_eq!(record.vector.len(), 7);
         assert_eq!(record.vector[0], 0.0);
         assert_eq!(record.vector[1], 1.0);
@@ -473,12 +473,12 @@ mod tests {
     fn test_request_timeout_values() {
         // Test different timeout configurations
         let timeouts = vec![
-            None,           // No timeout
-            Some(1000),     // 1 second
-            Some(30000),    // 30 seconds
-            Some(300000),   // 5 minutes
+            None,         // No timeout
+            Some(1000),   // 1 second
+            Some(30000),  // 30 seconds
+            Some(300000), // 5 minutes
         ];
-        
+
         for timeout in timeouts {
             let request = VectorBatchRequest {
                 collection_id: "timeout_test".to_string(),
@@ -486,7 +486,7 @@ mod tests {
                 batch_timeout_ms: timeout,
                 request_id: Some("timeout_test".to_string()),
             };
-            
+
             match timeout {
                 None => assert!(request.batch_timeout_ms.is_none()),
                 Some(expected) => assert_eq!(request.batch_timeout_ms.unwrap(), expected),
@@ -498,28 +498,29 @@ mod tests {
     fn test_vector_batch_configurations() {
         // Test different vector batch configurations
         let batch_sizes = vec![
-            None,           // Default batch size
-            Some(1),        // Single vector
-            Some(3),        // Small batch
-            Some(5),        // Medium batch
-            Some(10),       // Large batch
+            None,     // Default batch size
+            Some(1),  // Single vector
+            Some(3),  // Small batch
+            Some(5),  // Medium batch
+            Some(10), // Large batch
         ];
-        
+
         for batch_size in batch_sizes {
             // VectorBatchRequest doesn't have batch_size field, so we test with vectors count instead
             let vectors_count = batch_size;
             let mut vectors = Vec::new();
-            for i in 0..vectors_count.min(10) { // Limit to 10 for test performance
+            for i in 0..vectors_count.min(10) {
+                // Limit to 10 for test performance
                 vectors.push(create_test_vector_record(&format!("test_{}", i), 32));
             }
-            
+
             let request = VectorBatchRequest {
                 collection_id: "batch_size_test".to_string(),
                 vectors: vectors.clone(),
                 batch_timeout_ms: Some(5000),
                 request_id: Some("batch_test".to_string()),
             };
-            
+
             assert_eq!(request.vectors.len(), vectors.len());
             assert_eq!(request.batch_timeout_ms.unwrap(), 5000);
         }

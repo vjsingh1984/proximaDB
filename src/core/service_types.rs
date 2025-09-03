@@ -109,11 +109,11 @@ pub struct VectorRecord {
     pub collection_id: String,
     pub vector: Vec<f32>,
     pub metadata: HashMap<String, serde_json::Value>,
-    pub timestamp: i64,  // Required, seconds since epoch as i64 for Avro
-    pub updated_at: Option<i64>,  // Optional
-    pub expires_at: Option<i64>,  // Optional
-    pub version: Option<i64>,  // Optional
-    // Note: similarity, rank, score fields are only on SearchVectorRecord, not VectorRecord
+    pub timestamp: i64,          // Required, seconds since epoch as i64 for Avro
+    pub updated_at: Option<i64>, // Optional
+    pub expires_at: Option<i64>, // Optional
+    pub version: Option<i64>,    // Optional
+                                 // Note: similarity, rank, score fields are only on SearchVectorRecord, not VectorRecord
 }
 
 // Note: VectorRecord intentionally does NOT implement Eq or Hash
@@ -166,17 +166,20 @@ impl VectorRecord {
     /// This is used for WAL writes, network transmission, storage
     pub fn to_avro_bytes(&self) -> Result<Vec<u8>, apache_avro::Error> {
         use apache_avro::{types::Record, types::Value};
-        
+
         let mut writer = Writer::new(&*VECTOR_RECORD_SCHEMA, Vec::new());
-        
+
         // Create an Avro record manually to handle union types properly
         let mut record = Record::new(&*VECTOR_RECORD_SCHEMA).ok_or_else(|| {
             apache_avro::Error::DeserializeValue("Failed to create Avro record".to_string())
         })?;
         record.put("id", Value::String(self.id.clone()));
         record.put("collection_id", Value::String(self.collection_id.clone()));
-        record.put("vector", Value::Array(self.vector.iter().map(|&f| Value::Float(f)).collect()));
-        
+        record.put(
+            "vector",
+            Value::Array(self.vector.iter().map(|&f| Value::Float(f)).collect()),
+        );
+
         // Convert metadata map with union values
         let mut metadata_map = std::collections::HashMap::new();
         for (key, value) in &self.metadata {
@@ -198,17 +201,32 @@ impl VectorRecord {
             metadata_map.insert(key.clone(), avro_value);
         }
         record.put("metadata_info", Value::Map(metadata_map));
-        
+
         record.put("timestamp", Value::Long(self.timestamp));
-        record.put("updated_at", self.updated_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("expires_at", self.expires_at.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
-        record.put("version", self.version.map(Value::Long).unwrap_or(Value::Union(0, Box::new(Value::Null))));
+        record.put(
+            "updated_at",
+            self.updated_at
+                .map(Value::Long)
+                .unwrap_or(Value::Union(0, Box::new(Value::Null))),
+        );
+        record.put(
+            "expires_at",
+            self.expires_at
+                .map(Value::Long)
+                .unwrap_or(Value::Union(0, Box::new(Value::Null))),
+        );
+        record.put(
+            "version",
+            self.version
+                .map(Value::Long)
+                .unwrap_or(Value::Union(0, Box::new(Value::Null))),
+        );
         // Note: rank and score fields removed from VectorRecord struct - only similarity/distance remains
         // These fields exist in the Avro schema for compatibility but are not used
         record.put("rank", Value::Union(0, Box::new(Value::Null)));
         record.put("score", Value::Union(0, Box::new(Value::Null)));
         record.put("distance", Value::Union(0, Box::new(Value::Null)));
-        
+
         writer.append(record)?;
         writer.flush()?;
         Ok(writer.into_inner()?)
@@ -334,8 +352,8 @@ impl VectorRecord {
 
 /// Use proto-generated enums as single source of truth
 pub use crate::proto::proximadb::DistanceMetric;
-pub use crate::proto::proximadb::StorageEngine;
 pub use crate::proto::proximadb::IndexingAlgorithm;
+pub use crate::proto::proximadb::StorageEngine;
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CompressionAlgorithm {
@@ -379,7 +397,6 @@ impl Default for CompactionStrategy {
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionConfig {
-
     pub max_sstable_size_mb: u64,
     pub max_level_size_mb: u64,
     pub compaction_threads: u32,
@@ -778,7 +795,10 @@ impl CollectionResponse {
     }
 
     /// Set the multiple collections result
-    pub fn with_collections(mut self, collections: Vec<crate::proto::proximadb::Collection>) -> Self {
+    pub fn with_collections(
+        mut self,
+        collections: Vec<crate::proto::proximadb::Collection>,
+    ) -> Self {
         self.affected_count = collections.len() as i64;
         self.collections = collections;
         self
@@ -877,15 +897,15 @@ pub enum VectorOperation {
 }
 
 /// SearchRequest - External API representation of a vector search request.
-/// 
+///
 /// This structure represents what clients send when requesting a search operation.
 /// It's designed for API compatibility and ease of use from client SDKs.
-/// 
+///
 /// # Purpose
 /// - API contract for search requests
 /// - Client SDK interface
 /// - REST/gRPC request representation
-/// 
+///
 /// # Usage
 /// Used by API handlers to receive search requests from clients.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

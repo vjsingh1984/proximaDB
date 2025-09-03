@@ -1,16 +1,16 @@
 //! SST Engine Index-Based Data Reader
-//! 
+//!
 //! SST // strategy removed -  Read entire blocks then filter using indices
 //! This leverages LSM block structure for efficient bulk I/O
 
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use anyhow::Result;
 use tracing::{debug, info};
 
 use crate::core::VectorRecord;
 use crate::core::search::index_based_filter::{
-    IndexBasedDataReader, MetadataSource, ReadStrategy, ColumnMetadata, ColumnData
+    ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
 
 /// SST-specific metadata source representing an SST file
@@ -32,22 +32,22 @@ impl MetadataSource for SSTMetadataSource {
     fn get_row_count(&self) -> usize {
         self.sst_metadata.total_rows
     }
-    
+
     fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata> {
         self.sst_metadata.column_info.get(column_name).cloned()
     }
-    
+
     fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value> {
         self.column_metadata_cache
             .get(column_name)
             .and_then(|column_values| column_values.get(row_idx))
             .cloned()
     }
-    
+
     fn get_source_id(&self) -> String {
         self.file_path.clone()
     }
-    
+
     fn supports_selective_reading(&self) -> bool {
         false // SST reads entire blocks, then filters in memory
     }
@@ -56,55 +56,59 @@ impl MetadataSource for SSTMetadataSource {
 impl SSTMetadataSource {
     /// Create metadata source by reading SST file metadata
     pub async fn from_sst_file(file_path: &str) -> Result<Self> {
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?
+                .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?,
         );
-        let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
-            metadata_cache: crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
-                max_memory_mb: 100,
+        let zero_copy_config =
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
+                metadata_cache:
+                    crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
+                        max_memory_mb: 100,
+                        ..Default::default()
+                    },
                 ..Default::default()
-            },
-            ..Default::default()
-        };
+            };
         let zero_copy_system = Arc::new(
             crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
                 zero_copy_config,
                 filesystem.clone(),
-                Vec::new()
-            ).await?
+                Vec::new(),
+            )
+            .await?,
         );
         let reader = crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
             filesystem,
             zero_copy_system,
             String::from("indexed_reader")
         );
-        
+
         // Load metadata to build index cache - SST doesn't support full read like VIPER
         reader.load_metadata(file_path).await?;
-        
+
         // For SST, we'll build minimal metadata since we can't read all records efficiently
         // This is by design - SST is optimized for key-based lookups, not full scans
         let total_rows = 1000; // Estimated - would come from SST header if available
-        
+
         // Build minimal column metadata cache for SST
         let column_metadata_cache = HashMap::new(); // Empty for now - SST doesn't do full scans
         let column_info = HashMap::new(); // Empty for now - would be populated from bloom filter metadata
-        
+
         Ok(Self {
             file_path: file_path.to_string(),
             sst_metadata: SSTFileMetadata {
                 total_rows,
                 column_info,
-                block_count: 1, // TODO: Read actual block count from SST metadata
+                block_count: 1,     // TODO: Read actual block count from SST metadata
                 file_size_bytes: 0, // TODO: Get actual file size
             },
             column_metadata_cache,
         })
     }
-    
+
     fn infer_data_type(value: &serde_json::Value) -> ColumnData {
         match value {
             serde_json::Value::String(_) => ColumnData::String(String::new()),
@@ -114,7 +118,7 @@ impl SSTMetadataSource {
             _ => ColumnData::String(String::new()), // Default
         }
     }
-    
+
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         crate::core::search::json_comparison::compare_json_values(a, b)
     }
@@ -130,19 +134,24 @@ impl SSTIndexBasedReader {
     pub fn new() -> Self {
         // For synchronous new, we'll create a minimal filesystem factory
         // In practice, this should be passed in as a dependency
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_config =
+            crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
             // Use blocking runtime for synchronous constructor
             tokio::runtime::Handle::current()
-                .block_on(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config))
-                .expect("Failed to create filesystem factory")
+                .block_on(
+                    crate::storage::persistence::filesystem::FilesystemFactory::new(
+                        filesystem_config,
+                    ),
+                )
+                .expect("Failed to create filesystem factory"),
         );
         // Create a zero-copy IO system for the reader
         let zero_copy_system = Arc::new(crate::storage::engines::impls::sst::readers::zero_copy::orchestrator::ZeroCopyIOSystem::new(
             filesystem.clone(),
             1024 * 1024 * 64, // 64MB cache
         ));
-        
+
         Self {
             reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
                 filesystem,
@@ -151,7 +160,7 @@ impl SSTIndexBasedReader {
             ),
         }
     }
-    
+
     /// Filter entire block using indices (SST reads full blocks)
     /// Note: This is a placeholder - real implementation would use block readers
     async fn filter_by_indices(
@@ -162,16 +171,16 @@ impl SSTIndexBasedReader {
         // SST Strategy: Read entire blocks, filter using indices
         // This would typically read blocks and filter by indices
         // For now, return empty records with proper structure
-        
+
         debug!("SST filter by indices: {} indices requested", indices.len());
-        
+
         // Placeholder - real implementation would:
         // 1. Identify which blocks contain the indices
         // 2. Read those blocks fully
         // 3. Filter by the specific indices
         Ok(Vec::new())
     }
-    
+
     /// Read full SST file - placeholder implementation
     /// Note: SST is optimized for key-based lookups, not full file reads
     async fn read_full_file(&self, _file_path: &str) -> Result<Vec<VectorRecord>> {
@@ -195,34 +204,40 @@ impl IndexBasedDataReader for SSTIndexBasedReader {
                 debug!("SST: Skipping file {} - no qualifying rows", source_id);
                 Ok(Vec::new())
             }
-            
+
             ReadStrategy::ReadFullBlock => {
                 debug!("SST: Reading full file {} - high selectivity", source_id);
                 self.read_full_file(source_id).await
             }
-            
-            ReadStrategy::SelectiveRead { indices, estimated_benefit } => {
-                info!("SST: Block read with filter for {} - {} indices, {:.1}% memory savings", 
-                      source_id, indices.len(), estimated_benefit * 100.0);
-                
+
+            ReadStrategy::SelectiveRead {
+                indices,
+                estimated_benefit,
+            } => {
+                info!(
+                    "SST: Block read with filter for {} - {} indices, {:.1}% memory savings",
+                    source_id,
+                    indices.len(),
+                    estimated_benefit * 100.0
+                );
+
                 // SST Strategy: Read entire blocks then filter by indices
                 // This is still beneficial as it reduces post-processing overhead
                 let filtered_records = self.filter_by_indices(source_id, indices).await?;
-                
-                debug!("SST: Block filtering completed - {} records", filtered_records.len());
+
+                debug!(
+                    "SST: Block filtering completed - {} records",
+                    filtered_records.len()
+                );
                 Ok(filtered_records)
             }
         }
     }
-    
-    fn estimate_selective_read_benefit(
-        &self,
-        indices: &[usize],
-        total_rows: usize,
-    ) -> f32 {
+
+    fn estimate_selective_read_benefit(&self, indices: &[usize], total_rows: usize) -> f32 {
         // For SST, the benefit is primarily in memory usage and post-processing
         let selectivity = indices.len() as f32 / total_rows as f32;
-        
+
         // SST benefit is lower than VIPER since we still read entire blocks
         // But we save on memory allocation and post-processing time
         (1.0 - selectivity) * 0.3 // Up to 30% benefit for memory and processing
@@ -237,29 +252,29 @@ impl SSTMetadataSourceFactory {
     pub async fn create_from_file_path(file_path: &str) -> Result<SSTMetadataSource> {
         SSTMetadataSource::from_sst_file(file_path).await
     }
-    
+
     /// Create multiple metadata sources for batch processing
     pub async fn create_batch_from_paths(file_paths: &[String]) -> Result<Vec<SSTMetadataSource>> {
         let mut sources = Vec::new();
-        
+
         for path in file_paths {
             let source = Self::create_from_file_path(path).await?;
             sources.push(source);
         }
-        
+
         Ok(sources)
     }
-    
+
     /// Create metadata sources with column optimization
     pub async fn create_with_column_filters(
         file_paths: &[String],
         filter_columns: &[String],
     ) -> Result<Vec<SSTMetadataSource>> {
         let mut sources = Vec::new();
-        
+
         for path in file_paths {
             let mut source = Self::create_from_file_path(path).await?;
-            
+
             // Optimize metadata cache to only include filter columns
             let mut optimized_cache = HashMap::new();
             for column in filter_columns {
@@ -268,10 +283,10 @@ impl SSTMetadataSourceFactory {
                 }
             }
             source.column_metadata_cache = optimized_cache;
-            
+
             sources.push(source);
         }
-        
+
         Ok(sources)
     }
 }

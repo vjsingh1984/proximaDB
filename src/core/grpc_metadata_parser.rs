@@ -2,14 +2,16 @@
 //!
 //! Supports both simple string-based filters and advanced JSON-based logical operators.
 
+use anyhow::{Context, Result};
+use serde_json::{Value as JsonValue, json};
 use std::collections::HashMap;
-use serde_json::{json, Value as JsonValue};
-use anyhow::{Result, Context};
 
-use crate::core::{MetadataQuery, FieldQuery, ComparisonOperator};
+use crate::core::{ComparisonOperator, FieldQuery, MetadataQuery};
 
 /// Parse metadata filters from gRPC request into logical metadata query
-pub fn parse_metadata_query(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
+pub fn parse_metadata_query(
+    metadata_filter: &HashMap<String, String>,
+) -> Result<Option<MetadataQuery>> {
     if metadata_filter.is_empty() {
         return Ok(None);
     }
@@ -37,7 +39,7 @@ pub fn parse_metadata_query(metadata_filter: &HashMap<String, String>) -> Result
 fn parse_json_logical_query(json_str: &str) -> Result<Option<MetadataQuery>> {
     let query_value: JsonValue = serde_json::from_str(json_str)
         .with_context(|| format!("Invalid JSON in logical query: {}", json_str))?;
-    
+
     parse_json_query_value(&query_value)
 }
 
@@ -75,7 +77,7 @@ fn parse_json_and(and_array: &JsonValue) -> Result<Option<MetadataQuery>> {
                 parsed_queries.push(query);
             }
         }
-        
+
         if parsed_queries.is_empty() {
             Ok(None)
         } else {
@@ -95,7 +97,7 @@ fn parse_json_or(or_array: &JsonValue) -> Result<Option<MetadataQuery>> {
                 parsed_queries.push(query);
             }
         }
-        
+
         if parsed_queries.is_empty() {
             Ok(None)
         } else {
@@ -116,12 +118,15 @@ fn parse_json_not(not_obj: &JsonValue) -> Result<Option<MetadataQuery>> {
 }
 
 /// Parse JSON field query with operators
-fn parse_json_field_query(field_name: &str, field_value: &JsonValue) -> Result<Option<MetadataQuery>> {
+fn parse_json_field_query(
+    field_name: &str,
+    field_value: &JsonValue,
+) -> Result<Option<MetadataQuery>> {
     match field_value {
         JsonValue::Object(operators) => {
             // Field with operators like {"price": {"$gt": 100, "$lt": 500}}
             let mut queries = Vec::new();
-            
+
             for (op, value) in operators {
                 let operator = match op.as_str() {
                     "$eq" | "eq" => ComparisonOperator::Equal,
@@ -143,14 +148,14 @@ fn parse_json_field_query(field_name: &str, field_value: &JsonValue) -> Result<O
                         continue;
                     }
                 };
-                
+
                 queries.push(MetadataQuery::Field(FieldQuery {
                     field: field_name.to_string(),
                     operator,
                     value: value.clone(),
                 }));
             }
-            
+
             if queries.is_empty() {
                 Ok(None)
             } else if queries.len() == 1 {
@@ -161,15 +166,21 @@ fn parse_json_field_query(field_name: &str, field_value: &JsonValue) -> Result<O
         }
         _ => {
             // Simple equality: {"category": "electronics"}
-            Ok(Some(MetadataQuery::field_eq(field_name, field_value.clone())))
+            Ok(Some(MetadataQuery::field_eq(
+                field_name,
+                field_value.clone(),
+            )))
         }
     }
 }
 
 /// Parse logical operator queries from special fields
-fn parse_operator_queries(metadata_filter: &HashMap<String, String>, operator: &str) -> Result<Vec<MetadataQuery>> {
+fn parse_operator_queries(
+    metadata_filter: &HashMap<String, String>,
+    operator: &str,
+) -> Result<Vec<MetadataQuery>> {
     let mut queries = Vec::new();
-    
+
     // Look for numbered operator fields: __and_1, __and_2, etc.
     for (key, value) in metadata_filter {
         if key.starts_with(operator) && key.len() > operator.len() {
@@ -189,7 +200,7 @@ fn parse_operator_queries(metadata_filter: &HashMap<String, String>, operator: &
             }
         }
     }
-    
+
     Ok(queries)
 }
 
@@ -219,28 +230,28 @@ fn construct_logical_query(
     metadata_filter: &HashMap<String, String>,
 ) -> Result<Option<MetadataQuery>> {
     let mut all_queries = Vec::new();
-    
+
     // Add AND queries
     if !and_queries.is_empty() {
         all_queries.push(MetadataQuery::And(and_queries));
     }
-    
+
     // Add OR queries
     if !or_queries.is_empty() {
         all_queries.push(MetadataQuery::Or(or_queries));
     }
-    
+
     // Add NOT query
     if let Some(not_q) = not_query {
         all_queries.push(not_q);
     }
-    
+
     // Add simple equality filters (excluding special operator fields)
     let simple_queries = parse_simple_filters_excluding_operators(metadata_filter)?;
     if let Some(simple_query) = simple_queries {
         all_queries.push(simple_query);
     }
-    
+
     // Combine all queries with AND
     if all_queries.is_empty() {
         Ok(None)
@@ -252,19 +263,21 @@ fn construct_logical_query(
 }
 
 /// Parse simple equality filters
-fn parse_simple_filters(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
+fn parse_simple_filters(
+    metadata_filter: &HashMap<String, String>,
+) -> Result<Option<MetadataQuery>> {
     let mut queries = Vec::new();
-    
+
     for (key, value) in metadata_filter {
         // Try to parse value as JSON, fall back to string
         let json_value = match serde_json::from_str::<JsonValue>(value) {
             Ok(json_val) => json_val,
             Err(_) => JsonValue::String(value.clone()),
         };
-        
+
         queries.push(MetadataQuery::field_eq(key, json_value));
     }
-    
+
     if queries.is_empty() {
         Ok(None)
     } else if queries.len() == 1 {
@@ -275,24 +288,26 @@ fn parse_simple_filters(metadata_filter: &HashMap<String, String>) -> Result<Opt
 }
 
 /// Parse simple filters excluding operator fields
-fn parse_simple_filters_excluding_operators(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
+fn parse_simple_filters_excluding_operators(
+    metadata_filter: &HashMap<String, String>,
+) -> Result<Option<MetadataQuery>> {
     let mut queries = Vec::new();
-    
+
     for (key, value) in metadata_filter {
         // Skip operator fields
         if key.starts_with("__") {
             continue;
         }
-        
+
         // Try to parse value as JSON, fall back to string
         let json_value = match serde_json::from_str::<JsonValue>(value) {
             Ok(json_val) => json_val,
             Err(_) => JsonValue::String(value.clone()),
         };
-        
+
         queries.push(MetadataQuery::field_eq(key, json_value));
     }
-    
+
     if queries.is_empty() {
         Ok(None)
     } else if queries.len() == 1 {
@@ -305,17 +320,16 @@ fn parse_simple_filters_excluding_operators(metadata_filter: &HashMap<String, St
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
-    
+    use tracing::{debug, error, info, warn};
 
     #[test]
     fn test_simple_equality_parsing() {
         let mut filter = HashMap::new();
         filter.insert("category".to_string(), "electronics".to_string());
         filter.insert("brand".to_string(), "TechCorp".to_string());
-        
+
         let query = parse_metadata_query(&filter).unwrap().unwrap();
-        
+
         // Should create AND query with two equality conditions
         match query {
             MetadataQuery::And(queries) => {
@@ -328,17 +342,21 @@ use tracing::{debug, error, info, warn};
     #[test]
     fn test_json_logical_query_parsing() {
         let mut filter = HashMap::new();
-        filter.insert("__logical_query".to_string(), r#"
+        filter.insert(
+            "__logical_query".to_string(),
+            r#"
         {
             "and": [
                 {"category": "electronics"},
                 {"price": {"$lt": 300}}
             ]
         }
-        "#.to_string());
-        
+        "#
+            .to_string(),
+        );
+
         let query = parse_metadata_query(&filter).unwrap().unwrap();
-        
+
         match query {
             MetadataQuery::And(queries) => {
                 assert_eq!(queries.len(), 2);
@@ -350,11 +368,17 @@ use tracing::{debug, error, info, warn};
     #[test]
     fn test_operator_field_parsing() {
         let mut filter = HashMap::new();
-        filter.insert("__and_1".to_string(), r#"{"category": "electronics"}"#.to_string());
-        filter.insert("__and_2".to_string(), r#"{"price": {"$lt": 300}}"#.to_string());
-        
+        filter.insert(
+            "__and_1".to_string(),
+            r#"{"category": "electronics"}"#.to_string(),
+        );
+        filter.insert(
+            "__and_2".to_string(),
+            r#"{"price": {"$lt": 300}}"#.to_string(),
+        );
+
         let query = parse_metadata_query(&filter).unwrap().unwrap();
-        
+
         match query {
             MetadataQuery::And(queries) => {
                 assert!(!queries.is_none());
@@ -366,7 +390,9 @@ use tracing::{debug, error, info, warn};
     #[test]
     fn test_complex_query_parsing() {
         let mut filter = HashMap::new();
-        filter.insert("__logical_query".to_string(), r#"
+        filter.insert(
+            "__logical_query".to_string(),
+            r#"
         {
             "or": [
                 {
@@ -383,10 +409,12 @@ use tracing::{debug, error, info, warn};
                 }
             ]
         }
-        "#.to_string());
-        
+        "#
+            .to_string(),
+        );
+
         let query = parse_metadata_query(&filter).unwrap().unwrap();
-        
+
         match query {
             MetadataQuery::Or(queries) => {
                 assert_eq!(queries.len(), 2);

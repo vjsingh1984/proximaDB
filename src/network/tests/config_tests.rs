@@ -15,7 +15,7 @@ mod tests {
         assert!(config.enable_rest);
         assert!(config.enable_dashboard);
         assert!(!config.auth.enabled);
-        assert!(!config.rate_limit.enabled);  // Now disabled by default
+        assert!(!config.rate_limit.enabled); // Now disabled by default
         assert_eq!(config.request_timeout_secs, 30);
         assert_eq!(config.max_request_size, 64 * 1024 * 1024);
         assert_eq!(config.keep_alive_timeout_secs, 60);
@@ -77,7 +77,7 @@ mod tests {
     async fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
 
-        assert!(!config.enabled);  // Now disabled by default
+        assert!(!config.enabled); // Now disabled by default
         assert_eq!(config.requests_per_minute, 1000);
         assert_eq!(config.burst_size, 100);
         assert!(config.by_ip);
@@ -178,10 +178,10 @@ mod tests {
         };
 
         let middleware_config = config.to_middleware_config();
-        
+
         assert_eq!(middleware_config.enabled, true);
-        assert_eq!(middleware_config.max_requests, 150);  // Uses burst_size
-        assert_eq!(middleware_config.window_duration.as_secs(), 60);  // 1 minute
+        assert_eq!(middleware_config.max_requests, 150); // Uses burst_size
+        assert_eq!(middleware_config.window_duration.as_secs(), 60); // 1 minute
         assert_eq!(middleware_config.limit_health_endpoints, true);
         assert_eq!(middleware_config.global_max_requests, Some(5000));
     }

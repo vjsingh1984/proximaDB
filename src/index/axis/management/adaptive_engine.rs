@@ -10,13 +10,15 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::migration_engine::{MigrationComplexity, MigrationDecision};
 use crate::index::axis::{
     AxisConfig, CollectionAnalyzer,
-    management::strategy::{OptimizationConfig, OptimizationGoal, CollectionStatistics, QueryPatterns, IndexStrategyBuilder},
-    types::{Data, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy},
+    management::strategy::{
+        CollectionStatistics, IndexStrategyBuilder, OptimizationConfig, OptimizationGoal,
+        QueryPatterns,
+    },
+    types::{Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification},
 };
-use super::migration_engine::{MigrationDecision, MigrationComplexity};
-
 
 /// Engine for analyzing collections and recommending optimal indexing strategies
 pub struct AdaptiveIndexEngine {
@@ -412,15 +414,23 @@ impl AdaptiveIndexEngine {
         // TODO: Use ML models for accurate prediction
 
         // Calculate improvement based on index specifications
-        let current_has_vector = current.indexes.iter()
-            .any(|idx| matches!(idx.data_type, Data::DenseVector { .. } | Data::SparseVector { .. }));
-        let optimal_has_vector = optimal.indexes.iter()
-            .any(|idx| matches!(idx.data_type, Data::DenseVector { .. } | Data::SparseVector { .. }));
-        
+        let current_has_vector = current.indexes.iter().any(|idx| {
+            matches!(
+                idx.data_type,
+                Data::DenseVector { .. } | Data::SparseVector { .. }
+            )
+        });
+        let optimal_has_vector = optimal.indexes.iter().any(|idx| {
+            matches!(
+                idx.data_type,
+                Data::DenseVector { .. } | Data::SparseVector { .. }
+            )
+        });
+
         let improvement = match (current_has_vector, optimal_has_vector) {
-            (false, true) => 0.6,  // 60% improvement adding vector index
-            (true, true) => 0.2,   // 20% improvement optimizing existing
-            _ => 0.1,              // Default 10% improvement
+            (false, true) => 0.6, // 60% improvement adding vector index
+            (true, true) => 0.2,  // 20% improvement optimizing existing
+            _ => 0.1,             // Default 10% improvement
         };
 
         Ok(improvement)
@@ -450,7 +460,7 @@ impl AdaptiveIndexEngine {
         let current_count = current.indexes.len();
         let target_count = target.indexes.len();
         let count_diff = (current_count as f64 - target_count as f64).abs();
-        
+
         // Normalize to 0-1 range
         (count_diff / 10.0).min(1.0)
     }
@@ -473,24 +483,22 @@ impl AdaptiveIndexEngine {
         // TODO: Get from actual storage
         // For now, return a simple default strategy with identifier index
         use crate::index::axis::types::{QueryCondition, ResultCombination, RoutingRule};
-        
+
         Ok(IndexSelectionStrategy {
-            indexes: vec![
-                IndexSpecification {
-                    data_type: Data::Metadata, // Using Metadata type for ID indexing
-                    algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
-                    name: Some("default_id".to_string()),
-                    is_primary: false,
-                    selectivity_threshold: None,
+            indexes: vec![IndexSpecification {
+                data_type: Data::Metadata, // Using Metadata type for ID indexing
+                algorithm: IndexAlgorithm::BTree {
+                    max_keys_per_node: 256,
                 },
-            ],
-            routing_rules: vec![
-                RoutingRule {
-                    condition: QueryCondition::Always,
-                    use_indexes: vec![0],
-                    combination: ResultCombination::First,
-                },
-            ],
+                name: Some("default_id".to_string()),
+                is_primary: false,
+                selectivity_threshold: None,
+            }],
+            routing_rules: vec![RoutingRule {
+                condition: QueryCondition::Always,
+                use_indexes: vec![0],
+                combination: ResultCombination::First,
+            }],
         })
     }
 }
@@ -541,10 +549,7 @@ impl IndexStrategySelector {
             },
         );
 
-        configs.insert(
-            StrategyType::Mixed,
-            OptimizationConfig::default(),
-        );
+        configs.insert(StrategyType::Mixed, OptimizationConfig::default());
 
         configs.insert(
             StrategyType::MetadataHeavy,
@@ -587,7 +592,8 @@ impl IndexStrategySelector {
         strategy_type: StrategyType,
         characteristics: &CollectionCharacteristics,
     ) -> Result<IndexSelectionStrategy> {
-        let optimization_config = self.optimization_configs
+        let optimization_config = self
+            .optimization_configs
             .get(&strategy_type)
             .ok_or_else(|| anyhow::anyhow!("No config for strategy type: {:?}", strategy_type))?;
 

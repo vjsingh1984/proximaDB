@@ -4,11 +4,11 @@
 //! to enable Arrow processing of partial data without full file downloads.
 
 use anyhow::{Context, Result};
-use arrow_array::{Array, RecordBatch, StringArray, Float32Array};
-use arrow_schema::{Schema, Field, DataType};
+use arrow_array::{Array, Float32Array, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema};
+use chrono;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::HashMap;
-use chrono;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -104,46 +104,49 @@ impl ParquetReconstructor {
         metadata: &ParquetMetaData,
         query: &VectorQuery,
     ) -> Result<ReconstructedParquetData> {
-        info!("🔧 Reconstructing Parquet data from {} file seeks", seek_data.len());
-        
+        info!(
+            "🔧 Reconstructing Parquet data from {} file seeks",
+            seek_data.len()
+        );
+
         // Group seek data by row group and column
         let grouped_data = self.group_seek_data_by_row_group(seek_data)?;
-        
+
         // Process each row group
         let mut record_batches = Vec::new();
         let mut total_rows = 0;
         let mut bytes_processed = 0;
         let mut row_groups_included = Vec::new();
-        
+
         for (row_group_idx, column_data) in grouped_data {
             let row_group_metadata = metadata.row_group(row_group_idx);
-            
+
             // Decompress and parse column chunks
             let parsed_columns = self.parse_column_chunks(column_data, row_group_metadata)?;
-            
+
             // Create record batch from parsed columns
             let record_batch = self.create_record_batch_from_columns(parsed_columns, query)?;
-            
+
             total_rows += record_batch.num_rows();
             bytes_processed += self.estimate_batch_size(&record_batch);
             row_groups_included.push(row_group_idx);
             record_batches.push(record_batch);
         }
-        
+
         // Derive schema from the first record batch
         let schema = if !record_batches.is_empty() {
             record_batches[0].schema()
         } else {
             Arc::new(Schema::empty())
         };
-        
+
         info!(
             "✅ Reconstructed {} record batches with {} total rows ({:.1}KB)",
             record_batches.len(),
             total_rows,
             bytes_processed as f64 / 1024.0
         );
-        
+
         Ok(ReconstructedParquetData {
             record_batches,
             schema,
@@ -160,44 +163,47 @@ impl ParquetReconstructor {
         metadata: &ParquetMetaData,
         query: &VectorQuery,
     ) -> Result<ReconstructedParquetData> {
-        info!("☁️ Reconstructing Parquet data from {} HTTP ranges", range_data.len());
-        
+        info!(
+            "☁️ Reconstructing Parquet data from {} HTTP ranges",
+            range_data.len()
+        );
+
         // Convert range data to column chunks
         let column_chunks = self.parse_range_data_to_columns(range_data, metadata)?;
-        
+
         // Group by row group
         let grouped_chunks = self.group_column_chunks_by_row_group(column_chunks)?;
-        
+
         // Process each row group
         let mut record_batches = Vec::new();
         let mut total_rows = 0;
         let mut bytes_processed = 0;
         let mut row_groups_included = Vec::new();
-        
+
         for (row_group_idx, chunks) in grouped_chunks {
             // Create record batch from column chunks
             let record_batch = self.create_record_batch_from_chunk_data(chunks, query)?;
-            
+
             total_rows += record_batch.num_rows();
             bytes_processed += self.estimate_batch_size(&record_batch);
             row_groups_included.push(row_group_idx);
             record_batches.push(record_batch);
         }
-        
+
         // Derive schema
         let schema = if !record_batches.is_empty() {
             record_batches[0].schema()
         } else {
             Arc::new(Schema::empty())
         };
-        
+
         info!(
             "✅ Reconstructed {} record batches from ranges with {} total rows ({:.1}KB)",
             record_batches.len(),
             total_rows,
             bytes_processed as f64 / 1024.0
         );
-        
+
         Ok(ReconstructedParquetData {
             record_batches,
             schema,
@@ -213,16 +219,22 @@ impl ParquetReconstructor {
         reconstructed_data: ReconstructedParquetData,
         query: &VectorQuery,
     ) -> Result<Vec<VectorRecord>> {
-        debug!("🔄 Converting {} record batches to VectorRecord format", reconstructed_data.record_batches.len());
-        
+        debug!(
+            "🔄 Converting {} record batches to VectorRecord format",
+            reconstructed_data.record_batches.len()
+        );
+
         let mut vector_records = Vec::new();
-        
+
         for record_batch in reconstructed_data.record_batches {
             let batch_vectors = self.extract_vectors_from_batch(&record_batch, query)?;
             vector_records.extend(batch_vectors);
         }
-        
-        debug!("✅ Converted to {} VectorRecord objects", vector_records.len());
+
+        debug!(
+            "✅ Converted to {} VectorRecord objects",
+            vector_records.len()
+        );
         Ok(vector_records)
     }
 
@@ -232,7 +244,7 @@ impl ParquetReconstructor {
         seek_data: Vec<SeekData>,
     ) -> Result<HashMap<usize, Vec<ColumnChunkData>>> {
         let mut grouped = HashMap::new();
-        
+
         for seek in seek_data {
             let chunk_data = ColumnChunkData {
                 row_group_idx: seek.range.row_group_idx,
@@ -240,15 +252,16 @@ impl ParquetReconstructor {
                 data: seek.data,
                 compression: self.detect_compression(&seek.range)?,
                 uncompressed_size: seek.range.length as usize, // Approximation
-                row_count: 0, // Will be determined during parsing
+                row_count: 0,                                  // Will be determined during parsing
                 storage: None,
             };
-            
-            grouped.entry(seek.range.row_group_idx)
+
+            grouped
+                .entry(seek.range.row_group_idx)
                 .or_insert_with(Vec::new)
                 .push(chunk_data);
         }
-        
+
         Ok(grouped)
     }
 
@@ -259,15 +272,15 @@ impl ParquetReconstructor {
         _metadata: &ParquetMetaData,
     ) -> Result<Vec<ColumnChunkData>> {
         let mut column_chunks = Vec::new();
-        
+
         for range in range_data {
             // TODO: Implement proper range-to-column mapping
             // This requires understanding the Parquet file structure
             // For now, create placeholder column chunks
-            
+
             let data_len = range.data.len();
             let chunk_data = ColumnChunkData {
-                row_group_idx: 0, // Would be calculated from range mapping
+                row_group_idx: 0,                  // Would be calculated from range mapping
                 column_name: "vector".to_string(), // Would be determined from range context
                 data: range.data,
                 compression: CompressionType::None, // Would be detected from metadata
@@ -275,10 +288,10 @@ impl ParquetReconstructor {
                 row_count: 0,
                 storage: None,
             };
-            
+
             column_chunks.push(chunk_data);
         }
-        
+
         Ok(column_chunks)
     }
 
@@ -289,23 +302,26 @@ impl ParquetReconstructor {
         row_group_metadata: &RowGroupMetaData,
     ) -> Result<HashMap<String, ParsedColumn>> {
         let mut parsed_columns = HashMap::new();
-        
+
         for chunk_data in column_data {
-            debug!("🔍 Parsing column chunk: {} (row group {})", chunk_data.column_name, chunk_data.row_group_idx);
-            
+            debug!(
+                "🔍 Parsing column chunk: {} (row group {})",
+                chunk_data.column_name, chunk_data.row_group_idx
+            );
+
             // Decompress data if needed
             let decompressed_data = self.decompress_column_data(&chunk_data)?;
-            
+
             // Parse column data based on type
             let parsed_column = self.parse_column_data(
                 &chunk_data.column_name,
                 decompressed_data,
                 row_group_metadata,
             )?;
-            
+
             parsed_columns.insert(chunk_data.column_name.clone(), parsed_column);
         }
-        
+
         Ok(parsed_columns)
     }
 
@@ -317,26 +333,34 @@ impl ParquetReconstructor {
     ) -> Result<RecordBatch> {
         let mut fields = Vec::new();
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-        
+
         // Required columns based on query
         let required_columns = vec![
             "id".to_string(),
             "vector".to_string(),
             "metadata_info".to_string(),
         ];
-        
+
         for column_name in required_columns {
             if let Some(parsed_column) = parsed_columns.get(&column_name) {
-                fields.push(Field::new(&column_name, parsed_column.array.data_type().clone(), false));
+                fields.push(Field::new(
+                    &column_name,
+                    parsed_column.array.data_type().clone(),
+                    false,
+                ));
                 arrays.push(parsed_column.array.clone());
             } else {
                 // Create empty array for missing columns
                 let empty_array = self.create_empty_array(&column_name)?;
-                fields.push(Field::new(&column_name, empty_array.data_type().clone(), false));
+                fields.push(Field::new(
+                    &column_name,
+                    empty_array.data_type().clone(),
+                    false,
+                ));
                 arrays.push(empty_array);
             }
         }
-        
+
         let schema = Arc::new(Schema::new(fields));
         RecordBatch::try_new(schema, arrays)
             .context("Failed to create record batch from parsed columns")
@@ -348,15 +372,22 @@ impl ParquetReconstructor {
         chunks: Vec<ColumnChunkData>,
         _query: &VectorQuery,
     ) -> Result<RecordBatch> {
-        debug!("🏗️ Creating record batch from {} column chunks", chunks.len());
-        
+        debug!(
+            "🏗️ Creating record batch from {} column chunks",
+            chunks.len()
+        );
+
         // For now, create a simple record batch with placeholder data
         // In production, this would properly parse the Parquet column data
-        
-        let required_columns = vec!["id".to_string(), "vector".to_string(), "metadata_info".to_string()];
+
+        let required_columns = vec![
+            "id".to_string(),
+            "vector".to_string(),
+            "metadata_info".to_string(),
+        ];
         let mut fields = Vec::new();
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-        
+
         for column_name in required_columns {
             match column_name.as_str() {
                 "id" => {
@@ -364,9 +395,11 @@ impl ParquetReconstructor {
                     arrays.push(Arc::new(StringArray::from(vec!["placeholder_id"])));
                 }
                 "vector" => {
-                    fields.push(Field::new("vector", DataType::List(
-                        Arc::new(Field::new("item", DataType::Float32, false))
-                    ), false));
+                    fields.push(Field::new(
+                        "vector",
+                        DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+                        false,
+                    ));
                     // Create a simple float array for now
                     arrays.push(Arc::new(Float32Array::from(vec![0.0f32; 128])));
                 }
@@ -381,7 +414,7 @@ impl ParquetReconstructor {
                 }
             }
         }
-        
+
         let schema = Arc::new(Schema::new(fields));
         RecordBatch::try_new(schema, arrays)
             .context("Failed to create record batch from chunk data")
@@ -393,13 +426,14 @@ impl ParquetReconstructor {
         chunks: Vec<ColumnChunkData>,
     ) -> Result<HashMap<usize, Vec<ColumnChunkData>>> {
         let mut grouped = HashMap::new();
-        
+
         for chunk in chunks {
-            grouped.entry(chunk.row_group_idx)
+            grouped
+                .entry(chunk.row_group_idx)
                 .or_insert_with(Vec::new)
                 .push(chunk);
         }
-        
+
         Ok(grouped)
     }
 
@@ -410,12 +444,12 @@ impl ParquetReconstructor {
         _query: &VectorQuery,
     ) -> Result<Vec<VectorRecord>> {
         let mut vector_records = Vec::new();
-        
+
         // Get column indices
         let id_column = record_batch.column_by_name("id");
         let vector_column = record_batch.column_by_name("vector");
         let metadata_column = record_batch.column_by_name("metadata_info");
-        
+
         for row_idx in 0..record_batch.num_rows() {
             // Extract ID
             let id = if let Some(id_col) = id_column {
@@ -423,21 +457,21 @@ impl ParquetReconstructor {
             } else {
                 format!("id_{}", row_idx)
             };
-            
+
             // Extract vector
             let vector = if let Some(vec_col) = vector_column {
                 self.extract_vector_value(vec_col, row_idx)?
             } else {
                 vec![0.0f32; 128] // Placeholder
             };
-            
+
             // Extract metadata
             let metadata = if let Some(meta_col) = metadata_column {
                 self.extract_metadata_value(meta_col, row_idx)?
             } else {
                 Vec::new()
             };
-            
+
             vector_records.push(VectorRecord {
                 id,
                 vector,
@@ -450,7 +484,7 @@ impl ParquetReconstructor {
                 source: None,
             });
         }
-        
+
         Ok(vector_records)
     }
 
@@ -466,7 +500,10 @@ impl ParquetReconstructor {
             CompressionType::None => Ok(chunk_data.data.clone()),
             _ => {
                 // TODO: Implement decompression for other formats
-                warn!("⚠️ Compression {:?} not implemented, returning raw data", chunk_data.compression);
+                warn!(
+                    "⚠️ Compression {:?} not implemented, returning raw data",
+                    chunk_data.compression
+                );
                 Ok(chunk_data.data.clone())
             }
         }
@@ -480,7 +517,7 @@ impl ParquetReconstructor {
     ) -> Result<ParsedColumn> {
         // TODO: Implement actual Parquet column parsing
         // This is complex and would require implementing a Parquet column reader
-        
+
         // For now, return placeholder parsed column
         Ok(ParsedColumn {
             // data_type removed -  DataType::Utf8,
@@ -512,7 +549,11 @@ impl ParquetReconstructor {
         Ok(vec![0.0f32; 128])
     }
 
-    fn extract_metadata_value(&self, _column: &Arc<dyn Array>, _row_idx: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    fn extract_metadata_value(
+        &self,
+        _column: &Arc<dyn Array>,
+        _row_idx: usize,
+    ) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
         // TODO: Implement proper metadata extraction and conversion to MetadataItem
         Ok(Vec::new())
     }
@@ -548,7 +589,7 @@ mod tests {
     fn test_reconstructor_creation() {
         let config = ReconstructorConfig::default();
         let reconstructor = ParquetReconstructor::new(config);
-        
+
         assert!(reconstructor.config.enable_schema_validation);
         assert_eq!(reconstructor.config.max_memory_usage_mb, 256.0);
     }
@@ -562,7 +603,7 @@ mod tests {
             row_group_idx: 0,
             column_name: "test".to_string(),
         };
-        
+
         let compression = reconstructor.detect_compression(&range).unwrap();
         assert!(matches!(compression, CompressionType::None));
     }
@@ -570,7 +611,7 @@ mod tests {
     #[test]
     fn test_group_seek_data() {
         let reconstructor = ParquetReconstructor::new(ReconstructorConfig::default());
-        
+
         let seek_data = vec![
             SeekData {
                 range: FileSeekRange {
@@ -591,8 +632,10 @@ mod tests {
                 data: vec![4, 5, 6],
             },
         ];
-        
-        let grouped = reconstructor.group_seek_data_by_row_group(seek_data).unwrap();
+
+        let grouped = reconstructor
+            .group_seek_data_by_row_group(seek_data)
+            .unwrap();
         assert_eq!(grouped.len(), 1);
         assert_eq!(grouped[&0].len(), 2);
     }

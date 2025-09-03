@@ -1,5 +1,5 @@
 //! Internal quantization types (Release 1 - no legacy compatibility)
-//! 
+//!
 //! These types are used internally for quantization operations.
 //! The proto QuantizationConfig is simplified for user-facing API.
 
@@ -114,7 +114,7 @@ impl UnifiedQuantizationLevel {
             sign_based: false,
         })),
     };
-    
+
     pub const Int8: Self = Self {
         level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
             bits: 8,
@@ -123,7 +123,7 @@ impl UnifiedQuantizationLevel {
             clamp_values: true,
         })),
     };
-    
+
     /// Create a PQ4 constant (requires runtime initialization due to parameter)
     pub const Pq4: Self = Self {
         level_type: Some(QuantizationLevel::Pq(ProductQuantization {
@@ -133,7 +133,7 @@ impl UnifiedQuantizationLevel {
             adaptive_subvectors: false,
         })),
     };
-    
+
     /// Create a PQ8 constant (requires runtime initialization due to parameter)
     pub const Pq8: Self = Self {
         level_type: Some(QuantizationLevel::Pq(ProductQuantization {
@@ -143,7 +143,7 @@ impl UnifiedQuantizationLevel {
             adaptive_subvectors: false,
         })),
     };
-    
+
     /// Create a PQ8 configuration (common case)
     pub fn pq8(num_subvectors: u8) -> Self {
         Self {
@@ -155,7 +155,7 @@ impl UnifiedQuantizationLevel {
             })),
         }
     }
-    
+
     /// Create a PQ4 configuration (higher compression)
     pub fn pq4(num_subvectors: u8) -> Self {
         Self {
@@ -167,7 +167,7 @@ impl UnifiedQuantizationLevel {
             })),
         }
     }
-    
+
     /// Create an INT8 scalar quantization
     pub fn int8() -> Self {
         Self {
@@ -179,7 +179,7 @@ impl UnifiedQuantizationLevel {
             })),
         }
     }
-    
+
     /// Create a binary quantization
     pub fn binary() -> Self {
         Self {
@@ -189,7 +189,7 @@ impl UnifiedQuantizationLevel {
             })),
         }
     }
-    
+
     /// Get the number of bits per element
     pub fn bits_per_element(&self) -> u32 {
         match &self.level_type {
@@ -201,7 +201,7 @@ impl UnifiedQuantizationLevel {
             _ => 32, // Full precision
         }
     }
-    
+
     /// Calculate bytes per vector based on quantization level
     pub fn bytes_per_vector(&self, dimension: usize) -> usize {
         match &self.level_type {
@@ -210,22 +210,18 @@ impl UnifiedQuantizationLevel {
                 let bytes_per_code = ((pq.bits_per_code + 7) / 8) as usize;
                 codes_per_vector * bytes_per_code
             }
-            Some(QuantizationLevel::Scalar(sq)) => {
-                dimension * ((sq.bits + 7) / 8) as usize
-            }
+            Some(QuantizationLevel::Scalar(sq)) => dimension * ((sq.bits + 7) / 8) as usize,
             Some(QuantizationLevel::Binary(_)) => {
-                (dimension + 7) / 8  // 1 bit per dimension
+                (dimension + 7) / 8 // 1 bit per dimension
             }
-            Some(QuantizationLevel::Uniform(uq)) => {
-                dimension * ((uq.bits + 7) / 8) as usize
-            }
+            Some(QuantizationLevel::Uniform(uq)) => dimension * ((uq.bits + 7) / 8) as usize,
             Some(QuantizationLevel::Custom(cq)) => {
                 dimension * ((cq.bits_per_element + 7) / 8) as usize
             }
-            _ => dimension * 4,  // Full FP32 precision
+            _ => dimension * 4, // Full FP32 precision
         }
     }
-    
+
     /// Get compression ratio compared to FP32
     pub fn compression_ratio(&self, dimension: usize) -> f32 {
         let fp32_bytes = dimension * 4;

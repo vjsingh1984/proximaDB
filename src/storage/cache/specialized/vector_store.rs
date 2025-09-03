@@ -1,18 +1,18 @@
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
+use anyhow::Result;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 
 /// DEPRECATED: VectorStore is being phased out in favor of OS page cache + zero-copy system
-/// 
+///
 /// # Deprecation Rationale
 /// - High-dimensional vectors benefit more from OS page cache than in-memory caching
 /// - OS can handle pages optimally based on file access patterns
 /// - Zero-copy system provides file-specific metadata caching
 /// - Reduces memory pressure for large vector datasets
-/// 
+///
 /// Use `ZeroCopyIOSystem` with filename-based cache keys instead.
 
 /// Partitioned key for collection-aware storage
@@ -24,7 +24,10 @@ pub struct PartitionedVectorKey {
 
 impl PartitionedVectorKey {
     pub fn new(collection_id: String, vector_id: String) -> Self {
-        Self { collection_id, vector_id }
+        Self {
+            collection_id,
+            vector_id,
+        }
     }
 }
 
@@ -36,14 +39,14 @@ impl CacheValue for VectorRecord {
         // Calculate actual size based on vector dimensions
         // Each f32 is 4 bytes
         let vector_size = self.vector.len() * 4;
-        
+
         // Estimate metadata size (can't access private fields)
         // Assume each metadata item is ~50 bytes on average
         let metadata_size = self.metadata.len() * 50;
-        
+
         // Add size of id string
         let id_size = self.id.len();
-        
+
         // Total: vector data + metadata + id + struct overhead
         vector_size + metadata_size + id_size + 64
     }
@@ -71,7 +74,7 @@ impl VectorStore {
             partitioned_base: None,
         }
     }
-    
+
     /// Create a new VectorStore for a specific collection
     pub fn new_with_collection(collection_id: String, max_memory_mb: usize) -> Self {
         Self {
@@ -80,11 +83,11 @@ impl VectorStore {
             partitioned_base: Some(BaseCacheImpl::new(max_memory_mb)),
         }
     }
-    
+
     /// Batch get operation optimized for locality with collection awareness
     pub async fn batch_get(&self, ids: &[String]) -> Vec<Option<VectorRecord>> {
         let mut results = Vec::with_capacity(ids.len());
-        
+
         if let Some(ref coll_id) = self.collection_id {
             // Use partitioned cache
             if let Some(ref partitioned) = self.partitioned_base {
@@ -102,10 +105,10 @@ impl VectorStore {
                 results.push(self.base.get_with_hooks(id).await);
             }
         }
-        
+
         results
     }
-    
+
     /// Batch put operation with collection awareness
     pub async fn batch_put(&self, records: Vec<(String, VectorRecord)>) {
         if let Some(ref coll_id) = self.collection_id {
@@ -123,30 +126,30 @@ impl VectorStore {
             }
         }
     }
-    
+
     /// Prefetch vectors that are likely to be accessed together
     pub async fn similarity_prefetch(&self, _query_vector: &[f32], _k: usize) {
         // TODO: Implement similarity-based prefetching
         // This would use an index to find similar vectors and prefetch them
     }
-    
+
     /// Resize the cache
     pub async fn resize(&self, _new_size_mb: usize) -> anyhow::Result<()> {
         // TODO: Implement cache resizing
         Ok(())
     }
-    
+
     /// Clear all cache entries
     pub async fn clear_all(&self) -> anyhow::Result<()> {
         // TODO: Implement cache clearing
         Ok(())
     }
-    
+
     /// Check if a key exists in the cache
     pub async fn contains(&self, key: &str) -> bool {
         self.get(key).await.is_some()
     }
-    
+
     /// Get a vector from the cache with collection awareness
     pub async fn get(&self, key: &str) -> Option<VectorRecord> {
         if let Some(ref coll_id) = self.collection_id {
@@ -162,7 +165,7 @@ impl VectorStore {
             self.base.get_with_hooks(&key.to_string()).await
         }
     }
-    
+
     /// Get a vector from the cache with hooks (alias for compatibility)
     pub async fn get_with_hooks(&self, key: &String) -> Option<VectorRecord> {
         if let Some(ref coll_id) = self.collection_id {
@@ -178,7 +181,7 @@ impl VectorStore {
             self.base.get_with_hooks(key).await
         }
     }
-    
+
     /// Put a vector in the cache with collection awareness
     pub async fn put(&self, key: String, value: VectorRecord) {
         if let Some(ref coll_id) = self.collection_id {
@@ -192,7 +195,7 @@ impl VectorStore {
             self.base.put_with_hooks(key, value).await;
         }
     }
-    
+
     /// Put a vector in the cache with hooks (alias for compatibility)
     pub async fn put_with_hooks(&self, key: String, value: VectorRecord) {
         if let Some(ref coll_id) = self.collection_id {
@@ -206,7 +209,7 @@ impl VectorStore {
             self.base.put_with_hooks(key, value).await;
         }
     }
-    
+
     /// Access metrics from base cache
     pub fn metrics(&self) -> &crate::storage::cache::metrics::CacheMetrics {
         if let Some(ref partitioned) = self.partitioned_base {
@@ -215,7 +218,7 @@ impl VectorStore {
             self.base.metrics()
         }
     }
-    
+
     /// Invalidate a cache entry with collection awareness
     pub async fn invalidate(&self, key: &str) -> bool {
         if let Some(ref coll_id) = self.collection_id {
@@ -247,9 +250,13 @@ pub struct SstBlockKey {
 
 impl SstBlockKey {
     pub fn new(file_path: String, block_offset: u64, block_size: usize) -> Self {
-        Self { file_path, block_offset, block_size }
+        Self {
+            file_path,
+            block_offset,
+            block_size,
+        }
     }
-    
+
     /// Convert to cache key string
     pub fn to_cache_key(&self) -> String {
         format!("sst_block_{}_{}", self.file_path, self.block_offset)
@@ -285,7 +292,7 @@ impl VectorStore {
         // For now, store as a special vector record with compressed data in metadata
         // In production, would have a separate compressed block cache
         let cache_key = key.to_cache_key();
-        
+
         // Create a placeholder vector record that holds the compressed block
         let block_record = VectorRecord {
             id: cache_key.clone(),
@@ -294,19 +301,19 @@ impl VectorStore {
                 crate::proto::proximadb::MetadataItem {
                     key: "compressed_block".to_string(),
                     value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                        BASE64.encode(&compressed_data)
+                        BASE64.encode(&compressed_data),
                     )),
                 },
                 crate::proto::proximadb::MetadataItem {
                     key: "compression_type".to_string(),
                     value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                        format!("{:?}", compression)
+                        format!("{:?}", compression),
                     )),
                 },
                 crate::proto::proximadb::MetadataItem {
                     key: "uncompressed_size".to_string(),
                     value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
-                        uncompressed_size as f64
+                        uncompressed_size as f64,
                     )),
                 },
             ],
@@ -317,30 +324,34 @@ impl VectorStore {
             quantized_vector: None,
             source: None,
         };
-        
+
         self.put(cache_key, block_record).await;
         Ok(())
     }
-    
+
     /// Retrieve a compressed block from cache
     pub async fn get_compressed_block(&self, key: &SstBlockKey) -> Option<CompressedBlock> {
         let cache_key = key.to_cache_key();
         let record = self.get(&cache_key).await?;
-        
+
         // Extract compressed data from metadata
         let mut compressed_data = None;
         let mut compression_type = CompressionType::None;
         let mut uncompressed_size = 0usize;
-        
+
         for item in &record.metadata {
             match item.key.as_str() {
                 "compressed_block" => {
-                    if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) = &item.value {
+                    if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) =
+                        &item.value
+                    {
                         compressed_data = BASE64.decode(data).ok();
                     }
                 }
                 "compression_type" => {
-                    if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(ctype)) = &item.value {
+                    if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(ctype)) =
+                        &item.value
+                    {
                         compression_type = match ctype.as_str() {
                             "Zstd" => CompressionType::Zstd,
                             "Lz4" => CompressionType::Lz4,
@@ -350,14 +361,16 @@ impl VectorStore {
                     }
                 }
                 "uncompressed_size" => {
-                    if let Some(crate::proto::proximadb::metadata_item::Value::NumberValue(size)) = &item.value {
+                    if let Some(crate::proto::proximadb::metadata_item::Value::NumberValue(size)) =
+                        &item.value
+                    {
                         uncompressed_size = *size as usize;
                     }
                 }
                 _ => {}
             }
         }
-        
+
         compressed_data.map(|data| CompressedBlock {
             data,
             compression: compression_type,
@@ -365,7 +378,7 @@ impl VectorStore {
             vector_count: 0, // Would be extracted from block header
         })
     }
-    
+
     /// Cache decoded vectors from an SSTable block
     pub async fn cache_block_vectors(
         &self,
@@ -379,7 +392,7 @@ impl VectorStore {
         }
         Ok(())
     }
-    
+
     /// Get cached vectors from an SSTable block
     pub async fn get_block_vectors(&self, key: &SstBlockKey, count: usize) -> Vec<VectorRecord> {
         let mut vectors = Vec::with_capacity(count);
@@ -393,7 +406,7 @@ impl VectorStore {
         }
         vectors
     }
-    
+
     /// Invalidate all cached data for an SSTable file
     pub async fn invalidate_sstable(&self, file_path: &str) -> Result<()> {
         // In a real implementation, would track all keys for a file

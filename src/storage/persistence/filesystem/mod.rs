@@ -52,7 +52,7 @@
 //! ```rust
 //! // Automatically uses S3 backend
 //! let fs = FilesystemFactory::from_url("s3://bucket/path")?;
-//! 
+//!
 //! // Automatically uses local backend
 //! let fs = FilesystemFactory::from_url("file:///data/vectors")?;
 //! ```
@@ -92,21 +92,21 @@
 //! [storage.filesystem]
 //! # Default filesystem URL
 //! default_url = "file:///data"
-//! 
+//!
 //! # Atomic write strategy
 //! temp_strategy = "same_directory"
-//! 
+//!
 //! # Zero-copy configuration
 //! enable_mmap = true
 //! cache_size_mb = 1024
 //! prefetch_size_kb = 256
-//! 
+//!
 //! # S3 specific
 //! [storage.filesystem.s3]
 //! region = "us-west-2"
 //! max_connections = 100
 //! multipart_threshold_mb = 64
-//! 
+//!
 //! # Azure specific
 //! [storage.filesystem.azure]
 //! account = "myaccount"
@@ -129,20 +129,20 @@
 //!
 //! ```rust
 //! use proximadb::storage::filesystem::{FilesystemFactory, FileOptions};
-//! 
+//!
 //! // Create filesystem from URL
 //! let fs = FilesystemFactory::from_url("s3://my-bucket/vectors")?;
-//! 
+//!
 //! // Write with atomic guarantees
 //! fs.write_atomic(
 //!     "collection/segment.parquet",
 //!     data,
 //!     FileOptions::default()
 //! ).await?;
-//! 
+//!
 //! // Read with caching
 //! let content = fs.read("collection/segment.parquet").await?;
-//! 
+//!
 //! // List directory
 //! let entries = fs.list("collection/").await?;
 //! ```
@@ -168,23 +168,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error as IoError;
 use std::sync::Arc;
-use url::Url;
 use tracing::{debug, error, info};
+use url::Url;
 
 pub mod atomic_strategy;
 pub mod auth;
+pub mod intelligent_filesystem;
 pub mod local;
 pub mod manager;
 pub mod write_strategy;
 pub mod zero_copy_filesystem;
-pub mod intelligent_filesystem;
 
 #[cfg(test)]
 pub mod tests;
 
 // Zero-copy filesystem with intelligent caching
-pub use zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 pub use local::LocalFileSystem;
+pub use zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
@@ -243,7 +243,7 @@ pub struct FileMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirEntry {
     pub name: String,
-    pub url: String,  // Full URL instead of relative path
+    pub url: String, // Full URL instead of relative path
     pub metadata: FileMetadata,
 }
 
@@ -395,34 +395,34 @@ impl StorageTier {
     /// Get expected latency in microseconds
     pub fn expected_latency_us(&self) -> u64 {
         match self {
-            StorageTier::Memory => 1,              // <1μs
-            StorageTier::NVMe => 100,              // 100μs
-            StorageTier::SSD => 1_000,             // 1ms
-            StorageTier::HDD => 10_000,            // 10ms
-            StorageTier::S3Express => 5_000,       // 5ms
-            StorageTier::S3Standard => 50_000,     // 50ms
+            StorageTier::Memory => 1,                 // <1μs
+            StorageTier::NVMe => 100,                 // 100μs
+            StorageTier::SSD => 1_000,                // 1ms
+            StorageTier::HDD => 10_000,               // 10ms
+            StorageTier::S3Express => 5_000,          // 5ms
+            StorageTier::S3Standard => 50_000,        // 50ms
             StorageTier::S3GlacierInstant => 100_000, // 100ms
-            StorageTier::AzurePremium => 500,      // 500μs
-            StorageTier::AzureStandard => 2_000,   // 2ms
-            StorageTier::GcsSSD => 800,            // 800μs
-            StorageTier::GcsHDD => 15_000,         // 15ms
+            StorageTier::AzurePremium => 500,         // 500μs
+            StorageTier::AzureStandard => 2_000,      // 2ms
+            StorageTier::GcsSSD => 800,               // 800μs
+            StorageTier::GcsHDD => 15_000,            // 15ms
         }
     }
 
     /// Get optimal I/O size in bytes for this tier
     pub fn optimal_io_size(&self) -> usize {
         match self {
-            StorageTier::Memory => 64 * 1024,       // 64KB
-            StorageTier::NVMe => 128 * 1024,        // 128KB
-            StorageTier::SSD => 256 * 1024,         // 256KB
-            StorageTier::HDD => 1024 * 1024,        // 1MB
-            StorageTier::S3Express => 512 * 1024,   // 512KB
-            StorageTier::S3Standard => 1024 * 1024, // 1MB
+            StorageTier::Memory => 64 * 1024,                 // 64KB
+            StorageTier::NVMe => 128 * 1024,                  // 128KB
+            StorageTier::SSD => 256 * 1024,                   // 256KB
+            StorageTier::HDD => 1024 * 1024,                  // 1MB
+            StorageTier::S3Express => 512 * 1024,             // 512KB
+            StorageTier::S3Standard => 1024 * 1024,           // 1MB
             StorageTier::S3GlacierInstant => 4 * 1024 * 1024, // 4MB
-            StorageTier::AzurePremium => 256 * 1024,  // 256KB
-            StorageTier::AzureStandard => 512 * 1024, // 512KB
-            StorageTier::GcsSSD => 256 * 1024,        // 256KB
-            StorageTier::GcsHDD => 2 * 1024 * 1024,   // 2MB
+            StorageTier::AzurePremium => 256 * 1024,          // 256KB
+            StorageTier::AzureStandard => 512 * 1024,         // 512KB
+            StorageTier::GcsSSD => 256 * 1024,                // 256KB
+            StorageTier::GcsHDD => 2 * 1024 * 1024,           // 2MB
         }
     }
 
@@ -437,20 +437,20 @@ impl StorageTier {
 pub struct TierConfig {
     /// Storage tier type
     pub tier: StorageTier,
-    
+
     /// Base URL for this tier (e.g., "file:///mnt/nvme", "s3://bucket")
     pub base_url: String,
-    
+
     /// Maximum capacity in bytes (None = unlimited)
     pub max_capacity_bytes: Option<u64>,
-    
+
     /// Current usage in bytes (tracked runtime)
     #[serde(skip)]
     pub current_usage_bytes: u64,
-    
+
     /// Enable compression for this tier
     pub compression: bool,
-    
+
     /// Custom I/O size override (uses tier default if None)
     pub io_size_override: Option<usize>,
 }
@@ -481,7 +481,7 @@ pub struct FilesystemPerformanceConfig {
 
     /// Maximum concurrent operations
     pub max_concurrent_ops: usize,
-    
+
     /// Tier-specific configurations
     pub tier_configs: Vec<TierConfig>,
 }
@@ -492,22 +492,22 @@ pub struct FilesystemPerformanceConfig {
 pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
     /// Read data from current position
     async fn read(&mut self, buf: &mut [u8]) -> FsResult<usize>;
-    
+
     /// Write data at current position
     async fn write(&mut self, buf: &[u8]) -> FsResult<usize>;
-    
+
     /// Flush any buffered writes
     async fn flush(&mut self) -> FsResult<()>;
-    
+
     /// Seek to position (if supported)
     async fn seek(&mut self, pos: u64) -> FsResult<u64>;
-    
+
     /// Get current position
     async fn position(&self) -> FsResult<u64>;
-    
+
     /// Get file size
     async fn file_size(&self) -> FsResult<u64>;
-    
+
     /// Sync data to underlying storage
     async fn sync_all(&mut self) -> FsResult<()>;
 }
@@ -517,10 +517,10 @@ pub trait FilesystemFile: Send + Sync + std::fmt::Debug {
 pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// Get self as Any for downcasting to concrete types
     fn as_any(&self) -> &dyn std::any::Any;
-    
+
     /// Read file contents
     async fn read(&self, path: &str) -> FsResult<Vec<u8>>;
-    
+
     /// Get memory-mapped access to a file (only supported for local filesystem)
     /// Returns None if memory mapping is not supported (e.g., cloud storage)
     /// The returned mmap is read-only and safe for concurrent access
@@ -529,7 +529,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         // LocalFileSystem will override this to provide actual memory mapping
         Ok(None)
     }
-    
+
     /// Check if this filesystem supports memory mapping
     fn supports_mmap(&self) -> bool {
         false // Default: most filesystems don't support mmap
@@ -542,18 +542,22 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
         let data = self.read(path).await?;
         let start = offset as usize;
         let end = (offset + length) as usize;
-        
+
         if start >= data.len() {
             return Ok(vec![]);
         }
-        
+
         let end = end.min(data.len());
         Ok(data[start..end].to_vec())
     }
 
     /// Read multiple byte ranges from file in a single operation
     /// Optimizes for cloud storage by batching requests
-    async fn read_ranges(&self, path: &str, ranges: Vec<std::ops::Range<u64>>) -> FsResult<Vec<Vec<u8>>> {
+    async fn read_ranges(
+        &self,
+        path: &str,
+        ranges: Vec<std::ops::Range<u64>>,
+    ) -> FsResult<Vec<Vec<u8>>> {
         // Default implementation calls read_range for each range
         let mut results = Vec::with_capacity(ranges.len());
         for range in ranges {
@@ -565,7 +569,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
 
     /// Write file contents
     async fn write(&self, path: &str, data: &[u8], options: Option<FileOptions>) -> FsResult<()>;
-    
+
     /// Sync file data to disk (fsync/fdatasync)
     /// Ensures data durability after write operations
     /// Returns Ok(()) if sync is not supported by the filesystem
@@ -637,7 +641,9 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
             TempStrategy::SameDirectory => {
                 // Create ___temp subdirectory in same location (same mount point)
                 let parent = final_path.parent();
-                let temp_dir = parent.map(|p| p.join("___temp")).unwrap_or_else(|| std::path::PathBuf::from("___temp"));
+                let temp_dir = parent
+                    .map(|p| p.join("___temp"))
+                    .unwrap_or_else(|| std::path::PathBuf::from("___temp"));
                 let temp_file = temp_dir.join(format!("{}.{}", filename, std::process::id())); // Add PID for uniqueness
                 Ok(temp_file.to_string_lossy().to_string())
             }
@@ -712,7 +718,12 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     }
 
     /// Write string to file - convenience method for text files
-    async fn write_string(&self, path: &str, content: &str, options: Option<FileOptions>) -> FsResult<()> {
+    async fn write_string(
+        &self,
+        path: &str,
+        content: &str,
+        options: Option<FileOptions>,
+    ) -> FsResult<()> {
         self.write(path, content.as_bytes(), options).await
     }
 
@@ -720,7 +731,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     async fn remove_dir_all(&self, path: &str) -> FsResult<()> {
         // Default implementation using list and delete
         let entries = self.list(path).await?;
-        
+
         for entry in entries {
             if entry.metadata.is_directory {
                 self.remove_dir_all(&entry.url).await?;
@@ -728,7 +739,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
                 self.delete(&entry.url).await?;
             }
         }
-        
+
         self.delete(path).await
     }
 
@@ -824,7 +835,7 @@ impl FilesystemFactory {
 
         // Pre-initialize configured filesystems
         factory.initialize_filesystems().await?;
-        
+
         // Build tier mapping from configuration
         factory.initialize_tier_mapping();
 
@@ -851,7 +862,7 @@ impl FilesystemFactory {
 
     /// Get filesystem instance for URL scheme (cached instances)
     /// Get filesystem instance for URL scheme (returns Arc for safe sharing).
-    /// 
+    ///
     /// Use this when you need raw filesystem access without caching.
     pub fn get_filesystem(&self, url: &str) -> FsResult<Arc<dyn FileSystem>> {
         // Handle URLs without schemes by prepending file://
@@ -860,7 +871,7 @@ impl FilesystemFactory {
         } else {
             url.to_string()
         };
-        
+
         let scheme = self.extract_scheme(&normalized_url)?;
 
         self.filesystems
@@ -868,28 +879,28 @@ impl FilesystemFactory {
             .cloned()
             .ok_or_else(|| FilesystemError::UnsupportedScheme(scheme))
     }
-    
+
     /// Get an IntelligentFilesystem with automatic scheme-specific filesystem selection.
-    /// 
+    ///
     /// This is the RECOMMENDED method for engines to get filesystems.
     /// It automatically:
     /// 1. Selects the right filesystem based on URL scheme
     /// 2. Wraps it with IntelligentFilesystem for caching
     /// 3. Returns a ready-to-use cached filesystem
-    /// 
+    ///
     /// ## Benefits
-    /// 
+    ///
     /// - **Cloud Storage**: Dramatically reduces API calls through metadata caching
     /// - **Local Storage**: Adds bloom filter and block caching
     /// - **All Storage**: Access pattern learning and predictive prefetching
-    /// 
+    ///
     /// ## Example
-    /// 
+    ///
     /// ```rust
     /// // Instead of:
     /// let fs = factory.get_filesystem("s3://bucket")?;
     /// let cached_fs = IntelligentFilesystem::new(fs, collection_id, engine_type);
-    /// 
+    ///
     /// // Just do:
     /// let cached_fs = factory.get_intelligent_filesystem(
     ///     "s3://bucket",
@@ -902,17 +913,19 @@ impl FilesystemFactory {
         url: &str,
         collection_id: String,
         engine_type: String,
-    ) -> FsResult<Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>> {
+    ) -> FsResult<
+        Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>,
+    > {
         // Get the appropriate filesystem for this URL
         let fs = self.get_filesystem(url)?;
-        
+
         // Wrap it with IntelligentFilesystem for caching
         let intelligent_fs = crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem::new(
             fs,
             collection_id,
             engine_type,
         );
-        
+
         Ok(Arc::new(intelligent_fs))
     }
 
@@ -924,14 +937,14 @@ impl FilesystemFactory {
         debug!("📋 [DEBUG] copy_atomic START");
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
-        
+
         let from_fs = self.get_filesystem(from_url)?;
         let to_fs = self.get_filesystem(to_url)?;
 
         // Extract paths from URLs
         let from_path = Self::resolve_path(from_url)?;
         let to_path = Self::resolve_path(to_url)?;
-        
+
         info!("    from_path: {}", from_path);
         info!("    to_path: {}", to_path);
         debug!("    [DEBUG] from_path resolved: {}", from_path);
@@ -952,7 +965,7 @@ impl FilesystemFactory {
             }
             dest_file.write(&buffer[..bytes_read]).await?;
         }
-        
+
         // Flush and sync destination file
         dest_file.flush().await?;
         dest_file.sync_all().await?;
@@ -973,7 +986,7 @@ impl FilesystemFactory {
         debug!("🚚 [DEBUG] move_atomic called:");
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
-        
+
         // Copy first using streaming copy
         info!("    📋 Copying file atomically (streaming)...");
         debug!("    📋 [DEBUG] Copying file atomically (streaming)...");
@@ -1005,15 +1018,15 @@ impl FilesystemFactory {
         } else {
             url.to_string()
         };
-        
+
         let parsed_url = Url::parse(&normalized_url)?;
-        
+
         match parsed_url.scheme() {
             "file" => {
                 // File URLs must have absolute paths
                 if !parsed_url.path().starts_with('/') {
                     return Err(FilesystemError::InvalidPath(
-                        "File URLs must have absolute paths".to_string()
+                        "File URLs must have absolute paths".to_string(),
                     ));
                 }
             }
@@ -1021,7 +1034,7 @@ impl FilesystemFactory {
                 // S3 URLs must have bucket name
                 if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
-                        "S3 URLs must specify bucket name".to_string()
+                        "S3 URLs must specify bucket name".to_string(),
                     ));
                 }
             }
@@ -1029,24 +1042,29 @@ impl FilesystemFactory {
                 // GCS URLs must have bucket name
                 if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
-                        "GCS URLs must specify bucket name".to_string()
+                        "GCS URLs must specify bucket name".to_string(),
                     ));
                 }
             }
             "adls" => {
                 // ADLS URLs must have account and container
-                let path_parts: Vec<&str> = parsed_url.path().trim_start_matches('/').split('/').collect();
+                let path_parts: Vec<&str> = parsed_url
+                    .path()
+                    .trim_start_matches('/')
+                    .split('/')
+                    .collect();
                 if path_parts.len() < 2 || path_parts[0].is_empty() || path_parts[1].is_empty() {
                     return Err(FilesystemError::InvalidPath(
-                        "ADLS URLs must specify account and container".to_string()
+                        "ADLS URLs must specify account and container".to_string(),
                     ));
                 }
             }
             "abfs" => {
                 // ABFS URLs must have container@account format
-                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains('@') {
+                if parsed_url.host_str().is_none() || !parsed_url.host_str().unwrap().contains('@')
+                {
                     return Err(FilesystemError::InvalidPath(
-                        "ABFS URLs must use container@account format".to_string()
+                        "ABFS URLs must use container@account format".to_string(),
                     ));
                 }
             }
@@ -1054,17 +1072,17 @@ impl FilesystemFactory {
                 // HDFS URLs must have namenode host
                 if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
                     return Err(FilesystemError::InvalidPath(
-                        "HDFS URLs must specify namenode host".to_string()
+                        "HDFS URLs must specify namenode host".to_string(),
                     ));
                 }
             }
             _ => {
                 return Err(FilesystemError::UnsupportedScheme(
-                    parsed_url.scheme().to_string()
+                    parsed_url.scheme().to_string(),
                 ));
             }
         }
-        
+
         Ok(())
     }
 
@@ -1076,9 +1094,9 @@ impl FilesystemFactory {
         } else {
             url.to_string()
         };
-        
+
         let parsed_url = Url::parse(&normalized_url)?;
-        
+
         match parsed_url.scheme() {
             "s3" | "gcs" | "gs" => {
                 // Bucket is the hostname
@@ -1086,7 +1104,11 @@ impl FilesystemFactory {
             }
             "adls" => {
                 // Container is the second path segment
-                let path_parts: Vec<&str> = parsed_url.path().trim_start_matches('/').split('/').collect();
+                let path_parts: Vec<&str> = parsed_url
+                    .path()
+                    .trim_start_matches('/')
+                    .split('/')
+                    .collect();
                 if path_parts.len() >= 2 {
                     Ok(Some(path_parts[1].to_string()))
                 } else {
@@ -1114,13 +1136,17 @@ impl FilesystemFactory {
         } else {
             url.to_string()
         };
-        
+
         let parsed_url = Url::parse(&normalized_url)?;
-        
+
         match parsed_url.scheme() {
             "adls" => {
                 // Account is the first path segment
-                let path_parts: Vec<&str> = parsed_url.path().trim_start_matches('/').split('/').collect();
+                let path_parts: Vec<&str> = parsed_url
+                    .path()
+                    .trim_start_matches('/')
+                    .split('/')
+                    .collect();
                 if !path_parts.is_empty() && !path_parts[0].is_empty() {
                     Ok(Some(path_parts[0].to_string()))
                 } else {
@@ -1143,17 +1169,17 @@ impl FilesystemFactory {
     /// Extract relative path from URL (removes base path configured for the storage)
     pub fn extract_relative_path(&self, url: &str) -> FsResult<String> {
         info!("🔍 resolve_path: {}", url);
-        
+
         // Handle URLs without schemes by prepending file://
         let normalized_url = if !url.contains("://") {
             format!("file://{}", url)
         } else {
             url.to_string()
         };
-        
+
         // Log the normalized URL for debugging
         info!("    normalized_url: {}", normalized_url);
-        
+
         let parsed_url = match Url::parse(&normalized_url) {
             Ok(url) => url,
             Err(e) => {
@@ -1173,7 +1199,7 @@ impl FilesystemFactory {
             "s3" | "gcs" | "gs" => {
                 // For object stores, remove the bucket from path
                 let path_without_bucket = path.trim_start_matches('/');
-                
+
                 // Skip the bucket name (first path segment)
                 if let Some(slash_pos) = path_without_bucket.find('/') {
                     Ok(path_without_bucket[slash_pos + 1..].to_string())
@@ -1202,18 +1228,15 @@ impl FilesystemFactory {
         }
     }
 
-
     /// Extract scheme from URL, handling paths without schemes
     fn extract_scheme(&self, url: &str) -> FsResult<String> {
         if url.contains("://") {
             let parsed = Url::parse(url)?;
             let raw_scheme = parsed.scheme().to_string();
-            
+
             // Check for scheme mapping (e.g., gs -> gcs)
-            let mapped_scheme = self.config.scheme_mapping
-                .get(&raw_scheme)
-                ;
-            
+            let mapped_scheme = self.config.scheme_mapping.get(&raw_scheme);
+
             Ok(mapped_scheme.cloned().unwrap_or_else(|| raw_scheme.clone()))
         } else {
             // No scheme present - assume local file
@@ -1228,16 +1251,20 @@ impl FilesystemFactory {
     pub fn resolve_path(url: &str) -> FsResult<String> {
         // Debug logging can be removed once issues are resolved
         debug!("🔍 DEBUG resolve_path: Input URL = '{}'", url);
-        
+
         // Case 1: No scheme present - return as-is (this preserves relative paths)
         if !url.contains("://") {
-            debug!("🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'", url);
+            debug!(
+                "🔍 DEBUG resolve_path: No scheme, returning as-is: '{}'",
+                url
+            );
             return Ok(url.to_string());
         }
-        
+
         // Case 2: Parse URL with scheme
-        let parsed_url = Url::parse(url).map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
-        
+        let parsed_url = Url::parse(url)
+            .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
+
         // Case 3: Handle file:// URLs with special logic to preserve relative paths
         if parsed_url.scheme() == "file" {
             // CRITICAL: Always preserve the original path structure from the URL
@@ -1245,7 +1272,10 @@ impl FilesystemFactory {
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
                 let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
-                debug!("🔍 DEBUG resolve_path: Explicit relative path: '{}'", relative_path);
+                debug!(
+                    "🔍 DEBUG resolve_path: Explicit relative path: '{}'",
+                    relative_path
+                );
                 Ok(relative_path.to_string())
             } else if url.starts_with("file:///") {
                 // Absolute path: file:///absolute/path
@@ -1255,7 +1285,10 @@ impl FilesystemFactory {
             } else if url.starts_with("file://") {
                 // Implicit relative path: file://relative/path (treat as relative)
                 let relative_path = &url[7..]; // Remove "file://" prefix
-                debug!("🔍 DEBUG resolve_path: Implicit relative path: '{}'", relative_path);
+                debug!(
+                    "🔍 DEBUG resolve_path: Implicit relative path: '{}'",
+                    relative_path
+                );
                 Ok(relative_path.to_string())
             } else {
                 // Fallback
@@ -1274,22 +1307,23 @@ impl FilesystemFactory {
     /// Initialize tier-to-URL mapping from configuration
     fn initialize_tier_mapping(&mut self) {
         for tier_config in &self.config.performance_config.tier_configs {
-            self.tier_mapping.insert(tier_config.tier, tier_config.base_url.clone());
+            self.tier_mapping
+                .insert(tier_config.tier, tier_config.base_url.clone());
         }
-        
+
         // Add default mappings if not configured
         if !self.tier_mapping.contains_key(&StorageTier::Memory) {
-            self.tier_mapping.insert(StorageTier::Memory, "memory://".to_string());
+            self.tier_mapping
+                .insert(StorageTier::Memory, "memory://".to_string());
         }
     }
-    
+
     /// Get filesystem URL for a specific storage tier
     pub fn get_tier_url(&self, tier: StorageTier, relative_path: &str) -> FsResult<String> {
-        let base_url = self.tier_mapping.get(&tier)
-            .ok_or_else(|| FilesystemError::Config(
-                format!("No filesystem configured for tier {:?}", tier)
-            ))?;
-        
+        let base_url = self.tier_mapping.get(&tier).ok_or_else(|| {
+            FilesystemError::Config(format!("No filesystem configured for tier {:?}", tier))
+        })?;
+
         // Construct full URL
         if base_url.ends_with('/') {
             Ok(format!("{}{}", base_url, relative_path))
@@ -1297,7 +1331,7 @@ impl FilesystemFactory {
             Ok(format!("{}/{}", base_url, relative_path))
         }
     }
-    
+
     /// Promote data from one tier to another
     pub async fn promote_data(
         &self,
@@ -1306,18 +1340,22 @@ impl FilesystemFactory {
         relative_path: &str,
     ) -> FsResult<()> {
         if !to_tier.is_faster_than(&from_tier) {
-            return Err(FilesystemError::InvalidOperation(
-                format!("Cannot promote from {:?} to {:?} (target not faster)", from_tier, to_tier)
-            ));
+            return Err(FilesystemError::InvalidOperation(format!(
+                "Cannot promote from {:?} to {:?} (target not faster)",
+                from_tier, to_tier
+            )));
         }
-        
+
         let from_url = self.get_tier_url(from_tier, relative_path)?;
         let to_url = self.get_tier_url(to_tier, relative_path)?;
-        
-        info!("Promoting data from {:?} to {:?}: {}", from_tier, to_tier, relative_path);
+
+        info!(
+            "Promoting data from {:?} to {:?}: {}",
+            from_tier, to_tier, relative_path
+        );
         self.move_atomic(&from_url, &to_url).await
     }
-    
+
     /// Demote data from one tier to another
     pub async fn demote_data(
         &self,
@@ -1328,16 +1366,20 @@ impl FilesystemFactory {
         if from_tier.is_faster_than(&to_tier) {
             let from_url = self.get_tier_url(from_tier, relative_path)?;
             let to_url = self.get_tier_url(to_tier, relative_path)?;
-            
-            info!("Demoting data from {:?} to {:?}: {}", from_tier, to_tier, relative_path);
+
+            info!(
+                "Demoting data from {:?} to {:?}: {}",
+                from_tier, to_tier, relative_path
+            );
             self.move_atomic(&from_url, &to_url).await
         } else {
-            Err(FilesystemError::InvalidOperation(
-                format!("Cannot demote from {:?} to {:?} (target not slower)", from_tier, to_tier)
-            ))
+            Err(FilesystemError::InvalidOperation(format!(
+                "Cannot demote from {:?} to {:?} (target not slower)",
+                from_tier, to_tier
+            )))
         }
     }
-    
+
     /// Get optimal tier for data based on access patterns
     pub fn suggest_tier(&self, access_frequency: f64, data_size_bytes: u64) -> StorageTier {
         // Simple heuristic: hot data → fast tiers, cold data → slow tiers
@@ -1359,23 +1401,23 @@ impl FilesystemFactory {
             StorageTier::S3Standard
         }
     }
-    
+
     /// List all available filesystem types
     pub fn available_filesystems(&self) -> Vec<&str> {
         self.filesystems.keys().map(|s| s.as_str()).collect()
     }
 
     /// Create a zero-copy filesystem wrapper for intelligent caching and optimization
-    /// 
+    ///
     /// This wraps any underlying filesystem (S3, GCS, Azure, Local) with the zero-copy I/O system
     /// providing transparent cache-first, fallback-to-cloud operations for all read operations.
-    /// 
+    ///
     /// # Arguments
     /// * `url` - The base URL to determine which underlying filesystem to wrap
     /// * `io_system` - The zero-copy I/O system for caching and optimization
     /// * `collection_id` - Collection context for optimization
     /// * `engine_type` - Engine type for optimization (SST, VIPER, SWIFT, NOVA, etc.)
-    /// 
+    ///
     /// # Returns
     /// A zero-copy filesystem that transparently optimizes all file operations
     pub async fn create_zero_copy_filesystem(
@@ -1387,7 +1429,7 @@ impl FilesystemFactory {
     ) -> FsResult<ZeroCopyFilesystem> {
         // Get the underlying filesystem for the URL
         let underlying_fs = self.get_filesystem(url)?;
-        
+
         // Create an Arc wrapper around the underlying filesystem
         // We need to clone the filesystem, but since we can't clone trait objects,
         // we'll need to get it by scheme instead
@@ -1396,7 +1438,7 @@ impl FilesystemFactory {
         } else {
             "file"
         };
-        
+
         // For now, we'll create the underlying filesystem using a simplified approach
         // In production, the FilesystemFactory should be refactored to use Arc<dyn FileSystem>
         // throughout to support zero-copy filesystem creation more efficiently
@@ -1405,11 +1447,12 @@ impl FilesystemFactory {
             let local_fs = LocalFileSystem::new(local_config).await?;
             std::sync::Arc::new(local_fs) as std::sync::Arc<dyn FileSystem>
         } else {
-            return Err(FilesystemError::UnsupportedScheme(
-                format!("Zero-copy filesystem not yet supported for scheme: {}", scheme)
-            ));
+            return Err(FilesystemError::UnsupportedScheme(format!(
+                "Zero-copy filesystem not yet supported for scheme: {}",
+                scheme
+            )));
         };
-        
+
         // Build the zero-copy filesystem
         ZeroCopyFilesystemBuilder::new()
             .with_collection_id(collection_id)
@@ -1629,10 +1672,7 @@ mod inline_tests {
             "gcs"
         );
         // Test gs:// scheme mapping to gcs
-        assert_eq!(
-            factory.extract_scheme("gs://bucket/object").unwrap(),
-            "gcs"
-        );
+        assert_eq!(factory.extract_scheme("gs://bucket/object").unwrap(), "gcs");
         assert_eq!(
             factory.extract_scheme("hdfs://namenode:9000/path").unwrap(),
             "hdfs"
@@ -1648,8 +1688,14 @@ mod inline_tests {
             FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),
             "/tmp/test.txt"
         );
-        assert_eq!(FilesystemFactory::resolve_path("s3://bucket/key").unwrap(), "/key");
-        assert_eq!(FilesystemFactory::resolve_path("/local/path").unwrap(), "/local/path");
+        assert_eq!(
+            FilesystemFactory::resolve_path("s3://bucket/key").unwrap(),
+            "/key"
+        );
+        assert_eq!(
+            FilesystemFactory::resolve_path("/local/path").unwrap(),
+            "/local/path"
+        );
     }
 }
 

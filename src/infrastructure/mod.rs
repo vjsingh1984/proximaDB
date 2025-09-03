@@ -106,7 +106,7 @@
 //! struct Counter {
 //!     value: AtomicU64,
 //! }
-//! 
+//!
 //! impl Counter {
 //!     fn increment(&self) -> u64 {
 //!         self.value.fetch_add(1, Ordering::Relaxed)
@@ -131,28 +131,28 @@
 //! [infrastructure.concurrent]
 //! shards = 16  # Number of internal shards
 //! max_retries = 3  # CAS retry attempts
-//! 
+//!
 //! # Tiering configuration
 //! [infrastructure.tiering]
 //! enabled = true
 //! policy = "smart"  # rule_based, smart, workload_aware
-//! 
+//!
 //! # Tier definitions
 //! [[infrastructure.tiering.tiers]]
 //! name = "hot"
 //! storage = "memory"
 //! capacity_gb = 16
-//! 
+//!
 //! [[infrastructure.tiering.tiers]]
 //! name = "warm"
 //! storage = "ssd"
 //! capacity_gb = 256
-//! 
+//!
 //! [[infrastructure.tiering.tiers]]
 //! name = "cold"
 //! storage = "s3"
 //! capacity_gb = 10000
-//! 
+//!
 //! # Adaptive structures
 //! [infrastructure.adaptive]
 //! monitor_interval_ms = 1000
@@ -164,13 +164,13 @@
 //! ### Concurrent Storage
 //! ```rust
 //! use proximadb::infrastructure::ConcurrentStorage;
-//! 
+//!
 //! let storage = ConcurrentStorage::new();
-//! 
+//!
 //! // Concurrent writes
 //! storage.insert("key1", value1);
 //! storage.insert("key2", value2);
-//! 
+//!
 //! // Lock-free reads
 //! let value = storage.get("key1");
 //! ```
@@ -178,13 +178,13 @@
 //! ### Tiering Policy
 //! ```rust
 //! use proximadb::infrastructure::{SmartTierPolicy, WorkloadMetrics};
-//! 
+//!
 //! let policy = SmartTierPolicy::new(config);
 //! let metrics = WorkloadMetrics::from_access_log(log);
-//! 
+//!
 //! // Get tier recommendation
 //! let tier = policy.recommend_tier(&item, &metrics);
-//! 
+//!
 //! // Execute migration
 //! if tier != item.current_tier() {
 //!     tier_manager.migrate(item, tier).await?;
@@ -194,14 +194,14 @@
 //! ### Adaptive Store
 //! ```rust
 //! use proximadb::infrastructure::AdaptiveStore;
-//! 
+//!
 //! let store = AdaptiveStore::new(config);
-//! 
+//!
 //! // Store adapts to access patterns
 //! for i in 0..1000000 {
 //!     store.insert(i, data);  // Starts as HashMap
 //! }
-//! 
+//!
 //! // After detecting sequential access pattern
 //! // Automatically switches to BTree for better cache locality
 //! ```
@@ -214,22 +214,21 @@
 //! - **Atomic Operations**: Lock-free where possible
 //! - **Immutable Sharing**: Arc for read-heavy workloads
 
-pub mod concurrent_structures;
-pub mod tier_policy_engine;
 pub mod adaptive_structures;
+pub mod concurrent_structures;
 pub mod tier_data_movement;
+pub mod tier_policy_engine;
 
 pub use concurrent_structures::{
-    ConcurrentStorage, ConcurrentMapping, AtomicMetrics, MetricsSnapshot,
-    TypedStorage, AccessInfo
+    AccessInfo, AtomicMetrics, ConcurrentMapping, ConcurrentStorage, MetricsSnapshot, TypedStorage,
 };
 
 pub use tier_policy_engine::{
-    GlobalTier, RuleBasedTierPolicy, ServerTierConfig, 
-    SmartTierPolicy, StorageTier, WorkloadPattern, WorkloadMetrics
+    GlobalTier, RuleBasedTierPolicy, ServerTierConfig, SmartTierPolicy, StorageTier,
+    WorkloadMetrics, WorkloadPattern,
 };
 
 pub use adaptive_structures::{
-    AdaptiveStore, UniversalTier, AdaptiveStoreFactory, 
-    AdaptiveStoreConfig, BackendType, TierRebalanceResult
+    AdaptiveStore, AdaptiveStoreConfig, AdaptiveStoreFactory, BackendType, TierRebalanceResult,
+    UniversalTier,
 };

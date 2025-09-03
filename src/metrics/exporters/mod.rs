@@ -1,23 +1,23 @@
 //! Unified metrics exporters module combining Prometheus, JSON, and OpenTelemetry formats
 
-pub mod prometheus;
 pub mod json;
+pub mod prometheus;
 
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use prometheus::PrometheusExporter;
 pub use json::JsonExporter;
+pub use prometheus::PrometheusExporter;
 
 /// Trait for all metric exporters
 pub trait MetricsExporter: Send + Sync {
     /// Export metrics to the specific format
     fn export(&self, metrics: &MetricsSnapshot) -> Result<String>;
-    
+
     /// Get the content type for HTTP responses
     fn content_type(&self) -> &'static str;
-    
+
     /// Get the export format name
     fn format_name(&self) -> &'static str;
 }

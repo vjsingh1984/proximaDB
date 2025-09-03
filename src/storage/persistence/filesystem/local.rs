@@ -27,7 +27,9 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::info;
 
-use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
+use super::{
+    DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult,
+};
 
 /// Local filesystem configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,37 +68,38 @@ impl LocalFileSystem {
     /// Extract path from URL for stateless operations (uses centralized utility)
     fn resolve_path(&self, url: &str) -> FsResult<String> {
         use crate::storage::persistence::filesystem::FilesystemFactory;
-        
+
         let path = FilesystemFactory::resolve_path(url)?;
-        
+
         // Validate that it's a file URL if it has a scheme
         if url.contains("://") {
             use url::Url;
             let parsed_url = Url::parse(url)?;
             if parsed_url.scheme() != "file" {
-                return Err(FilesystemError::UnsupportedScheme(parsed_url.scheme().to_string()));
+                return Err(FilesystemError::UnsupportedScheme(
+                    parsed_url.scheme().to_string(),
+                ));
             }
         }
-        
+
         Ok(path)
     }
-    
+
     /// Resolve a path string to an absolute PathBuf, handling cases where current_dir() fails
     fn resolve_to_absolute_path(&self, path_str: &str) -> PathBuf {
         let mut resolved_path = PathBuf::from(path_str);
-        
+
         // If path is already absolute, return it
         if resolved_path.is_absolute() {
             return resolved_path;
         }
-        
+
         // Try to get current directory, otherwise use fallbacks
         match std::env::current_dir() {
             Ok(cwd) => {
                 resolved_path = cwd.join(path_str);
             }
             Err(_e) => {
-                
                 // Use PWD or CARGO_MANIFEST_DIR as fallback
                 let fallback_base = if let Ok(pwd) = std::env::var("PWD") {
                     pwd
@@ -105,14 +108,14 @@ impl LocalFileSystem {
                 } else {
                     "/tmp".to_string()
                 };
-                
+
                 // Properly resolve the relative path - order matters!
                 if path_str.starts_with("../") {
                     // Handle parent directory references with path
                     let base = PathBuf::from(&fallback_base);
                     let mut current = base.clone();
                     let mut remaining: &str = path_str;
-                    
+
                     // Handle multiple ../ sequences
                     while remaining.starts_with("../") {
                         if let Some(parent) = current.parent() {
@@ -145,7 +148,7 @@ impl LocalFileSystem {
                 }
             }
         }
-        
+
         resolved_path
     }
 
@@ -154,29 +157,23 @@ impl LocalFileSystem {
         // Capture the process start directory information
         match std::env::current_dir() {
             Ok(_cwd) => {
-                
                 // Try to get parent to see if it's accessible
-                if let Some(_parent) = _cwd.parent() {
-                }
+                if let Some(_parent) = _cwd.parent() {}
             }
             Err(_e) => {
-                
                 // Try alternative methods to understand the environment
                 if let Ok(exe_path) = std::env::current_exe() {
-                    if let Some(_exe_dir) = exe_path.parent() {
-                    }
+                    if let Some(_exe_dir) = exe_path.parent() {}
                 }
-                
+
                 // Check environment variables
-                if let Ok(_pwd) = std::env::var("PWD") {
-                }
-                
+                if let Ok(_pwd) = std::env::var("PWD") {}
+
                 // Check if we're in a test environment
-                if let Ok(_cargo_manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-                }
+                if let Ok(_cargo_manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {}
             }
         }
-        
+
         // Create and validate root directory if specified
         if let Some(ref root_dir) = config.root_dir {
             if !root_dir.exists() {
@@ -200,7 +197,6 @@ impl LocalFileSystem {
 
         Ok(Self { config })
     }
-
 
     /// Convert std::fs::Metadata to FileMetadata
     fn convert_metadata(&self, path: &Path, metadata: &std::fs::Metadata) -> FileMetadata {
@@ -250,7 +246,7 @@ impl FileSystem for LocalFileSystem {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    
+
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         // Extract path from URL
         let path_str = self.resolve_path(path)?;
@@ -259,9 +255,10 @@ impl FileSystem for LocalFileSystem {
         match fs::read(&resolved_path).await {
             Ok(data) => Ok(data),
             Err(e) => match e.kind() {
-                std::io::ErrorKind::NotFound => Err(FilesystemError::NotFound(
-                    format!("File not found: {}", path)
-                )),
+                std::io::ErrorKind::NotFound => Err(FilesystemError::NotFound(format!(
+                    "File not found: {}",
+                    path
+                ))),
                 std::io::ErrorKind::PermissionDenied => Err(FilesystemError::PermissionDenied(
                     resolved_path.display().to_string(),
                 )),
@@ -269,27 +266,26 @@ impl FileSystem for LocalFileSystem {
             },
         }
     }
-    
+
     async fn get_mmap(&self, path: &str) -> FsResult<Option<memmap2::Mmap>> {
         use memmap2::MmapOptions;
         use std::fs::File;
-        
+
         // Extract path from URL
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
-        
+
         // Open file for memory mapping (synchronous operation)
-        let file = File::open(&resolved_path)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::NotFound => FilesystemError::NotFound(
-                    format!("File not found for mmap: {}", path)
-                ),
-                std::io::ErrorKind::PermissionDenied => FilesystemError::PermissionDenied(
-                    resolved_path.display().to_string(),
-                ),
-                _ => FilesystemError::Io(e),
-            })?;
-        
+        let file = File::open(&resolved_path).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                FilesystemError::NotFound(format!("File not found for mmap: {}", path))
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                FilesystemError::PermissionDenied(resolved_path.display().to_string())
+            }
+            _ => FilesystemError::Io(e),
+        })?;
+
         // Create memory map
         // Safety: We're creating a read-only mmap which is safe for concurrent access
         let mmap = unsafe {
@@ -297,11 +293,15 @@ impl FileSystem for LocalFileSystem {
                 .map(&file)
                 .map_err(|e| FilesystemError::Io(e))?
         };
-        
-        tracing::debug!("Created memory map for file: {} (size: {} bytes)", path, mmap.len());
+
+        tracing::debug!(
+            "Created memory map for file: {} (size: {} bytes)",
+            path,
+            mmap.len()
+        );
         Ok(Some(mmap))
     }
-    
+
     fn supports_mmap(&self) -> bool {
         true // Local filesystem supports memory mapping
     }
@@ -316,9 +316,7 @@ impl FileSystem for LocalFileSystem {
             if let Some(parent) = resolved_path.parent() {
                 fs::create_dir_all(parent)
                     .await
-                    .map_err(|e| {
-                        FilesystemError::Io(e)
-                    })?;
+                    .map_err(|e| FilesystemError::Io(e))?;
             }
         }
 
@@ -340,10 +338,10 @@ impl FileSystem for LocalFileSystem {
                 .open(&resolved_path)
                 .await
                 .map_err(FilesystemError::Io)?;
-                
+
             // Write all data
             file.write_all(data).await.map_err(FilesystemError::Io)?;
-            
+
             // Sync data to disk to prevent truncation issues
             file.sync_all().await.map_err(FilesystemError::Io)?;
         } else {
@@ -415,56 +413,61 @@ impl FileSystem for LocalFileSystem {
 
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        
+
         // Extract path from URL
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
-        
+
         // Open file for reading
         let mut file = match tokio::fs::File::open(&resolved_path).await {
             Ok(f) => f,
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => {
-                    return Err(FilesystemError::NotFound(
-                        format!("File not found: {}", path)
-                    ))
+                    return Err(FilesystemError::NotFound(format!(
+                        "File not found: {}",
+                        path
+                    )));
                 }
                 std::io::ErrorKind::PermissionDenied => {
                     return Err(FilesystemError::PermissionDenied(
                         resolved_path.display().to_string(),
-                    ))
+                    ));
                 }
                 _ => return Err(FilesystemError::Io(e)),
             },
         };
-        
+
         // Get file size to validate the range
         let metadata = file.metadata().await.map_err(FilesystemError::Io)?;
         let file_size = metadata.len();
-        
+
         // Check if offset is beyond file size
         if offset >= file_size {
             return Ok(vec![]);
         }
-        
+
         // Seek to the offset
         file.seek(std::io::SeekFrom::Start(offset))
             .await
             .map_err(FilesystemError::Io)?;
-        
+
         // Calculate actual bytes to read (handle case where offset + length > file_size)
         let bytes_to_read = std::cmp::min(length, file_size - offset) as usize;
-        
+
         // Debug log for SSTable bloom filter issue
         if path.contains(".sstable") && offset < 1000 {
             tracing::debug!(
                 "DEBUG LocalFS read_range: path={}, offset={}, length={}, file_size={}, bytes_to_read={}",
-                path, offset, length, file_size, bytes_to_read
+                path,
+                offset,
+                length,
+                file_size,
+                bytes_to_read
             );
         }
-        
+
         // Extra detailed tracing for our SST debug
-        
+
         // Read the exact amount of bytes
         let mut buffer = vec![0u8; bytes_to_read];
         match file.read_exact(&mut buffer).await {
@@ -476,12 +479,17 @@ impl FileSystem for LocalFileSystem {
                 let current_pos = file.stream_position().await.unwrap_or(0);
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
-                    path, offset, bytes_to_read, current_pos, file_size, e
+                    path,
+                    offset,
+                    bytes_to_read,
+                    current_pos,
+                    file_size,
+                    e
                 );
                 return Err(FilesystemError::Io(e));
             }
         }
-        
+
         Ok(buffer)
     }
 
@@ -507,18 +515,15 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>> {
-        
         // Extract path from URL
         let path_str = self.resolve_path(path)?;
-        
+
         let resolved_path = PathBuf::from(path_str);
 
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&resolved_path)
             .await
-            .map_err(|e| {
-                FilesystemError::Io(e)
-            })?;
+            .map_err(|e| FilesystemError::Io(e))?;
 
         while let Some(entry) = dir.next_entry().await.map_err(FilesystemError::Io)? {
             let entry_path = entry.path();
@@ -535,7 +540,8 @@ impl FileSystem for LocalFileSystem {
             let entry_url = if path.starts_with("file://./") || path.starts_with("./") {
                 // For relative URLs, preserve the relative nature
                 if self.config.root_dir.is_some() {
-                    let relative_from_root = entry_path.strip_prefix(&self.config.root_dir.as_ref().unwrap())
+                    let relative_from_root = entry_path
+                        .strip_prefix(&self.config.root_dir.as_ref().unwrap())
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|_| entry_path.display().to_string());
                     format!("file://./{}", relative_from_root)
@@ -547,11 +553,14 @@ impl FileSystem for LocalFileSystem {
                 // Absolute path
                 format!("file://{}", entry_path.display())
             };
-            info!("📁 DEBUG LocalFileSystem::list entry_url: '{}' for entry_path: {:?}", entry_url, entry_path);
+            info!(
+                "📁 DEBUG LocalFileSystem::list entry_url: '{}' for entry_path: {:?}",
+                entry_url, entry_path
+            );
 
             entries.push(DirEntry {
                 name,
-                url: entry_url,  // Use full URL instead of path
+                url: entry_url, // Use full URL instead of path
                 metadata: file_metadata,
             });
         }
@@ -568,39 +577,28 @@ impl FileSystem for LocalFileSystem {
 
         fs::create_dir(&resolved_path)
             .await
-            .map_err(|e| {
-                match e.kind() {
-                    std::io::ErrorKind::AlreadyExists => {
-                        FilesystemError::AlreadyExists(resolved_path.display().to_string())
-                    }
-                    _ => FilesystemError::Io(e),
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::AlreadyExists => {
+                    FilesystemError::AlreadyExists(resolved_path.display().to_string())
                 }
+                _ => FilesystemError::Io(e),
             })
     }
 
     async fn create_dir_all(&self, path: &str) -> FsResult<()> {
-        
         // First extract path from URL
         let path_str = self.resolve_path(path)?;
-        
+
         // Then resolve to absolute path
         let resolved_path = self.resolve_to_absolute_path(&path_str);
-        
+
         // Now create the directory with the resolved absolute path
         match std::fs::create_dir_all(&resolved_path) {
-            Ok(()) => {
-                Ok(())
-            }
-            Err(e) => {
-                match e.kind() {
-                    std::io::ErrorKind::AlreadyExists => {
-                        Ok(())
-                    }
-                    _ => {
-                        Err(FilesystemError::Io(e))
-                    }
-                }
-            }
+            Ok(()) => Ok(()),
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::AlreadyExists => Ok(()),
+                _ => Err(FilesystemError::Io(e)),
+            },
         }
     }
 
@@ -614,26 +612,21 @@ impl FileSystem for LocalFileSystem {
         if let Some(parent) = to_path.parent() {
             fs::create_dir_all(parent)
                 .await
-                .map_err(|e| {
-                    FilesystemError::Io(e)
-                })?;
+                .map_err(|e| FilesystemError::Io(e))?;
         }
 
         fs::copy(&from_path, &to_path)
             .await
-            .map_err(|e| {
-                FilesystemError::Io(e)
-            })?;
+            .map_err(|e| FilesystemError::Io(e))?;
 
         Ok(())
     }
 
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {
-        
         // Extract paths from URLs
         let from_path_str = self.resolve_path(from)?;
         let from_path = PathBuf::from(&from_path_str);
-        
+
         let to_path_str = self.resolve_path(to)?;
         let to_path = PathBuf::from(&to_path_str);
 
@@ -641,9 +634,7 @@ impl FileSystem for LocalFileSystem {
         if let Some(parent) = to_path.parent() {
             fs::create_dir_all(parent)
                 .await
-                .map_err(|e| {
-                    FilesystemError::Io(e)
-                })?;
+                .map_err(|e| FilesystemError::Io(e))?;
         }
 
         fs::rename(&from_path, &to_path)
@@ -660,17 +651,17 @@ impl FileSystem for LocalFileSystem {
         // This is a no-op for the filesystem as a whole
         Ok(())
     }
-    
+
     async fn sync_file(&self, path: &str) -> FsResult<()> {
         // Extract path from URL
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
-        
+
         // Only sync if enabled in config
         if !self.config.sync_enabled {
             return Ok(());
         }
-        
+
         // Open the file for sync
         let file = tokio::fs::OpenOptions::new()
             .read(true)
@@ -683,11 +674,10 @@ impl FileSystem for LocalFileSystem {
                 }
                 _ => FilesystemError::Io(e),
             })?;
-        
+
         // Call sync_all() which performs fsync on the file
-        file.sync_all().await
-            .map_err(FilesystemError::Io)?;
-        
+        file.sync_all().await.map_err(FilesystemError::Io)?;
+
         tracing::debug!("✅ File synced to disk: {}", resolved_path.display());
         Ok(())
     }
@@ -695,7 +685,7 @@ impl FileSystem for LocalFileSystem {
     async fn open_file(&self, path: &str, create: bool) -> FsResult<Box<dyn FilesystemFile>> {
         let path_str = self.resolve_path(path)?;
         let resolved_path = PathBuf::from(path_str);
-        
+
         let file = if create {
             tokio::fs::OpenOptions::new()
                 .read(true)
@@ -705,16 +695,17 @@ impl FileSystem for LocalFileSystem {
                 .await
         } else {
             tokio::fs::File::open(&resolved_path).await
-        }.map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => FilesystemError::NotFound(
-                format!("File not found: {}", path)
-            ),
-            std::io::ErrorKind::PermissionDenied => FilesystemError::PermissionDenied(
-                resolved_path.display().to_string(),
-            ),
+        }
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                FilesystemError::NotFound(format!("File not found: {}", path))
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                FilesystemError::PermissionDenied(resolved_path.display().to_string())
+            }
             _ => FilesystemError::Io(e),
         })?;
-        
+
         Ok(Box::new(LocalFile {
             file,
             path: resolved_path,
@@ -735,33 +726,38 @@ impl FilesystemFile for LocalFile {
         use tokio::io::AsyncReadExt;
         self.file.read(buf).await.map_err(FilesystemError::Io)
     }
-    
+
     async fn write(&mut self, buf: &[u8]) -> FsResult<usize> {
         use tokio::io::AsyncWriteExt;
         self.file.write(buf).await.map_err(FilesystemError::Io)
     }
-    
+
     async fn flush(&mut self) -> FsResult<()> {
         use tokio::io::AsyncWriteExt;
         self.file.flush().await.map_err(FilesystemError::Io)
     }
-    
+
     async fn seek(&mut self, pos: u64) -> FsResult<u64> {
         use tokio::io::{AsyncSeekExt, SeekFrom};
-        self.file.seek(SeekFrom::Start(pos)).await.map_err(FilesystemError::Io)
+        self.file
+            .seek(SeekFrom::Start(pos))
+            .await
+            .map_err(FilesystemError::Io)
     }
-    
+
     async fn position(&self) -> FsResult<u64> {
         // Note: Getting current position requires a mutable reference in tokio
         // This is a limitation of the tokio API
         Ok(0) // Would need to track position separately or use seek(SeekFrom::Current(0))
     }
-    
+
     async fn file_size(&self) -> FsResult<u64> {
-        let metadata = tokio::fs::metadata(&self.path).await.map_err(FilesystemError::Io)?;
+        let metadata = tokio::fs::metadata(&self.path)
+            .await
+            .map_err(FilesystemError::Io)?;
         Ok(metadata.len())
     }
-    
+
     async fn sync_all(&mut self) -> FsResult<()> {
         self.file.sync_all().await.map_err(FilesystemError::Io)
     }
@@ -771,26 +767,26 @@ impl FilesystemFile for LocalFile {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_relative_path_url_handling() {
         // Save current directory to restore later
         let original_dir = std::env::current_dir().unwrap();
-        
+
         // Create a temporary directory and change to it
         let temp_dir = TempDir::new().unwrap();
         std::env::set_current_dir(temp_dir.path()).unwrap();
-        
+
         // Clean up any existing test structure first
         if std::path::Path::new("test_metadata_info").exists() {
             std::fs::remove_dir_all("test_metadata_info").ok();
         }
-        
+
         // Create test structure using relative paths in current directory
         std::fs::create_dir_all("test_metadata/current").unwrap();
         std::fs::write("test_metadata/current/test.txt", b"test content").unwrap();
-        
+
         // Create filesystem without root_dir - it should handle relative paths as-is
         let config = LocalConfig {
             root_dir: None,
@@ -798,35 +794,47 @@ use tracing::{debug, error, info};
             default_permissions: None,
             sync_enabled: false,
         };
-        
+
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Debug: Check current directory and file existence
         let current_dir = std::env::current_dir().unwrap();
         debug!("🔍 Current directory: {}", current_dir.display());
-        debug!("🔍 Checking if test_metadata/current exists: {}", std::path::Path::new("test_metadata/current").exists());
-        debug!("🔍 Checking if test_metadata/current/test.txt exists: {}", std::path::Path::new("test_metadata/current/test.txt").exists());
-        
+        debug!(
+            "🔍 Checking if test_metadata/current exists: {}",
+            std::path::Path::new("test_metadata/current").exists()
+        );
+        debug!(
+            "🔍 Checking if test_metadata/current/test.txt exists: {}",
+            std::path::Path::new("test_metadata/current/test.txt").exists()
+        );
+
         // Verify the directory exists before testing
-        assert!(std::path::Path::new("test_metadata/current").exists(), "test_metadata/current directory should exist");
-        assert!(std::path::Path::new("test_metadata/current/test.txt").exists(), "test.txt file should exist");
-        
+        assert!(
+            std::path::Path::new("test_metadata/current").exists(),
+            "test_metadata/current directory should exist"
+        );
+        assert!(
+            std::path::Path::new("test_metadata/current/test.txt").exists(),
+            "test.txt file should exist"
+        );
+
         // Test listing with relative path - this should work with the relative path as provided
         let relative_url = "file://test_metadata/current";
         debug!("🔍 About to list: {}", relative_url);
         let entries = fs.list(relative_url).await.unwrap();
-        
+
         // Restore original directory AFTER filesystem operations to avoid test pollution
         std::env::set_current_dir(original_dir).unwrap();
-        
+
         // Verify entries
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "test.txt");
-        
+
         // The key test: verify the URL doesn't have duplicated paths
         let entry_url = &entries[0].url;
         debug!("Entry URL: {}", entry_url);
-        
+
         // The URL should be properly formatted without duplications
         assert!(entry_url.contains("test_metadata/current/test.txt"));
         assert!(!entry_url.contains("test_metadata/test_metadata_info"));
@@ -837,24 +845,24 @@ use tracing::{debug, error, info};
         // Create a temporary directory
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
-        
+
         // Create test structure
         let test_dir = temp_path.join("test_metadata/current");
         std::fs::create_dir_all(&test_dir).unwrap();
         std::fs::write(test_dir.join("test.txt"), b"test content").unwrap();
-        
+
         // Create filesystem without root_dir (absolute paths)
         let config = LocalConfig::default();
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Test listing with absolute URL
         let absolute_url = format!("file://{}", test_dir.display());
         let entries = fs.list(&absolute_url).await.unwrap();
-        
+
         // Verify entries
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "test.txt");
-        
+
         // Verify the URL is properly formatted
         let entry_url = &entries[0].url;
         debug!("Entry URL: {}", entry_url);
@@ -866,10 +874,13 @@ use tracing::{debug, error, info};
     async fn test_resolve_path() {
         let config = LocalConfig::default();
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Test various URL formats
         assert_eq!(fs.resolve_path("file:///tmp/test").unwrap(), "/tmp/test");
-        assert_eq!(fs.resolve_path("file://./relative/path").unwrap(), "./relative/path");
+        assert_eq!(
+            fs.resolve_path("file://./relative/path").unwrap(),
+            "./relative/path"
+        );
         assert_eq!(fs.resolve_path("/absolute/path").unwrap(), "/absolute/path");
         assert_eq!(fs.resolve_path("relative/path").unwrap(), "relative/path");
     }
@@ -878,7 +889,7 @@ use tracing::{debug, error, info};
     async fn test_no_path_duplication_in_operations() {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
-        
+
         // Setup filesystem with root directory
         let config = LocalConfig {
             root_dir: Some(temp_path.to_path_buf()),
@@ -886,9 +897,9 @@ use tracing::{debug, error, info};
             default_permissions: None,
             sync_enabled: false,
         };
-        
+
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Clean up any existing test directories/files first
         // Check if the metadata directory exists and clean it up
         if fs.exists("file://./metadata_info").await {
@@ -902,28 +913,32 @@ use tracing::{debug, error, info};
             let _ = fs.delete("file://./metadata/current").await;
             let _ = fs.delete("file://./metadata_info").await;
         }
-        
+
         // Create a directory structure
         let test_url = "file://./metadata/current";
         fs.create_dir_all(test_url).await.unwrap();
-        
+
         // Write a file
         let file_url = "file://./metadata/current/test.oplog";
         // Clean up if file exists from previous run
         let _ = fs.delete(file_url).await;
         fs.write(file_url, b"test data", None).await.unwrap();
-        
+
         // List the directory
         let entries = fs.list(test_url).await.unwrap();
-        
+
         // Verify no path duplication
         assert_eq!(entries.len(), 1);
         let entry_url = &entries[0].url;
-        
+
         // Count occurrences of "metadata_info" in the URL
         let metadata_count = entry_url.matches("metadata_info").count();
-        assert_eq!(metadata_count, 1, "Path 'metadata' should appear only once in URL: {}", entry_url);
-        
+        assert_eq!(
+            metadata_count, 1,
+            "Path 'metadata' should appear only once in URL: {}",
+            entry_url
+        );
+
         // Verify we can read the file using the listed URL
         let content = fs.read(&entry_url).await.unwrap();
         assert_eq!(content, b"test data");
@@ -935,11 +950,11 @@ use tracing::{debug, error, info};
         let temp_dir = TempDir::new().unwrap();
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(temp_dir.path()).unwrap();
-        
+
         // Create filesystem WITHOUT root_dir
         let config = LocalConfig::default();
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Clean up any existing test directories first
         if fs.exists("file://./test_metadata_info").await {
             // List and delete all files recursively
@@ -951,25 +966,27 @@ use tracing::{debug, error, info};
             let _ = fs.delete("file://./test_metadata/current").await;
             let _ = fs.delete("file://./test_metadata_info").await;
         }
-        
+
         // Test with relative URL
         let relative_url = "file://./test_metadata/current";
         fs.create_dir_all(relative_url).await.unwrap();
-        
+
         // Verify the directory was created at the correct location
         assert!(std::path::Path::new("./test_metadata/current").exists());
-        
+
         // Write a file
-        fs.write("file://./test_metadata/current/test.txt", b"test", None).await.unwrap();
-        
+        fs.write("file://./test_metadata/current/test.txt", b"test", None)
+            .await
+            .unwrap();
+
         // List directory
         let entries = fs.list(relative_url).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].url.contains("test.txt"));
-        
+
         // Verify no path duplication in the URL
         assert!(!entries[0].url.contains("test_metadata/test_metadata_info"));
-        
+
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
     }
@@ -978,22 +995,24 @@ use tracing::{debug, error, info};
     async fn test_resolve_path_consistency() {
         // Test that paths are extracted consistently without root_dir resolution
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Test with root_dir set (but it shouldn't affect path extraction)
         let config_with_root = LocalConfig {
             root_dir: Some(temp_dir.path().to_path_buf()),
             ..Default::default()
         };
         let fs_with_root = LocalFileSystem::new(config_with_root).await.unwrap();
-        
+
         // Path extraction should return the path as-is
-        let path_str = fs_with_root.resolve_path("file://./subdir/file.txt").unwrap();
+        let path_str = fs_with_root
+            .resolve_path("file://./subdir/file.txt")
+            .unwrap();
         assert_eq!(path_str, "./subdir/file.txt");
-        
+
         // Test without root_dir - should be the same
         let config_no_root = LocalConfig::default();
         let fs_no_root = LocalFileSystem::new(config_no_root).await.unwrap();
-        
+
         let path_str = fs_no_root.resolve_path("file://./subdir/file.txt").unwrap();
         assert_eq!(path_str, "./subdir/file.txt");
     }
@@ -1002,22 +1021,22 @@ use tracing::{debug, error, info};
     async fn test_prevent_double_relative_path_resolution() {
         // This test verifies that paths are used as-is without root_dir resolution
         // Previously there was a bug where paths were being resolved against root_dir
-        
+
         let temp_dir = TempDir::new().unwrap();
         let working_dir = temp_dir.path();
-        
+
         // Change to temp directory so relative paths work
         let original_dir = std::env::current_dir().unwrap();
         std::env::set_current_dir(working_dir).unwrap();
-        
+
         // Create filesystem WITHOUT root_dir - paths should be used as-is
         let config = LocalConfig {
-            root_dir: None, // No root_dir - paths are used as-is
+            root_dir: None,      // No root_dir - paths are used as-is
             sync_enabled: false, // Disable sync for testing
             ..Default::default()
         };
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Test with URL - use FileOptions to ensure proper creation
         let options = Some(crate::storage::persistence::filesystem::FileOptions {
             create_dirs: true,
@@ -1028,20 +1047,30 @@ use tracing::{debug, error, info};
             metadata: None,
             temp_path: None,
         });
-        
+
         // Write using a file:// URL with proper relative path format
         let test_path = "metadata/current/test.txt";
         let test_url = format!("file://./{}", test_path);
-        fs.write(&test_url, b"test data", options.clone()).await.unwrap();
-        
+        fs.write(&test_url, b"test data", options.clone())
+            .await
+            .unwrap();
+
         // Verify the file was created at the expected location
-        assert!(std::path::Path::new(test_path).exists(), "File should exist at {}", test_path);
-        
+        assert!(
+            std::path::Path::new(test_path).exists(),
+            "File should exist at {}",
+            test_path
+        );
+
         // Also test with a relative path (no file:// prefix)
         let another_path = "metadata/current/another.txt";
         fs.write(another_path, b"more data", options).await.unwrap();
-        assert!(std::path::Path::new(another_path).exists(), "File should exist at {}", another_path);
-        
+        assert!(
+            std::path::Path::new(another_path).exists(),
+            "File should exist at {}",
+            another_path
+        );
+
         // Test that previously problematic paths work correctly
         // This used to cause double path resolution
         let problematic_path = "./test_metadata/current/file.txt";
@@ -1056,10 +1085,14 @@ use tracing::{debug, error, info};
             metadata: None,
             temp_path: None,
         });
-        fs.write(&problematic_url, b"problematic data", create_dirs_options).await.unwrap();
-        assert!(std::path::Path::new("test_metadata/current/file.txt").exists(), 
-                "File should exist at test_metadata/current/file.txt");
-        
+        fs.write(&problematic_url, b"problematic data", create_dirs_options)
+            .await
+            .unwrap();
+        assert!(
+            std::path::Path::new("test_metadata/current/file.txt").exists(),
+            "File should exist at test_metadata/current/file.txt"
+        );
+
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
     }
@@ -1070,7 +1103,7 @@ use tracing::{debug, error, info};
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
         debug!("📁 Created temp directory: {}", temp_path.display());
-        
+
         // Test with root_dir configuration
         let config = LocalConfig {
             root_dir: Some(temp_path.to_path_buf()),
@@ -1079,36 +1112,36 @@ use tracing::{debug, error, info};
             sync_enabled: false,
         };
         debug!("⚙️ Created config: {:?}", config);
-        
+
         debug!("🔧 Creating LocalFileSystem...");
         let fs = match LocalFileSystem::new(config).await {
             Ok(fs) => {
                 info!("✅ LocalFileSystem created successfully");
                 fs
-            },
+            }
             Err(e) => {
                 error!("❌ Failed to create LocalFileSystem: {:?}", e);
                 panic!("Failed to create filesystem: {:?}", e);
             }
         };
-        
+
         // Test 1: Non-existent file should return false
         let non_existent_url = "file://./non_existent_file.txt";
         debug!("🔍 Testing non-existent file: {}", non_existent_url);
         let exists_result = fs.exists(non_existent_url).await.unwrap();
         assert!(!exists_result, "Non-existent file should return false");
         info!("✅ Non-existent file test passed");
-        
+
         // Test 2: Create a file and test it exists
         let test_file_url = "file://./test_exists_file.txt";
         debug!("🔍 Testing file creation: {}", test_file_url);
-        
+
         // Clean up any existing file first
         if fs.exists(test_file_url).await {
             debug!("🧹 Cleaning up existing file: {}", test_file_url);
             let _ = fs.delete(test_file_url).await;
         }
-        
+
         debug!("📝 Writing test file: {}", test_file_url);
         match fs.write(test_file_url, b"test content", None).await {
             Ok(_) => info!("✅ File written successfully"),
@@ -1119,36 +1152,38 @@ use tracing::{debug, error, info};
         }
         let exists_result = fs.exists(test_file_url).await.unwrap();
         assert!(exists_result, "Created file should exist");
-        
+
         // Test 3: Non-existent directory should return false
         let non_existent_dir_url = "file://./non_existent_dir";
         let exists_result = fs.exists(non_existent_dir_url).await.unwrap();
         assert!(!exists_result, "Non-existent directory should return false");
-        
+
         // Test 4: Create a directory and test it exists
         let test_dir_url = "file://./test_exists_dir";
-        
+
         // Clean up any existing directory first
         if fs.exists(test_dir_url).await {
             debug!("🧹 Cleaning up existing directory: {}", test_dir_url);
             let _ = fs.delete(test_dir_url).await;
         }
-        
+
         fs.create_dir(test_dir_url).await.unwrap();
         let exists_result = fs.exists(test_dir_url).await.unwrap();
         assert!(exists_result, "Created directory should exist");
-        
+
         // Test 5: Test with nested path
         let nested_file_url = "file://./test_exists_dir/nested_file.txt";
-        fs.write(nested_file_url, b"nested content", None).await.unwrap();
+        fs.write(nested_file_url, b"nested content", None)
+            .await
+            .unwrap();
         let exists_result = fs.exists(nested_file_url).await.unwrap();
         assert!(exists_result, "Nested file should exist");
-        
+
         // Test 6: Test after deletion
         fs.delete(test_file_url).await.unwrap();
         let exists_result = fs.exists(test_file_url).await.unwrap();
         assert!(!exists_result, "Deleted file should not exist");
-        
+
         info!("✅ All exists() method tests passed!");
     }
 
@@ -1156,11 +1191,11 @@ use tracing::{debug, error, info};
     async fn test_exists_method_without_root_dir() {
         // Save current directory to restore later
         let original_dir = std::env::current_dir().unwrap();
-        
+
         // Create a temporary directory and change to it
         let temp_dir = TempDir::new().unwrap();
         std::env::set_current_dir(temp_dir.path()).unwrap();
-        
+
         // Test without root_dir (relative paths)
         let config = LocalConfig {
             root_dir: None,
@@ -1168,37 +1203,43 @@ use tracing::{debug, error, info};
             default_permissions: None,
             sync_enabled: false,
         };
-        
+
         let fs = LocalFileSystem::new(config).await.unwrap();
-        
+
         // Clean up any existing test files
         if std::path::Path::new("test_exists_relative.txt").exists() {
             std::fs::remove_file("test_exists_relative.txt").ok();
         }
-        
+
         // Test 1: Non-existent relative file
         let relative_file_url = "file://./test_exists_relative.txt";
         let exists_result = fs.exists(relative_file_url).await.unwrap();
-        assert!(!exists_result, "Non-existent relative file should return false");
-        
+        assert!(
+            !exists_result,
+            "Non-existent relative file should return false"
+        );
+
         // Test 2: Create and test relative file
-        fs.write(relative_file_url, b"relative test content", None).await.unwrap();
+        fs.write(relative_file_url, b"relative test content", None)
+            .await
+            .unwrap();
         let exists_result = fs.exists(relative_file_url).await.unwrap();
         assert!(exists_result, "Created relative file should exist");
-        
+
         // Test 3: Verify the file actually exists on disk
-        assert!(std::path::Path::new("test_exists_relative.txt").exists(), 
-                "File should exist on disk at relative path");
-        
+        assert!(
+            std::path::Path::new("test_exists_relative.txt").exists(),
+            "File should exist on disk at relative path"
+        );
+
         // Clean up
         fs.delete(relative_file_url).await.unwrap();
         let exists_result = fs.exists(relative_file_url).await.unwrap();
         assert!(!exists_result, "Deleted relative file should not exist");
-        
+
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
-        
+
         info!("✅ All exists() relative path tests passed!");
     }
 }
-

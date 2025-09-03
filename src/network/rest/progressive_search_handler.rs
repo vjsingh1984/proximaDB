@@ -9,43 +9,43 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
+use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::{
+    FilterExpression, SearchParams,
     integrated_search_optimization::IntegratedSearchOptimizer,
     progressive_quantization::{ProgressiveSearchConfig, SearchScenario},
-    SearchParams, FilterExpression,
 };
-use crate::compute::distance_computation::DistanceMetric;
 
 /// Request for progressive search
 #[derive(Debug, Deserialize)]
 pub struct ProgressiveSearchRequest {
     /// Query vector
     pub vector: Vec<f32>,
-    
+
     /// Number of results to return
     pub k: usize,
-    
+
     /// Optional filter expression
     pub filter: Option<FilterExpression>,
-    
+
     /// Distance metric override
     pub distance_metric: Option<String>,
-    
+
     /// Search scenario (high_recall, balanced, high_speed, low_memory)
     pub scenario: Option<String>,
-    
+
     /// Enable adaptive recall tuning
     pub adaptive_recall: Option<bool>,
-    
+
     /// Custom recall rates
     pub custom_recalls: Option<CustomRecalls>,
-    
+
     /// Include vectors in response
     pub include_vectors: Option<bool>,
-    
+
     /// Include metadata in response
     pub include_metadata: Option<bool>,
-    
+
     /// Return stage metrics
     pub include_metrics: Option<bool>,
 }
@@ -63,13 +63,13 @@ pub struct CustomRecalls {
 pub struct ProgressiveSearchResponse {
     /// Search results
     pub results: Vec<SearchResultDto>,
-    
+
     /// Total search time in milliseconds
     pub search_time_ms: f64,
-    
+
     /// Stage metrics if requested
     pub metrics: Option<StageMetrics>,
-    
+
     /// Effective configuration used
     pub config_used: Option<ConfigUsed>,
 }
@@ -121,12 +121,12 @@ pub async fn progressive_search_handler(
     State(orchestrator): State<Arc<IntegratedSearchOptimizer>>,
 ) -> Result<Json<ProgressiveSearchResponse>, StatusCode> {
     let start_time = std::time::Instant::now();
-    
+
     info!(
         "Progressive search request for collection {} with k={}",
         collection_id, params.k
     );
-    
+
     // Configure progressive search
     let mut config = if let Some(scenario_str) = params.scenario.as_ref() {
         match scenario_str.as_str() {
@@ -138,7 +138,7 @@ pub async fn progressive_search_handler(
     } else {
         ProgressiveSearchConfig::default()
     };
-    
+
     // Apply custom recall rates if provided
     if let Some(custom) = params.custom_recalls {
         if let Some(binary) = custom.binary_recall {
@@ -151,18 +151,18 @@ pub async fn progressive_search_handler(
             config.pq_recall = pq.clamp(0.5, 1.0);
         }
     }
-    
+
     // Enable adaptive recall if requested
     if let Some(adaptive) = params.adaptive_recall {
         config.adaptive_recall = adaptive;
     }
-    
+
     // Create search parameters
     let search_params = SearchParams {
         query_vectors: None, // Will be set from params.vector
         vector: Some(params.vector.clone()),
         top_k: Some(params.k),
-        distance_metric: None, // Use collection default
+        distance_metric: None,   // Use collection default
         filter_expression: None, // TODO: Convert params.filter to FilterExpression
         filters: Default::default(),
         accuracy_threshold: None,
@@ -173,25 +173,28 @@ pub async fn progressive_search_handler(
         enable_metadata_filtering_hint: params.filter.is_some().into(),
         enable_progressive_search: Some(true),
         requires_ordering: Some(true), // Progressive search needs ordering
-        runtime_hints: None, // Use default hints
+        runtime_hints: None,           // Use default hints
         progressive_scenario: params.scenario.clone(),
         progressive_recalls: None,
         optimization_hint: params.scenario.clone(),
         custom_hints: Default::default(),
         quantization_hint: None,
     };
-    
+
     // Execute progressive search
-    match orchestrator.search(
-        &collection_id,
-        &params.vector,
-        params.k,
-        &search_params,
-        params.filter.as_ref(),
-    ).await {
+    match orchestrator
+        .search(
+            &collection_id,
+            &params.vector,
+            params.k,
+            &search_params,
+            params.filter.as_ref(),
+        )
+        .await
+    {
         Ok(results) => {
             let search_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-            
+
             // Convert results to DTOs
             let result_dtos: Vec<SearchResultDto> = results
                 .into_iter()
@@ -205,15 +208,18 @@ pub async fn progressive_search_handler(
                         None
                     },
                     metadata: if params.include_metadata.unwrap_or(false) {
-                        Some(r.metadata.iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect())
+                        Some(
+                            r.metadata
+                                .iter()
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect(),
+                        )
                     } else {
                         None
                     },
                 })
                 .collect();
-            
+
             // Prepare metrics if requested
             let metrics = if params.include_metrics.unwrap_or(false) {
                 Some(StageMetrics {
@@ -237,13 +243,15 @@ pub async fn progressive_search_handler(
                         time_ms: 0.0,
                         recall_rate: Some(1.0),
                     },
-                    total_candidates_evaluated: config.compute_stage_sizes(params.k).total_computations,
+                    total_candidates_evaluated: config
+                        .compute_stage_sizes(params.k)
+                        .total_computations,
                     speedup_vs_brute_force: 0.0, // Would be calculated based on collection size
                 })
             } else {
                 None
             };
-            
+
             // Prepare config used
             let config_used = Some(ConfigUsed {
                 scenario: params.scenario.unwrap_or_else(|| "balanced".to_string()),
@@ -252,13 +260,13 @@ pub async fn progressive_search_handler(
                 pq_recall: config.pq_recall,
                 max_expansion_factor: config.max_expansion_factor,
             });
-            
+
             info!(
                 "Progressive search completed in {:.2}ms with {} results",
                 search_time_ms,
                 result_dtos.len()
             );
-            
+
             Ok(Json(ProgressiveSearchResponse {
                 results: result_dtos,
                 search_time_ms,
@@ -289,10 +297,10 @@ pub async fn explain_progressive_search_handler(
     } else {
         ProgressiveSearchConfig::default()
     };
-    
+
     let k = params.k.unwrap_or(10);
     let stage_sizes = config.compute_stage_sizes(k);
-    
+
     Ok(Json(ExplainResponse {
         collection_id,
         k,

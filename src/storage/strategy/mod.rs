@@ -13,20 +13,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Use proto enums as base types for consistency
-use crate::proto::proximadb::{StorageEngine as ProtoStorageEngine, IndexingAlgorithm as ProtoIndexingAlgorithm, DistanceMetric as ProtoDistanceMetric};
+use crate::proto::proximadb::{
+    DistanceMetric as ProtoDistanceMetric, IndexingAlgorithm as ProtoIndexingAlgorithm,
+    StorageEngine as ProtoStorageEngine,
+};
 
 /// Collection strategy configuration for persistence and lifecycle operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionStrategyConfig {
     /// Indexing algorithm configuration
     pub indexing_config: IndexingConfig,
-    
+
     /// Storage engine configuration
     pub storage_config: StorageConfig,
-    
+
     /// Search engine configuration
     pub search_config: SearchConfig,
-    
+
     /// Performance tuning parameters
     pub performance_config: PerformanceConfig,
 }
@@ -50,15 +53,9 @@ pub enum IndexingAlgorithm {
         ef_search: u32,
     },
     /// Inverted File Index
-    IVF {
-        nlist: u32,
-        nprobe: u32,
-    },
+    IVF { nlist: u32, nprobe: u32 },
     /// Product Quantization
-    PQ {
-        m: u32,
-        nbits: u32,
-    },
+    PQ { m: u32, nbits: u32 },
     /// Flat (brute force) search
     Flat,
 }
@@ -73,7 +70,7 @@ impl IndexingAlgorithm {
             IndexingAlgorithm::Flat => ProtoIndexingAlgorithm::Flat,
         }
     }
-    
+
     /// Create from proto enum with default parameters
     pub fn from_proto_type(proto: ProtoIndexingAlgorithm) -> Self {
         match proto {
@@ -86,10 +83,7 @@ impl IndexingAlgorithm {
                 nlist: 100,
                 nprobe: 1,
             },
-            ProtoIndexingAlgorithm::Pq => IndexingAlgorithm::PQ {
-                m: 8,
-                nbits: 8,
-            },
+            ProtoIndexingAlgorithm::Pq => IndexingAlgorithm::PQ { m: 8, nbits: 8 },
             ProtoIndexingAlgorithm::Flat => IndexingAlgorithm::Flat,
             _ => IndexingAlgorithm::HNSW {
                 m: 16,

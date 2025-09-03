@@ -1,7 +1,7 @@
 //! Unit tests for AXIS Strategy Selection
 
-use super::*;
 use super::types::*;
+use super::*;
 use std::collections::HashMap;
 
 #[test]
@@ -71,9 +71,9 @@ fn test_index_strategy_builder_creation() {
         typical_k: 10,
         recall_requirement: 0.95,
     };
-    
+
     let builder = IndexStrategyBuilder::new(stats, patterns);
-    
+
     assert_eq!(builder.collection_stats.total_vectors, 10_000);
     assert_eq!(builder.query_patterns.avg_queries_per_second, 100.0);
 }
@@ -97,16 +97,15 @@ fn test_index_strategy_builder_build() {
         typical_k: 10,
         recall_requirement: 0.95,
     };
-    
-    let strategy = IndexStrategyBuilder::new(stats, patterns)
-        .build()
-        .unwrap();
-    
+
+    let strategy = IndexStrategyBuilder::new(stats, patterns).build().unwrap();
+
     assert!(!strategy.indexes.is_none());
     assert!(!strategy.routing_rules.is_none());
-    
-    let has_vector_index = strategy.indexes.iter().any(|idx| {
-        matches!(idx.data_type, Data::DenseVector { .. })
-    });
+
+    let has_vector_index = strategy
+        .indexes
+        .iter()
+        .any(|idx| matches!(idx.data_type, Data::DenseVector { .. }));
     assert!(has_vector_index);
 }

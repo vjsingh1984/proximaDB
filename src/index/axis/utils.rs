@@ -18,7 +18,7 @@
 //!
 //! This module provides reusable, high-performance data structures and utilities
 //! that are shared across all AXIS index implementations. The focus is on:
-//! 
+//!
 //! - Lock-free concurrent data structures using DashMap
 //! - Atomic counters for statistics
 //! - Vector storage with consistent patterns
@@ -29,8 +29,8 @@ use anyhow::Result;
 use dashmap::DashMap;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::MetadataItem;
@@ -117,7 +117,10 @@ impl IndexVectorStore {
 
     /// Get all vector IDs (for iteration)
     pub fn keys(&self) -> Vec<String> {
-        self.vectors.iter().map(|entry| entry.key().clone()).collect()
+        self.vectors
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Get dimension
@@ -157,22 +160,27 @@ impl ConcurrentIdMapping {
 
         // Allocate new internal ID
         let internal_id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        
+
         // Insert both mappings
-        self.external_to_internal.insert(external_id.clone(), internal_id);
+        self.external_to_internal
+            .insert(external_id.clone(), internal_id);
         self.internal_to_external.insert(internal_id, external_id);
-        
+
         Ok(internal_id)
     }
 
     /// Get internal ID for external ID
     pub fn internal(&self, external_id: &str) -> Option<usize> {
-        self.external_to_internal.get(external_id).map(|entry| *entry.value())
+        self.external_to_internal
+            .get(external_id)
+            .map(|entry| *entry.value())
     }
 
     /// Get external ID for internal ID
     pub fn external(&self, internal_id: usize) -> Option<String> {
-        self.internal_to_external.get(&internal_id).map(|entry| entry.value().clone())
+        self.internal_to_external
+            .get(&internal_id)
+            .map(|entry| entry.value().clone())
     }
 
     /// Remove mapping by external ID
@@ -234,27 +242,33 @@ impl AtomicStats {
     pub fn record_success(&self, duration_us: u64) {
         self.operations.fetch_add(1, Ordering::Relaxed);
         self.successful.fetch_add(1, Ordering::Relaxed);
-        self.total_time_us.fetch_add(duration_us as usize, Ordering::Relaxed);
+        self.total_time_us
+            .fetch_add(duration_us as usize, Ordering::Relaxed);
     }
 
     /// Record a failed operation
     pub fn record_failure(&self, duration_us: u64) {
         self.operations.fetch_add(1, Ordering::Relaxed);
         self.failed.fetch_add(1, Ordering::Relaxed);
-        self.total_time_us.fetch_add(duration_us as usize, Ordering::Relaxed);
+        self.total_time_us
+            .fetch_add(duration_us as usize, Ordering::Relaxed);
     }
 
     /// Get success rate (0.0 to 1.0)
     pub fn success_rate(&self) -> f64 {
         let total = self.operations.load(Ordering::Relaxed);
-        if total == 0 { return 1.0; }
+        if total == 0 {
+            return 1.0;
+        }
         self.successful.load(Ordering::Relaxed) as f64 / total as f64
     }
 
     /// Get average operation time in microseconds
     pub fn avg_time_us(&self) -> f64 {
         let total = self.operations.load(Ordering::Relaxed);
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         self.total_time_us.load(Ordering::Relaxed) as f64 / total as f64
     }
 
@@ -320,14 +334,14 @@ pub mod metadata {
                 .filter_map(|(key, value)| {
                     let proto_value = match value {
                         JsonValue::String(s) => Some(
-                            crate::proto::proximadb::metadata_item::Value::StringValue(s.clone())
+                            crate::proto::proximadb::metadata_item::Value::StringValue(s.clone()),
                         ),
-                        JsonValue::Number(n) => n.as_f64().map(
-                            crate::proto::proximadb::metadata_item::Value::NumberValue
-                        ),
-                        JsonValue::Bool(b) => Some(
-                            crate::proto::proximadb::metadata_item::Value::BoolValue(*b)
-                        ),
+                        JsonValue::Number(n) => n
+                            .as_f64()
+                            .map(crate::proto::proximadb::metadata_item::Value::NumberValue),
+                        JsonValue::Bool(b) => {
+                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b))
+                        }
                         _ => None,
                     };
 
@@ -347,12 +361,13 @@ pub mod metadata {
             Some(map) => {
                 map.iter()
                     .map(|(k, v)| {
-                        k.len() + match v {
-                            JsonValue::String(s) => s.len() + 24, // String overhead
-                            JsonValue::Number(_) => 8,
-                            JsonValue::Bool(_) => 1,
-                            _ => 16, // Estimate for other types
-                        }
+                        k.len()
+                            + match v {
+                                JsonValue::String(s) => s.len() + 24, // String overhead
+                                JsonValue::Number(_) => 8,
+                                JsonValue::Bool(_) => 1,
+                                _ => 16, // Estimate for other types
+                            }
                     })
                     .sum::<usize>()
                     + map.capacity() * 16 // HashMap overhead
@@ -391,7 +406,7 @@ pub mod validation {
         }
         if dimension > 100_000 {
             return Err(anyhow::anyhow!(
-                "Vector dimension {} is too large (max 100,000)", 
+                "Vector dimension {} is too large (max 100,000)",
                 dimension
             ));
         }
@@ -425,7 +440,7 @@ mod tests {
     #[test]
     fn test_concurrent_vector_store() {
         let store = IndexVectorStore::new(3);
-        
+
         let vector = Arc::new(VectorRecord {
             id: Some("test1".to_string()),
             vector: vec![1.0, 2.0, 3.0],
@@ -461,7 +476,7 @@ mod tests {
         // Test register
         let id1 = mapping.register("external1".to_string()).unwrap();
         let id2 = mapping.register("external2".to_string()).unwrap();
-        
+
         assert_eq!(id1, 0);
         assert_eq!(id2, 1);
         assert_eq!(mapping.len(), 2);
@@ -478,7 +493,7 @@ mod tests {
     #[test]
     fn test_atomic_stats() {
         let stats = AtomicStats::new();
-        
+
         stats.record_success(100);
         stats.record_success(200);
         stats.record_failure(150);

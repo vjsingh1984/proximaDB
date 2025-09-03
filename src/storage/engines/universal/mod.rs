@@ -1,7 +1,7 @@
 //! Universal Storage Engine Adapter System
 //!
 //! This module provides a unified interface for distance computations across all storage engines.
-//! It integrates the PQ and INT8 optimized distance computations and provides progressive 
+//! It integrates the PQ and INT8 optimized distance computations and provides progressive
 //! refinement capabilities for all storage engines (PRISM, NOVA, SWIFT, VIPER, SST).
 //!
 //! ## Common Capabilities Provided
@@ -66,7 +66,7 @@
 //!
 //! ```rust
 //! use proximadb::storage::engines::universal::{
-//!     UniversalDistanceAdapter, DistanceComputationRequest, 
+//!     UniversalDistanceAdapter, DistanceComputationRequest,
 //!     ProgressiveRefinementConfig, StorageFormat
 //! };
 //!
@@ -97,28 +97,26 @@ pub mod tests;
 
 // Public re-exports
 pub use adapter::{
-    UniversalDistanceAdapter, DistanceComputationRequest, DistanceComputationResult,
-    CandidateVector, PerformanceMetrics, AdapterError, AdapterResult,
+    AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
+    DistanceComputationResult, PerformanceMetrics, UniversalDistanceAdapter,
 };
 
 pub use config::{
-    UniversalAdapterConfig, ProgressiveRefinementConfig, CacheConfig,
-    HardwareAccelerationConfig, StorageEngineConfig,
+    CacheConfig, HardwareAccelerationConfig, ProgressiveRefinementConfig, StorageEngineConfig,
+    UniversalAdapterConfig,
 };
 
 pub use conversion::{
-    StorageFormat, FormatConverter, ConversionError, ConversionResult,
-    QuantizedFormat, CompressionFormat,
+    CompressionFormat, ConversionError, ConversionResult, FormatConverter, QuantizedFormat,
+    StorageFormat,
 };
 
 pub use hardware_manager::{
-    HardwareAccelerationManager, AccelerationCapabilities, 
-    OptimizationStrategy, SIMDCapabilities,
+    AccelerationCapabilities, HardwareAccelerationManager, OptimizationStrategy, SIMDCapabilities,
 };
 
 pub use progressive_refinement::{
-    ProgressiveRefinementPipeline, RefinementStage, RefinementStrategy,
-    QualityMetrics,
+    ProgressiveRefinementPipeline, QualityMetrics, RefinementStage, RefinementStrategy,
 };
 
 // Quantized calculator exports removed - use compute module directly:
@@ -126,8 +124,8 @@ pub use progressive_refinement::{
 // - crate::compute::quantization::storage_engine::StorageQuantizationEngine
 
 pub use storage_integration::{
-    StorageEngineAdapter, EngineType, IntegrationError,
-    PRISMAdapter, NOVAAdapter, SWIFTAdapter, VIPERAdapter, SSTAdapter,
+    EngineType, IntegrationError, NOVAAdapter, PRISMAdapter, SSTAdapter, SWIFTAdapter,
+    StorageEngineAdapter, VIPERAdapter,
 };
 
 /// Current version of the universal adapter system

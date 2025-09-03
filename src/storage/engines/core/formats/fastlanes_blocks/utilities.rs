@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+use super::{FastLanesDataBlock, RowBasedConfig};
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use super::{RowBasedConfig, FastLanesDataBlock};
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -23,10 +23,10 @@ impl RowBasedUtilities {
         let mut total_metadata_bytes = 0;
         let mut total_quantized_bytes = 0;
         let mut total_index_bytes = 0;
-        
+
         for block in blocks {
             total_records += block.records.len();
-            
+
             // Calculate vector data size
             for record in &block.records {
                 total_vector_bytes += record.vector.len() * 4; // 4 bytes per f32
@@ -34,18 +34,19 @@ impl RowBasedUtilities {
                     total_metadata_bytes += record.metadata.len() * 32; // Rough estimate per metadata item
                 }
             }
-            
+
             // Calculate quantized data size
             if let Some(ref quantized_vecs) = block.quantized_vectors {
                 total_quantized_bytes += quantized_vecs.iter().map(|v| v.len()).sum::<usize>();
             }
-            
+
             // Calculate index size (rough estimate)
             total_index_bytes += 8 * 2; // u32 block_id takes 8 bytes in index structures
         }
-        
-        let total_size = total_vector_bytes + total_metadata_bytes + total_quantized_bytes + total_index_bytes;
-        
+
+        let total_size =
+            total_vector_bytes + total_metadata_bytes + total_quantized_bytes + total_index_bytes;
+
         MemoryUsageReport {
             total_records,
             total_size_bytes: total_size,
@@ -65,14 +66,14 @@ impl RowBasedUtilities {
             },
         }
     }
-    
+
     /// Estimate optimal configuration for given workload
     pub fn recommend_configuration(
         workload: &WorkloadCharacteristics,
         hardware: &HardwareCapabilities,
     ) -> RowBasedConfig {
         let mut config = RowBasedConfig::default();
-        
+
         // Adjust based on workload
         match workload.workload_type {
             WorkloadType::HighThroughput => {
@@ -96,40 +97,40 @@ impl RowBasedUtilities {
                 config.indexing.enable_metadata_index = true;
             }
         }
-        
+
         // Adjust based on hardware
         if hardware.memory.total_memory / (1024 * 1024 * 1024) > 32 {
             config.performance.cache_size_bytes = 2 * 1024 * 1024 * 1024; // 2GB cache
         }
-        
+
         if hardware.cpu.logical_cores > 8 {
             config.performance.max_concurrent_operations = hardware.cpu.logical_cores;
         }
-        
+
         // NVMe detection would require checking actual storage devices
         // For now, use a conservative buffer size
         config.performance.io_buffer_size = 256 * 1024; // 256KB default
-        
+
         config
     }
-    
+
     /// Validate record integrity
     pub fn validate_records(records: &[VectorRecord]) -> ValidationReport {
         let mut report = ValidationReport::default();
-        
+
         for (idx, record) in records.iter().enumerate() {
             let mut record_issues = Vec::new();
-            
+
             // Check ID
             if record.id.is_empty() {
                 record_issues.push("Missing or empty ID".to_string());
             }
-            
+
             // Check vector
             if record.vector.is_empty() {
                 record_issues.push("Empty vector".to_string());
             }
-            
+
             // Check for NaN or infinite values
             for (i, &value) in record.vector.iter().enumerate() {
                 if value.is_nan() {
@@ -139,12 +140,12 @@ impl RowBasedUtilities {
                     record_issues.push(format!("Infinite value at position {}", i));
                 }
             }
-            
+
             // Check timestamp
             if record.timestamp < 0 {
                 record_issues.push("Invalid timestamp".to_string());
             }
-            
+
             if record_issues.is_empty() {
                 report.valid_records += 1;
             } else {
@@ -156,45 +157,45 @@ impl RowBasedUtilities {
                 });
             }
         }
-        
+
         report.total_records = records.len();
         report.success_rate = if report.total_records > 0 {
             report.valid_records as f64 / report.total_records as f64
         } else {
             1.0
         };
-        
+
         report
     }
-    
+
     /// Optimize vector layout for hardware
     pub fn optimize_vector_layout(
         vectors: &[Vec<f32>],
         hardware: &HardwareCapabilities,
-        dimension: usize,  // From CollectionConfig
+        dimension: usize, // From CollectionConfig
     ) -> OptimizedVectorLayout {
         // Dimension comes from collection config, not from vectors
-        
+
         // Determine optimal SIMD alignment
         let simd_width = if hardware.has_avx512() {
             16 // 512 bits / 32 bits per float
         } else if hardware.cpu.features.avx2_support {
-            8  // 256 bits / 32 bits per float
+            8 // 256 bits / 32 bits per float
         } else if hardware.cpu.features.sse42_support {
-            4  // 128 bits / 32 bits per float
+            4 // 128 bits / 32 bits per float
         } else {
-            1  // No SIMD
+            1 // No SIMD
         };
-        
+
         // Calculate padding needed for alignment
         let padding_needed = if dimension % simd_width != 0 {
             simd_width - (dimension % simd_width)
         } else {
             0
         };
-        
+
         let aligned_dimension = dimension + padding_needed;
-        
+
         // Create optimized layout
         let mut optimized_vectors = Vec::with_capacity(vectors.len());
         for vector in vectors {
@@ -203,7 +204,7 @@ impl RowBasedUtilities {
             aligned_vector.extend(vec![0.0; padding_needed]);
             optimized_vectors.push(aligned_vector);
         }
-        
+
         OptimizedVectorLayout {
             original_dimension: dimension,
             aligned_dimension,
@@ -214,98 +215,104 @@ impl RowBasedUtilities {
             expected_speedup: Self::estimate_simd_speedup(simd_width),
         }
     }
-    
+
     /// Estimate SIMD speedup factor
     fn estimate_simd_speedup(simd_width: usize) -> f32 {
         match simd_width {
-            16 => 8.0,  // AVX-512: ~8x speedup
-            8 => 4.0,   // AVX2: ~4x speedup  
-            4 => 2.0,   // SSE: ~2x speedup
-            _ => 1.0,   // No SIMD
+            16 => 8.0, // AVX-512: ~8x speedup
+            8 => 4.0,  // AVX2: ~4x speedup
+            4 => 2.0,  // SSE: ~2x speedup
+            _ => 1.0,  // No SIMD
         }
     }
-    
+
     /// Analyze access patterns for optimization
-    pub fn analyze_access_patterns(
-        access_log: &[AccessLogEntry],
-    ) -> AccessPatternAnalysis {
+    pub fn analyze_access_patterns(access_log: &[AccessLogEntry]) -> AccessPatternAnalysis {
         let mut temporal_gaps = Vec::new();
         let mut spatial_distances = Vec::new();
         let mut operation_counts = HashMap::new();
-        
+
         // Sort by timestamp
         let mut sorted_log = access_log.to_vec();
         sorted_log.sort_by_key(|entry| entry.timestamp);
-        
+
         // Analyze temporal patterns
         for window in sorted_log.windows(2) {
             let gap = window[1].timestamp - window[0].timestamp;
             temporal_gaps.push(gap);
         }
-        
+
         // Analyze spatial patterns (simplified)
         for window in sorted_log.windows(2) {
-            let distance = Self::calculate_access_distance(&window[0].record_id, &window[1].record_id);
+            let distance =
+                Self::calculate_access_distance(&window[0].record_id, &window[1].record_id);
             spatial_distances.push(distance);
         }
-        
+
         // Count operations
         for entry in access_log {
-            *operation_counts.entry(entry.operation_type.clone()).or_insert(0) += 1;
+            *operation_counts
+                .entry(entry.operation_type.clone())
+                .or_insert(0) += 1;
         }
-        
+
         AccessPatternAnalysis {
             total_accesses: access_log.len(),
             temporal_locality: Self::calculate_temporal_locality(&temporal_gaps),
             spatial_locality: Self::calculate_spatial_locality(&spatial_distances),
             operation_distribution: operation_counts,
-            recommended_optimizations: Self::recommend_access_optimizations(&temporal_gaps, &spatial_distances),
+            recommended_optimizations: Self::recommend_access_optimizations(
+                &temporal_gaps,
+                &spatial_distances,
+            ),
         }
     }
-    
+
     /// Calculate temporal locality score
     fn calculate_temporal_locality(gaps: &[i64]) -> f64 {
         if gaps.is_empty() {
             return 0.0;
         }
-        
+
         let avg_gap = gaps.iter().sum::<i64>() as f64 / gaps.len() as f64;
-        let variance = gaps.iter()
+        let variance = gaps
+            .iter()
             .map(|&gap| (gap as f64 - avg_gap).powi(2))
-            .sum::<f64>() / gaps.len() as f64;
-        
+            .sum::<f64>()
+            / gaps.len() as f64;
+
         // Lower variance means higher temporal locality
         1.0 / (1.0 + variance.sqrt() / avg_gap)
     }
-    
+
     /// Calculate spatial locality score
     fn calculate_spatial_locality(distances: &[u64]) -> f64 {
         if distances.is_empty() {
             return 0.0;
         }
-        
+
         let avg_distance = distances.iter().sum::<u64>() as f64 / distances.len() as f64;
-        
+
         // Lower average distance means higher spatial locality
         1.0 / (1.0 + avg_distance / 1000.0) // Normalize by typical block size
     }
-    
+
     /// Calculate access distance between record IDs (simplified)
     fn calculate_access_distance(id1: &str, id2: &str) -> u64 {
         // This is a simplified version - in practice would consider actual layout
         (id1.len() as i64 - id2.len() as i64).abs() as u64
     }
-    
+
     /// Recommend optimizations based on access patterns
     fn recommend_access_optimizations(
         temporal_gaps: &[i64],
         spatial_distances: &[u64],
     ) -> Vec<OptimizationRecommendation> {
         let mut recommendations = Vec::new();
-        
+
         let temporal_locality = Self::calculate_temporal_locality(temporal_gaps);
         let spatial_locality = Self::calculate_spatial_locality(spatial_distances);
-        
+
         if temporal_locality > 0.7 {
             recommendations.push(OptimizationRecommendation {
                 optimization_type: "enable_prefetching".to_string(),
@@ -314,7 +321,7 @@ impl RowBasedUtilities {
                 implementation_cost: "Low".to_string(),
             });
         }
-        
+
         if spatial_locality > 0.8 {
             recommendations.push(OptimizationRecommendation {
                 optimization_type: "sequential_layout".to_string(),
@@ -323,7 +330,7 @@ impl RowBasedUtilities {
                 implementation_cost: "Medium".to_string(),
             });
         }
-        
+
         if temporal_locality < 0.3 && spatial_locality < 0.3 {
             recommendations.push(OptimizationRecommendation {
                 optimization_type: "random_access_optimization".to_string(),
@@ -332,7 +339,7 @@ impl RowBasedUtilities {
                 implementation_cost: "High".to_string(),
             });
         }
-        
+
         recommendations
     }
 }
@@ -352,29 +359,22 @@ impl PathResolver {
     ) -> PathBuf {
         base_path.join(collection_id).join(engine_name)
     }
-    
+
     /// Resolve file path within collection
-    pub fn resolve_file_path(
-        collection_path: &Path,
-        filename: &str,
-    ) -> PathBuf {
+    pub fn resolve_file_path(collection_path: &Path, filename: &str) -> PathBuf {
         collection_path.join(filename)
     }
-    
+
     /// Resolve index path
-    pub fn resolve_index_path(
-        collection_path: &Path,
-        index_type: &str,
-    ) -> PathBuf {
+    pub fn resolve_index_path(collection_path: &Path, index_type: &str) -> PathBuf {
         collection_path.join("indexes").join(index_type)
     }
-    
+
     /// Resolve backup path
-    pub fn resolve_backup_path(
-        collection_path: &Path,
-        timestamp: i64,
-    ) -> PathBuf {
-        collection_path.join("backups").join(format!("backup_{}", timestamp))
+    pub fn resolve_backup_path(collection_path: &Path, timestamp: i64) -> PathBuf {
+        collection_path
+            .join("backups")
+            .join(format!("backup_{}", timestamp))
     }
 }
 
@@ -386,7 +386,7 @@ impl MemoryEstimator {
     pub fn estimate_vector_memory(record_count: usize, dimension: usize) -> usize {
         record_count * dimension * 4 // 4 bytes per f32
     }
-    
+
     /// Estimate memory for quantized storage
     pub fn estimate_quantized_memory(
         record_count: usize,
@@ -395,13 +395,13 @@ impl MemoryEstimator {
     ) -> usize {
         (Self::estimate_vector_memory(record_count, dimension) as f32 * quantization_ratio) as usize
     }
-    
+
     /// Estimate memory for index structures
     pub fn estimate_index_memory(record_count: usize, avg_id_length: usize) -> usize {
         // Rough estimate: ID + pointer + overhead
         record_count * (avg_id_length + 8 + 16)
     }
-    
+
     /// Estimate total memory usage
     pub fn estimate_total_memory(
         record_count: usize,
@@ -410,10 +410,11 @@ impl MemoryEstimator {
         quantization_ratio: f32,
     ) -> MemoryEstimate {
         let vector_memory = Self::estimate_vector_memory(record_count, dimension);
-        let quantized_memory = Self::estimate_quantized_memory(record_count, dimension, quantization_ratio);
+        let quantized_memory =
+            Self::estimate_quantized_memory(record_count, dimension, quantization_ratio);
         let index_memory = Self::estimate_index_memory(record_count, avg_id_length);
         let metadata_memory = record_count * 256; // Rough estimate for metadata
-        
+
         MemoryEstimate {
             vector_memory,
             quantized_memory,
@@ -438,7 +439,7 @@ impl PerformanceProfiler {
             checkpoints: Vec::new(),
         }
     }
-    
+
     pub fn checkpoint(&mut self, name: String) {
         let elapsed = self.start_time.elapsed();
         self.checkpoints.push(PerformanceCheckpoint {
@@ -447,21 +448,18 @@ impl PerformanceProfiler {
             memory_usage: Self::get_current_memory_usage(),
         });
     }
-    
+
     pub fn finish(self) -> PerformanceProfile {
         let total_time = self.start_time.elapsed();
-        let peak_memory = self.checkpoints.iter()
-            .map(|cp| cp.memory_usage)
-            .max()
-            ;
-        
+        let peak_memory = self.checkpoints.iter().map(|cp| cp.memory_usage).max();
+
         PerformanceProfile {
             total_time_ms: total_time.as_millis() as u64,
             checkpoints: self.checkpoints,
             peak_memory_bytes: peak_memory.unwrap_or(0),
         }
     }
-    
+
     fn get_current_memory_usage() -> usize {
         // Simplified - would use actual memory profiling
         0
@@ -592,7 +590,7 @@ pub struct PerformanceProfile {
 mod tests {
     use super::*;
     use crate::core::VectorRecord;
-    
+
     #[test]
     fn test_memory_usage_calculation() {
         let records = vec![
@@ -607,19 +605,19 @@ mod tests {
                 ..Default::default()
             },
         ];
-        
+
         let blocks = vec![super::RowBasedDataBlock::new(
             records,
             super::block_structures::BlockCompressionConfig::default(),
         )];
-        
+
         let report = RowBasedUtilities::calculate_memory_usage(&blocks);
-        
+
         assert_eq!(report.total_records, 2);
         assert!(report.total_size_bytes > 0);
         assert!(report.vector_data_bytes > 0);
     }
-    
+
     #[test]
     fn test_record_validation() {
         let records = vec![
@@ -642,57 +640,61 @@ mod tests {
                 ..Default::default()
             },
         ];
-        
+
         let report = RowBasedUtilities::validate_records(&records);
-        
+
         assert_eq!(report.total_records, 3);
         assert_eq!(report.valid_records, 1);
         assert_eq!(report.invalid_records, 2);
         assert!(report.success_rate < 0.5);
     }
-    
+
     #[test]
     fn test_filename_generation() {
         let sst_filename = FilenameCodec::new().generate(3, "sst");
         assert!(sst_filename.contains("L3_"));
         assert!(sst_filename.ends_with(".sstable"));
-        
+
         let swift_filename = FilenameCodec::new().generate(2, "swift");
         assert!(swift_filename.contains("L2_"));
         assert!(swift_filename.ends_with(".swift"));
-        
+
         let level = FilenameCodec::new().parse_level(&sst_filename) as u8;
         assert_eq!(level, Some(3));
     }
-    
+
     #[test]
     fn test_memory_estimation() {
         let estimate = MemoryEstimator::estimate_total_memory(
-            1000,   // records
-            768,    // dimension
-            32,     // avg ID length
-            0.25,   // quantization ratio (75% savings)
+            1000, // records
+            768,  // dimension
+            32,   // avg ID length
+            0.25, // quantization ratio (75% savings)
         );
-        
+
         assert!(estimate.vector_memory > 0);
         assert!(estimate.quantized_memory < estimate.vector_memory);
         assert!(estimate.memory_savings > 0);
-        assert_eq!(estimate.total_memory, 
-                   estimate.vector_memory + estimate.quantized_memory + 
-                   estimate.index_memory + estimate.metadata_memory);
+        assert_eq!(
+            estimate.total_memory,
+            estimate.vector_memory
+                + estimate.quantized_memory
+                + estimate.index_memory
+                + estimate.metadata_memory
+        );
     }
-    
+
     #[test]
     fn test_performance_profiler() {
         let mut profiler = PerformanceProfiler::new();
-        
+
         profiler.checkpoint("start".to_string());
         std::thread::sleep(std::time::Duration::from_millis(1));
         profiler.checkpoint("middle".to_string());
         std::thread::sleep(std::time::Duration::from_millis(1));
-        
+
         let profile = profiler.finish();
-        
+
         assert!(profile.total_time_ms >= 2);
         assert_eq!(profile.checkpoints.len(), 2);
         assert_eq!(profile.checkpoints[0].name, "start");

@@ -18,9 +18,9 @@ use std::sync::Arc;
 use crate::proto::proximadb::{Collection, CollectionConfig, CollectionStats};
 
 use super::{
+    MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
+    SystemMetadata,
     write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog},
-    MetadataFilter, MetadataOperation, MetadataStorageStats,
-    MetadataStoreInterface, SystemMetadata,
 };
 // use crate::storage::strategy::CollectionStrategyConfig; // Unused
 
@@ -159,7 +159,8 @@ pub struct MetadataStore {
     config: MetadataStoreConfig,
 
     /// Atomic store for transactional operations  
-    transaction_coordinator: Option<Arc<crate::storage::transaction_coordinator::AtomicMetadataStore>>,
+    transaction_coordinator:
+        Option<Arc<crate::storage::transaction_coordinator::AtomicMetadataStore>>,
 
     /// Direct WAL manager for simple operations
     write_buffer_manager: Arc<MetadataWriteAheadLog>,
@@ -190,9 +191,7 @@ impl MetadataStore {
                 };
                 tokio::fs::create_dir_all(path)
                     .await
-                    .with_context(|| {
-                        format!("Failed to create metadata directory: {}", path)
-                    })?;
+                    .with_context(|| format!("Failed to create metadata directory: {}", path))?;
             }
         }
 
@@ -207,7 +206,7 @@ impl MetadataStore {
         let mut metadata_wal_config = MetadataWALConfig::default();
 
         // Override data directories to use metadata-specific locations
-        metadata_wal_config.base_config.multi_disk.data_directories = 
+        metadata_wal_config.base_config.multi_disk.data_directories =
             config.metadata_storage_urls.clone();
 
         // Create WAL manager
@@ -405,19 +404,12 @@ impl MetadataStore {
     }
 
     /// Get collection metadata
-    pub async fn get_collection(
-        &self,
-        collection_id: &str,
-    ) -> Result<Option<Collection>> {
+    pub async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
         MetadataStoreInterface::get_collection(self, collection_id).await
     }
 
     /// Update collection metadata
-    pub async fn update_collection(
-        &self,
-        collection_id: &str,
-        metadata: Collection,
-    ) -> Result<()> {
+    pub async fn update_collection(&self, collection_id: &str, metadata: Collection) -> Result<()> {
         MetadataStoreInterface::update_collection(self, collection_id, metadata).await
     }
 
@@ -452,9 +444,15 @@ impl MetadataStoreInterface for MetadataStore {
             atomic_store.create_collection(metadata).await
         } else {
             // Direct WAL operation - convert proto Collection to VersionedCollectionMetadata
-            let config = metadata.config.as_ref().ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
-            let stats = metadata.stats.as_ref().unwrap_or(&CollectionStats::default());
-            
+            let config = metadata
+                .config
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
+            let stats = metadata
+                .stats
+                .as_ref()
+                .unwrap_or(&CollectionStats::default());
+
             let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id.clone(),
                 name: config.name.clone(),
@@ -477,10 +475,7 @@ impl MetadataStoreInterface for MetadataStore {
         }
     }
 
-    async fn get_collection(
-        &self,
-        collection_id: &str,
-    ) -> Result<Option<Collection>> {
+    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
         if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.get_collection(collection_id).await
         } else {
@@ -502,13 +497,13 @@ impl MetadataStoreInterface for MetadataStore {
                     owner: versioned.owner.clone(),
                     embedding_models: None,
                 };
-                
+
                 let stats = CollectionStats {
                     vector_count: versioned.vector_count as i64,
                     index_size_bytes: 0, // Not available from WAL
                     data_size_bytes: versioned.total_size_bytes as i64,
                 };
-                
+
                 let collection = Collection {
                     id: versioned.id.clone(),
                     config: Some(config),
@@ -524,20 +519,22 @@ impl MetadataStoreInterface for MetadataStore {
         }
     }
 
-    async fn update_collection(
-        &self,
-        collection_id: &str,
-        metadata: Collection,
-    ) -> Result<()> {
+    async fn update_collection(&self, collection_id: &str, metadata: Collection) -> Result<()> {
         if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store
                 .update_collection(collection_id, metadata)
                 .await
         } else {
             // Direct WAL operation - convert proto Collection to VersionedCollectionMetadata
-            let config = metadata.config.as_ref().ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
-            let stats = metadata.stats.as_ref().unwrap_or(&CollectionStats::default());
-            
+            let config = metadata
+                .config
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
+            let stats = metadata
+                .stats
+                .as_ref()
+                .unwrap_or(&CollectionStats::default());
+
             let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id.clone(),
                 name: config.name.clone(),
@@ -564,14 +561,13 @@ impl MetadataStoreInterface for MetadataStore {
         if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.delete_collection(collection_id).await
         } else {
-            self.write_buffer_manager.delete_collection(collection_id).await
+            self.write_buffer_manager
+                .delete_collection(collection_id)
+                .await
         }
     }
 
-    async fn list_collections(
-        &self,
-        filter: Option<MetadataFilter>,
-    ) -> Result<Vec<Collection>> {
+    async fn list_collections(&self, filter: Option<MetadataFilter>) -> Result<Vec<Collection>> {
         if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.list_collections(filter).await
         } else {
@@ -597,13 +593,13 @@ impl MetadataStoreInterface for MetadataStore {
                         owner: versioned.owner.clone(),
                         embedding_models: None,
                     };
-                    
+
                     let stats = CollectionStats {
                         vector_count: versioned.vector_count as i64,
                         index_size_bytes: 0,
                         data_size_bytes: versioned.total_size_bytes as i64,
                     };
-                    
+
                     Collection {
                         id: versioned.id.clone(),
                         config: Some(config),
@@ -699,7 +695,7 @@ impl MetadataStoreInterface for MetadataStore {
             Ok(MetadataStorageStats {
                 total_collections: wal_stats.total_collections,
                 total_metadata_size_bytes: 0, // Not directly available from WAL stats
-                cache_hit_rate: 0.0,        // Not directly available from WAL stats
+                cache_hit_rate: 0.0,          // Not directly available from WAL stats
                 avg_operation_latency_ms: 0.0, // Not directly available from WAL stats
                 storage_backend: "wal-only".to_string(),
                 last_backup_time: None,
@@ -750,48 +746,60 @@ impl MetadataStoreInterface for MetadataStore {
     async fn backup(&self, location: &str) -> Result<String> {
         // Generate backup ID
         use uuid::Uuid;
-        let backup_id = format!("backup-{}-{}", Utc::now().timestamp(), Uuid::new_v4().to_string()[..8].to_string());
-        
-        tracing::info!("Starting backup to location: {} with ID: {}", location, backup_id);
-        
+        let backup_id = format!(
+            "backup-{}-{}",
+            Utc::now().timestamp(),
+            Uuid::new_v4().to_string()[..8].to_string()
+        );
+
+        tracing::info!(
+            "Starting backup to location: {} with ID: {}",
+            location,
+            backup_id
+        );
+
         // Flush WAL to ensure all data is persisted
         self.write_buffer_manager.flush().await?;
-        
+
         // TODO: Implement actual backup logic
         // 1. Create backup manifest
         // 2. Copy metadata files to backup location
         // 3. Compress if configured
         // 4. Verify backup integrity
-        
+
         tracing::info!("Backup completed with ID: {}", backup_id);
         Ok(backup_id)
     }
 
     async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
-        tracing::info!("Starting restore from backup ID: {} at location: {}", backup_id, location);
-        
+        tracing::info!(
+            "Starting restore from backup ID: {} at location: {}",
+            backup_id,
+            location
+        );
+
         // TODO: Implement actual restore logic
         // 1. Validate backup integrity
         // 2. Stop current operations
         // 3. Restore metadata files
         // 4. Rebuild indexes if necessary
         // 5. Resume operations
-        
+
         tracing::info!("Restore completed for backup ID: {}", backup_id);
         Ok(())
     }
 
     async fn close(&self) -> Result<()> {
         tracing::info!("Closing MetadataStore");
-        
+
         // Flush any pending data
         self.write_buffer_manager.flush().await?;
-        
+
         // Close atomic store if available
         if let Some(atomic_store) = &self.transaction_coordinator {
             atomic_store.close().await?;
         }
-        
+
         tracing::info!("MetadataStore closed successfully");
         Ok(())
     }

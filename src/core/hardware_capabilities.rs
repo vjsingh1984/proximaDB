@@ -139,18 +139,18 @@
 //! [hardware]
 //! # Enable hardware detection
 //! enable_detection = true
-//! 
+//!
 //! # SIMD settings
 //! enable_simd = true
 //! enable_avx512 = true
 //! prefer_avx2 = false  # For older CPUs
-//! 
+//!
 //! # GPU settings
 //! enable_gpu_acceleration = true
 //! gpu_device_id = 0
 //! gpu_min_batch_size = 1000
 //! gpu_min_vector_size = 128
-//! 
+//!
 //! # Cache settings
 //! enable_cache_optimization = true
 //! l3_aware_blocking = true
@@ -161,7 +161,7 @@
 //! ### Initialization
 //! ```rust
 //! use proximadb::hardware::{initialize_hardware_capabilities, HardwareConfig};
-//! 
+//!
 //! // Initialize at server startup
 //! let config = HardwareConfig::from_toml("config.toml")?;
 //! initialize_hardware_capabilities(config)?;
@@ -170,20 +170,20 @@
 //! ### Runtime Queries
 //! ```rust
 //! use proximadb::hardware::{hardware_capabilities, HardwareQuery};
-//! 
+//!
 //! // Get capabilities
 //! let caps = hardware_capabilities();
-//! 
+//!
 //! // Check features
 //! if caps.has_avx512() {
 //!     // Use AVX-512 optimized path
 //! }
-//! 
+//!
 //! // GPU decisions
 //! if caps.should_use_gpu_batch(batch_size) {
 //!     // Offload to GPU
 //! }
-//! 
+//!
 //! // Cache-aware sizing
 //! let row_group_size = caps.optimal_row_group_size();
 //! ```
@@ -215,13 +215,13 @@
 //! 5. **Profile First**: Measure before optimizing
 
 use anyhow::Result;
+use num_cpus;
 use std::sync::{Arc, OnceLock};
 use tracing::info;
-use num_cpus;
 
 // No longer importing duplicate CpuFeatures from compute module
-use crate::query::sql_engine::vector_array_parser::SimdCapabilities;
 use crate::core::config::HardwareConfig;
+use crate::query::sql_engine::vector_array_parser::SimdCapabilities;
 // No longer importing PlatformCapability from compute - using our own HardwareBackend
 
 // GPU types with feature gating
@@ -341,10 +341,10 @@ impl Default for CpuFeatures {
 impl Default for CacheSizes {
     fn default() -> Self {
         Self {
-            l1_data: 32 * 1024,      // 32KB default
+            l1_data: 32 * 1024,        // 32KB default
             l1_instruction: 32 * 1024, // 32KB default
-            l2: 256 * 1024,          // 256KB default
-            l3: 8 * 1024 * 1024,     // 8MB default
+            l2: 256 * 1024,            // 256KB default
+            l3: 8 * 1024 * 1024,       // 8MB default
         }
     }
 }
@@ -397,16 +397,16 @@ impl HardwareCapabilities {
     pub fn detect_with_config(config: HardwareConfig) -> Result<Self> {
         info!("🔍 Detecting hardware capabilities...");
         let start_time = std::time::Instant::now();
-        
+
         // Only detect if enabled in config
         if !config.enable_detection {
             info!("⚠️ Hardware detection disabled by configuration");
             return Ok(Self::disabled(config));
         }
-        
+
         // Detect CPU capabilities
         let cpu = Self::detect_cpu()?;
-        
+
         // Detect GPU capabilities only if GPU acceleration is enabled
         let gpu = if config.enable_gpu_acceleration {
             Self::detect_gpu()?
@@ -420,10 +420,10 @@ impl HardwareCapabilities {
                 cuda_compute_capability: None,
             }
         };
-        
+
         // Detect memory information
         let memory = Self::detect_memory()?;
-        
+
         let caps = Self {
             cpu,
             gpu,
@@ -431,16 +431,19 @@ impl HardwareCapabilities {
             config,
             detected_at: start_time,
         };
-        
+
         let elapsed = start_time.elapsed();
-        info!("✅ Hardware detection completed in {:.2}ms", elapsed.as_secs_f64() * 1000.0);
-        
+        info!(
+            "✅ Hardware detection completed in {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
+
         // Log summary
         caps.log_summary();
-        
+
         Ok(caps)
     }
-    
+
     /// Create disabled hardware capabilities
     fn disabled(config: HardwareConfig) -> Self {
         Self {
@@ -476,15 +479,15 @@ impl HardwareCapabilities {
             detected_at: std::time::Instant::now(),
         }
     }
-    
+
     /// Detect CPU capabilities
     fn detect_cpu() -> Result<CpuCapabilities> {
         let physical_cores = num_cpus::get_physical();
         let logical_cores = num_cpus::get();
-        
+
         // Detect SIMD capabilities first
         let simd = SimdCapabilities::detect();
-        
+
         // Use centralized CpuFeatures with SIMD detection results and actual cache detection
         let features = CpuFeatures {
             avx512_support: simd.has_avx512,
@@ -495,10 +498,10 @@ impl HardwareCapabilities {
             thread_count: logical_cores,
             cache_sizes: Self::detect_cache_sizes(),
         };
-        
+
         // Get CPU info (platform-specific)
         let (vendor, model_name) = Self::get_cpu_info();
-        
+
         Ok(CpuCapabilities {
             physical_cores,
             logical_cores,
@@ -508,25 +511,27 @@ impl HardwareCapabilities {
             features,
         })
     }
-    
+
     /// Get CPU vendor and model information
     fn get_cpu_info() -> (String, String) {
         #[cfg(target_arch = "x86_64")]
         {
             use raw_cpuid::CpuId;
             let cpuid = CpuId::new();
-            
-            let vendor = cpuid.get_vendor_info()
+
+            let vendor = cpuid
+                .get_vendor_info()
                 .map(|v| v.as_str().to_string())
                 .unwrap_or_else(|| "Unknown".to_string());
-                
-            let model = cpuid.get_processor_brand_string()
+
+            let model = cpuid
+                .get_processor_brand_string()
                 .map(|b| b.as_str().to_string())
                 .unwrap_or_else(|| "Unknown CPU".to_string());
-                
+
             (vendor, model)
         }
-        
+
         #[cfg(not(target_arch = "x86_64"))]
         {
             // For non-x86 architectures
@@ -540,7 +545,7 @@ impl HardwareCapabilities {
             }
         }
     }
-    
+
     /// Detect actual CPU cache sizes using platform-specific methods
     fn detect_cache_sizes() -> CacheSizes {
         #[cfg(target_os = "macos")]
@@ -563,33 +568,39 @@ impl HardwareCapabilities {
             // Android ARM64 systems
             Self::detect_android_cache_sizes()
         }
-        #[cfg(all(target_arch = "x86_64", not(any(target_os = "macos", target_os = "linux"))))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            not(any(target_os = "macos", target_os = "linux"))
+        ))]
         {
             // Windows x86_64 or other x86_64 platforms
             Self::detect_x86_cache_sizes()
         }
-        #[cfg(all(target_arch = "aarch64", not(any(target_os = "macos", target_os = "linux", target_os = "android"))))]
+        #[cfg(all(
+            target_arch = "aarch64",
+            not(any(target_os = "macos", target_os = "linux", target_os = "android"))
+        ))]
         {
             // Other ARM64 platforms (e.g., Windows ARM64)
             Self::detect_arm_cache_sizes()
         }
         #[cfg(not(any(
-            target_os = "macos", 
-            target_os = "linux", 
+            target_os = "macos",
+            target_os = "linux",
             target_os = "android",
-            target_arch = "x86_64", 
+            target_arch = "x86_64",
             target_arch = "aarch64"
         )))]
         {
             CacheSizes::default()
         }
     }
-    
+
     #[cfg(target_arch = "x86_64")]
     fn detect_x86_cache_sizes() -> CacheSizes {
         use raw_cpuid::CpuId;
         let cpuid = CpuId::new();
-        
+
         // Try to get cache info from CPUID
         // Using get_cache_parameters which provides detailed cache info
         if let Some(cache_params) = cpuid.get_cache_parameters() {
@@ -597,150 +608,189 @@ impl HardwareCapabilities {
             let mut l1_instruction = 32 * 1024;
             let mut l2 = 256 * 1024;
             let mut l3 = 8 * 1024 * 1024;
-            
+
             for cache in cache_params {
                 match cache.level() {
                     1 => {
                         let cache_type = cache.cache_type();
                         if cache_type == raw_cpuid::CacheType::Data {
-                            l1_data = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize;
+                            l1_data = (cache.sets()
+                                * cache.associativity()
+                                * cache.coherency_line_size())
+                                as usize;
                         } else if cache_type == raw_cpuid::CacheType::Instruction {
-                            l1_instruction = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize;
+                            l1_instruction = (cache.sets()
+                                * cache.associativity()
+                                * cache.coherency_line_size())
+                                as usize;
                         }
-                    },
-                    2 => l2 = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize,
-                    3 => l3 = (cache.sets() * cache.associativity() * cache.coherency_line_size()) as usize,
+                    }
+                    2 => {
+                        l2 = (cache.sets() * cache.associativity() * cache.coherency_line_size())
+                            as usize
+                    }
+                    3 => {
+                        l3 = (cache.sets() * cache.associativity() * cache.coherency_line_size())
+                            as usize
+                    }
                     _ => {}
                 }
             }
-            
-            CacheSizes { l1_data, l1_instruction, l2, l3 }
+
+            CacheSizes {
+                l1_data,
+                l1_instruction,
+                l2,
+                l3,
+            }
         } else {
             tracing::warn!("Could not detect x86 cache sizes, using defaults");
             CacheSizes::default()
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     fn detect_macos_cache_sizes() -> CacheSizes {
         use std::process::Command;
-        
+
         // Use sysctl to get cache information on macOS
         let mut cache_sizes = CacheSizes::default();
-        
+
         // L1 data cache
-        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l1dcachesize"]).output() {
+        if let Ok(output) = Command::new("sysctl")
+            .args(&["-n", "hw.l1dcachesize"])
+            .output()
+        {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
                 if let Ok(size) = size_str.trim().parse::<usize>() {
                     cache_sizes.l1_data = size;
                 }
             }
         }
-        
+
         // L1 instruction cache
-        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l1icachesize"]).output() {
+        if let Ok(output) = Command::new("sysctl")
+            .args(&["-n", "hw.l1icachesize"])
+            .output()
+        {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
                 if let Ok(size) = size_str.trim().parse::<usize>() {
                     cache_sizes.l1_instruction = size;
                 }
             }
         }
-        
+
         // L2 cache
-        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l2cachesize"]).output() {
+        if let Ok(output) = Command::new("sysctl")
+            .args(&["-n", "hw.l2cachesize"])
+            .output()
+        {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
                 if let Ok(size) = size_str.trim().parse::<usize>() {
                     cache_sizes.l2 = size;
                 }
             }
         }
-        
+
         // L3 cache
-        if let Ok(output) = Command::new("sysctl").args(&["-n", "hw.l3cachesize"]).output() {
+        if let Ok(output) = Command::new("sysctl")
+            .args(&["-n", "hw.l3cachesize"])
+            .output()
+        {
             if let Ok(size_str) = String::from_utf8(output.stdout) {
                 if let Ok(size) = size_str.trim().parse::<usize>() {
                     cache_sizes.l3 = size;
                 }
             }
         }
-        
-        tracing::info!("Detected macOS cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
-                      cache_sizes.l1_data / 1024, 
-                      cache_sizes.l1_instruction / 1024,
-                      cache_sizes.l2 / 1024, 
-                      cache_sizes.l3 / 1024 / 1024);
-        
+
+        tracing::info!(
+            "Detected macOS cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
+            cache_sizes.l1_data / 1024,
+            cache_sizes.l1_instruction / 1024,
+            cache_sizes.l2 / 1024,
+            cache_sizes.l3 / 1024 / 1024
+        );
+
         cache_sizes
     }
-    
+
     #[cfg(target_os = "linux")]
     fn detect_linux_cache_sizes() -> CacheSizes {
         use std::fs;
-        
+
         let mut cache_sizes = CacheSizes::default();
-        
+
         // Try to read from /sys/devices/system/cpu/cpu0/cache/
         let base_path = "/sys/devices/system/cpu/cpu0/cache";
-        
+
         // L1 data cache (index0)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index0/size", base_path)) {
             if let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l1_data = size;
             }
         }
-        
+
         // L1 instruction cache (index1)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index1/size", base_path)) {
             if let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l1_instruction = size;
             }
         }
-        
+
         // L2 cache (index2)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index2/size", base_path)) {
             if let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l2 = size;
             }
         }
-        
+
         // L3 cache (index3)
         if let Ok(size_str) = fs::read_to_string(format!("{}/index3/size", base_path)) {
             if let Some(size) = Self::parse_linux_cache_size(&size_str) {
                 cache_sizes.l3 = size;
             }
         }
-        
-        tracing::info!("Detected Linux cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
-                      cache_sizes.l1_data / 1024, 
-                      cache_sizes.l1_instruction / 1024,
-                      cache_sizes.l2 / 1024, 
-                      cache_sizes.l3 / 1024 / 1024);
-        
+
+        tracing::info!(
+            "Detected Linux cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
+            cache_sizes.l1_data / 1024,
+            cache_sizes.l1_instruction / 1024,
+            cache_sizes.l2 / 1024,
+            cache_sizes.l3 / 1024 / 1024
+        );
+
         cache_sizes
     }
-    
+
     #[cfg(target_os = "linux")]
     fn parse_linux_cache_size(size_str: &str) -> Option<usize> {
         let trimmed = size_str.trim();
         if trimmed.ends_with('K') {
-            trimmed[..trimmed.len()-1].parse::<usize>().ok().map(|n| n * 1024)
+            trimmed[..trimmed.len() - 1]
+                .parse::<usize>()
+                .ok()
+                .map(|n| n * 1024)
         } else if trimmed.ends_with('M') {
-            trimmed[..trimmed.len()-1].parse::<usize>().ok().map(|n| n * 1024 * 1024)
+            trimmed[..trimmed.len() - 1]
+                .parse::<usize>()
+                .ok()
+                .map(|n| n * 1024 * 1024)
         } else {
             trimmed.parse::<usize>().ok()
         }
     }
-    
+
     #[cfg(all(target_arch = "aarch64", target_os = "android"))]
     fn detect_android_cache_sizes() -> CacheSizes {
         use std::fs;
-        
+
         // Android uses Linux-style /sys filesystem but may have different paths
         let mut cache_sizes = CacheSizes::default();
-        
+
         // Try standard Linux paths first
         cache_sizes = Self::detect_linux_cache_sizes();
-        
+
         // If that fails, try Android-specific detection via /proc/cpuinfo
         if cache_sizes.l3 == CacheSizes::default().l3 {
             if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
@@ -759,23 +809,25 @@ impl HardwareCapabilities {
                 }
             }
         }
-        
-        tracing::info!("Detected Android ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
-                      cache_sizes.l1_data / 1024, 
-                      cache_sizes.l1_instruction / 1024,
-                      cache_sizes.l2 / 1024, 
-                      cache_sizes.l3 / 1024 / 1024);
-        
+
+        tracing::info!(
+            "Detected Android ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
+            cache_sizes.l1_data / 1024,
+            cache_sizes.l1_instruction / 1024,
+            cache_sizes.l2 / 1024,
+            cache_sizes.l3 / 1024 / 1024
+        );
+
         cache_sizes
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     fn detect_arm_cache_sizes() -> CacheSizes {
         use std::fs;
-        
+
         // Generic ARM64 detection for non-Linux platforms (e.g., Windows ARM64)
         let mut cache_sizes = CacheSizes::default();
-        
+
         // Try to read ARM system registers via platform-specific methods
         #[cfg(target_os = "windows")]
         {
@@ -783,7 +835,7 @@ impl HardwareCapabilities {
             // For now, use enhanced defaults based on common ARM architectures
             cache_sizes = Self::get_arm_defaults();
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         {
             // For other ARM64 platforms, try Linux-style detection first
@@ -793,16 +845,18 @@ impl HardwareCapabilities {
                 cache_sizes = Self::get_arm_defaults();
             }
         }
-        
-        tracing::info!("Detected ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB", 
-                      cache_sizes.l1_data / 1024, 
-                      cache_sizes.l1_instruction / 1024,
-                      cache_sizes.l2 / 1024, 
-                      cache_sizes.l3 / 1024 / 1024);
-        
+
+        tracing::info!(
+            "Detected ARM64 cache sizes: L1D={}KB, L1I={}KB, L2={}KB, L3={}MB",
+            cache_sizes.l1_data / 1024,
+            cache_sizes.l1_instruction / 1024,
+            cache_sizes.l2 / 1024,
+            cache_sizes.l3 / 1024 / 1024
+        );
+
         cache_sizes
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     fn get_arm_defaults() -> CacheSizes {
         // Enhanced defaults for ARM64 based on common architectures
@@ -810,22 +864,22 @@ impl HardwareCapabilities {
         // Snapdragon 8 Gen 2: L1=64KB, L2=512KB, L3=8MB
         // AWS Graviton3: L1=64KB, L2=1MB, L3=32MB
         CacheSizes {
-            l1_data: 64 * 1024,           // 64KB typical for ARM64
-            l1_instruction: 64 * 1024,    // 64KB typical for ARM64
-            l2: 1024 * 1024,              // 1MB conservative estimate
-            l3: 12 * 1024 * 1024,         // 12MB average (8-32MB range)
+            l1_data: 64 * 1024,        // 64KB typical for ARM64
+            l1_instruction: 64 * 1024, // 64KB typical for ARM64
+            l2: 1024 * 1024,           // 1MB conservative estimate
+            l3: 12 * 1024 * 1024,      // 12MB average (8-32MB range)
         }
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     fn parse_arm_cpuinfo(cpuinfo: &str) -> CacheSizes {
         let mut cache_sizes = Self::get_arm_defaults();
-        
+
         // ARM /proc/cpuinfo has different format than x86
         // Look for ARM-specific cache information
         for line in cpuinfo.lines() {
             let line_lower = line.to_lowercase();
-            
+
             // Check for ARM cache size indicators
             if line_lower.contains("cache") && line_lower.contains("size") {
                 if let Some(size) = Self::parse_arm_cache_size(&line) {
@@ -847,7 +901,7 @@ impl HardwareCapabilities {
                     }
                 }
             }
-            
+
             // Check for specific ARM vendor cache info
             if line_lower.contains("apple") && line_lower.contains("cache") {
                 // Apple Silicon specific parsing
@@ -857,37 +911,37 @@ impl HardwareCapabilities {
                 cache_sizes = Self::parse_qualcomm_cache(&line, cache_sizes);
             }
         }
-        
+
         cache_sizes
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     fn parse_arm_cache_size(line: &str) -> Option<usize> {
         // ARM cache size parsing - more flexible than Linux KB/MB parsing
         let line_lower = line.to_lowercase();
-        
+
         // Look for size patterns: "32KB", "1MB", "8192 KB", etc.
         for word in line.split_whitespace() {
             let word_clean = word.trim_matches(|c: char| !c.is_alphanumeric());
-            
+
             if word_clean.ends_with("kb") {
-                if let Ok(size) = word_clean[..word_clean.len()-2].parse::<usize>() {
+                if let Ok(size) = word_clean[..word_clean.len() - 2].parse::<usize>() {
                     return Some(size * 1024);
                 }
             } else if word_clean.ends_with("mb") {
-                if let Ok(size) = word_clean[..word_clean.len()-2].parse::<usize>() {
+                if let Ok(size) = word_clean[..word_clean.len() - 2].parse::<usize>() {
                     return Some(size * 1024 * 1024);
                 }
             } else if word_clean.ends_with("k") {
-                if let Ok(size) = word_clean[..word_clean.len()-1].parse::<usize>() {
+                if let Ok(size) = word_clean[..word_clean.len() - 1].parse::<usize>() {
                     return Some(size * 1024);
                 }
             }
         }
-        
+
         None
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     fn parse_apple_silicon_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Apple Silicon has known cache configurations
@@ -911,7 +965,7 @@ impl HardwareCapabilities {
         }
         cache_sizes
     }
-    
+
     #[cfg(target_arch = "aarch64")]
     fn parse_qualcomm_cache(line: &str, mut cache_sizes: CacheSizes) -> CacheSizes {
         // Qualcomm Snapdragon typical configurations
@@ -922,7 +976,9 @@ impl HardwareCapabilities {
             cache_sizes.l1_instruction = 64 * 1024;
             cache_sizes.l2 = 512 * 1024;
             cache_sizes.l3 = 8 * 1024 * 1024;
-        } else if line.to_lowercase().contains("8+ gen 1") || line.to_lowercase().contains("8 gen 1") {
+        } else if line.to_lowercase().contains("8+ gen 1")
+            || line.to_lowercase().contains("8 gen 1")
+        {
             cache_sizes.l1_data = 32 * 1024;
             cache_sizes.l1_instruction = 32 * 1024;
             cache_sizes.l2 = 256 * 1024;
@@ -930,7 +986,7 @@ impl HardwareCapabilities {
         }
         cache_sizes
     }
-    
+
     /// Detect GPU capabilities
     fn detect_gpu() -> Result<GpuCapabilities> {
         #[cfg(feature = "gpu")]
@@ -945,7 +1001,7 @@ impl HardwareCapabilities {
                         HardwareBackend::OpenCL => GpuBackend::OpenCL,
                         _ => GpuBackend::None,
                     };
-                    
+
                     // For now, create a single device entry
                     // In production, we'd enumerate all devices
                     let devices = if backend != GpuBackend::None {
@@ -960,13 +1016,17 @@ impl HardwareCapabilities {
                     } else {
                         vec![]
                     };
-                    
+
                     let total_memory = devices.iter().map(|d| d.total_memory).sum();
-                    
+
                     Ok(GpuCapabilities {
                         backend,
                         devices,
-                        primary_device: if backend != GpuBackend::None { Some(0) } else { None },
+                        primary_device: if backend != GpuBackend::None {
+                            Some(0)
+                        } else {
+                            None
+                        },
                         total_memory,
                         cuda_compute_capability: None,
                     })
@@ -983,7 +1043,7 @@ impl HardwareCapabilities {
                 }
             }
         }
-        
+
         #[cfg(not(feature = "gpu"))]
         {
             // GPU feature disabled, return empty capabilities
@@ -996,96 +1056,100 @@ impl HardwareCapabilities {
             })
         }
     }
-    
+
     /// Detect memory information
     fn detect_memory() -> Result<MemoryInfo> {
         use sysinfo::System;
-        
+
         let mut sys = System::new_all();
         sys.refresh_memory();
-        
+
         let total_memory = sys.total_memory(); // Already in bytes in sysinfo 0.30+
         let available_memory = sys.available_memory(); // Already in bytes
-        
+
         // Recommend cache size as 10% of available memory, capped at 8GB
         let recommended_cache_size = std::cmp::min(
             available_memory / 10,
-            8 * 1024 * 1024 * 1024 // 8GB max
+            8 * 1024 * 1024 * 1024, // 8GB max
         );
-        
+
         Ok(MemoryInfo {
             total_memory,
             available_memory,
             recommended_cache_size,
         })
     }
-    
+
     /// Log hardware capabilities summary
     fn log_summary(&self) {
-        info!("🖥️  CPU: {} {} ({} physical cores, {} logical cores)",
-            self.cpu.vendor, self.cpu.model_name, 
-            self.cpu.physical_cores, self.cpu.logical_cores);
-            
+        info!(
+            "🖥️  CPU: {} {} ({} physical cores, {} logical cores)",
+            self.cpu.vendor, self.cpu.model_name, self.cpu.physical_cores, self.cpu.logical_cores
+        );
+
         info!("🎯 SIMD: {}", self.cpu.simd.to_string());
-        
+
         match self.gpu.backend {
             GpuBackend::None => {
                 info!("🎮 GPU: Not available (CPU-only mode)");
             }
             _ => {
-                info!("🎮 GPU: {} with {} device(s), {:.1}GB total mem",
+                info!(
+                    "🎮 GPU: {} with {} device(s), {:.1}GB total mem",
                     self.gpu.backend,
                     self.gpu.devices.len(),
-                    self.gpu.total_memory as f64 / (1024.0 * 1024.0 * 1024.0));
+                    self.gpu.total_memory as f64 / (1024.0 * 1024.0 * 1024.0)
+                );
             }
         }
-        
-        info!("💾 Memory: {:.1}GB total, {:.1}GB available",
+
+        info!(
+            "💾 Memory: {:.1}GB total, {:.1}GB available",
             self.memory.total_memory as f64 / (1024.0 * 1024.0 * 1024.0),
-            self.memory.available_memory as f64 / (1024.0 * 1024.0 * 1024.0));
+            self.memory.available_memory as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
     }
-    
+
     /// Check if AVX-512 is available and enabled
     pub fn has_avx512(&self) -> bool {
         self.config.enable_simd && self.config.enable_avx512 && self.cpu.simd.has_avx512
     }
-    
+
     /// Check if any GPU acceleration is available and enabled
     pub fn has_gpu(&self) -> bool {
         self.config.enable_gpu_acceleration && self.gpu.backend != GpuBackend::None
     }
-    
+
     /// Check if GPU is available for distance calculations
     pub fn has_gpu_distance(&self) -> bool {
         self.has_gpu() && self.config.enable_gpu_acceleration
     }
-    
+
     /// Check if GPU is available for SQL parsing
     pub fn has_gpu_parsing(&self) -> bool {
         self.has_gpu() && self.config.enable_gpu_parsing
     }
-    
+
     /// Check if SIMD is enabled and available
     pub fn has_simd(&self) -> bool {
-        self.config.enable_simd && (
-            self.cpu.simd.has_sse || 
-            self.cpu.simd.has_avx || 
-            self.cpu.simd.has_avx2 || 
-            self.cpu.simd.has_avx512 ||
-            self.cpu.simd.has_neon
-        )
+        self.config.enable_simd
+            && (self.cpu.simd.has_sse
+                || self.cpu.simd.has_avx
+                || self.cpu.simd.has_avx2
+                || self.cpu.simd.has_avx512
+                || self.cpu.simd.has_neon)
     }
-    
+
     /// Check if should use GPU for distance calculation based on vector size
     pub fn should_use_gpu_distance(&self, vector_size: usize) -> bool {
         self.has_gpu_distance() && vector_size >= self.config.gpu_min_vector_size
     }
-    
+
     /// Check if should use GPU for batch operations based on batch size
     pub fn should_use_gpu_batch(&self, batch_size: usize) -> bool {
         self.has_gpu_distance() && batch_size >= self.config.gpu_min_batch_size
     }
-    
+
     /// Get the preferred hardware backend for operations
     pub fn preferred_backend(&self) -> HardwareBackend {
         if self.has_gpu() {
@@ -1100,7 +1164,7 @@ impl HardwareCapabilities {
             self.cpu_backend()
         }
     }
-    
+
     /// Get the best CPU backend based on SIMD capabilities
     fn cpu_backend(&self) -> HardwareBackend {
         if self.cpu.simd.has_avx512 {
@@ -1118,9 +1182,9 @@ impl HardwareCapabilities {
 /// Initialize hardware capabilities with configuration (called once at server startup)
 pub fn initialize_hardware_capabilities(config: HardwareConfig) -> Result<()> {
     let caps = HardwareCapabilities::detect_with_config(config)?;
-    
+
     HARDWARE_CAPABILITIES.get_or_init(|| Arc::new(caps));
-    
+
     Ok(())
 }
 
@@ -1130,7 +1194,7 @@ pub fn initialize_hardware_capabilities_default() -> Result<()> {
 }
 
 /// Get the global hardware capabilities
-/// 
+///
 /// # Panics
 /// Panics if called before initialize_hardware_capabilities()
 pub fn hardware_capabilities() -> Arc<HardwareCapabilities> {
@@ -1173,8 +1237,8 @@ impl Default for GpuCapabilities {
 impl Default for MemoryInfo {
     fn default() -> Self {
         Self {
-            total_memory: 8 * 1024 * 1024 * 1024, // 8GB default
-            available_memory: 4 * 1024 * 1024 * 1024, // 4GB default
+            total_memory: 8 * 1024 * 1024 * 1024,       // 8GB default
+            available_memory: 4 * 1024 * 1024 * 1024,   // 4GB default
             recommended_cache_size: 1024 * 1024 * 1024, // 1GB
         }
     }
@@ -1193,8 +1257,7 @@ impl Default for HardwareCapabilities {
 }
 
 pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
-    try_get_hardware_capabilities()
-        .unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
+    try_get_hardware_capabilities().unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
 }
 
 /// Hardware capability queries for easy access
@@ -1207,41 +1270,40 @@ impl HardwareQuery {
             .map(|caps| caps.has_avx512())
             .unwrap_or(false)
     }
-    
+
     /// Check if GPU acceleration is available
     pub fn has_gpu() -> bool {
         try_get_hardware_capabilities()
             .map(|caps| caps.has_gpu())
             .unwrap_or(false)
     }
-    
+
     /// Get the number of CPU cores
     pub fn cpu_cores() -> usize {
         try_get_hardware_capabilities()
             .map(|caps| caps.cpu.logical_cores)
             .unwrap_or_else(|| num_cpus::get())
     }
-    
+
     /// Get recommended thread pool size
     pub fn recommended_thread_pool_size() -> usize {
         let cores = Self::cpu_cores();
         // Use 2x physical cores for I/O bound tasks
         std::cmp::min(cores * 2, 64)
     }
-    
+
     /// Get recommended cache size
     pub fn recommended_cache_size() -> u64 {
         try_get_hardware_capabilities()
             .map(|caps| caps.memory.recommended_cache_size)
             .unwrap_or(1024 * 1024 * 1024) // 1GB default
     }
-    
+
     /// Get L3 cache size for optimal row group sizing
     /// Used by RAPTOR engine for hardware-aware parameter selection
     pub fn l3_cache_size(&self) -> Option<usize> {
         // Return actual L3 cache size from hardware detection
-        try_get_hardware_capabilities()
-            .map(|caps| caps.cpu.features.cache_sizes.l3)
+        try_get_hardware_capabilities().map(|caps| caps.cpu.features.cache_sizes.l3)
     }
 }
 
@@ -1249,54 +1311,51 @@ impl HardwareQuery {
 mod tests {
     use super::*;
     use tracing::debug;
-    
+
     #[test]
     fn test_hardware_detection_legacy() {
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
-        
+
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
         assert!(!caps.cpu.vendor.is_none());
-        
+
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0);
         assert!(caps.memory.recommended_cache_size > 0);
-        
+
         debug!("Detected hardware: {:?}", caps);
     }
-    
+
     #[test]
     fn test_simd_detection() {
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
-        
+
         // At least one SIMD capability should be available
         let simd = &caps.cpu.simd;
-        assert!(
-            simd.has_sse || simd.has_avx || simd.has_avx2 || 
-            simd.has_avx512 || simd.has_neon
-        );
+        assert!(simd.has_sse || simd.has_avx || simd.has_avx2 || simd.has_avx512 || simd.has_neon);
     }
-    
+
     #[test]
     fn test_preferred_backend() {
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
         let backend = caps.preferred_backend();
-        
+
         // Should return a valid backend
         match backend {
-            HardwareBackend::Scalar |
-            HardwareBackend::SSE |
-            HardwareBackend::AVX2 |
-            HardwareBackend::AVX512 |
-            HardwareBackend::NEON |
-            HardwareBackend::CUDA |
-            HardwareBackend::ROCm |
-            HardwareBackend::MPS |
-            HardwareBackend::OpenCL => {
+            HardwareBackend::Scalar
+            | HardwareBackend::SSE
+            | HardwareBackend::AVX2
+            | HardwareBackend::AVX512
+            | HardwareBackend::NEON
+            | HardwareBackend::CUDA
+            | HardwareBackend::ROCm
+            | HardwareBackend::MPS
+            | HardwareBackend::OpenCL => {
                 // Valid backend
             }
         }

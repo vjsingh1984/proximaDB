@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::multi_tier_deduplication::{
-        MultiTierDeduplicator, StorageTier, TieredSearchCandidate, DeduplicationStorageEngine
+        DeduplicationStorageEngine, MultiTierDeduplicator, StorageTier, TieredSearchCandidate,
     };
     use crate::proto::proximadb::VectorRecord;
     use chrono::Utc;
@@ -18,7 +18,6 @@ mod tests {
             // rank removed -  None,
             similarity: Some(score),
             similarity: None,
-        
         }
     }
 
@@ -69,13 +68,13 @@ mod tests {
         ];
 
         deduplicator.add_tier_results(candidates);
-        
+
         // Should NOT be early terminated since ordering is required
         assert!(!deduplicator.is_early_terminated());
-        
+
         let results = deduplicator.get_final_results(k);
         assert_eq!(results.len(), 3);
-        
+
         // Results should be ordered by score
         assert_eq!(results[0].vector_record.id.as_ref().unwrap(), "vec1");
         assert_eq!(results[1].vector_record.id.as_ref().unwrap(), "vec2");
@@ -120,10 +119,10 @@ mod tests {
         ];
 
         deduplicator.add_tier_results(candidates);
-        
+
         // Should be early terminated since we have k results and no ordering required
         assert!(deduplicator.is_early_terminated());
-        
+
         let results = deduplicator.get_final_results(k);
         assert_eq!(results.len(), 3);
     }
@@ -166,13 +165,13 @@ mod tests {
         ];
 
         deduplicator.add_tier_results(candidates);
-        
+
         // Should be early terminated with k unique results
         assert!(deduplicator.is_early_terminated());
-        
+
         let results = deduplicator.get_final_results(k);
         assert_eq!(results.len(), 2);
-        
+
         // Should have kept the higher tier version of vec1
         assert_eq!(results[0].vector_record.id.as_ref().unwrap(), "vec1");
         assert_eq!(results[0].score, 0.9); // From Unflushed tier
@@ -208,10 +207,10 @@ mod tests {
         ];
 
         deduplicator.add_tier_results(candidates);
-        
+
         // Should NOT be early terminated since we don't have k results
         assert!(!deduplicator.is_early_terminated());
-        
+
         let results = deduplicator.get_final_results(k);
         assert_eq!(results.len(), 2); // Only 2 results available
     }

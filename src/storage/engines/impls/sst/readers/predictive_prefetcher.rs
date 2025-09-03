@@ -5,13 +5,13 @@
 //! data before it's requested.
 
 use anyhow::Result;
+use chrono::Timelike;
 use dashmap::DashMap;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use chrono::Timelike;
 
 // Import FastLanesDataBlock for SST usage
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
@@ -162,7 +162,7 @@ impl PredictivePrefetcher {
             metrics: Arc::new(PrefetchMetrics::new()),
         }
     }
-    
+
     /// Record an access and update patterns
     pub async fn record_access(&self, key: &BlockCacheKey, hit: bool) -> Result<()> {
         let record = AccessRecord {
@@ -171,17 +171,17 @@ impl PredictivePrefetcher {
             access_type: self.detect_access_type(key).await,
             hit,
         };
-        
+
         // Update patterns
         self.access_patterns.update_patterns(&record).await?;
-        
+
         // Only trigger predictive prefetching if not in test mode
         #[cfg(not(test))]
         self.predict_and_prefetch(key).await?;
-        
+
         Ok(())
     }
-    
+
     /// Get prefetched block if available
     pub async fn get_prefetched(&self, key: &BlockCacheKey) -> Option<Arc<FastLanesDataBlock>> {
         if let Some((_, block)) = self.prefetch_cache.remove(key) {
@@ -192,13 +192,13 @@ impl PredictivePrefetcher {
             None
         }
     }
-    
+
     /// Predict next blocks and schedule prefetching
     async fn predict_and_prefetch(&self, current_key: &BlockCacheKey) -> Result<()> {
         let predictions = self.predict_next_blocks(current_key).await?;
-        
+
         let mut queue = self.prefetch_queue.write().await;
-        
+
         for (key, confidence, pattern_type) in predictions {
             if confidence >= self.config.confidence_threshold {
                 let entry = PrefetchEntry {
@@ -207,50 +207,60 @@ impl PredictivePrefetcher {
                     predicted_time: Instant::now() + Duration::from_millis(10),
                     pattern_type,
                 };
-                
+
                 queue.add_entry(entry);
                 self.metrics.pattern_matches.fetch_add(1, Ordering::Relaxed);
             }
         }
-        
+
         // Start prefetch tasks
         self.execute_prefetches().await?;
-        
+
         Ok(())
     }
-    
+
     /// Predict next blocks based on patterns
     async fn predict_next_blocks(
         &self,
         current_key: &BlockCacheKey,
     ) -> Result<Vec<(BlockCacheKey, f64, PatternType)>> {
         let mut predictions = Vec::new();
-        
+
         // Sequential pattern prediction
-        if let Some(seq_pattern) = self.access_patterns.sequential_patterns.get(&current_key.file_path) {
-            if seq_pattern.access_count > 3 {  // Use access count as confidence metric
+        if let Some(seq_pattern) = self
+            .access_patterns
+            .sequential_patterns
+            .get(&current_key.file_path)
+        {
+            if seq_pattern.access_count > 3 {
+                // Use access count as confidence metric
                 for i in 1..=self.config.prefetch_window {
-                    let next_block_id = (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
+                    let next_block_id =
+                        (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
                     let next_key = BlockCacheKey {
                         file_path: current_key.file_path.clone(),
                         block_id: next_block_id,
                         block_index: current_key.block_index + i,
                     };
-                    
+
                     predictions.push((
                         next_key,
-                        0.8 * (0.9_f64).powi(i as i32),  // Use fixed confidence decay
+                        0.8 * (0.9_f64).powi(i as i32), // Use fixed confidence decay
                         PatternType::Sequential,
                     ));
                 }
             }
         }
-        
+
         // Random pattern prediction (hot blocks)
-        if let Some(rand_pattern) = self.access_patterns.random_patterns.get(&current_key.file_path) {
+        if let Some(rand_pattern) = self
+            .access_patterns
+            .random_patterns
+            .get(&current_key.file_path)
+        {
             let mut hot_blocks: Vec<_> = rand_pattern.hot_blocks.iter().collect();
             hot_blocks.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
-            
+
             for (block_id, count) in hot_blocks.iter().take(self.config.prefetch_window) {
                 let confidence = **count as f64 / rand_pattern.total_accesses as f64;
                 if confidence > 0.1 {
@@ -259,21 +269,21 @@ impl PredictivePrefetcher {
                         block_id: **block_id,
                         block_index: 0, // Will be determined during fetch
                     };
-                    
+
                     predictions.push((key, confidence, PatternType::Random));
                 }
             }
         }
-        
+
         // ML-based prediction (if enabled)
         if self.config.enable_ml_prediction {
             let ml_predictions = self.ml_predict_blocks(current_key).await?;
             predictions.extend(ml_predictions);
         }
-        
+
         Ok(predictions)
     }
-    
+
     /// ML-based block prediction (simplified)
     async fn ml_predict_blocks(
         &self,
@@ -281,21 +291,23 @@ impl PredictivePrefetcher {
     ) -> Result<Vec<(BlockCacheKey, f64, PatternType)>> {
         // Simplified ML prediction using access history
         let history = self.access_patterns.access_history.read().await;
-        
+
         // Find similar access patterns
         let mut pattern_scores: HashMap<u32, f64> = HashMap::new();
-        
+
         for (i, record) in history.iter().enumerate() {
             if record.key.file_path == current_key.file_path {
                 // Look at next accesses
                 if let Some(next_record) = history.get(i + 1) {
                     if next_record.key.file_path == current_key.file_path {
-                        *pattern_scores.entry(next_record.key.block_id).or_insert(0.0) += 1.0;
+                        *pattern_scores
+                            .entry(next_record.key.block_id)
+                            .or_insert(0.0) += 1.0;
                     }
                 }
             }
         }
-        
+
         // Normalize scores
         let total_score: f64 = pattern_scores.values().sum();
         if total_score > 0.0 {
@@ -311,54 +323,52 @@ impl PredictivePrefetcher {
                 })
                 .filter(|(_, confidence, _)| *confidence > 0.1)
                 .collect();
-                
+
             Ok(predictions)
         } else {
             Ok(vec![])
         }
     }
-    
+
     /// Execute prefetch operations
     async fn execute_prefetches(&self) -> Result<()> {
         let mut queue = self.prefetch_queue.write().await;
-        
+
         while let Some(entry) = queue.pop_highest_priority() {
             if self.prefetch_cache.len() * 4096 > self.config.max_cache_size_bytes {
                 // Cache is full, stop prefetching
                 break;
             }
-            
+
             if !queue.is_active(&entry.key) && !self.prefetch_cache.contains_key(&entry.key) {
                 // Start async prefetch task
                 let key = entry.key.clone();
                 let prefetcher = self.clone();
-                
-                let handle = tokio::spawn(async move {
-                    prefetcher.prefetch_block(&key).await
-                });
-                
+
+                let handle = tokio::spawn(async move { prefetcher.prefetch_block(&key).await });
+
                 queue.mark_active(entry.key, handle);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Prefetch a single block
     async fn prefetch_block(&self, key: &BlockCacheKey) -> Result<()> {
         let _start = Instant::now();
-        
+
         // Check if block is already cached
         if self.prefetch_cache.contains_key(key) {
             return Ok(());
         }
-        
+
         // Get SSTable reader reference (needs to be provided via context)
         // For now, return error as we need proper SSTable reader integration
         return Err(anyhow::anyhow!(
             "Prefetch requires SSTable reader integration - to be implemented with UnifiedSstableReader"
         ));
-        
+
         // Real implementation would be:
         // let block = self.sstable_reader.read_block(&key.file_path, key.block_index).await?;
         // self.prefetch_cache.insert(key.clone(), block);
@@ -367,32 +377,33 @@ impl PredictivePrefetcher {
         // self.metrics.prefetch_latency_us.fetch_add(latency, Ordering::Relaxed);
         // self.metrics.bytes_prefetched.fetch_add(block.data.len() as u64, Ordering::Relaxed);
     }
-    
+
     /// Detect access type
     async fn detect_access_type(&self, key: &BlockCacheKey) -> AccessType {
         // Convert BlockCacheKey to String for map lookup
         let key_str = format!("{}:{}:{}", key.file_path, key.block_id, key.block_index);
         if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key_str) {
-            if pattern.access_count > 3 {  // Use access count threshold
+            if pattern.access_count > 3 {
+                // Use access count threshold
                 return AccessType::Sequential;
             }
         }
-        
+
         AccessType::Random
     }
-    
+
     /// Get prefetch statistics
     pub fn stats(&self) -> PrefetchStats {
         PrefetchStats {
             hit_rate: self.calculate_hit_rate(),
             waste_rate: self.calculate_waste_rate(),
-            avg_latency_us: self.metrics.prefetch_latency_us.load(Ordering::Relaxed) 
+            avg_latency_us: self.metrics.prefetch_latency_us.load(Ordering::Relaxed)
                 / self.metrics.prefetch_hits.load(Ordering::Relaxed).max(1),
             cache_size_bytes: self.prefetch_cache.len() * 4096,
             pattern_matches: self.metrics.pattern_matches.load(Ordering::Relaxed),
         }
     }
-    
+
     fn calculate_hit_rate(&self) -> f64 {
         let hits = self.metrics.prefetch_hits.load(Ordering::Relaxed);
         let total = hits + self.metrics.prefetch_misses.load(Ordering::Relaxed);
@@ -402,7 +413,7 @@ impl PredictivePrefetcher {
             0.0
         }
     }
-    
+
     fn calculate_waste_rate(&self) -> f64 {
         let wasted = self.metrics.wasted_prefetches.load(Ordering::Relaxed);
         let total = self.metrics.bytes_prefetched.load(Ordering::Relaxed) / 4096;
@@ -445,7 +456,7 @@ impl AccessPatternTracker {
             access_history: RwLock::new(VecDeque::with_capacity(10000)),
         }
     }
-    
+
     pub async fn update_patterns(&self, record: &AccessRecord) -> Result<()> {
         // Update access history
         {
@@ -455,19 +466,19 @@ impl AccessPatternTracker {
                 history.pop_front();
             }
         }
-        
+
         // Update sequential pattern
         self.update_sequential_pattern(record).await?;
-        
+
         // Update random pattern
         self.update_random_pattern(record).await?;
-        
+
         // Update temporal pattern
         self.update_temporal_pattern(record).await?;
-        
+
         Ok(())
     }
-    
+
     async fn update_sequential_pattern(&self, record: &AccessRecord) -> Result<()> {
         self.sequential_patterns
             .entry(record.key.file_path.clone())
@@ -494,10 +505,10 @@ impl AccessPatternTracker {
                 // confidence removed -  0.5,
                 last_access: record.timestamp,
             });
-            
+
         Ok(())
     }
-    
+
     async fn update_random_pattern(&self, record: &AccessRecord) -> Result<()> {
         self.random_patterns
             .entry(record.key.file_path.clone())
@@ -515,26 +526,26 @@ impl AccessPatternTracker {
                     total_accesses: 1,
                 }
             });
-            
+
         Ok(())
     }
-    
+
     async fn update_temporal_pattern(&self, record: &AccessRecord) -> Result<()> {
         let mut temporal = self.temporal_patterns.write().await;
-        
+
         // Update access rates
         let now = record.timestamp;
         temporal.access_rates.push_back((now, 1.0));
-        
+
         // Keep only recent data
         while temporal.access_rates.len() > 1000 {
             temporal.access_rates.pop_front();
         }
-        
+
         // Update hourly pattern
         let hour = chrono::Utc::now().hour() as usize;
         temporal.hourly_pattern[hour] += 1;
-        
+
         Ok(())
     }
 }
@@ -556,20 +567,21 @@ impl PrefetchQueue {
             active_tasks: HashMap::new(),
         }
     }
-    
+
     fn add_entry(&mut self, entry: PrefetchEntry) {
         self.queue.push(entry);
-        self.queue.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap());
+        self.queue
+            .sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap());
     }
-    
+
     fn pop_highest_priority(&mut self) -> Option<PrefetchEntry> {
         self.queue.pop()
     }
-    
+
     fn is_active(&self, key: &BlockCacheKey) -> bool {
         self.active_tasks.contains_key(key)
     }
-    
+
     fn mark_active(&mut self, key: BlockCacheKey, handle: tokio::task::JoinHandle<Result<()>>) {
         self.active_tasks.insert(key, handle);
     }
@@ -601,12 +613,11 @@ impl Default for PrefetchConfig {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info};
-    
+    use tracing::{debug, error, info};
+
     #[tokio::test]
     #[ignore = "Test hangs - needs investigation"]
     async fn test_sequential_pattern_detection() {
@@ -614,7 +625,7 @@ use tracing::{debug, error, info};
         config.prefetch_window = 2; // Limit prefetch window for testing
         config.max_cache_size_bytes = 1024 * 1024; // 1MB limit for tests
         let prefetcher = PredictivePrefetcher::new(config);
-        
+
         // Record sequential access pattern (without actual prefetching)
         for i in 0..10 {
             let key = BlockCacheKey {
@@ -622,7 +633,7 @@ use tracing::{debug, error, info};
                 block_id: i,
                 block_index: i as usize,
             };
-            
+
             // Just update patterns without triggering actual prefetch
             let record = AccessRecord {
                 key: key.clone(),
@@ -630,21 +641,27 @@ use tracing::{debug, error, info};
                 access_type: AccessType::Sequential,
                 hit: true,
             };
-            
+
             // Directly update patterns to avoid any prefetch logic
-            prefetcher.access_patterns.update_patterns(&record).await.unwrap();
+            prefetcher
+                .access_patterns
+                .update_patterns(&record)
+                .await
+                .unwrap();
         }
-        
+
         // Check that sequential pattern was detected
-        let pattern = prefetcher.access_patterns.sequential_patterns
+        let pattern = prefetcher
+            .access_patterns
+            .sequential_patterns
             .get(key)
             .unwrap();
-        
+
         assert_eq!(pattern.stride, 1);
         assert!(pattern.confidence > 0.8);
         assert_eq!(pattern.access_count, 10); // 10 accesses tracked
     }
-    
+
     #[tokio::test]
     #[ignore = "Test hangs - needs investigation"]
     async fn test_hot_block_detection() {
@@ -652,7 +669,7 @@ use tracing::{debug, error, info};
         config.prefetch_window = 2;
         config.max_cache_size_bytes = 1024 * 1024;
         let prefetcher = PredictivePrefetcher::new(config);
-        
+
         // Record hot block access pattern (without actual prefetching)
         let hot_blocks = vec![5, 10, 15];
         for _ in 0..20 {
@@ -662,29 +679,31 @@ use tracing::{debug, error, info};
                     block_id,
                     block_index: block_id as usize,
                 };
-                
+
                 let record = AccessRecord {
                     key: key.clone(),
                     timestamp: Instant::now(),
                     access_type: AccessType::Random,
                     hit: true,
                 };
-                
-                prefetcher.access_patterns.update_patterns(&record).await.unwrap();
+
+                prefetcher
+                    .access_patterns
+                    .update_patterns(&record)
+                    .await
+                    .unwrap();
             }
         }
-        
+
         // Check hot blocks were identified
-        let pattern = prefetcher.access_patterns.random_patterns
-            .get(key)
-            .unwrap();
-        
+        let pattern = prefetcher.access_patterns.random_patterns.get(key).unwrap();
+
         assert_eq!(pattern.hot_blocks[&5], 20);
         assert_eq!(pattern.hot_blocks[&10], 20);
         assert_eq!(pattern.hot_blocks[&15], 20);
         assert_eq!(pattern.total_accesses, 60);
     }
-    
+
     #[tokio::test]
     #[ignore = "Test hangs - needs investigation"]
     async fn test_prefetch_prediction() {
@@ -692,7 +711,7 @@ use tracing::{debug, error, info};
         config.prefetch_window = 2;
         config.max_cache_size_bytes = 1024 * 1024;
         let prefetcher = PredictivePrefetcher::new(config);
-        
+
         // Build sequential pattern (without actual prefetching)
         for i in 0..5 {
             let key = BlockCacheKey {
@@ -700,34 +719,45 @@ use tracing::{debug, error, info};
                 block_id: i * 2, // Stride of 2
                 block_index: i as usize,
             };
-            
+
             let record = AccessRecord {
                 key: key.clone(),
                 timestamp: Instant::now(),
                 access_type: AccessType::Sequential,
                 hit: true,
             };
-            
-            prefetcher.access_patterns.update_patterns(&record).await.unwrap();
+
+            prefetcher
+                .access_patterns
+                .update_patterns(&record)
+                .await
+                .unwrap();
         }
-        
+
         // Predict next blocks
         let current_key = BlockCacheKey {
             file_path: "predict.sstable".to_string(),
             block_id: 8,
             block_index: 4,
         };
-        
+
         let predictions = prefetcher.predict_next_blocks(&current_key).await.unwrap();
-        
+
         // Check if sequential pattern was detected
-        let has_pattern = prefetcher.access_patterns.sequential_patterns.contains_key("predict.sstable");
+        let has_pattern = prefetcher
+            .access_patterns
+            .sequential_patterns
+            .contains_key("predict.sstable");
         if has_pattern {
-            let pattern = prefetcher.access_patterns.sequential_patterns.get(key).unwrap();
+            let pattern = prefetcher
+                .access_patterns
+                .sequential_patterns
+                .get(key)
+                .unwrap();
             // Pattern should have detected stride of 2
             assert_eq!(pattern.stride, 2);
             debug!("Pattern // confidence removed -  {}", pattern.confidence);
-            
+
             // If confidence is high enough for predictions
             if pattern.confidence > 0.7 {
                 assert!(!predictions.is_none());

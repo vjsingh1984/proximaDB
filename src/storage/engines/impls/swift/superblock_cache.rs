@@ -1,16 +1,16 @@
 // SuperBlock Cache for SWIFT Engine - Tree-Based Navigation Optimized
 // Focused on SWIFT's actual design: hierarchical tree navigation with instant traversal
 
+use crate::storage::persistence::filesystem::FileSystem;
+use anyhow::Result;
+use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
-use crate::storage::persistence::filesystem::FileSystem;
-use dashmap::DashMap;
-use serde::{Serialize, Deserialize};
 
 // Zero-copy filesystem handled by storage layer
 // Block structures handled internally
@@ -22,27 +22,28 @@ use crate::storage::persistence::filesystem::ZeroCopyFilesystem;
 pub struct SwiftSuperBlockCache {
     /// SuperBlock metadata cache (always in memory for fast tree navigation)
     superblock_cache: Arc<DashMap<String, Arc<CachedSuperBlockMetadata>>>,
-    
+
     /// Tree navigation hints cache
     tree_navigation_cache: Arc<DashMap<String, Arc<TreeNavigationHints>>>,
-    
+
     /// DataBlock metadata cache with LRU eviction
     datablock_cache: Arc<RwLock<lru::LruCache<String, Arc<CachedDataBlockMetadata>>>>,
     datablock_ttl_sec: u64,
-    
+
     /// Bloom filter cache for instant filtering
     bloom_filter_cache: Arc<DashMap<String, Arc<BloomFilterMetadata>>>,
-    
+
     /// Progressive search cache
-    progressive_search_cache: Arc<RwLock<HashMap<String, (Arc<ProgressiveSearchMetadata>, Instant)>>>,
+    progressive_search_cache:
+        Arc<RwLock<HashMap<String, (Arc<ProgressiveSearchMetadata>, Instant)>>>,
     progressive_ttl_sec: u64,
-    
+
     /// Tree path optimization cache
     tree_path_cache: Arc<DashMap<String, Arc<OptimalTreePath>>>,
-    
+
     /// Filesystem for loading/storing cache data
     filesystem: Arc<ZeroCopyFilesystem>,
-    
+
     /// Cache statistics
     cache_stats: Arc<SwiftCacheStatistics>,
 }
@@ -53,37 +54,37 @@ pub struct CachedSuperBlockMetadata {
     /// SuperBlock identification
     pub superblock_id: u32,
     pub collection_id: String,
-    
+
     /// Tree navigation data
     pub tree_depth: u16,
     pub tree_node_count: u32,
     pub leaf_node_count: u32,
     pub tree_balance_factor: f32,
-    
+
     /// Hierarchical structure (SWIFT design: SuperBlock → DataBlock → Records)
     pub datablock_count: u32,
     pub total_records: u64,
     pub records_per_datablock: u32,
-    
+
     /// FastLanes encoding information
     pub superblock_encoding_marker: u8,
     pub encoding_efficiency: f32,
     pub compression_ratio: f32,
-    
+
     /// Progressive quantization levels available
     pub available_quantization_levels: Vec<QuantizationLevelMetadata>,
-    
+
     /// Access patterns for tree optimization
     pub access_frequency: u64,
     #[serde(skip)]
     pub last_access: Instant,
     pub hot_datablocks: Vec<u32>,
-    
+
     /// Bloom filter statistics
     pub bloom_filter_size: u32,
     pub bloom_filter_false_positive_rate: f32,
     pub bloom_filter_selectivity: f32,
-    
+
     /// Instant traversal metrics
     pub avg_lookup_time_us: u64,
     pub tree_cache_hit_rate: f32,
@@ -95,16 +96,16 @@ pub struct CachedSuperBlockMetadata {
 pub struct TreeNavigationHints {
     /// Optimal tree traversal paths
     pub frequent_paths: Vec<TreePath>,
-    
+
     /// Prefetch recommendations
     pub prefetch_nodes: Vec<String>,
-    
+
     /// Branch prediction hints
     pub branch_probabilities: HashMap<String, f32>,
-    
+
     /// Cache locality hints
     pub locality_groups: Vec<LocalityGroup>,
-    
+
     /// Performance optimization suggestions
     pub optimization_hints: Vec<TreeOptimizationHint>,
 }
@@ -153,24 +154,24 @@ pub struct CachedDataBlockMetadata {
     /// DataBlock identification
     pub datablock_id: u32,
     pub superblock_id: u32,
-    
+
     /// Record organization
     pub record_count: u32,
     pub has_deletes: bool,
     pub has_updates: bool,
-    
+
     /// Tree navigation data
     pub tree_leaf_position: Option<u32>,
     pub navigation_keys: Vec<String>,
     pub key_range: (String, String),
-    
+
     /// Progressive quantization data
     pub quantization_summary: QuantizationSummary,
-    
+
     /// Access optimization
     pub access_stats: DataBlockAccessStats,
     pub cache_priority: u8,
-    
+
     /// Feature-rich metadata (SWIFT design focus)
     pub bloom_filter_present: bool,
     pub inverted_index_present: bool,
@@ -227,10 +228,10 @@ pub struct BloomFilterMetadata {
 /// Types of bloom filters in SWIFT
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BloomFilter {
-    KeyFilter,         // For ID lookups
-    MetadataFilter,    // For metadata filtering
-    CompositeFilter,   // For complex queries
-    SketchFilter,      // For approximate queries
+    KeyFilter,       // For ID lookups
+    MetadataFilter,  // For metadata filtering
+    CompositeFilter, // For complex queries
+    SketchFilter,    // For approximate queries
 }
 
 /// Progressive search metadata for optimization
@@ -294,43 +295,57 @@ impl SwiftSuperBlockCache {
             }),
         }
     }
-    
+
     /// Get SuperBlock metadata for tree navigation (SWIFT's core feature)
-    pub async fn superblock_metadata(&self, superblock_id: &str) -> Result<Arc<CachedSuperBlockMetadata>> {
+    pub async fn superblock_metadata(
+        &self,
+        superblock_id: &str,
+    ) -> Result<Arc<CachedSuperBlockMetadata>> {
         // Check cache first
         if let Some(metadata) = self.superblock_cache.get(superblock_id) {
-            self.cache_stats.superblock_hits.fetch_add(1, Ordering::Relaxed);
+            self.cache_stats
+                .superblock_hits
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(metadata.clone());
         }
-        
+
         // Load from disk
         let metadata = self.load_superblock_metadata(superblock_id).await?;
         let metadata_arc = Arc::new(metadata);
-        
+
         // Cache it permanently (SuperBlocks are always in memory for instant access)
-        self.superblock_cache.insert(superblock_id.to_string(), metadata_arc.clone());
-        
+        self.superblock_cache
+            .insert(superblock_id.to_string(), metadata_arc.clone());
+
         Ok(metadata_arc)
     }
-    
+
     /// Get tree navigation hints for instant traversal optimization
-    pub async fn tree_navigation_hints(&self, superblock_id: &str) -> Result<Arc<TreeNavigationHints>> {
+    pub async fn tree_navigation_hints(
+        &self,
+        superblock_id: &str,
+    ) -> Result<Arc<TreeNavigationHints>> {
         // Check cache first
         if let Some(hints) = self.tree_navigation_cache.get(superblock_id) {
-            self.cache_stats.tree_navigation_hits.fetch_add(1, Ordering::Relaxed);
+            self.cache_stats
+                .tree_navigation_hits
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(hints.clone());
         }
-        
+
         // Load from disk or generate
-        let hints = self.load_or_generate_navigation_hints(superblock_id).await?;
+        let hints = self
+            .load_or_generate_navigation_hints(superblock_id)
+            .await?;
         let hints_arc = Arc::new(hints);
-        
+
         // Cache it (navigation hints are critical for performance)
-        self.tree_navigation_cache.insert(superblock_id.to_string(), hints_arc.clone());
-        
+        self.tree_navigation_cache
+            .insert(superblock_id.to_string(), hints_arc.clone());
+
         Ok(hints_arc)
     }
-    
+
     /// Optimize tree navigation path for instant traversal
     pub async fn optimize_tree_navigation(
         &self,
@@ -338,75 +353,103 @@ impl SwiftSuperBlockCache {
         superblock_ids: &[String],
     ) -> Result<Arc<OptimalTreePath>> {
         let cache_key = format!("{}:{}", query_pattern, superblock_ids.join(","));
-        
+
         // Check if we already have an optimal path
         if let Some(optimal_path) = self.tree_path_cache.get(&cache_key) {
-            self.cache_stats.tree_optimization_saves.fetch_add(1, Ordering::Relaxed);
+            self.cache_stats
+                .tree_optimization_saves
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(optimal_path.clone());
         }
-        
+
         // Generate optimal path based on SuperBlock tree structures
-        let optimal_path = self.generate_optimal_tree_path(query_pattern, superblock_ids).await?;
+        let optimal_path = self
+            .generate_optimal_tree_path(query_pattern, superblock_ids)
+            .await?;
         let optimal_path_arc = Arc::new(optimal_path);
-        
+
         // Cache the optimization
-        self.tree_path_cache.insert(cache_key, optimal_path_arc.clone());
-        
-        self.cache_stats.instant_traversal_saves.fetch_add(1, Ordering::Relaxed);
+        self.tree_path_cache
+            .insert(cache_key, optimal_path_arc.clone());
+
+        self.cache_stats
+            .instant_traversal_saves
+            .fetch_add(1, Ordering::Relaxed);
         info!("Generated optimal tree path for pattern: {}", query_pattern);
-        
+
         Ok(optimal_path_arc)
     }
-    
+
     /// Preload SuperBlock cache for instant access (SWIFT design requirement)
     pub async fn preload_superblocks_for_instant_access(&self, collection_id: &str) -> Result<()> {
-        info!("Preloading SuperBlocks for instant access in collection {}", collection_id);
-        
+        info!(
+            "Preloading SuperBlocks for instant access in collection {}",
+            collection_id
+        );
+
         // Load all SuperBlock metadata (critical for instant traversal)
         // Filesystem operations handled by caller
         let superblock_path = format!("{}/superblocks_metadata.bin", collection_id);
         // TODO: Load superblock metadata from filesystem
-        
+
         // Load tree navigation hints
         let navigation_path = format!("{}/tree_navigation_hints.bin", collection_id);
         // TODO: Load navigation hints from filesystem
-        
+
         // Load bloom filter metadata (for instant filtering)
         let bloom_path = format!("{}/bloom_filters_metadata.bin", collection_id);
         if self.filesystem.exists(&bloom_path).await.unwrap_or(false) {
             let data = self.filesystem.read(&bloom_path).await?;
             let filters: HashMap<String, BloomFilterMetadata> = bincode::deserialize(&data)?;
-            
+
             for (key, filter) in filters {
                 self.bloom_filter_cache.insert(key, Arc::new(filter));
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get cache performance statistics
     pub fn cache_statistics(&self) -> SwiftCacheStats {
         SwiftCacheStats {
             superblock_hits: self.cache_stats.superblock_hits.load(Ordering::Relaxed),
-            tree_navigation_hits: self.cache_stats.tree_navigation_hits.load(Ordering::Relaxed),
+            tree_navigation_hits: self
+                .cache_stats
+                .tree_navigation_hits
+                .load(Ordering::Relaxed),
             datablock_hits: self.cache_stats.datablock_hits.load(Ordering::Relaxed),
             bloom_filter_hits: self.cache_stats.bloom_filter_hits.load(Ordering::Relaxed),
-            progressive_search_hits: self.cache_stats.progressive_search_hits.load(Ordering::Relaxed),
+            progressive_search_hits: self
+                .cache_stats
+                .progressive_search_hits
+                .load(Ordering::Relaxed),
             cache_misses: self.cache_stats.cache_misses.load(Ordering::Relaxed),
-            tree_optimization_saves: self.cache_stats.tree_optimization_saves.load(Ordering::Relaxed),
-            instant_traversal_saves: self.cache_stats.instant_traversal_saves.load(Ordering::Relaxed),
+            tree_optimization_saves: self
+                .cache_stats
+                .tree_optimization_saves
+                .load(Ordering::Relaxed),
+            instant_traversal_saves: self
+                .cache_stats
+                .instant_traversal_saves
+                .load(Ordering::Relaxed),
         }
     }
-    
+
     // Helper methods for loading from disk
-    async fn load_superblock_metadata(&self, superblock_id: &str) -> Result<CachedSuperBlockMetadata> {
+    async fn load_superblock_metadata(
+        &self,
+        superblock_id: &str,
+    ) -> Result<CachedSuperBlockMetadata> {
         let path = format!("cache/superblock/{}.bin", superblock_id);
         let data = self.filesystem.read(&path).await?;
         Ok(bincode::deserialize(&data)?)
     }
-    
-    async fn load_or_generate_navigation_hints(&self, superblock_id: &str) -> Result<TreeNavigationHints> {
+
+    async fn load_or_generate_navigation_hints(
+        &self,
+        superblock_id: &str,
+    ) -> Result<TreeNavigationHints> {
         let path = format!("cache/navigation/{}.bin", superblock_id);
         if self.filesystem.exists(&path).await.unwrap_or(false) {
             let data = self.filesystem.read(&path).await?;
@@ -422,7 +465,7 @@ impl SwiftSuperBlockCache {
             })
         }
     }
-    
+
     async fn generate_optimal_tree_path(
         &self,
         query_pattern: &str,
@@ -433,7 +476,7 @@ impl SwiftSuperBlockCache {
         Ok(OptimalTreePath {
             query_pattern: query_pattern.to_string(),
             optimal_nodes: superblock_ids.to_vec(),
-            estimated_latency_us: 100, // 0.1ms estimate
+            estimated_latency_us: 100,       // 0.1ms estimate
             cache_requirements: 1024 * 1024, // 1MB
             success_rate: 0.95,
         })
@@ -455,10 +498,13 @@ pub struct SwiftCacheStats {
 
 impl SwiftCacheStats {
     pub fn total_hits(&self) -> u64 {
-        self.superblock_hits + self.tree_navigation_hits + self.datablock_hits + 
-        self.bloom_filter_hits + self.progressive_search_hits
+        self.superblock_hits
+            + self.tree_navigation_hits
+            + self.datablock_hits
+            + self.bloom_filter_hits
+            + self.progressive_search_hits
     }
-    
+
     pub fn cache_hit_rate(&self) -> f32 {
         let total_requests = self.total_hits() + self.cache_misses;
         if total_requests > 0 {
@@ -467,7 +513,7 @@ impl SwiftCacheStats {
             0.0
         }
     }
-    
+
     pub fn tree_optimization_effectiveness(&self) -> f32 {
         let total_navigation = self.tree_navigation_hits + self.tree_optimization_saves;
         if total_navigation > 0 {

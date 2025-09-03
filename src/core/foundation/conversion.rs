@@ -1,11 +1,10 @@
 //! Conversion traits and utilities for schema type transformation
 
-
 /// Trait for converting external types to unified types
 pub trait ToUnified<T> {
     /// Convert to unified type
     fn to_unified(self) -> T;
-    
+
     /// Try to convert to unified type with error handling
     fn try_to_unified(self) -> Result<T, String>
     where
@@ -19,7 +18,7 @@ pub trait ToUnified<T> {
 pub trait FromUnified<T> {
     /// Convert from unified type
     fn from_unified(unified: T) -> Self;
-    
+
     /// Try to convert from unified type with error handling
     fn try_from_unified(unified: T) -> Result<Self, String>
     where

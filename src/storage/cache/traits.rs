@@ -26,27 +26,27 @@ pub trait BaseCache: Send + Sync {
     async fn get_with_hooks(&self, key: &Self::Key) -> Option<Self::Value> {
         // Pre-get hook for custom logic
         self.pre_get_hook(key).await;
-        
+
         // Check each tier in order
         if let Some(value) = self.check_l1(key).await {
             self.record_hit(CacheTier::L1);
             return Some(value);
         }
-        
+
         if let Some(value) = self.check_l2(key).await {
             // Promote to L1 for faster future access
             self.promote_to_l1(key, &value).await;
             self.record_hit(CacheTier::L2);
             return Some(value);
         }
-        
+
         if let Some(value) = self.check_l3(key).await {
             // Promote to L2 (and potentially L1)
             self.promote_to_l2(key, &value).await;
             self.record_hit(CacheTier::L3);
             return Some(value);
         }
-        
+
         self.record_miss();
         self.post_miss_hook(key).await;
         None
@@ -55,31 +55,31 @@ pub trait BaseCache: Send + Sync {
     /// Put value into cache with automatic tier placement
     async fn put_with_hooks(&self, key: Self::Key, value: Self::Value) {
         self.pre_put_hook(&key, &value).await;
-        
+
         // Determine appropriate tier based on value size and access patterns
         let tier = self.select_tier(&key, &value).await;
-        
+
         match tier {
             CacheTier::L1 => self.put_l1(key.clone(), value.clone()).await,
             CacheTier::L2 => self.put_l2(key.clone(), value.clone()).await,
             CacheTier::L3 => self.put_l3(key.clone(), value.clone()).await,
         }
-        
+
         self.post_put_hook(&key, &value).await;
     }
 
     /// Invalidate a cache entry across all tiers
     async fn invalidate(&self, key: &Self::Key) -> bool {
         let mut invalidated = false;
-        
+
         invalidated |= self.invalidate_l1(key).await;
         invalidated |= self.invalidate_l2(key).await;
         invalidated |= self.invalidate_l3(key).await;
-        
+
         if invalidated {
             self.post_invalidate_hook(key).await;
         }
-        
+
         invalidated
     }
 
@@ -94,29 +94,29 @@ pub trait BaseCache: Send + Sync {
     async fn check_l1(&self, key: &Self::Key) -> Option<Self::Value>;
     async fn check_l2(&self, key: &Self::Key) -> Option<Self::Value>;
     async fn check_l3(&self, key: &Self::Key) -> Option<Self::Value>;
-    
+
     async fn put_l1(&self, key: Self::Key, value: Self::Value);
     async fn put_l2(&self, key: Self::Key, value: Self::Value);
     async fn put_l3(&self, key: Self::Key, value: Self::Value);
-    
+
     async fn invalidate_l1(&self, key: &Self::Key) -> bool;
     async fn invalidate_l2(&self, key: &Self::Key) -> bool;
     async fn invalidate_l3(&self, key: &Self::Key) -> bool;
-    
+
     async fn promote_to_l1(&self, key: &Self::Key, value: &Self::Value);
     async fn promote_to_l2(&self, key: &Self::Key, value: &Self::Value);
-    
+
     async fn select_tier(&self, key: &Self::Key, value: &Self::Value) -> CacheTier;
 
     // Metrics operations
     fn record_hit(&self, tier: CacheTier) {
         self.metrics().record_hit(tier);
     }
-    
+
     fn record_miss(&self) {
         self.metrics().record_miss();
     }
-    
+
     fn metrics(&self) -> &CacheMetrics;
 }
 
@@ -142,12 +142,12 @@ impl<V: CacheValue> CacheEntry<V> {
             size_bytes,
         }
     }
-    
+
     pub fn touch(&mut self) {
         self.last_accessed = SystemTime::now();
         self.access_count += 1;
     }
-    
+
     pub fn age(&self) -> std::time::Duration {
         SystemTime::now()
             .duration_since(self.inserted_at)

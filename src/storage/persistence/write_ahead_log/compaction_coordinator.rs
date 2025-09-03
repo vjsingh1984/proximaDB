@@ -10,25 +10,25 @@
 //! Coordinates automatic compaction after flush operations to optimize storage efficiency.
 //! Integrates with WALFlushCoordinator to trigger compaction when needed.
 
+use crate::storage::traits::UnifiedStorageEngine;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
-use crate::storage::traits::UnifiedStorageEngine;
 
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
 // use crate::storage::engines::impls::viper::ViperEngine;
+use crate::index::axis::AxisManager;
 use crate::storage::engines::impls::sst::SstStorage;
 use crate::storage::traits::FlushResult;
-use crate::index::axis::AxisManager;
 
 use super::compaction_axis_integration::CompactionAxisUpdater;
 
 /// Background compaction coordinator
-/// 
+///
 /// **Architecture:**
 /// - Monitors flush operations from WALFlushCoordinator
 /// - Automatically triggers compaction when thresholds are met
@@ -38,20 +38,20 @@ use super::compaction_axis_integration::CompactionAxisUpdater;
 pub struct CompactionCoordinator {
     /// Per-collection compaction state
     collection_states: Arc<RwLock<HashMap<String, CollectionCompactionState>>>,
-    
+
     /// Storage engines for compaction
     viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
     sst_engine: Arc<SstStorage>,
-    
+
     /// Compaction configuration
     config: Option<CompactionConfig>,
-    
+
     /// Active compaction tracking
     active_compactions: Arc<Mutex<HashMap<String, CompactionTask>>>,
-    
+
     /// Compaction statistics
     stats: Arc<RwLock<CompactionStats>>,
-    
+
     /// AXIS index updater
     axis_updater: CompactionAxisUpdater,
 }
@@ -61,19 +61,19 @@ pub struct CompactionCoordinator {
 pub struct CollectionCompactionState {
     /// Number of files that need compaction
     pub files_needing_compaction: usize,
-    
+
     /// Total size of uncompacted data
     pub uncompacted_size_bytes: u64,
-    
+
     /// Last compaction timestamp
     pub last_compaction: Option<DateTime<Utc>>,
-    
+
     /// Number of flushes since last compaction
     pub flushes_since_compaction: u32,
-    
+
     /// Whether compaction is currently running
     pub compaction_in_progress: bool,
-    
+
     /// Preferred storage engine for this collection
     pub preferred_engine: String,
 }
@@ -96,19 +96,19 @@ impl Default for CollectionCompactionState {
 pub struct CompactionConfig {
     /// Maximum files before triggering compaction
     pub max_files_before_compaction: usize,
-    
+
     /// Maximum size before triggering compaction (bytes)
     pub max_size_before_compaction: u64,
-    
+
     /// Maximum flushes before forcing compaction
     pub max_flushes_before_compaction: u32,
-    
+
     /// Minimum time between compactions (seconds)
     pub min_compaction_interval_secs: u64,
-    
+
     /// Enable background compaction
     pub enable_background_compaction: bool,
-    
+
     /// Maximum concurrent compactions
     pub max_concurrent_compactions: usize,
 }
@@ -116,7 +116,7 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            max_files_before_compaction: 5,  // Reduced from 10 to be more aggressive
+            max_files_before_compaction: 5, // Reduced from 10 to be more aggressive
             max_size_before_compaction: 100 * 1024 * 1024, // 100MB
             max_flushes_before_compaction: 5,
             min_compaction_interval_secs: 60, // 1 minute (reduced from 5 minutes)
@@ -131,16 +131,16 @@ impl Default for CompactionConfig {
 pub struct CompactionTask {
     /// Unique task identifier
     pub task_id: String,
-    
+
     /// Collection being compacted
     pub collection_id: String,
-    
+
     /// Storage engine performing compaction
     pub engine_type: String,
-    
+
     /// When compaction started
     pub started_at: DateTime<Utc>,
-    
+
     /// Estimated completion time
     pub estimated_completion: Option<DateTime<Utc>>,
 }
@@ -150,19 +150,19 @@ pub struct CompactionTask {
 pub struct CompactionStats {
     /// Total compactions completed
     pub total_compactions: u64,
-    
+
     /// Total bytes compacted
     pub total_bytes_compacted: u64,
-    
+
     /// Total files compacted
     pub total_files_compacted: u64,
-    
+
     /// Average compaction duration (seconds)
     pub avg_compaction_duration_secs: f64,
-    
+
     /// Current active compactions
     pub active_compactions: u32,
-    
+
     /// Compaction failures
     pub failed_compactions: u64,
 }
@@ -172,22 +172,22 @@ pub struct CompactionStats {
 pub struct CompactionResult {
     /// Whether compaction succeeded
     pub success: bool,
-    
+
     /// Collections affected
     pub collections_affected: Vec<String>,
-    
+
     /// Files compacted
     pub files_compacted: u64,
-    
+
     /// Bytes reclaimed
     pub bytes_reclaimed: u64,
-    
+
     /// Duration in milliseconds
     pub duration_ms: u64,
-    
+
     /// When compaction completed
     pub completed_at: DateTime<Utc>,
-    
+
     /// Engine that performed compaction
     pub engine_type: String,
 }
@@ -201,7 +201,7 @@ impl CompactionCoordinator {
         axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {
         let config_ref = config.as_ref();
-        
+
         if let Some(cfg) = config_ref {
             info!(
                 "🔧 CompactionCoordinator: Initializing with config: max_files={}, max_size={}MB, max_flushes={}",
@@ -212,7 +212,7 @@ impl CompactionCoordinator {
         } else {
             info!("🔧 CompactionCoordinator: Initializing with default config");
         }
-        
+
         Self {
             collection_states: Arc::new(RwLock::new(HashMap::new())),
             viper_engine,
@@ -223,66 +223,87 @@ impl CompactionCoordinator {
             axis_updater: CompactionAxisUpdater::new(axis_manager),
         }
     }
-    
+
     /// Initialize compaction state for a collection
-    pub async fn initialize_collection(&self, collection_id: &str, preferred_engine: &str) -> Result<()> {
+    pub async fn initialize_collection(
+        &self,
+        collection_id: &str,
+        preferred_engine: &str,
+    ) -> Result<()> {
         let mut states = self.collection_states.write().await;
         if !states.contains_key(collection_id) {
             let mut state = CollectionCompactionState::default();
             state.preferred_engine = preferred_engine.to_string();
-            
+
             // Discover existing files to initialize proper state
-            let existing_files = self.discover_existing_files_for_collection(collection_id, preferred_engine).await?;
+            let existing_files = self
+                .discover_existing_files_for_collection(collection_id, preferred_engine)
+                .await?;
             if !existing_files.is_empty() {
                 state.files_needing_compaction = existing_files.len();
                 state.uncompacted_size_bytes = existing_files.len() as u64 * 5 * 1024 * 1024; // Estimate 5MB per file
-                
+
                 info!(
                     "🔍 CompactionCoordinator: Found {} existing files for collection {} during initialization",
-                    existing_files.len(), collection_id
+                    existing_files.len(),
+                    collection_id
                 );
             }
-            
+
             states.insert(collection_id.to_string(), state);
-            
+
             info!(
                 "🔧 CompactionCoordinator: Initialized collection {} with preferred engine {} ({} existing files)",
-                collection_id, preferred_engine, existing_files.len()
+                collection_id,
+                preferred_engine,
+                existing_files.len()
             );
         }
         Ok(())
     }
-    
+
     /// Handle flush completion - triggers compaction if needed
     /// This is called by WALFlushCoordinator after successful flush
-    pub async fn handle_flush_completion(&self, flush_result: &FlushResult) -> Result<Option<CompactionResult>> {
-        if !self.config.as_ref().map(|c| c.enable_background_compaction).unwrap_or(false) {
+    pub async fn handle_flush_completion(
+        &self,
+        flush_result: &FlushResult,
+    ) -> Result<Option<CompactionResult>> {
+        if !self
+            .config
+            .as_ref()
+            .map(|c| c.enable_background_compaction)
+            .unwrap_or(false)
+        {
             return Ok(None);
         }
-        
+
         for collection_id in &flush_result.collections_affected {
             info!(
                 "🔧 CompactionCoordinator: Processing flush completion for collection {}",
                 collection_id
             );
-            
+
             // Update collection state
-            self.update_collection_state_after_flush(collection_id, flush_result).await?;
-            
+            self.update_collection_state_after_flush(collection_id, flush_result)
+                .await?;
+
             // Check if compaction is needed
             if self.should_trigger_compaction(collection_id).await? {
                 info!(
                     "🚀 CompactionCoordinator: Triggering background compaction for collection {}",
                     collection_id
                 );
-                
-                return self.trigger_background_compaction(collection_id).await.map(Some);
+
+                return self
+                    .trigger_background_compaction(collection_id)
+                    .await
+                    .map(Some);
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Update collection state after flush
     async fn update_collection_state_after_flush(
         &self,
@@ -291,12 +312,12 @@ impl CompactionCoordinator {
     ) -> Result<()> {
         let mut states = self.collection_states.write().await;
         let state = states.entry(collection_id.to_string()).or_default();
-        
+
         // Update state based on flush result
         state.files_needing_compaction += flush_result.files_created.unwrap_or(0) as usize;
         state.uncompacted_size_bytes += flush_result.bytes_written.unwrap_or(0);
         state.flushes_since_compaction += 1;
-        
+
         debug!(
             "🔧 CompactionCoordinator: Updated state for {}: files={}, size={}KB, flushes={}",
             collection_id,
@@ -304,82 +325,153 @@ impl CompactionCoordinator {
             state.uncompacted_size_bytes / 1024,
             state.flushes_since_compaction
         );
-        
+
         Ok(())
     }
-    
+
     /// Check if compaction should be triggered
     async fn should_trigger_compaction(&self, collection_id: &str) -> Result<bool> {
         let states = self.collection_states.read().await;
         let _default_state = CollectionCompactionState::default();
         let state = states.get(collection_id);
-        
+
         // Don't trigger if already in progress
         if let Some(s) = state {
             if s.compaction_in_progress {
                 return Ok(false);
             }
         }
-        
+
         // Check time constraint
         if let Some(s) = state {
             if let Some(last_compaction) = s.last_compaction {
-            let elapsed = Utc::now().signed_duration_since(last_compaction);
-            if elapsed.num_seconds() < self.config.as_ref().map(|c| c.min_compaction_interval_secs).unwrap_or(60) as i64 {
-                debug!(
-                    "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
-                    elapsed.num_seconds(),
-                    self.config.as_ref().map(|c| c.min_compaction_interval_secs).unwrap_or(60)
-                );
-                return Ok(false);
+                let elapsed = Utc::now().signed_duration_since(last_compaction);
+                if elapsed.num_seconds()
+                    < self
+                        .config
+                        .as_ref()
+                        .map(|c| c.min_compaction_interval_secs)
+                        .unwrap_or(60) as i64
+                {
+                    debug!(
+                        "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
+                        elapsed.num_seconds(),
+                        self.config
+                            .as_ref()
+                            .map(|c| c.min_compaction_interval_secs)
+                            .unwrap_or(60)
+                    );
+                    return Ok(false);
+                }
             }
         }
-        }
-        
+
         // Check active compaction limit
         let active_count = self.active_compactions.lock().await.len();
-        if active_count >= self.config.as_ref().map(|c| c.max_concurrent_compactions).unwrap_or(2) {
+        if active_count
+            >= self
+                .config
+                .as_ref()
+                .map(|c| c.max_concurrent_compactions)
+                .unwrap_or(2)
+        {
             debug!(
                 "🔧 CompactionCoordinator: Too many active compactions ({}/{})",
                 active_count,
-                self.config.as_ref().map(|c| c.max_concurrent_compactions).unwrap_or(2)
+                self.config
+                    .as_ref()
+                    .map(|c| c.max_concurrent_compactions)
+                    .unwrap_or(2)
             );
             return Ok(false);
         }
-        
+
         // Also check actual file count in storage (not just tracked state)
-        let preferred_engine = state.as_ref().map(|s| s.preferred_engine.as_str()).unwrap_or("viper");
-        let actual_file_count = match self.discover_existing_files_for_collection(
-            collection_id, 
-            &preferred_engine
-        ).await {
+        let preferred_engine = state
+            .as_ref()
+            .map(|s| s.preferred_engine.as_str())
+            .unwrap_or("viper");
+        let actual_file_count = match self
+            .discover_existing_files_for_collection(collection_id, &preferred_engine)
+            .await
+        {
             Ok(files) => files.len(),
             Err(e) => {
-                warn!("⚠️ CompactionCoordinator: Failed to discover files for {}: {}", collection_id, e);
+                warn!(
+                    "⚠️ CompactionCoordinator: Failed to discover files for {}: {}",
+                    collection_id, e
+                );
                 0
             }
         };
-        
+
         // Use the maximum of tracked state and actual file count
-        let effective_file_count = state.as_ref().map(|s| s.files_needing_compaction).unwrap_or(0).max(actual_file_count);
-        
+        let effective_file_count = state
+            .as_ref()
+            .map(|s| s.files_needing_compaction)
+            .unwrap_or(0)
+            .max(actual_file_count);
+
         // Check thresholds
         let should_compact = if let Some(s) = state {
-            effective_file_count >= self.config.as_ref().map(|c| c.max_files_before_compaction).unwrap_or(10) ||
-            s.uncompacted_size_bytes >= self.config.as_ref().map(|c| c.max_size_before_compaction).unwrap_or(1024 * 1024 * 1024) ||
-            s.flushes_since_compaction >= self.config.as_ref().map(|c| c.max_flushes_before_compaction).unwrap_or(5)
+            effective_file_count
+                >= self
+                    .config
+                    .as_ref()
+                    .map(|c| c.max_files_before_compaction)
+                    .unwrap_or(10)
+                || s.uncompacted_size_bytes
+                    >= self
+                        .config
+                        .as_ref()
+                        .map(|c| c.max_size_before_compaction)
+                        .unwrap_or(1024 * 1024 * 1024)
+                || s.flushes_since_compaction
+                    >= self
+                        .config
+                        .as_ref()
+                        .map(|c| c.max_flushes_before_compaction)
+                        .unwrap_or(5)
         } else {
-            effective_file_count >= self.config.as_ref().map(|c| c.max_files_before_compaction).unwrap_or(10)
+            effective_file_count
+                >= self
+                    .config
+                    .as_ref()
+                    .map(|c| c.max_files_before_compaction)
+                    .unwrap_or(10)
         };
-        
+
         if should_compact {
             info!(
                 "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{} (actual={}), size={}MB/{}MB, flushes={}/{}",
                 collection_id,
-                state.as_ref().map(|s| s.files_needing_compaction).unwrap_or(0), self.config.as_ref().map(|c| c.max_files_before_compaction).unwrap_or(10),
+                state
+                    .as_ref()
+                    .map(|s| s.files_needing_compaction)
+                    .unwrap_or(0),
+                self.config
+                    .as_ref()
+                    .map(|c| c.max_files_before_compaction)
+                    .unwrap_or(10),
                 actual_file_count,
-                state.as_ref().map(|s| s.uncompacted_size_bytes).unwrap_or(0) / (1024 * 1024), self.config.as_ref().map(|c| c.max_size_before_compaction).unwrap_or(1024 * 1024 * 1024) / (1024 * 1024),
-                state.as_ref().map(|s| s.flushes_since_compaction).unwrap_or(0), self.config.as_ref().map(|c| c.max_flushes_before_compaction).unwrap_or(5)
+                state
+                    .as_ref()
+                    .map(|s| s.uncompacted_size_bytes)
+                    .unwrap_or(0)
+                    / (1024 * 1024),
+                self.config
+                    .as_ref()
+                    .map(|c| c.max_size_before_compaction)
+                    .unwrap_or(1024 * 1024 * 1024)
+                    / (1024 * 1024),
+                state
+                    .as_ref()
+                    .map(|s| s.flushes_since_compaction)
+                    .unwrap_or(0),
+                self.config
+                    .as_ref()
+                    .map(|c| c.max_flushes_before_compaction)
+                    .unwrap_or(5)
             );
         } else if actual_file_count > 5 {
             debug!(
@@ -387,15 +479,15 @@ impl CompactionCoordinator {
                 collection_id, actual_file_count
             );
         }
-        
+
         Ok(should_compact)
     }
-    
+
     /// Trigger background compaction for a collection
     async fn trigger_background_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         let task_id = uuid::Uuid::new_v4().to_string();
         let collection_id = collection_id.to_string();
-        
+
         // Mark compaction as in progress
         {
             let mut states = self.collection_states.write().await;
@@ -403,7 +495,7 @@ impl CompactionCoordinator {
                 state.compaction_in_progress = true;
             }
         }
-        
+
         // Get preferred engine
         let preferred_engine = {
             let states = self.collection_states.read().await;
@@ -412,7 +504,7 @@ impl CompactionCoordinator {
                 .map(|s| s.preferred_engine.clone())
                 .unwrap_or_else(|| "VIPER".to_string())
         };
-        
+
         // Create compaction task
         let task = CompactionTask {
             task_id: task_id.clone(),
@@ -421,37 +513,44 @@ impl CompactionCoordinator {
             started_at: Utc::now(),
             estimated_completion: None,
         };
-        
+
         // Track active compaction
         {
             let mut active = self.active_compactions.lock().await;
             active.insert(collection_id.clone(), task);
         }
-        
+
         info!(
             "🚀 CompactionCoordinator: Starting background compaction task {} for collection {} using {}",
             task_id, collection_id, preferred_engine
         );
-        
+
         // Execute compaction
-        let result = self.execute_compaction(&collection_id, &preferred_engine).await;
-        
+        let result = self
+            .execute_compaction(&collection_id, &preferred_engine)
+            .await;
+
         // Cleanup and update state
-        self.complete_compaction(&collection_id, &task_id, &result).await;
-        
+        self.complete_compaction(&collection_id, &task_id, &result)
+            .await;
+
         result
     }
-    
+
     /// Execute compaction using the specified engine
-    async fn execute_compaction(&self, collection_id: &str, engine_type: &str) -> Result<CompactionResult> {
+    async fn execute_compaction(
+        &self,
+        collection_id: &str,
+        engine_type: &str,
+    ) -> Result<CompactionResult> {
         let start_time = std::time::Instant::now();
         let _started_at = Utc::now();
-        
+
         info!(
             "🔧 CompactionCoordinator: Executing compaction for collection {} using {} engine",
             collection_id, engine_type
         );
-        
+
         // Execute compaction based on engine type
         let compaction_result = match engine_type {
             "VIPER" => self.execute_viper_compaction(collection_id).await,
@@ -464,9 +563,9 @@ impl CompactionCoordinator {
                 self.execute_viper_compaction(collection_id).await
             }
         };
-        
+
         let duration = start_time.elapsed();
-        
+
         match compaction_result {
             Ok(result) => {
                 info!(
@@ -474,37 +573,41 @@ impl CompactionCoordinator {
                     collection_id,
                     duration.as_millis()
                 );
-                
+
                 // Update AXIS indexes with compaction results
                 // Note: WAL compaction doesn't track vector-level changes
                 // Only storage engines (LSM/VIPER) track deleted/merged vectors
                 // For now, pass empty arrays since WAL doesn't have this data
                 use std::collections::HashMap;
-                if let Err(e) = self.axis_updater.update_indexes_after_compaction(
-                    collection_id,
-                    &crate::storage::traits::CompactionResult {
-                        success: true,
-                        collections_affected: vec![collection_id.to_string()],
-                        entries_processed: Some(result.files_compacted), // Map files to entries
-                        entries_removed: Some(0), // Not tracked in WAL compaction
-                        bytes_read: Some(result.bytes_reclaimed), // Approximate
-                        bytes_written: Some(0), // Not tracked
-                        input_files: Some(result.files_compacted),
-                        output_files: Some(1), // Typically compacts to single file
-                        duration_ms: Some(duration.as_millis() as u64),
-                        completed_at: Utc::now(),
-                        engine_metrics: HashMap::new(),
-                    },
-                    &[], // No deleted vectors tracked at WAL level
-                    &[], // No merged vectors tracked at WAL level
-                ).await {
+                if let Err(e) = self
+                    .axis_updater
+                    .update_indexes_after_compaction(
+                        collection_id,
+                        &crate::storage::traits::CompactionResult {
+                            success: true,
+                            collections_affected: vec![collection_id.to_string()],
+                            entries_processed: Some(result.files_compacted), // Map files to entries
+                            entries_removed: Some(0), // Not tracked in WAL compaction
+                            bytes_read: Some(result.bytes_reclaimed), // Approximate
+                            bytes_written: Some(0),   // Not tracked
+                            input_files: Some(result.files_compacted),
+                            output_files: Some(1), // Typically compacts to single file
+                            duration_ms: Some(duration.as_millis() as u64),
+                            completed_at: Utc::now(),
+                            engine_metrics: HashMap::new(),
+                        },
+                        &[], // No deleted vectors tracked at WAL level
+                        &[], // No merged vectors tracked at WAL level
+                    )
+                    .await
+                {
                     warn!(
                         "⚠️ CompactionCoordinator: Failed to update AXIS indexes after compaction: {}",
                         e
                     );
                     // Continue - compaction succeeded even if index update failed
                 }
-                
+
                 // Update the result with the actual duration and return it
                 let mut final_result = result;
                 final_result.duration_ms = duration.as_millis() as u64;
@@ -517,7 +620,7 @@ impl CompactionCoordinator {
                     duration.as_millis(),
                     e
                 );
-                
+
                 Ok(CompactionResult {
                     success: false,
                     collections_affected: vec![collection_id.to_string()],
@@ -530,11 +633,14 @@ impl CompactionCoordinator {
             }
         }
     }
-    
+
     /// Execute VIPER engine compaction
     async fn execute_viper_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
-        debug!("🔧 CompactionCoordinator: Executing VIPER compaction for {}", collection_id);
-        
+        debug!(
+            "🔧 CompactionCoordinator: Executing VIPER compaction for {}",
+            collection_id
+        );
+
         // Use VIPER's do_compact method through unified framework
         let params = crate::storage::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
@@ -550,18 +656,21 @@ impl CompactionCoordinator {
             Ok(enhanced_result) => {
                 info!(
                     "✅ VIPER compaction completed: {} entries processed, {} bytes written, {} entries removed",
-                    enhanced_result.entries_processed.unwrap_or(0), 
+                    enhanced_result.entries_processed.unwrap_or(0),
                     enhanced_result.bytes_written.unwrap_or(0),
                     enhanced_result.entries_removed.unwrap_or(0)
                 );
-                
+
                 // Convert storage::CompactionResult to local CompactionResult
                 Ok(CompactionResult {
                     success: true,
                     collections_affected: enhanced_result.collections_affected,
                     files_compacted: enhanced_result.input_files.unwrap_or(0),
-                    bytes_reclaimed: enhanced_result.bytes_written.unwrap_or(0).saturating_sub(enhanced_result.bytes_read.unwrap_or(0)),
-                    duration_ms: 0,  // Will be filled by caller
+                    bytes_reclaimed: enhanced_result
+                        .bytes_written
+                        .unwrap_or(0)
+                        .saturating_sub(enhanced_result.bytes_read.unwrap_or(0)),
+                    duration_ms: 0, // Will be filled by caller
                     completed_at: Utc::now(),
                     engine_type: "VIPER".to_string(),
                 })
@@ -572,11 +681,14 @@ impl CompactionCoordinator {
             }
         }
     }
-    
+
     /// Execute LSM engine compaction  
     async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
-        debug!("🔧 CompactionCoordinator: Executing LSM compaction for {}", collection_id);
-        
+        debug!(
+            "🔧 CompactionCoordinator: Executing LSM compaction for {}",
+            collection_id
+        );
+
         // Use SST's do_compact method through unified framework
         let params = crate::storage::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
@@ -592,18 +704,21 @@ impl CompactionCoordinator {
             Ok(enhanced_result) => {
                 info!(
                     "✅ LSM compaction completed: {} entries processed, {} bytes written, {} entries removed",
-                    enhanced_result.entries_processed.unwrap_or(0), 
+                    enhanced_result.entries_processed.unwrap_or(0),
                     enhanced_result.bytes_written.unwrap_or(0),
                     enhanced_result.entries_removed.unwrap_or(0)
                 );
-                
+
                 // Convert storage::CompactionResult to local CompactionResult
                 Ok(CompactionResult {
                     success: true,
                     collections_affected: enhanced_result.collections_affected,
                     files_compacted: enhanced_result.input_files.unwrap_or(0),
-                    bytes_reclaimed: enhanced_result.bytes_written.unwrap_or(0).saturating_sub(enhanced_result.bytes_read.unwrap_or(0)),
-                    duration_ms: 0,  // Will be filled by caller
+                    bytes_reclaimed: enhanced_result
+                        .bytes_written
+                        .unwrap_or(0)
+                        .saturating_sub(enhanced_result.bytes_read.unwrap_or(0)),
+                    duration_ms: 0, // Will be filled by caller
                     completed_at: Utc::now(),
                     engine_type: "SST".to_string(),
                 })
@@ -614,7 +729,7 @@ impl CompactionCoordinator {
             }
         }
     }
-    
+
     /// Complete compaction and update state
     async fn complete_compaction(
         &self,
@@ -627,13 +742,13 @@ impl CompactionCoordinator {
             let mut active = self.active_compactions.lock().await;
             active.remove(collection_id);
         }
-        
+
         // Update collection state
         {
             let mut states = self.collection_states.write().await;
             if let Some(state) = states.get_mut(collection_id) {
                 state.compaction_in_progress = false;
-                
+
                 if let Ok(compaction_result) = result {
                     if compaction_result.success {
                         // Reset compaction metrics on success
@@ -645,7 +760,7 @@ impl CompactionCoordinator {
                 }
             }
         }
-        
+
         // Update global statistics
         {
             let mut stats = self.stats.write().await;
@@ -655,11 +770,13 @@ impl CompactionCoordinator {
                         stats.total_compactions += 1;
                         stats.total_bytes_compacted += compaction_result.bytes_reclaimed;
                         stats.total_files_compacted += compaction_result.files_compacted as u64;
-                        
+
                         // Update average duration
-                        let total_duration = stats.avg_compaction_duration_secs * (stats.total_compactions - 1) as f64 + 
-                                           (compaction_result.duration_ms as f64 / 1000.0);
-                        stats.avg_compaction_duration_secs = total_duration / stats.total_compactions as f64;
+                        let total_duration = stats.avg_compaction_duration_secs
+                            * (stats.total_compactions - 1) as f64
+                            + (compaction_result.duration_ms as f64 / 1000.0);
+                        stats.avg_compaction_duration_secs =
+                            total_duration / stats.total_compactions as f64;
                     } else {
                         stats.failed_compactions += 1;
                     }
@@ -668,71 +785,87 @@ impl CompactionCoordinator {
                     stats.failed_compactions += 1;
                 }
             }
-            
+
             stats.active_compactions = self.active_compactions.lock().await.len() as u32;
         }
-        
+
         info!(
             "🎯 CompactionCoordinator: Completed compaction task {} for collection {}",
             task_id, collection_id
         );
     }
-    
+
     /// Get compaction statistics
     pub async fn get_stats(&self) -> CompactionStats {
         self.stats.read().await.clone()
     }
-    
+
     /// Get collection state
-    pub async fn get_collection_state(&self, collection_id: &str) -> Option<CollectionCompactionState> {
+    pub async fn get_collection_state(
+        &self,
+        collection_id: &str,
+    ) -> Option<CollectionCompactionState> {
         let states = self.collection_states.read().await;
         states.get(collection_id).cloned()
     }
-    
+
     /// Manual compaction trigger (for testing or admin operations)
-    pub async fn trigger_manual_compaction(&self, collection_id: &str, engine_type: Option<&str>) -> Result<CompactionResult> {
+    pub async fn trigger_manual_compaction(
+        &self,
+        collection_id: &str,
+        engine_type: Option<&str>,
+    ) -> Result<CompactionResult> {
         let engine = engine_type;
-        
+
         info!(
             "🔧 CompactionCoordinator: Manual compaction triggered for collection {} using {}",
-            collection_id, engine.unwrap_or("default")
+            collection_id,
+            engine.unwrap_or("default")
         );
-        
+
         self.trigger_background_compaction(collection_id).await
     }
-    
+
     /// Check collection compaction status and trigger if needed
     pub async fn check_and_compact(&self, collection_id: &str) -> Result<Option<CompactionResult>> {
         // Initialize collection state if not exists
         if self.get_collection_state(collection_id).await.is_none() {
             self.initialize_collection(collection_id, "VIPER").await?;
         }
-        
+
         // Check if compaction is needed
         if self.should_trigger_compaction(collection_id).await? {
             info!(
                 "🔧 CompactionCoordinator: Auto-triggering compaction for collection {} based on file count",
                 collection_id
             );
-            self.trigger_background_compaction(collection_id).await.map(Some)
+            self.trigger_background_compaction(collection_id)
+                .await
+                .map(Some)
         } else {
             Ok(None)
         }
     }
-    
+
     /// Discover existing files for a collection
-    async fn discover_existing_files_for_collection(&self, collection_id: &str, engine_type: &str) -> Result<Vec<String>> {
+    async fn discover_existing_files_for_collection(
+        &self,
+        collection_id: &str,
+        engine_type: &str,
+    ) -> Result<Vec<String>> {
         match engine_type {
             "VIPER" => {
                 // Use VIPER engine's file discovery
-                self.viper_engine.parquet_files_for_collection(collection_id).await
+                self.viper_engine
+                    .parquet_files_for_collection(collection_id)
+                    .await
             }
             "LSM" | "SST" => {
                 // For SST engine, we'd need to implement similar discovery
                 // For now, return empty as SST handles its own compaction differently
                 Ok(vec![])
             }
-            _ => Ok(vec![])
+            _ => Ok(vec![]),
         }
     }
 }
@@ -756,24 +889,29 @@ struct EngineCompactionResult {
 pub trait CompactionCoordinatorCallbacks {
     /// Called before starting compaction
     async fn on_compaction_start(&self, collection_id: &str, engine_type: &str) -> Result<()>;
-    
+
     /// Called after compaction completion
-    async fn on_compaction_complete(&self, collection_id: &str, result: &CompactionResult) -> Result<()>;
-    
+    async fn on_compaction_complete(
+        &self,
+        collection_id: &str,
+        result: &CompactionResult,
+    ) -> Result<()>;
+
     /// Called on compaction failure
-    async fn on_compaction_failure(&self, collection_id: &str, error: &anyhow::Error) -> Result<()>;
+    async fn on_compaction_failure(&self, collection_id: &str, error: &anyhow::Error)
+    -> Result<()>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_compaction_coordinator() {
         // TODO: Implement comprehensive tests
         assert!(true);
     }
-    
+
     #[test]
     fn test_compaction_config() {
         let config = CompactionConfig::default();
@@ -782,7 +920,7 @@ mod tests {
         assert_eq!(config.max_flushes_before_compaction, 5);
         assert!(config.enable_background_compaction);
     }
-    
+
     #[test]
     fn test_collection_state() {
         let state = CollectionCompactionState::default();

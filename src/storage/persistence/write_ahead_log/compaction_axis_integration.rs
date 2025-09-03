@@ -10,7 +10,7 @@
 //! This module handles index updates during compaction operations,
 //! ensuring that AXIS indexes remain consistent with the compacted data.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -33,7 +33,7 @@ impl CompactionAxisUpdater {
     }
 
     /// Update AXIS indexes after compaction
-    /// 
+    ///
     /// This method handles:
     /// 1. Removing deleted vectors from indexes
     /// 2. Re-indexing merged/updated vectors
@@ -61,7 +61,10 @@ impl CompactionAxisUpdater {
         // Get all indexes for the collection
         let indexes = axis.get_collection_indexes(collection_id).await?;
         if indexes.is_empty() {
-            debug!("No indexes found for collection {}, skipping", collection_id);
+            debug!(
+                "No indexes found for collection {}, skipping",
+                collection_id
+            );
             return Ok(());
         }
 
@@ -73,28 +76,19 @@ impl CompactionAxisUpdater {
 
         // Process deletions first
         if !deleted_vector_ids.is_empty() {
-            self.remove_deleted_vectors_from_indexes(
-                &indexes,
-                deleted_vector_ids,
-                collection_id,
-            ).await?;
+            self.remove_deleted_vectors_from_indexes(&indexes, deleted_vector_ids, collection_id)
+                .await?;
         }
 
         // Process merged/updated vectors
         if !merged_vectors.is_empty() {
-            self.update_merged_vectors_in_indexes(
-                &indexes,
-                merged_vectors,
-                collection_id,
-            ).await?;
+            self.update_merged_vectors_in_indexes(&indexes, merged_vectors, collection_id)
+                .await?;
         }
 
         // Handle static indexes that need rebuilding
-        self.rebuild_static_indexes_if_needed(
-            axis,
-            collection_id,
-            &indexes,
-        ).await?;
+        self.rebuild_static_indexes_if_needed(axis, collection_id, &indexes)
+            .await?;
 
         info!(
             "✅ AXIS Compaction: Successfully updated {} indexes for collection {}",
@@ -236,7 +230,10 @@ impl CompactionAxisUpdater {
         for (index_name, index) in indexes {
             // Check if this is a static index (like Annoy)
             let algorithm = index.algorithm();
-            if matches!(algorithm, crate::index::axis::types::IndexAlgorithm::Annoy { .. }) {
+            if matches!(
+                algorithm,
+                crate::index::axis::types::IndexAlgorithm::Annoy { .. }
+            ) {
                 info!(
                     "🔨 AXIS Compaction: Rebuilding static index {} for collection {}",
                     index_name, collection_id
@@ -265,10 +262,7 @@ impl CompactionAxisUpdater {
     }
 
     /// Get compaction statistics for AXIS indexes
-    pub async fn get_compaction_stats(
-        &self,
-        collection_id: &str,
-    ) -> Result<CompactionIndexStats> {
+    pub async fn get_compaction_stats(&self, collection_id: &str) -> Result<CompactionIndexStats> {
         let axis = match &self.axis_manager {
             Some(manager) => manager,
             None => {
@@ -277,7 +271,7 @@ impl CompactionAxisUpdater {
         };
 
         let indexes = axis.get_collection_indexes(collection_id).await?;
-        
+
         let mut stats = CompactionIndexStats {
             total_indexes: indexes.len(),
             ..Default::default()
@@ -290,10 +284,14 @@ impl CompactionAxisUpdater {
 
             // Count index types
             match index.algorithm() {
-                crate::index::axis::types::IndexAlgorithm::HNSW { .. } => stats.dynamic_indexes += 1,
+                crate::index::axis::types::IndexAlgorithm::HNSW { .. } => {
+                    stats.dynamic_indexes += 1
+                }
                 crate::index::axis::types::IndexAlgorithm::IVF { .. } => stats.dynamic_indexes += 1,
                 crate::index::axis::types::IndexAlgorithm::LSH { .. } => stats.dynamic_indexes += 1,
-                crate::index::axis::types::IndexAlgorithm::Annoy { .. } => stats.static_indexes += 1,
+                crate::index::axis::types::IndexAlgorithm::Annoy { .. } => {
+                    stats.static_indexes += 1
+                }
                 _ => {}
             }
         }

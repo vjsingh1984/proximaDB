@@ -1,14 +1,14 @@
 pub mod memory_tier;
-pub mod nvme_tier;
 pub mod network_tier;
+pub mod nvme_tier;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
 pub use memory_tier::MemoryBackend;
-pub use nvme_tier::NvmeBackend;
 pub use network_tier::NetworkBackend;
+pub use nvme_tier::NvmeBackend;
 
 /// Cache storage tier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,7 +29,7 @@ impl CacheTier {
             CacheTier::L3 => "network",
         }
     }
-    
+
     pub fn priority(&self) -> u8 {
         match self {
             CacheTier::L1 => 1,
@@ -44,28 +44,28 @@ impl CacheTier {
 pub trait StorageBackend: Send + Sync + Debug {
     type Key: Clone + Send + Sync;
     type Value: Clone + Send + Sync;
-    
+
     /// Get a value from the storage backend
     async fn get(&self, key: &Self::Key) -> Option<Self::Value>;
-    
+
     /// Put a value into the storage backend
     async fn put(&self, key: Self::Key, value: Self::Value) -> Result<(), StorageError>;
-    
+
     /// Remove a value from the storage backend
     async fn remove(&self, key: &Self::Key) -> bool;
-    
+
     /// Check if a key exists in the storage backend
     async fn contains(&self, key: &Self::Key) -> bool;
-    
+
     /// Clear all entries in the storage backend
     async fn clear(&self) -> Result<(), StorageError>;
-    
+
     /// Get the current size in bytes
     async fn size_bytes(&self) -> usize;
-    
+
     /// Get the number of entries
     async fn entry_count(&self) -> usize;
-    
+
     /// Get the tier this backend represents
     fn tier(&self) -> CacheTier;
 }

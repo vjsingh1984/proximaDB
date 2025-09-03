@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable, bytes_of, from_bytes};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::core::error::ProximaDBError;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::io::zero_copy::traits::{
-    MetadataSerializer, EngineMetadata, QueryContext, DataRange, QueryType
+    DataRange, EngineMetadata, MetadataSerializer, QueryContext, QueryType,
 };
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// SWIFT global metadata header (bytemuck compatible)
 #[repr(C)]
@@ -138,10 +138,10 @@ impl EngineMetadata for SwiftMetadata {
     }
 
     fn memory_footprint(&self) -> usize {
-        std::mem::size_of::<SwiftGlobalHeader>() +
-        self.segments.len() * std::mem::size_of::<SwiftSegmentHeader>() +
-        self.variable_data.len() +
-        std::mem::size_of::<Self>()
+        std::mem::size_of::<SwiftGlobalHeader>()
+            + self.segments.len() * std::mem::size_of::<SwiftSegmentHeader>()
+            + self.variable_data.len()
+            + std::mem::size_of::<Self>()
     }
 
     fn creation_timestamp(&self) -> Option<u64> {
@@ -154,10 +154,10 @@ impl EngineMetadata for SwiftMetadata {
 
     fn supports_query_type(&self, query_type: &QueryType) -> bool {
         match query_type {
-            QueryType::IdLookup => true,        // Excellent for ID lookups
+            QueryType::IdLookup => true,         // Excellent for ID lookups
             QueryType::SimilaritySearch => true, // Supports but not optimized
             QueryType::MetadataFilter => true,   // Supports metadata filtering
-            QueryType::Batch => true,           // Supports batch operations
+            QueryType::Batch => true,            // Supports batch operations
         }
     }
 
@@ -175,7 +175,7 @@ impl SwiftMetadata {
     fn hash_id(&self, id: &str) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         id.hash(&mut hasher);
         hasher.finish()
@@ -236,7 +236,11 @@ impl SwiftMetadataSerializer {
     }
 
     /// Extract metadata from SWIFT file
-    async fn extract_metadata(&self, file_path: &str, _collection_id: &str) -> Result<SwiftMetadata, ProximaDBError> {
+    async fn extract_metadata(
+        &self,
+        file_path: &str,
+        _collection_id: &str,
+    ) -> Result<SwiftMetadata, ProximaDBError> {
         // In a real implementation, this would:
         // 1. Read SWIFT file footer to get index location
         // 2. Parse global header from index
@@ -296,7 +300,11 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         "SWIFT"
     }
 
-    fn serialize_metadata(&self, file_path: &str, collection_id: &str) -> Result<Vec<u8>, ProximaDBError> {
+    fn serialize_metadata(
+        &self,
+        file_path: &str,
+        collection_id: &str,
+    ) -> Result<Vec<u8>, ProximaDBError> {
         // Extract metadata (would be async in real implementation)
         let runtime = tokio::runtime::Handle::current();
         let metadata = runtime.block_on(self.extract_metadata(file_path, collection_id))?;
@@ -350,7 +358,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
     fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
         if data.len() < std::mem::size_of::<SwiftGlobalHeader>() + 4 {
             return Err(ProximaDBError::InvalidInput(
-                "SWIFT metadata too small".into()
+                "SWIFT metadata too small".into(),
             ));
         }
 
@@ -358,47 +366,58 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         // 1. Deserialize global header manually
         let global = SwiftGlobalHeader {
-            file_size: u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()),
-            num_segments: u32::from_le_bytes(data[offset+8..offset+12].try_into().unwrap()),
-            index_offset: u32::from_le_bytes(data[offset+12..offset+16].try_into().unwrap()),
-            index_size: u32::from_le_bytes(data[offset+16..offset+20].try_into().unwrap()),
-            total_records: u64::from_le_bytes(data[offset+20..offset+28].try_into().unwrap()),
-            min_timestamp: u64::from_le_bytes(data[offset+28..offset+36].try_into().unwrap()),
-            max_timestamp: u64::from_le_bytes(data[offset+36..offset+44].try_into().unwrap()),
-            compression_ratio: data[offset+44],
-            format_version: data[offset+45],
-            reserved: data[offset+46..offset+52].try_into().unwrap(),
+            file_size: u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()),
+            num_segments: u32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap()),
+            index_offset: u32::from_le_bytes(data[offset + 12..offset + 16].try_into().unwrap()),
+            index_size: u32::from_le_bytes(data[offset + 16..offset + 20].try_into().unwrap()),
+            total_records: u64::from_le_bytes(data[offset + 20..offset + 28].try_into().unwrap()),
+            min_timestamp: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().unwrap()),
+            max_timestamp: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().unwrap()),
+            compression_ratio: data[offset + 44],
+            format_version: data[offset + 45],
+            reserved: data[offset + 46..offset + 52].try_into().unwrap(),
         };
         offset += 52; // Size of SwiftGlobalHeader
 
         // 2. Read number of segments
         let num_segments = u32::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]);
         offset += 4;
 
         // 3. Deserialize segment headers
         let segment_size = std::mem::size_of::<SwiftSegmentHeader>();
         let mut segments = Vec::with_capacity(num_segments as usize);
-        
+
         for _ in 0..num_segments {
             if offset + segment_size > data.len() {
                 return Err(ProximaDBError::InvalidInput(
-                    "Insufficient data for SWIFT segment headers".into()
+                    "Insufficient data for SWIFT segment headers".into(),
                 ));
             }
-            
+
             let segment = SwiftSegmentHeader {
-                offset: u64::from_le_bytes(data[offset..offset+8].try_into().unwrap()),
-                compressed_size: u32::from_le_bytes(data[offset+8..offset+12].try_into().unwrap()),
-                uncompressed_size: u32::from_le_bytes(data[offset+12..offset+16].try_into().unwrap()),
-                record_count: u32::from_le_bytes(data[offset+16..offset+20].try_into().unwrap()),
-                bloom_offset: u32::from_le_bytes(data[offset+20..offset+24].try_into().unwrap()),
-                bloom_size: u32::from_le_bytes(data[offset+24..offset+28].try_into().unwrap()),
-                min_id_hash: u64::from_le_bytes(data[offset+28..offset+36].try_into().unwrap()),
-                max_id_hash: u64::from_le_bytes(data[offset+36..offset+44].try_into().unwrap()),
-                priority: data[offset+44],
-                reserved: data[offset+45..offset+52].try_into().unwrap(),
+                offset: u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()),
+                compressed_size: u32::from_le_bytes(
+                    data[offset + 8..offset + 12].try_into().unwrap(),
+                ),
+                uncompressed_size: u32::from_le_bytes(
+                    data[offset + 12..offset + 16].try_into().unwrap(),
+                ),
+                record_count: u32::from_le_bytes(
+                    data[offset + 16..offset + 20].try_into().unwrap(),
+                ),
+                bloom_offset: u32::from_le_bytes(
+                    data[offset + 20..offset + 24].try_into().unwrap(),
+                ),
+                bloom_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().unwrap()),
+                min_id_hash: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().unwrap()),
+                max_id_hash: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().unwrap()),
+                priority: data[offset + 44],
+                reserved: data[offset + 45..offset + 52].try_into().unwrap(),
             };
             segments.push(segment);
             offset += 52; // Size of SwiftSegmentHeader
@@ -407,18 +426,21 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         // 4. Read variable data
         if offset + 4 > data.len() {
             return Err(ProximaDBError::InvalidInput(
-                "Insufficient data for SWIFT variable data size".into()
+                "Insufficient data for SWIFT variable data size".into(),
             ));
         }
 
         let variable_data_size = u32::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]) as usize;
         offset += 4;
 
         if offset + variable_data_size > data.len() {
             return Err(ProximaDBError::InvalidInput(
-                "Insufficient data for SWIFT variable data".into()
+                "Insufficient data for SWIFT variable data".into(),
             ));
         }
 
@@ -434,15 +456,15 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         trace!(
             segments = metadata.segments.len(),
-            variable_data_size,
-            "Deserialized SWIFT metadata"
+            variable_data_size, "Deserialized SWIFT metadata"
         );
 
         Ok(Box::new(metadata))
     }
 
     fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
-        let swift_metadata = metadata.as_any()
+        let swift_metadata = metadata
+            .as_any()
             .downcast_ref::<SwiftMetadata>()
             .expect("Invalid metadata type for SWIFT serializer");
 
@@ -478,13 +500,18 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         }
     }
 
-    fn get_required_ranges(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> Option<Vec<DataRange>> {
-        let swift_metadata = metadata.as_any()
+    fn get_required_ranges(
+        &self,
+        metadata: &dyn EngineMetadata,
+        query_context: &QueryContext,
+    ) -> Option<Vec<DataRange>> {
+        let swift_metadata = metadata
+            .as_any()
             .downcast_ref::<SwiftMetadata>()
             .expect("Invalid metadata type for SWIFT serializer");
 
         let required_segments = swift_metadata.get_required_segments(query_context);
-        
+
         if required_segments.len() == swift_metadata.segments.len() {
             // Need all segments - return None to indicate full file read
             None
@@ -494,7 +521,11 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         }
     }
 
-    fn estimate_selectivity(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> f32 {
+    fn estimate_selectivity(
+        &self,
+        metadata: &dyn EngineMetadata,
+        query_context: &QueryContext,
+    ) -> f32 {
         metadata.estimated_selectivity(query_context)
     }
 }
@@ -512,7 +543,9 @@ mod tests {
         let serializer = SwiftMetadataSerializer::new(filesystem);
 
         // Test serialization
-        let serialized = serializer.serialize_metadata("/test/file.swift", "test_collection").unwrap();
+        let serialized = serializer
+            .serialize_metadata("/test/file.swift", "test_collection")
+            .unwrap();
         assert!(!serialized.is_none());
 
         // Test deserialization
@@ -527,7 +560,9 @@ mod tests {
         let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
         let serializer = SwiftMetadataSerializer::new(filesystem);
 
-        let serialized = serializer.serialize_metadata("/test/file.swift", "test_collection").unwrap();
+        let serialized = serializer
+            .serialize_metadata("/test/file.swift", "test_collection")
+            .unwrap();
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
 
         // Test ID lookup with non-existent ID
@@ -551,7 +586,9 @@ mod tests {
         let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
         let serializer = SwiftMetadataSerializer::new(filesystem);
 
-        let serialized = serializer.serialize_metadata("/test/file.swift", "test_collection").unwrap();
+        let serialized = serializer
+            .serialize_metadata("/test/file.swift", "test_collection")
+            .unwrap();
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
 
         let mut query_context = QueryContext::default();

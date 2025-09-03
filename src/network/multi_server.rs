@@ -14,13 +14,13 @@ use uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;
-use crate::services::collection::manager::CollectionService;
 use crate::services::VectorOperationsService;
+use crate::services::collection::manager::CollectionService;
+use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::StorageEngine;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 #[derive(Debug, Clone)]
@@ -303,7 +303,10 @@ impl SharedServices {
         storage_config: &crate::core::config::StorageConfig,
     ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
-        debug!("🔧 SharedServices::new - Starting with storage_config: {:?}", storage_config);
+        debug!(
+            "🔧 SharedServices::new - Starting with storage_config: {:?}",
+            storage_config
+        );
 
         // SharedServices owns metadata configuration logic
         info!(
@@ -342,7 +345,9 @@ impl SharedServices {
             // 3. This results in duplicated paths like "./demo_metadata/./demo_metadata/current"
             //
             // The LocalFileSystem should work with URLs as-is without any root directory.
-            info!("📂 SharedServices: Using default filesystem config without root_dir to prevent path duplication");
+            info!(
+                "📂 SharedServices: Using default filesystem config without root_dir to prevent path duplication"
+            );
 
             // Use default config - no root_dir set
             crate::storage::persistence::filesystem::FilesystemConfig::default()
@@ -360,11 +365,10 @@ impl SharedServices {
             Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
         debug!("✅ SharedServices: Filestore metadata backend created successfully");
 
-        let collection_service = Arc::new(
-            CollectionService::new(filestore_backend, storage_config.clone()).await?
-        );
+        let collection_service =
+            Arc::new(CollectionService::new(filestore_backend, storage_config.clone()).await?);
         debug!("✅ SharedServices: CollectionService created successfully");
-        
+
         // Collection service will be injected into StorageEngine by ProximaDB::new
         info!("✅ SharedServices: Collection service created for injection into StorageEngine");
 
@@ -373,77 +377,101 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Converting WAL config from TOML...");
         let wal_config = Self::convert_toml_to_wal_config(&storage_config.wal_config);
         debug!("✅ SharedServices::new - WAL config converted successfully from TOML");
-        
+
         // Create filesystem factory for engines
         debug!("🔧 SharedServices::new - Creating filesystem factory for engines...");
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(
-            crate::storage::persistence::filesystem::FilesystemConfig::default()
-        ).await?);
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(
+                crate::storage::persistence::filesystem::FilesystemConfig::default(),
+            )
+            .await?,
+        );
         debug!("✅ SharedServices::new - Filesystem factory for engines created successfully");
-        
+
         // Create VIPER engine
         debug!("🔧 SharedServices::new - Creating VIPER engine...");
         let viper_config = crate::core::config::ViperConfig::default();
         debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
         let viper_engine = Arc::new(
-            crate::storage::engines::impls::viper::ViperEngine::from_core_config(viper_config, filesystem_factory.clone()).await?
+            crate::storage::engines::impls::viper::ViperEngine::from_core_config(
+                viper_config,
+                filesystem_factory.clone(),
+            )
+            .await?,
         );
         debug!("✅ SharedServices::new - VIPER engine created successfully");
-        
+
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = Arc::new(
             crate::storage::engines::impls::sst::SstStorage::new(
                 storage_config.sst_config.clone().unwrap_or_default(),
                 filesystem_factory.clone(),
-                Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
-            ).await?
+                Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                ),
+            )
+            .await?,
         );
         debug!("✅ SharedServices::new - SST engine created successfully");
-        
+
         // Create WAL manager for two-stage search
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
         let wal_manager = {
-            use crate::storage::persistence::write_ahead_log::{WriteAheadLogManager, WALBatchFactory};
-            
-            // Create WAL batch strategy 
+            use crate::storage::persistence::write_ahead_log::{
+                WALBatchFactory, WriteAheadLogManager,
+            };
+
+            // Create WAL batch strategy
             let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
             let strategy = WALBatchFactory::create_batch_serialization_strategy(
                 strategy_type,
                 &wal_config,
-                filesystem_factory.clone()
-            ).await?;
-            
+                filesystem_factory.clone(),
+            )
+            .await?;
+
             // Create WAL manager directly
             Arc::new(WriteAheadLogManager::new(strategy, wal_config.clone()).await?)
         };
         debug!("✅ SharedServices::new - WAL manager created successfully");
-        
+
         // Create AxisManager for index operations
         debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
-        let axis_manager = Arc::new(
-            crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?
-        );
+        let axis_manager =
+            Arc::new(crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?);
         debug!("✅ SharedServices::new - AxisManager created successfully");
-        
+
         // Create VectorOperationsService with optimized architecture and two-stage search
-        debug!("🔧 SharedServices::new - About to create VectorOperationsService with two-stage search...");
-        let vector_operations_service = Arc::new(
-            VectorOperationsService::new(sst_engine, wal_manager, axis_manager)
+        debug!(
+            "🔧 SharedServices::new - About to create VectorOperationsService with two-stage search..."
         );
-        
-        info!("✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled");
+        let vector_operations_service = Arc::new(VectorOperationsService::new(
+            sst_engine,
+            wal_manager,
+            axis_manager,
+        ));
+
+        info!(
+            "✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled"
+        );
         debug!("🔧 SharedServices::new - VectorOperationsService created successfully");
-        
+
         // Collection recovery will be handled by StorageEngine::start()
         // SharedServices no longer tries to recover before storage starts
-        info!("📋 SharedServices: Collection recovery will be handled by StorageEngine during startup");
-        
+        info!(
+            "📋 SharedServices: Collection recovery will be handled by StorageEngine during startup"
+        );
+
         // Placeholder for future assignment service recovery
         // TODO: Add assignment service recovery after StorageEngine starts
-        
-        if false { // Disabled recovery code - will be moved to ProximaDB::new
-            let recovered_collections = std::collections::HashMap::<String, crate::storage::metadata::VersionedCollectionMetadata>::new();
+
+        if false {
+            // Disabled recovery code - will be moved to ProximaDB::new
+            let recovered_collections = std::collections::HashMap::<
+                String,
+                crate::storage::metadata::VersionedCollectionMetadata,
+            >::new();
             info!(
                 "📦 SharedServices: Restoring {} collections to metadata backend",
                 recovered_collections.len()
@@ -465,10 +493,12 @@ impl SharedServices {
                     filterable_columns: vec![],
                     index_configs: vec![],
                     quantization: Some(crate::proto::proximadb::QuantizationConfig {
-                        enabled: true,  // Quantization enabled by default
-                        strategy: crate::proto::proximadb::quantization_config::Strategy::SmartDefaults as i32,
+                        enabled: true, // Quantization enabled by default
+                        strategy:
+                            crate::proto::proximadb::quantization_config::Strategy::SmartDefaults
+                                as i32,
                         custom_levels: vec![],
-                        enable_progressive_search: true,  // Progressive search enabled by default
+                        enable_progressive_search: true, // Progressive search enabled by default
                         binary_filter_selectivity: 0.3,
                         int8_ranking_selectivity: 0.1,
                         pq_ranking_selectivity: 0.05,
@@ -548,14 +578,19 @@ impl SharedServices {
             vector_operations_service.clone(),
         ));
 
-        info!("✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)");
+        info!(
+            "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
+        );
 
-        Ok((Self {
-            collection_service: collection_service.clone(),
-            vector_operations_service,
-            unified_handlers,
-            metrics_collector,
-        }, collection_service))
+        Ok((
+            Self {
+                collection_service: collection_service.clone(),
+                vector_operations_service,
+                unified_handlers,
+                metrics_collector,
+            },
+            collection_service,
+        ))
     }
 
     /// Recover vectors from write buffer after StorageEngine has started
@@ -565,36 +600,39 @@ impl SharedServices {
         storage: &Arc<RwLock<StorageEngine>>,
     ) -> Result<()> {
         info!("🔄 SharedServices: Starting vector recovery from write buffer");
-        
+
         // Get collections that need vector recovery
         let storage_ref = storage.read().await;
         let recovered_collections = storage_ref.recovered_collections_metadata().await?;
-        
+
         if recovered_collections.is_empty() {
             info!("📋 SharedServices: No collections found for vector recovery");
             return Ok(());
         }
-        
-        info!("📦 SharedServices: Found {} collections for potential vector recovery", recovered_collections.len());
-        
+
+        info!(
+            "📦 SharedServices: Found {} collections for potential vector recovery",
+            recovered_collections.len()
+        );
+
         // TODO: Implement actual vector recovery from write buffer
         // This would involve:
         // 1. For each collection, check if write buffer has unflushed data
         // 2. Load vectors from write buffer into VectorOperationsService memtable
         // 3. Mark recovery complete for each collection
-        
+
         info!("✅ SharedServices: Vector recovery completed");
         Ok(())
     }
-    
+
     /// Convert TOML WALConfig to internal WALConfig
     fn convert_toml_to_wal_config(
-        toml_config: &crate::core::config::WriteBufferUserConfig
+        toml_config: &crate::core::config::WriteBufferUserConfig,
     ) -> crate::storage::persistence::write_ahead_log::config::WALConfig {
         use crate::storage::persistence::write_ahead_log::config::{
-            WALConfig, PerformanceConfig, MemTableConfig, MemTableType, SyncMode
+            MemTableConfig, MemTableType, PerformanceConfig, SyncMode, WALConfig,
         };
-        
+
         // Create performance config with values from TOML
         info!(
             "📋 Converting WALConfig from TOML: memory_flush_size_bytes={} ({}MB), vector_count_threshold={}, write_buffer_size_mb={}MB",
@@ -603,7 +641,7 @@ impl SharedServices {
             toml_config.vector_count_threshold,
             toml_config.write_buffer_size_mb
         );
-        
+
         let performance = PerformanceConfig {
             memory_flush_size_bytes: toml_config.memory_flush_size_bytes,
             global_flush_threshold: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
@@ -616,7 +654,7 @@ impl SharedServices {
             },
             ..Default::default()
         };
-        
+
         // Create memtable config
         let memtable = MemTableConfig {
             global_memory_limit: toml_config.write_buffer_size_mb as usize * 1024 * 1024,
@@ -627,20 +665,20 @@ impl SharedServices {
             },
             ..Default::default()
         };
-        
+
         // Create multi-disk config with WAL directory
         let multi_disk = crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
             data_directories: vec![toml_config.write_buffer_directory.clone()],
             distribution_strategy: crate::storage::persistence::write_ahead_log::config::DiskDistributionStrategy::RoundRobin,
             collection_affinity: true,
         };
-        
+
         WALConfig {
             performance,
             memtable,
             multi_disk,
-            enable_mvcc: true, // Enable MVCC for consistency
-            enable_ttl: true,  // Enable TTL support
+            enable_mvcc: true,                  // Enable MVCC for consistency
+            enable_ttl: true,                   // Enable TTL support
             enable_background_compaction: true, // Enable background compaction
             enable_optimized_writer: toml_config.enable_wal, // Use enable_wal to control optimized writer
             ..Default::default()
@@ -652,7 +690,7 @@ impl SharedServices {
 /// Responsibilities: ports, TLS, server lifecycle, protocol orchestration
 pub struct MultiServer {
     config: MultiServerConfig,
-    pub shared_services: SharedServices,  // Made public for recovery access
+    pub shared_services: SharedServices, // Made public for recovery access
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -708,8 +746,7 @@ impl MultiServer {
                 grpc_service
             };
 
-            let mut server_builder = tonic::transport::Server::builder()
-                .add_service(grpc_service);
+            let mut server_builder = tonic::transport::Server::builder().add_service(grpc_service);
 
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {
@@ -754,9 +791,14 @@ impl MultiServer {
                 use crate::network::rest::server::RestServer;
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
-                match RestServer::new(rest_bind_addr, unified_handlers, max_request_size_mb, enable_compression)
-                    .start()
-                    .await
+                match RestServer::new(
+                    rest_bind_addr,
+                    unified_handlers,
+                    max_request_size_mb,
+                    enable_compression,
+                )
+                .start()
+                .await
                 {
                     Ok(_) => {
                         info!("✅ REST Server completed");

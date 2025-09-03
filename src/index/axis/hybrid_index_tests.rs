@@ -10,9 +10,11 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::index::axis::management::manager::{
+        FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+    };
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification, ResultCombination};
-    use crate::index::axis::management::manager::{HybridQuery, VectorQuery, MetadataFilter, FilterOperator};
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_hybrid_vector_metadata_search() {
@@ -53,7 +55,7 @@ use tracing::{debug, error, info};
 
         // Verify both indexes are used
         assert!(vector_spec.supports_clustering());
-        assert!(!metadata_spec.supports_clustering());  // BTree doesn't support clustering
+        assert!(!metadata_spec.supports_clustering()); // BTree doesn't support clustering
     }
 
     #[tokio::test]
@@ -70,7 +72,7 @@ use tracing::{debug, error, info};
                 },
                 name: Some("primary_vector".to_string()),
                 is_primary: true,
-                selectivity_threshold: Some(0.1),  // Use for selective queries
+                selectivity_threshold: Some(0.1), // Use for selective queries
             },
             IndexSpecification {
                 // data_type removed -  Data::DenseVector { dimension: 512 },
@@ -81,7 +83,7 @@ use tracing::{debug, error, info};
                 },
                 name: Some("bulk_vector".to_string()),
                 is_primary: false,
-                selectivity_threshold: Some(0.5),  // Use for bulk queries
+                selectivity_threshold: Some(0.5), // Use for bulk queries
             },
             IndexSpecification {
                 // data_type removed -  Data::Metadata,
@@ -133,11 +135,11 @@ use tracing::{debug, error, info};
         );
 
         assert!(ivf_pq_spec.supports_clustering());
-        
+
         // Verify quantizer is properly configured
         if let IndexAlgorithm::IVF { quantizer, .. } = &ivf_pq_spec.algorithm {
             assert!(quantizer.is_some());
-            
+
             if let Some(q) = quantizer {
                 if let IndexAlgorithm::PQ { m, nbits, .. } = q.as_ref() {
                     assert_eq!(*m, 8);
@@ -157,7 +159,7 @@ use tracing::{debug, error, info};
                     m: 16,
                     ef_construction: 200,
                     ef_search: 100,
-                    max_elements: 10000,  // Small capacity
+                    max_elements: 10000, // Small capacity
                 },
             ),
             IndexSpecification::new(
@@ -172,13 +174,13 @@ use tracing::{debug, error, info};
         ];
 
         // Test fallback logic
-        let vector_count = 15000;  // Exceeds HNSW capacity
-        
+        let vector_count = 15000; // Exceeds HNSW capacity
+
         // Should fallback to IVF
         let selected_index = if vector_count > 10000 {
-            &index_chain[1]  // IVF
+            &index_chain[1] // IVF
         } else {
-            &index_chain[0]  // HNSW
+            &index_chain[0] // HNSW
         };
 
         match &selected_index.algorithm {
@@ -211,7 +213,7 @@ use tracing::{debug, error, info};
         );
 
         let vector_spec = IndexSpecification::new(
-            Data::DenseVector { dimension: 384 },  // Sentence embedding dimension
+            Data::DenseVector { dimension: 384 }, // Sentence embedding dimension
             IndexAlgorithm::Annoy {
                 n_trees: 10,
                 search_k: -1,
@@ -220,15 +222,17 @@ use tracing::{debug, error, info};
         );
 
         // Both should be usable for hybrid search
-        assert!(!text_spec.supports_clustering());  // Text index doesn't cluster
-        assert!(vector_spec.supports_clustering());  // Vector index supports clustering
+        assert!(!text_spec.supports_clustering()); // Text index doesn't cluster
+        assert!(vector_spec.supports_clustering()); // Vector index supports clustering
     }
 
     #[tokio::test]
     async fn test_sparse_dense_vector_combination() {
         // Test combining sparse and dense vector indexes
         let sparse_spec = IndexSpecification::new(
-            Data::SparseVector { max_dimension: 50000 },
+            Data::SparseVector {
+                max_dimension: 50000,
+            },
             IndexAlgorithm::InvertedIndex {
                 analyzer: crate::index::axis::types::TextAnalyzer {
                     tokenizer: crate::index::axis::types::Tokenizer::Whitespace,
@@ -251,9 +255,9 @@ use tracing::{debug, error, info};
         // Test hybrid scoring
         let sparse_weight: f32 = 0.3;
         let dense_weight: f32 = 0.7;
-        
+
         assert!((sparse_weight + dense_weight - 1.0).abs() < 0.001);
-        
+
         // Both can be used together
         assert!(dense_spec.supports_clustering());
         // Sparse vectors with inverted index don't support clustering
@@ -263,14 +267,14 @@ use tracing::{debug, error, info};
     #[tokio::test]
     async fn test_multi_stage_search() {
         // Test multi-stage search: coarse -> fine
-        
+
         // Stage 1: Coarse search with LSH
         let coarse_spec = IndexSpecification::new(
             Data::DenseVector { dimension: 512 },
             IndexAlgorithm::LSH {
                 n_projections: 5,
                 n_hash_tables: 5,
-                hash_width: 2.0,  // Wider buckets for coarse search
+                hash_width: 2.0, // Wider buckets for coarse search
             },
         );
 
@@ -289,7 +293,7 @@ use tracing::{debug, error, info};
         );
 
         // Stage 3: Final reranking (would use FLAT/brute-force)
-        
+
         // All stages support clustering
         assert!(coarse_spec.supports_clustering());
         assert!(fine_spec.supports_clustering());
@@ -318,7 +322,7 @@ use tracing::{debug, error, info};
 
         // Bloom filter for quick existence check
         assert!(!bloom_spec.supports_clustering());
-        
+
         // Main index for actual search
         assert!(main_spec.supports_clustering());
     }
@@ -336,10 +340,13 @@ use tracing::{debug, error, info};
 
         // Skip list doesn't support clustering (it's for ordered data)
         assert!(!skiplist_spec.supports_clustering());
-        
+
         // Good for range queries and ordered traversal
         match &skiplist_spec.algorithm {
-            IndexAlgorithm::SkipList { max_level, probability } => {
+            IndexAlgorithm::SkipList {
+                max_level,
+                probability,
+            } => {
                 assert_eq!(*max_level, 16);
                 assert_eq!(*probability, 0.5);
             }
@@ -351,10 +358,10 @@ use tracing::{debug, error, info};
     async fn test_adaptive_index_selection() {
         // Test adaptive selection based on query patterns
         let query_patterns = vec![
-            ("high_precision", 0.01),   // Use HNSW
-            ("balanced", 0.1),           // Use IVF
-            ("high_recall", 0.5),        // Use LSH
-            ("exhaustive", 1.0),         // Use FLAT (brute force)
+            ("high_precision", 0.01), // Use HNSW
+            ("balanced", 0.1),        // Use IVF
+            ("high_recall", 0.5),     // Use LSH
+            ("exhaustive", 1.0),      // Use FLAT (brute force)
         ];
 
         for (pattern, selectivity) in query_patterns {
@@ -377,7 +384,8 @@ use tracing::{debug, error, info};
                 },
                 _ => {
                     // Would use FLAT for exhaustive search
-                    IndexAlgorithm::LSH {  // Placeholder since FLAT not implemented
+                    IndexAlgorithm::LSH {
+                        // Placeholder since FLAT not implemented
                         n_projections: 100,
                         n_hash_tables: 100,
                         hash_width: 0.1,
@@ -385,8 +393,10 @@ use tracing::{debug, error, info};
                 }
             };
 
-            debug!("Pattern '{}' (selectivity={}) -> {:?}", 
-                     pattern, selectivity, selected_algorithm);
+            debug!(
+                "Pattern '{}' (selectivity={}) -> {:?}",
+                pattern, selectivity, selected_algorithm
+            );
         }
     }
 }

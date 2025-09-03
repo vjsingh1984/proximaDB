@@ -3,10 +3,10 @@
 //! Supports complex metadata filtering with AND, OR, NOT operations
 //! and various comparison operators for flexible search queries.
 
-use std::collections::HashMap;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use anyhow::{Result, Context};
+use std::collections::HashMap;
 
 /// Metadata query expression supporting logical and comparison operators
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -85,11 +85,13 @@ impl MetadataQueryEngine {
     }
 
     /// Evaluate a metadata query against a record's metadata
-    pub fn evaluate(&mut self, query: &MetadataQuery, metadata: &HashMap<String, JsonValue>) -> Result<bool> {
+    pub fn evaluate(
+        &mut self,
+        query: &MetadataQuery,
+        metadata: &HashMap<String, JsonValue>,
+    ) -> Result<bool> {
         match query {
-            MetadataQuery::Field(field_query) => {
-                self.evaluate_field_query(field_query, metadata)
-            }
+            MetadataQuery::Field(field_query) => self.evaluate_field_query(field_query, metadata),
             MetadataQuery::And(queries) => {
                 // All queries must be true
                 for sub_query in queries {
@@ -118,16 +120,16 @@ impl MetadataQueryEngine {
     }
 
     /// Evaluate a field-specific query
-    fn evaluate_field_query(&mut self, field_query: &FieldQuery, metadata: &HashMap<String, JsonValue>) -> Result<bool> {
+    fn evaluate_field_query(
+        &mut self,
+        field_query: &FieldQuery,
+        metadata: &HashMap<String, JsonValue>,
+    ) -> Result<bool> {
         let field_value = metadata.get(&field_query.field);
 
         match field_query.operator {
-            ComparisonOperator::Equal => {
-                Ok(field_value == Some(&field_query.value))
-            }
-            ComparisonOperator::NotEqual => {
-                Ok(field_value != Some(&field_query.value))
-            }
+            ComparisonOperator::Equal => Ok(field_value == Some(&field_query.value)),
+            ComparisonOperator::NotEqual => Ok(field_value != Some(&field_query.value)),
             ComparisonOperator::LessThan => {
                 self.compare_numeric_or_string(field_value, &field_query.value, |a, b| a < b)
             }
@@ -155,9 +157,7 @@ impl MetadataQueryEngine {
                     text.ends_with(pattern)
                 })
             }
-            ComparisonOperator::In => {
-                self.array_operation(field_value, &field_query.value, true)
-            }
+            ComparisonOperator::In => self.array_operation(field_value, &field_query.value, true),
             ComparisonOperator::NotIn => {
                 self.array_operation(field_value, &field_query.value, false)
             }
@@ -174,7 +174,12 @@ impl MetadataQueryEngine {
     }
 
     /// Compare numeric or string values using a comparison function
-    fn compare_numeric_or_string<F>(&self, field_value: Option<&JsonValue>, expected: &JsonValue, compare_fn: F) -> Result<bool>
+    fn compare_numeric_or_string<F>(
+        &self,
+        field_value: Option<&JsonValue>,
+        expected: &JsonValue,
+        compare_fn: F,
+    ) -> Result<bool>
     where
         F: Fn(f64, f64) -> bool + Clone,
     {
@@ -198,17 +203,21 @@ impl MetadataQueryEngine {
                         None => false,
                     };
                     Ok(result)
-                }
-                else {
+                } else {
                     Ok(false)
                 }
             }
             None => Ok(false),
         }
     }
-    
+
     /// Compare values that support PartialEq (used for Equal and NotEqual)
-    fn compare_values<F>(&self, field_value: Option<&JsonValue>, expected: &JsonValue, compare_fn: F) -> Result<bool>
+    fn compare_values<F>(
+        &self,
+        field_value: Option<&JsonValue>,
+        expected: &JsonValue,
+        compare_fn: F,
+    ) -> Result<bool>
     where
         F: Fn(&JsonValue, &JsonValue) -> bool,
     {
@@ -219,7 +228,12 @@ impl MetadataQueryEngine {
     }
 
     /// Perform string operations (contains, starts_with, ends_with)
-    fn string_operation<F>(&self, field_value: Option<&JsonValue>, pattern: &JsonValue, string_fn: F) -> Result<bool>
+    fn string_operation<F>(
+        &self,
+        field_value: Option<&JsonValue>,
+        pattern: &JsonValue,
+        string_fn: F,
+    ) -> Result<bool>
     where
         F: Fn(&str, &str) -> bool,
     {
@@ -232,7 +246,12 @@ impl MetadataQueryEngine {
     }
 
     /// Perform array operations (in, not_in)
-    fn array_operation(&self, field_value: Option<&JsonValue>, array_value: &JsonValue, should_contain: bool) -> Result<bool> {
+    fn array_operation(
+        &self,
+        field_value: Option<&JsonValue>,
+        array_value: &JsonValue,
+        should_contain: bool,
+    ) -> Result<bool> {
         match (field_value, array_value) {
             (Some(value), JsonValue::Array(array)) => {
                 let contains = array.contains(value);
@@ -243,19 +262,29 @@ impl MetadataQueryEngine {
     }
 
     /// Perform regex matching operation
-    fn regex_operation(&mut self, field_name: &str, field_value: Option<&JsonValue>, pattern: &JsonValue) -> Result<bool> {
+    fn regex_operation(
+        &mut self,
+        field_name: &str,
+        field_value: Option<&JsonValue>,
+        pattern: &JsonValue,
+    ) -> Result<bool> {
         match (field_value, pattern.as_str()) {
             (Some(JsonValue::String(text)), Some(pattern_str)) => {
                 // Get or compile regex
                 let regex = if let Some(cached_regex) = self.regex_cache.get(pattern_str) {
                     cached_regex.clone()
                 } else {
-                    let compiled_regex = regex::Regex::new(pattern_str)
-                        .with_context(|| format!("Invalid regex pattern for field {}: {}", field_name, pattern_str))?;
-                    self.regex_cache.insert(pattern_str.to_string(), compiled_regex.clone());
+                    let compiled_regex = regex::Regex::new(pattern_str).with_context(|| {
+                        format!(
+                            "Invalid regex pattern for field {}: {}",
+                            field_name, pattern_str
+                        )
+                    })?;
+                    self.regex_cache
+                        .insert(pattern_str.to_string(), compiled_regex.clone());
                     compiled_regex
                 };
-                
+
                 Ok(regex.is_match(text.as_str()))
             }
             _ => Ok(false),
@@ -294,7 +323,12 @@ impl MetadataQueryBuilder {
     }
 
     /// Add a field comparison condition
-    pub fn field_compare(mut self, field: &str, operator: ComparisonOperator, value: JsonValue) -> Self {
+    pub fn field_compare(
+        mut self,
+        field: &str,
+        operator: ComparisonOperator,
+        value: JsonValue,
+    ) -> Self {
         let field_query = MetadataQuery::Field(FieldQuery {
             field: field.to_string(),
             operator,
@@ -411,7 +445,10 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), json!("electronics"));
         metadata.insert("price".to_string(), json!(99.99));
-        metadata.insert("tags".to_string(), json!(["computer", "gaming", "portable"]));
+        metadata.insert(
+            "tags".to_string(),
+            json!(["computer", "gaming", "portable"]),
+        );
         metadata.insert("brand".to_string(), json!("TechCorp"));
         metadata.insert("year".to_string(), json!(2023));
         metadata.insert("description".to_string(), json!("Electronics"));
@@ -422,10 +459,10 @@ mod tests {
     fn test_simple_equality() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         let query = MetadataQuery::field_eq("category", json!("electronics"));
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         let query = MetadataQuery::field_eq("category", json!("books"));
         assert!(!engine.evaluate(&query, &metadata).unwrap());
     }
@@ -434,7 +471,7 @@ mod tests {
     fn test_numeric_comparisons() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         // Greater than
         let query = MetadataQuery::Field(FieldQuery {
             field: "price".to_string(),
@@ -442,7 +479,7 @@ mod tests {
             value: json!(50.0),
         });
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         // Less than
         let query = MetadataQuery::Field(FieldQuery {
             field: "year".to_string(),
@@ -456,11 +493,11 @@ mod tests {
     fn test_string_operations() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         // Contains
         let query = MetadataQuery::field_contains("description", "gaming");
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         // Starts with
         let query = MetadataQuery::Field(FieldQuery {
             field: "brand".to_string(),
@@ -474,7 +511,7 @@ mod tests {
     fn test_logical_operators() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         // AND operation
         let query = MetadataQuery::And(vec![
             MetadataQuery::field_eq("category", json!("electronics")),
@@ -485,18 +522,19 @@ mod tests {
             }),
         ]);
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         // OR operation
         let query = MetadataQuery::Or(vec![
             MetadataQuery::field_eq("category", json!("books")),
             MetadataQuery::field_eq("category", json!("electronics")),
         ]);
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         // NOT operation
-        let query = MetadataQuery::Not(Box::new(
-            MetadataQuery::field_eq("category", json!("books"))
-        ));
+        let query = MetadataQuery::Not(Box::new(MetadataQuery::field_eq(
+            "category",
+            json!("books"),
+        )));
         assert!(engine.evaluate(&query, &metadata).unwrap());
     }
 
@@ -504,11 +542,11 @@ mod tests {
     fn test_array_operations() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         // IN operation
         let query = MetadataQuery::field_in("category", vec![json!("electronics"), json!("books")]);
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         // Array contains value
         let query = MetadataQuery::Field(FieldQuery {
             field: "laptop_info".to_string(),
@@ -530,7 +568,7 @@ mod tests {
     fn test_complex_query() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         // Complex query: (category = "electronics" AND price < 150) OR (brand contains "Tech")
         let query = MetadataQuery::Or(vec![
             MetadataQuery::And(vec![
@@ -547,7 +585,7 @@ mod tests {
                 value: json!("Tech"),
             }),
         ]);
-        
+
         assert!(engine.evaluate(&query, &metadata).unwrap());
     }
 
@@ -555,11 +593,11 @@ mod tests {
     fn test_field_range() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         // Price range query: 50 <= price <= 200
         let query = MetadataQuery::field_range("price", 50.0, 200.0);
         assert!(engine.evaluate(&query, &metadata).unwrap());
-        
+
         // Out of range
         let query = MetadataQuery::field_range("price", 200.0, 300.0);
         assert!(!engine.evaluate(&query, &metadata).unwrap());
@@ -569,12 +607,11 @@ mod tests {
     fn test_query_builder() {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
-        
+
         let query = MetadataQueryBuilder::new()
             .field_equals("category", json!("electronics"))
             .build();
-        
+
         assert!(engine.evaluate(&query, &metadata).unwrap());
     }
 }
-

@@ -25,7 +25,7 @@
 // - Access column data with zero-copy when possible
 // - Manage memory efficiently across multiple Parquet files
 //
-// RENAME SUGGESTION: This file should be renamed to `parquet_io_layer.rs` 
+// RENAME SUGGESTION: This file should be renamed to `parquet_io_layer.rs`
 // or `parquet_cache_manager.rs` to better reflect its I/O and caching role
 
 use std::collections::HashMap;
@@ -43,12 +43,12 @@ use parquet::file::metadata::ParquetMetaData;
 use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system  
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+// DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
 use crate::core::error::{ProximaDBError, StorageError};
 use crate::proto::proximadb::VectorRecord;
+use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
-const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024;  // 8MB max footer size
+const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024; // 8MB max footer size
 const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column indexes
 
 /// Shared Parquet format reader with zero-copy cache-first architecture
@@ -56,16 +56,16 @@ const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column ind
 pub struct SharedParquetFormatReader {
     /// Filesystem for I/O operations
     filesystem: Arc<FilesystemFactory>,
-    
+
     /// Memory mapping strategy for Parquet (column-aware optimizations)
     mmap_strategy: ParquetMmapStrategy,
-    
+
     /// UNIFIED CACHE: Zero-copy system replaces all specialized caches
     zero_copy_system: Arc<ZeroCopyIOSystem>,
-    
+
     /// Collection ID for filename-based cache keys
     collection_id: String,
-    
+
     /// Statistics for monitoring
     stats: Arc<ReaderStats>,
 }
@@ -74,19 +74,20 @@ pub struct SharedParquetFormatReader {
 pub struct ParquetMmapStrategy {
     /// Footer strategy (always try to mmap)
     pub footer_max_size: usize,
-    
+
     /// Column-specific strategies
     pub column_strategies: HashMap<String, ColumnMmapStrategy>,
-    
+
     /// Row group size threshold for mmap
     pub row_group_mmap_threshold: usize,
 }
 
 #[derive(Clone)]
 pub enum ColumnMmapStrategy {
-    AlwaysMmap,      // Hot columns (e.g., primary key, vector_id)
-    NeverMmap,       // Large blob columns
-    Adaptive {       // Based on access patterns
+    AlwaysMmap, // Hot columns (e.g., primary key, vector_id)
+    NeverMmap,  // Large blob columns
+    Adaptive {
+        // Based on access patterns
         min_access_count: u32,
         recency_weight: f32,
     },
@@ -137,10 +138,10 @@ pub struct LocalDiskCache {
     cache_dir: PathBuf,
     max_cache_size: u64,
     current_size: AtomicU64,
-    
+
     /// Track cached row groups per file
     cached_row_groups: DashMap<String, Vec<usize>>,
-    
+
     /// Track cached columns per row group
     cached_columns: DashMap<String, HashMap<usize, Vec<String>>>,
 }
@@ -164,26 +165,28 @@ impl SharedParquetFormatReader {
     /// Read columns using cached metadata (avoids footer download)
     async fn read_with_cached_metadata(
         &self,
-        cached_metadata: Arc<Box<dyn crate::storage::engines::core::io::zero_copy::traits::EngineMetadata>>,
+        cached_metadata: Arc<
+            Box<dyn crate::storage::engines::core::io::zero_copy::traits::EngineMetadata>,
+        >,
         columns: &[String],
         row_filter: Option<&FilterExpression>,
     ) -> Result<Vec<RecordBatch>, ProximaDBError> {
         // This would extract row group statistics from cached metadata
         // and use them for filtering without downloading the footer
-        
+
         // For now, we'll implement a placeholder that delegates to the full read
         // In a complete implementation, this would:
         // 1. Extract row group statistics from cached_metadata
-        // 2. Apply row_filter to statistics  
+        // 2. Apply row_filter to statistics
         // 3. Download only required row groups
         // 4. Return filtered RecordBatch results
-        
+
         debug!("Using cached metadata for optimized Parquet read (implementation pending)");
-        
+
         // Temporary: Return empty result - real implementation would process cached metadata
         Ok(vec![])
     }
-    
+
     /// Read specific columns with intelligent filtering and caching
     /// CACHE-FIRST: Checks zero-copy metadata cache before file operations
     pub async fn read_columns_smart(
@@ -196,105 +199,118 @@ impl SharedParquetFormatReader {
         // CACHE-FIRST PATTERN: Check zero-copy metadata cache for Parquet metadata
         // Cache key format: filename:collection_id:engine (parquet/viper/nova)
         let cache_key = format!("{}:{}:parquet", file_path, collection_id);
-        
+
         match self.zero_copy_system.get_cached_metadata(&cache_key).await {
             Ok(Some(cached_metadata)) => {
                 debug!("✅ Cache HIT for Parquet metadata: {}", file_path);
                 // Use cached metadata for row group filtering (avoids footer download)
-                return self.read_with_cached_metadata(cached_metadata, columns, row_filter).await;
+                return self
+                    .read_with_cached_metadata(cached_metadata, columns, row_filter)
+                    .await;
             }
             Ok(None) => {
                 debug!("❌ Cache MISS for Parquet metadata: {}", file_path);
             }
             Err(e) => {
-                warn!("⚠️ Cache error for {}: {}, falling back to file read", file_path, e);
+                warn!(
+                    "⚠️ Cache error for {}: {}, falling back to file read",
+                    file_path, e
+                );
             }
         }
-        
+
         // FALLBACK: Get footer metadata (download ONLY footer for cloud files)
         let footer = self.get_footer_smart(file_path).await?;
-        
+
         // Step 2: Use metadata to filter row groups BEFORE downloading
         let candidate_row_groups = if let Some(filter) = row_filter {
             self.filter_row_groups_by_statistics(&footer, filter)?
         } else {
             (0..footer.metadata.num_row_groups()).collect()
         };
-        
+
         // Track how many row groups we filtered out
         let total_rgs = footer.metadata.num_row_groups();
         let filtered_out = total_rgs - candidate_row_groups.len();
-        self.stats.row_groups_filtered.fetch_add(filtered_out as u64, Ordering::Relaxed);
-        
+        self.stats
+            .row_groups_filtered
+            .fetch_add(filtered_out as u64, Ordering::Relaxed);
+
         // Calculate bandwidth saved
         let avg_rg_size = 50 * 1024 * 1024; // 50MB average
-        self.stats.bytes_saved.fetch_add((filtered_out * avg_rg_size) as u64, Ordering::Relaxed);
-        
+        self.stats
+            .bytes_saved
+            .fetch_add((filtered_out * avg_rg_size) as u64, Ordering::Relaxed);
+
         if candidate_row_groups.is_empty() {
             // No row groups match - saved all bandwidth!
             return Ok(Vec::new());
         }
-        
+
         // Step 3: Read only candidate row groups
         let mut batches = Vec::new();
-        
+
         for rg_idx in candidate_row_groups {
-            let batch = self.read_row_group_smart(
-                file_path,
-                rg_idx,
-                columns,
-                &footer,
-            ).await?;
-            
+            let batch = self
+                .read_row_group_smart(file_path, rg_idx, columns, &footer)
+                .await?;
+
             if let Some(batch) = batch {
                 batches.push(batch);
             }
         }
-        
+
         Ok(batches)
     }
-    
+
     /// Get footer with minimal bandwidth usage
-    async fn get_footer_smart(&self, file_path: &str) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
+    async fn get_footer_smart(
+        &self,
+        file_path: &str,
+    ) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
         // TODO: Implement footer caching using zero_copy_system
         // For now, always read fresh
         self.stats.footer_misses.fetch_add(1, Ordering::Relaxed);
-        
+
         // For cloud files, download ONLY the footer
         if self.is_cloud_file(file_path) {
-            let metadata = self.filesystem
+            let metadata = self
+                .filesystem
                 .get_filesystem(file_path)?
                 .metadata(file_path)
                 .await?;
             let file_size = metadata.size;
-            
+
             // Parquet footer is at the end - read last 8MB max
             let footer_start = file_size.saturating_sub(FOOTER_MAX_SIZE as u64);
-            let footer_data = self.filesystem
+            let footer_data = self
+                .filesystem
                 .get_filesystem(file_path)?
                 .read_range(file_path, footer_start, FOOTER_MAX_SIZE as u64)
                 .await?;
-            
-            self.stats.bytes_downloaded.fetch_add(footer_data.len() as u64, Ordering::Relaxed);
-            
+
+            self.stats
+                .bytes_downloaded
+                .fetch_add(footer_data.len() as u64, Ordering::Relaxed);
+
             // Parse footer
             let metadata = self.parse_footer(&footer_data)?;
-            
+
             let cache_entry = ParquetFooterCache {
                 metadata: Arc::new(metadata),
                 raw_footer: Arc::new(footer_data),
                 last_access: Instant::now(),
             };
-            
+
             // TODO: Store in zero_copy_system cache instead
-            
+
             return Ok(Arc::new(cache_entry));
         }
-        
+
         // For local files, can mmap the footer
         self.get_local_footer_with_mmap(file_path).await
     }
-    
+
     /// Filter row groups using statistics BEFORE downloading
     fn filter_row_groups_by_statistics(
         &self,
@@ -302,11 +318,11 @@ impl SharedParquetFormatReader {
         filter: &FilterExpression,
     ) -> Result<Vec<usize>, ProximaDBError> {
         let mut candidates = Vec::new();
-        
+
         for (idx, rg) in footer.metadata.row_groups().iter().enumerate() {
             // Check column statistics to see if this row group can contain matching data
             let mut might_match = true;
-            
+
             for column_chunk in rg.columns() {
                 if let Some(stats) = column_chunk.statistics() {
                     // Use min/max statistics to prune
@@ -316,15 +332,15 @@ impl SharedParquetFormatReader {
                     }
                 }
             }
-            
+
             if might_match {
                 candidates.push(idx);
             }
         }
-        
+
         Ok(candidates)
     }
-    
+
     /// Read a single row group with smart column selection
     async fn read_row_group_smart(
         &self,
@@ -336,14 +352,14 @@ impl SharedParquetFormatReader {
         // Check if we have this row group cached locally
         // TODO: Check zero_copy_system cache for row group data
         // For now, always read fresh
-        
+
         let rg_metadata = &footer.metadata.row_groups()[rg_idx];
-        
+
         // For cloud files, download only needed columns
         if self.is_cloud_file(file_path) {
             // Calculate which column chunks we need
             let mut column_ranges = Vec::new();
-            
+
             for column_name in columns {
                 if let Some(column_chunk) = self.find_column_chunk(rg_metadata, column_name) {
                     column_ranges.push((
@@ -353,53 +369,61 @@ impl SharedParquetFormatReader {
                     ));
                 }
             }
-            
+
             // Download column chunks
             let mut column_data = HashMap::new();
-            
+
             for (col_name, offset, size) in column_ranges {
-                let data = self.filesystem
+                let data = self
+                    .filesystem
                     .get_filesystem(file_path)?
                     .read_range(file_path, offset as u64, size)
                     .await?;
-                
-                self.stats.bytes_downloaded.fetch_add(size, Ordering::Relaxed);
+
+                self.stats
+                    .bytes_downloaded
+                    .fetch_add(size, Ordering::Relaxed);
                 column_data.insert(col_name, data);
             }
-            
+
             // TODO: Cache in zero_copy_system for future use
-            
+
             // Decode and return
             return self.decode_column_data(column_data, rg_metadata);
         }
-        
+
         // For local files, read directly
-        self.read_local_row_group(file_path, rg_idx, columns, rg_metadata).await
+        self.read_local_row_group(file_path, rg_idx, columns, rg_metadata)
+            .await
     }
-    
+
     /// Invalidate cache during compaction
-    pub async fn invalidate_cache_for_collection(&self, collection_id: &str) -> Result<(), ProximaDBError> {
+    pub async fn invalidate_cache_for_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<(), ProximaDBError> {
         let mut invalidated = 0;
-        
+
         // Remove from footer cache
         // TODO: Implement cache invalidation using zero_copy_system
         // For now, track invalidation count
         invalidated = 0;
-        
+
         // TODO: Invalidate in zero_copy_system cache
         // self.zero_copy_system.invalidate_collection(collection_id).await?;
-        
-        self.stats.cache_invalidations.fetch_add(invalidated, Ordering::Relaxed);
-        
+
+        self.stats
+            .cache_invalidations
+            .fetch_add(invalidated, Ordering::Relaxed);
+
         info!(
             "Invalidated {} Parquet cache entries for collection {} during compaction",
-            invalidated,
-            collection_id
+            invalidated, collection_id
         );
-        
+
         Ok(())
     }
-    
+
     /// Optimized columnar scan for multiple files
     pub async fn optimize_columnar_scan(
         &self,
@@ -409,104 +433,112 @@ impl SharedParquetFormatReader {
     ) -> Result<Vec<RecordBatch>, ProximaDBError> {
         // Prefetch footers in parallel (small, always worth it)
         let footers = self.prefetch_footers_parallel(file_paths).await?;
-        
+
         // Build global pruning plan across all files
         let mut total_filtered = 0;
         let mut total_candidates = 0;
-        
+
         let mut file_plans = Vec::new();
-        
+
         for (file_path, footer) in file_paths.iter().zip(footers.iter()) {
             let candidates = if let Some(f) = filter {
                 self.filter_row_groups_by_statistics(footer, f)?
             } else {
                 (0..footer.metadata.num_row_groups()).collect()
             };
-            
+
             total_filtered += footer.metadata.num_row_groups() - candidates.len();
             total_candidates += candidates.len();
-            
+
             if !candidates.is_empty() {
                 file_plans.push((file_path.clone(), footer.clone(), candidates));
             }
         }
-        
+
         info!(
             "Columnar scan: filtered {}/{} row groups using statistics, downloading {} candidates",
             total_filtered,
             total_filtered + total_candidates,
             total_candidates
         );
-        
+
         // Execute reads in parallel
         let mut all_batches = Vec::new();
-        
+
         for (file_path, footer, row_groups) in file_plans {
             for rg_idx in row_groups {
-                if let Some(batch) = self.read_row_group_smart(
-                    &file_path,
-                    rg_idx,
-                    columns,
-                    &footer,
-                ).await? {
+                if let Some(batch) = self
+                    .read_row_group_smart(&file_path, rg_idx, columns, &footer)
+                    .await?
+                {
                     all_batches.push(batch);
                 }
             }
         }
-        
+
         Ok(all_batches)
     }
-    
+
     /// Prefetch footers in parallel
     async fn prefetch_footers_parallel(
         &self,
         file_paths: &[String],
     ) -> Result<Vec<Arc<ParquetFooterCache>>, ProximaDBError> {
         let mut futures = Vec::new();
-        
+
         for path in file_paths {
             futures.push(self.get_footer_smart(path));
         }
-        
+
         // Execute all footer fetches in parallel
         let results = futures::future::join_all(futures).await;
-        
+
         let mut footers = Vec::new();
         for result in results {
             footers.push(result?);
         }
-        
+
         Ok(footers)
     }
-    
+
     /// Check if file is on cloud storage
     fn is_cloud_file(&self, path: &str) -> bool {
-        path.starts_with("s3://") || 
-        path.starts_with("gs://") || 
-        path.starts_with("azure://") ||
-        path.starts_with("http://") ||
-        path.starts_with("https://")
+        path.starts_with("s3://")
+            || path.starts_with("gs://")
+            || path.starts_with("azure://")
+            || path.starts_with("http://")
+            || path.starts_with("https://")
     }
-    
+
     /// Parse Parquet footer from raw bytes
     fn parse_footer(&self, _data: &[u8]) -> Result<ParquetMetaData, ProximaDBError> {
         // Use parquet crate to parse footer
         // For now, return a placeholder - real implementation would parse the actual footer
-        Err(ProximaDBError::Internal("Footer parsing not yet implemented".to_string()))
+        Err(ProximaDBError::Internal(
+            "Footer parsing not yet implemented".to_string(),
+        ))
     }
-    
+
     /// Check if statistics match filter
-    fn statistics_match_filter(&self, _stats: &parquet::file::statistics::Statistics, _filter: &FilterExpression) -> bool {
+    fn statistics_match_filter(
+        &self,
+        _stats: &parquet::file::statistics::Statistics,
+        _filter: &FilterExpression,
+    ) -> bool {
         // Check min/max against filter predicates
         true // Placeholder
     }
-    
+
     /// Find column chunk in row group metadata
-    fn find_column_chunk(&self, _rg: &parquet::file::metadata::RowGroupMetaData, _column: &str) -> Option<&parquet::file::metadata::ColumnChunkMetaData> {
+    fn find_column_chunk(
+        &self,
+        _rg: &parquet::file::metadata::RowGroupMetaData,
+        _column: &str,
+    ) -> Option<&parquet::file::metadata::ColumnChunkMetaData> {
         // Find column chunk metadata
         None // Placeholder
     }
-    
+
     /// Decode column data into RecordBatch
     fn decode_column_data(
         &self,
@@ -516,7 +548,7 @@ impl SharedParquetFormatReader {
         // Decode Parquet column data
         Ok(None) // Placeholder
     }
-    
+
     /// Read local row group
     async fn read_local_row_group(
         &self,
@@ -528,14 +560,19 @@ impl SharedParquetFormatReader {
         // Read from local file
         Ok(None) // Placeholder
     }
-    
+
     /// Get local footer with mmap
-    async fn get_local_footer_with_mmap(&self, _file_path: &str) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
+    async fn get_local_footer_with_mmap(
+        &self,
+        _file_path: &str,
+    ) -> Result<Arc<ParquetFooterCache>, ProximaDBError> {
         // mmap footer for local files
         // For now, return an error - real implementation would use mmap
-        Err(ProximaDBError::Internal("Local footer mmap not yet implemented".to_string()))
+        Err(ProximaDBError::Internal(
+            "Local footer mmap not yet implemented".to_string(),
+        ))
     }
-    
+
     /// Get statistics
     pub fn get_stats(&self) -> ReaderStatsSummary {
         ReaderStatsSummary {
@@ -573,7 +610,7 @@ pub struct ReaderStatsSummary {
 impl LocalDiskCache {
     pub fn new(cache_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&cache_dir).ok();
-        
+
         Self {
             cache_dir,
             max_cache_size: 200 * 1024 * 1024 * 1024, // 200GB for columnar data
@@ -582,7 +619,7 @@ impl LocalDiskCache {
             cached_columns: DashMap::new(),
         }
     }
-    
+
     /// Get cached row group if available
     pub async fn row_group(
         &self,
@@ -608,10 +645,10 @@ impl LocalDiskCache {
                 }
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Cache row group data
     pub async fn put_row_group(
         &self,
@@ -620,48 +657,52 @@ impl LocalDiskCache {
         column_data: &HashMap<String, Vec<u8>>,
     ) -> Result<(), ProximaDBError> {
         let cache_file = self.cache_path_for_row_group(file_path, rg_idx);
-        
+
         // Ensure parent directory exists
         if let Some(parent) = cache_file.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(e)))?;
         }
-        
+
         // Serialize and write column data
         // ... implementation
-        
+
         // Update tracking
-        self.cached_row_groups.entry(file_path.to_string())
+        self.cached_row_groups
+            .entry(file_path.to_string())
             .or_insert_with(Vec::new)
             .push(rg_idx);
-        
-        self.cached_columns.entry(file_path.to_string())
+
+        self.cached_columns
+            .entry(file_path.to_string())
             .or_insert_with(HashMap::new)
             .insert(rg_idx, column_data.keys().cloned().collect());
-        
+
         Ok(())
     }
-    
+
     /// Invalidate cache for collection
     pub async fn invalidate_collection(&self, collection_id: &str) -> Result<(), ProximaDBError> {
         let mut files_to_remove = Vec::new();
-        
+
         // Find all cached files for this collection
         for entry in self.cached_row_groups.iter() {
             if entry.key().contains(collection_id) {
                 files_to_remove.push(entry.key().clone());
             }
         }
-        
+
         // Remove from cache
         for file_path in files_to_remove {
             self.cached_row_groups.remove(&file_path);
             self.cached_columns.remove(&file_path);
-            
+
             // Delete cache files
-            let pattern = self.cache_dir.join(format!("{}*", 
-                file_path.replace('/', "_").replace(':', "_")));
-            
+            let pattern = self.cache_dir.join(format!(
+                "{}*",
+                file_path.replace('/', "_").replace(':', "_")
+            ));
+
             // Remove all matching files
             if let Ok(paths) = glob::glob(pattern.to_str().unwrap()) {
                 for path in paths.flatten() {
@@ -669,18 +710,21 @@ impl LocalDiskCache {
                 }
             }
         }
-        
-        info!("Invalidated Parquet disk cache for collection {}", collection_id);
-        
+
+        info!(
+            "Invalidated Parquet disk cache for collection {}",
+            collection_id
+        );
+
         Ok(())
     }
-    
+
     fn cache_path_for_row_group(&self, file_path: &str, rg_idx: usize) -> PathBuf {
         let safe_name = file_path
             .replace('/', "_")
             .replace(':', "_")
             .replace("\\", "_");
-        
+
         self.cache_dir.join(format!("{}_rg_{}", safe_name, rg_idx))
     }
 }

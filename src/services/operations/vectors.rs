@@ -1,32 +1,32 @@
 //! Vector Operations Service - Centralized Search Orchestration
-//! 
+//!
 //! ARCHITECTURE OVERVIEW:
 //! ======================
 //! This service orchestrates all vector search operations across the system:
-//! 
+//!
 //! 1. **Unified Search Interface**: All storage engines implement `search_vectors_unified`
 //!    - VIPER: Uses columnar Parquet format with predicate pushdown
 //!    - NOVA: Extends Parquet with additional statistics for aggressive I/O pruning
 //!    - SST: Uses row-based format with bloom filters and hierarchical blocks
 //!    - SWIFT: Zero-overhead storage with progressive quantization
-//! 
+//!
 //! 2. **Shared Infrastructure**:
 //!    - `columnar/parquet_reader.rs`: Shared Parquet reader for VIPER and NOVA
 //!    - `compute/quantization/storage_engine.rs`: Common quantization for all engines
 //!    - `compute/distance_computation/engine.rs`: Unified distance computation
-//! 
+//!
 //! 3. **Progressive Search Pipeline**:
 //!    - Binary filtering (95% reduction)
 //!    - INT8 approximation (fast distance)
 //!    - PQ ranking (further refinement)
 //!    - Full precision (final results)
-//! 
+//!
 //! 4. **Engine-Specific Optimizations**:
 //!    - NOVA: Maintains additional stats beyond Parquet for aggressive pruning
 //!    - VIPER: Leverages Parquet column statistics and zone maps
 //!    - SST: Uses hierarchical bloom filters for block-level filtering
-//! 
-//! All searches flow through this service → storage engine's search_vectors_unified → 
+//!
+//! All searches flow through this service → storage engine's search_vectors_unified →
 //! engine-specific optimizations → results
 
 use anyhow::Result;
@@ -35,14 +35,17 @@ use tracing::{debug, info};
 
 use crate::storage::traits::{CollectionMetadataProvider, UnifiedStorageEngine};
 
+use crate::compute::quantization::types::{
+    BinaryQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
+    UnifiedQuantizationLevel,
+};
 use crate::core::VectorRecord;
-use crate::core::search::FilterExpression; 
+use crate::core::search::FilterExpression;
 use crate::proto::proximadb::Collection;
 use crate::query::unified_query_optimizer::{
-    UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,
-    ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType,
+    ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType, UnifiedExecutionPlan,
+    UnifiedQueryContext, UnifiedQueryOptimizer,
 };
-use crate::compute::quantization::types::{UnifiedQuantizationLevel, QuantizationLevel, ProductQuantization, BinaryQuantization, ScalarQuantization};
 
 fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {
     let level_type = match strategy.quantization_type {
@@ -101,24 +104,24 @@ impl Default for UnifiedSearchConfig {
         }
     }
 }
+use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryCache, QueryKey};
 use crate::storage::engines::impls::sst::SstStorage;
-use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey, CachedQueryResult};
 use std::time::SystemTime;
 
 /// Updated Vector Operations Service using consolidated optimizer
 pub struct VectorOperationsService {
     /// Storage engine - using concrete type for now due to trait object safety
     storage_engine: Arc<SstStorage>,
-    
+
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
-    
+
     /// SINGLE unified query optimizer (replaced two separate optimizers)
     query_optimizer: Arc<UnifiedQueryOptimizer>,
-    
+
     /// Collection cache (unchanged)
     collection_cache: Arc<dashmap::DashMap<String, Arc<Collection>>>,
-    
+
     /// Query result cache - unified for all query sources (SQL, REST API, gRPC)
     query_cache: Arc<QueryCache>,
 
@@ -133,17 +136,20 @@ impl VectorOperationsService {
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
         axis_index_manager: Arc<crate::index::AxisManager>,
     ) -> Self {
-        info!("🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer and two-stage search");
+        info!(
+            "🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer and two-stage search"
+        );
         info!("   ✅ Eliminated ~650 lines of duplicate optimization code");
         info!("   ✅ Single optimizer handles both search and filtering");
         info!("   ✅ Progressive quantization-aware search enabled");
         info!("   ✅ Two-stage search: WAL/memtable → Storage engine");
-        
-        let optimizer_config = crate::query::unified_query_optimizer::UnifiedOptimizerConfig::default();
-        
+
+        let optimizer_config =
+            crate::query::unified_query_optimizer::UnifiedOptimizerConfig::default();
+
         // Initialize query cache with 512MB memory budget (configurable)
         let query_cache = Arc::new(QueryCache::new(512));
-        
+
         Self {
             storage_engine,
             wal_manager,
@@ -153,14 +159,14 @@ impl VectorOperationsService {
             axis_index_manager,
         }
     }
-    
+
     /// Execute progressive quantization-aware search
     /// Uses the formula: k_stage = k · Π(1/r_i) for all subsequent stages
     /// UNIFIED SEARCH METHOD - Single entry point for ALL search operations
-    /// 
+    ///
     /// This is THE search method. All search requests (SQL, REST, gRPC) should flow through here.
     /// It replaces: progressive_search, search_vectors, search_vectors_with_filters
-    /// 
+    ///
     /// Flow: SQL/REST/gRPC -> UnifiedHandlers -> THIS METHOD -> Storage/Index
     pub async fn unified_search(
         &self,
@@ -171,7 +177,7 @@ impl VectorOperationsService {
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
         let config = config.clone();
-        
+
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
         let cache_key = QueryKey::new(
@@ -180,20 +186,28 @@ impl VectorOperationsService {
             k as u32,
             filter_str.as_deref(),
         );
-        
+
         // Check cache first
         if let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await {
-            debug!("✅ Cache hit for unified search in collection {}", collection_id);
+            debug!(
+                "✅ Cache hit for unified search in collection {}",
+                collection_id
+            );
             return Ok(cached);
         }
-        
-        let progressive_enabled = config.as_ref().map(|c| c.progressive_search).unwrap_or(false);
-        info!("🔍 Starting unified search for collection {} (progressive: {})", 
-              collection_id, progressive_enabled);
-        
+
+        let progressive_enabled = config
+            .as_ref()
+            .map(|c| c.progressive_search)
+            .unwrap_or(false);
+        info!(
+            "🔍 Starting unified search for collection {} (progressive: {})",
+            collection_id, progressive_enabled
+        );
+
         // Get collection configuration
         let _collection = self.get_or_load_collection(collection_id).await?;
-        
+
         // Execute search based on configuration
         let results = if progressive_enabled {
             // Progressive search with configured recall levels
@@ -203,7 +217,8 @@ impl VectorOperationsService {
                 k,
                 filter,
                 config.unwrap_or_default(),
-            ).await?
+            )
+            .await?
         } else {
             // Direct search without progressive stages
             self.execute_search_internal(
@@ -211,22 +226,27 @@ impl VectorOperationsService {
                 query_vector,
                 k,
                 filter,
-                config.as_ref().map(|c| c.optimization_goal.clone()).unwrap_or_default(),
-            ).await?
+                config
+                    .as_ref()
+                    .map(|c| c.optimization_goal.clone())
+                    .unwrap_or_default(),
+            )
+            .await?
         };
-        
+
         // Cache the results - convert to CachedQueryResult
         let cached_result = crate::storage::cache::specialized::query_cache::CachedQueryResult {
             results: results.clone(),
             cached_at: std::time::SystemTime::now(),
             file_dependencies: Vec::new(), // No specific file dependencies for this query
         };
-        self.query_cache.put_with_hooks(cache_key, cached_result).await;
-        
+        self.query_cache
+            .put_with_hooks(cache_key, cached_result)
+            .await;
+
         Ok(results)
     }
-    
-    
+
     /// Execute progressive search with multiple stages
     async fn execute_progressive_search(
         &self,
@@ -236,8 +256,11 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: UnifiedSearchConfig,
     ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
-        debug!("🔍 Executing progressive search for collection {}", collection_id);
-        
+        debug!(
+            "🔍 Executing progressive search for collection {}",
+            collection_id
+        );
+
         // Create search parameters with progressive settings
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
@@ -261,7 +284,7 @@ impl VectorOperationsService {
             progressive_recalls: config.progressive_recalls.clone(),
             optimization_hint: config.scenario.clone(),
         };
-        
+
         // Use the internal execution with progressive configuration
         self.execute_search_internal(
             collection_id,
@@ -269,9 +292,10 @@ impl VectorOperationsService {
             k,
             filter,
             config.optimization_goal,
-        ).await
+        )
+        .await
     }
-    
+
     /// Internal implementation for search execution
     async fn execute_search_internal(
         &self,
@@ -281,8 +305,11 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         optimization_goal: OptimizationGoal,
     ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
-        debug!("🔍 Executing unified search+filter query for collection {}", collection_id);
-        
+        debug!(
+            "🔍 Executing unified search+filter query for collection {}",
+            collection_id
+        );
+
         // Create cache key for this query
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
         let cache_key = QueryKey::new(
@@ -291,16 +318,16 @@ impl VectorOperationsService {
             top_k as u32,
             filter_str.as_deref(),
         );
-        
+
         // Check cache first (5 minute TTL)
         if let Some(cached_results) = self.query_cache.get_if_fresh(&cache_key, 300).await {
             debug!("✅ Cache hit for query in collection {}", collection_id);
             return Ok(cached_results);
         }
-        
+
         // Get collection
         let collection = self.get_or_load_collection(collection_id).await?;
-        
+
         // Create unified context (combines what used to be two separate contexts)
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
@@ -326,7 +353,7 @@ impl VectorOperationsService {
             progressive_recalls: None,
             optimization_hint: Some(optimization_goal.to_string()),
         };
-        
+
         let query_vector_clone = query_vector.clone();
         let query_vectors = vec![query_vector_clone];
         let context = UnifiedQueryContext {
@@ -339,36 +366,43 @@ impl VectorOperationsService {
             total_columns: self.get_column_count(collection_id).await?,
             query_vectors: Some(&query_vectors),
         };
-        
+
         // SINGLE optimization call (replaced two separate optimization calls)
         let execution_plan = self.query_optimizer.optimize_query(context).await?;
-        
-        debug!("📋 Unified execution plan created with {} steps", execution_plan.execution_steps.len());
-        
+
+        debug!(
+            "📋 Unified execution plan created with {} steps",
+            execution_plan.execution_steps.len()
+        );
+
         // Execute the unified plan with search parameters
-        let internal_results = self.execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter).await?;
-        
+        let internal_results = self
+            .execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter)
+            .await?;
+
         // Convert InternalSearchResult to proto SearchResult at API boundary
         let proto_results = vec![self.convert_to_proto_search_result(
             internal_results,
             collection_id,
-            true,  // include_vectors
-            true,  // include_metadata  
-            true,  // include_source
+            true, // include_vectors
+            true, // include_metadata
+            true, // include_source
         )];
-        
+
         // Cache the results for future queries
         let cached_result = CachedQueryResult {
             results: proto_results.clone(),
             cached_at: SystemTime::now(),
             file_dependencies: Vec::new(), // TODO: Track file dependencies for invalidation
         };
-        self.query_cache.put_with_hooks(cache_key, cached_result).await;
+        self.query_cache
+            .put_with_hooks(cache_key, cached_result)
+            .await;
         debug!("💾 Cached query results for collection {}", collection_id);
-        
+
         Ok(proto_results)
     }
-    
+
     /// Execute unified plan - NEW capability for combined operations
     async fn execute_unified_plan(
         &self,
@@ -380,53 +414,61 @@ impl VectorOperationsService {
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results: Vec<crate::core::search::InternalSearchResult> = Vec::new();
         let mut intermediate_results: Option<Vec<crate::core::search::InternalSearchResult>> = None;
-        
+
         for step in plan.execution_steps {
             match step {
                 // NEW: Combined filter+search execution (not possible before consolidation!)
-                ExecutionStep::CombinedFilterSearch { 
+                ExecutionStep::CombinedFilterSearch {
                     filter_pushdown,
                     search_method,
                     early_termination,
                 } => {
                     debug!("⚡ Executing COMBINED filter+search (15-25% performance gain)");
-                    
+
                     // Push filters down to storage layer for optimal performance
                     for pushdown_op in filter_pushdown {
-                        self.apply_filter_pushdown(collection_id, pushdown_op).await?;
+                        self.apply_filter_pushdown(collection_id, pushdown_op)
+                            .await?;
                     }
-                    
+
                     // Execute search with filter-aware optimization
-                    results = self.execute_filtered_search(
-                        collection_id,
-                        search_method,
-                        early_termination,
-                        intermediate_results.as_ref(),
-                        query_vector.clone(),
-                        top_k,
-                        filter.clone(),
-                    ).await?;
+                    results = self
+                        .execute_filtered_search(
+                            collection_id,
+                            search_method,
+                            early_termination,
+                            intermediate_results.as_ref(),
+                            query_vector.clone(),
+                            top_k,
+                            filter.clone(),
+                        )
+                        .await?;
                 }
-                
+
                 // Traditional separate filter execution
-                ExecutionStep::MetadataFilter { 
+                ExecutionStep::MetadataFilter {
                     conditions,
                     execution_method,
                     estimated_selectivity,
                     estimated_cost,
                 } => {
-                    debug!("🔍 Executing metadata filter (selectivity: {:.2})", estimated_selectivity);
-                    
-                    let filtered = self.execute_filter(
-                        collection_id,
-                        conditions,
-                        execution_method,
-                        intermediate_results.as_ref(),
-                    ).await?;
-                    
+                    debug!(
+                        "🔍 Executing metadata filter (selectivity: {:.2})",
+                        estimated_selectivity
+                    );
+
+                    let filtered = self
+                        .execute_filter(
+                            collection_id,
+                            conditions,
+                            execution_method,
+                            intermediate_results.as_ref(),
+                        )
+                        .await?;
+
                     intermediate_results = Some(filtered);
                 }
-                
+
                 // Traditional separate search execution
                 ExecutionStep::VectorSearch {
                     execution_method,
@@ -434,52 +476,57 @@ impl VectorOperationsService {
                     candidates,
                 } => {
                     debug!("🎯 Executing vector search (candidates: {})", candidates);
-                    
-                    let search_results = self.execute_search(
-                        collection_id,
-                        execution_method,
-                        quantization_strategy,
-                        candidates,
-                        intermediate_results.as_ref(),
-                    ).await?;
-                    
+
+                    let search_results = self
+                        .execute_search(
+                            collection_id,
+                            execution_method,
+                            quantization_strategy,
+                            candidates,
+                            intermediate_results.as_ref(),
+                        )
+                        .await?;
+
                     results = search_results;
                 }
-                
+
                 // Index lookup optimization
                 ExecutionStep::IndexLookup {
                     index_type,
                     lookup_params,
                 } => {
                     debug!("📚 Using index lookup ({:?})", index_type);
-                    
-                    let index_results = self.execute_index_lookup(
-                        collection_id,
-                        index_type,
-                        lookup_params,
-                    ).await?;
-                    
+
+                    let index_results = self
+                        .execute_index_lookup(collection_id, index_type, lookup_params)
+                        .await?;
+
                     intermediate_results = Some(index_results);
                 }
-                
+
                 // Bloom filter pre-filtering
                 ExecutionStep::BloomFilterCheck {
                     filter_type,
                     expected_false_positive_rate,
                 } => {
-                    debug!("🌸 Applying bloom filter (FPR: {:.4})", expected_false_positive_rate);
-                    
-                    let bloom_filtered = self.apply_bloom_filter(
-                        collection_id,
-                        filter_type,
-                        intermediate_results.as_ref(),
-                    ).await?;
-                    
+                    debug!(
+                        "🌸 Applying bloom filter (FPR: {:.4})",
+                        expected_false_positive_rate
+                    );
+
+                    let bloom_filtered = self
+                        .apply_bloom_filter(
+                            collection_id,
+                            filter_type,
+                            intermediate_results.as_ref(),
+                        )
+                        .await?;
+
                     intermediate_results = Some(bloom_filtered);
                 }
             }
         }
-        
+
         // Return final results or intermediate if no final step produced results
         if results.is_empty() {
             // Return intermediate results directly
@@ -492,7 +539,7 @@ impl VectorOperationsService {
             Ok(results)
         }
     }
-    
+
     /// Apply filter pushdown to storage layer - NEW optimization!
     async fn apply_filter_pushdown(
         &self,
@@ -500,22 +547,31 @@ impl VectorOperationsService {
         pushdown_op: crate::query::unified_query_optimizer::FilterPushdownOperation,
     ) -> Result<()> {
         use crate::query::unified_query_optimizer::FilterPushdownOperation;
-        
+
         match pushdown_op {
-            FilterPushdownOperation::StorageLevel { filter, estimated_reduction } => {
-                debug!("⬇️ Pushing filter to storage (reduction: {:.1}%)", estimated_reduction * 100.0);
+            FilterPushdownOperation::StorageLevel {
+                filter,
+                estimated_reduction,
+            } => {
+                debug!(
+                    "⬇️ Pushing filter to storage (reduction: {:.1}%)",
+                    estimated_reduction * 100.0
+                );
                 // Convert FilterCondition to UnifiedMetadataFilter
                 let unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
                     conditions: vec![filter],
                     logic: crate::query::unified_query_optimizer::FilterLogic::And,
-                    optimization_hints: crate::query::unified_query_optimizer::FilterOptimizationHints {
-                        expected_selectivity: Some(estimated_reduction),
-                        preferred_index: None,
-                        allow_parallel: true,
-                    },
+                    optimization_hints:
+                        crate::query::unified_query_optimizer::FilterOptimizationHints {
+                            expected_selectivity: Some(estimated_reduction),
+                            preferred_index: None,
+                            allow_parallel: true,
+                        },
                 };
                 // Configure storage engine to apply filter during scan
-                self.storage_engine.set_scan_filter(collection_id, &unified_filter).await?;
+                self.storage_engine
+                    .set_scan_filter(collection_id, &unified_filter)
+                    .await?;
             }
             FilterPushdownOperation::IndexLevel { filter, index_name } => {
                 debug!("⬇️ Pushing filter to index: {:?}", index_name);
@@ -523,22 +579,25 @@ impl VectorOperationsService {
                 let unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
                     conditions: vec![filter],
                     logic: crate::query::unified_query_optimizer::FilterLogic::And,
-                    optimization_hints: crate::query::unified_query_optimizer::FilterOptimizationHints {
-                        expected_selectivity: None,
-                        preferred_index: index_name.clone(),
-                        allow_parallel: true,
-                    },
+                    optimization_hints:
+                        crate::query::unified_query_optimizer::FilterOptimizationHints {
+                            expected_selectivity: None,
+                            preferred_index: index_name.clone(),
+                            allow_parallel: true,
+                        },
                 };
                 // Configure index to apply filter during lookup
                 if let Some(index) = index_name {
-                    self.storage_engine.set_index_filter(collection_id, &index, &unified_filter).await?;
+                    self.storage_engine
+                        .set_index_filter(collection_id, &index, &unified_filter)
+                        .await?;
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Execute combined filtered search with TWO-STAGE search architecture
     async fn execute_filtered_search(
         &self,
@@ -550,10 +609,13 @@ impl VectorOperationsService {
         top_k: usize,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        info!("🎯 Executing TWO-STAGE optimized filter+search for collection {}", collection_id);
+        info!(
+            "🎯 Executing TWO-STAGE optimized filter+search for collection {}",
+            collection_id
+        );
         info!("   Stage 1: WAL/memtable search for recent unflushed vectors");
         info!("   Stage 2: Storage engine search for flushed/compacted vectors");
-        
+
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
         let distance_metric = match collection.config.as_ref() {
@@ -561,25 +623,36 @@ impl VectorOperationsService {
                 .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine),
             None => crate::proto::proximadb::DistanceMetric::Cosine,
         };
-        
+
         // Stage 1: Search WAL/memtable for unflushed vectors
-        debug!("🔍 Stage 1: Searching WAL/memtable for collection {} with {} filter conditions", 
-               collection_id, 
-               if filter.is_some() { "WITH" } else { "NO" });
-        let wal_results = self.wal_manager.search_unflushed_vectors(
+        debug!(
+            "🔍 Stage 1: Searching WAL/memtable for collection {} with {} filter conditions",
             collection_id,
-            &query_vector,
-            top_k * 2, // Get more candidates from WAL to merge later
-            distance_metric,
-            filter.as_ref(), // Pass the FilterExpression directly
-            true, // include_vectors
-            true, // include_metadata
-        ).await?;
-        info!("✅ Stage 1 complete: Found {} unflushed vectors from WAL", wal_results.len());
-        
+            if filter.is_some() { "WITH" } else { "NO" }
+        );
+        let wal_results = self
+            .wal_manager
+            .search_unflushed_vectors(
+                collection_id,
+                &query_vector,
+                top_k * 2, // Get more candidates from WAL to merge later
+                distance_metric,
+                filter.as_ref(), // Pass the FilterExpression directly
+                true,            // include_vectors
+                true,            // include_metadata
+            )
+            .await?;
+        info!(
+            "✅ Stage 1 complete: Found {} unflushed vectors from WAL",
+            wal_results.len()
+        );
+
         // Stage 2: Search storage engine for flushed vectors
-        debug!("🔍 Stage 2: Searching storage engine for collection {}", collection_id);
-        
+        debug!(
+            "🔍 Stage 2: Searching storage engine for collection {}",
+            collection_id
+        );
+
         // Create search context for storage engine with same filter expression
         let search_params = crate::core::search::SearchParams {
             query_vectors: Some(vec![query_vector.clone()]),
@@ -587,7 +660,7 @@ impl VectorOperationsService {
             top_k: Some(top_k),
             distance_metric: Some(distance_metric),
             filter_expression: filter.clone(), // Pass the same FilterExpression to storage engine
-            filters: None, // Legacy field - using filter_expression instead
+            filters: None,                     // Legacy field - using filter_expression instead
             accuracy_threshold: None,
             include_expired: Some(false),
             timeout_ms: None,
@@ -603,39 +676,50 @@ impl VectorOperationsService {
             progressive_recalls: None,
             optimization_hint: None,
         };
-        
+
         // Get the collection from cache for StorageQueryContext
         let collection = self.get_or_load_collection(collection_id).await?;
-        
+
         let search_context = crate::storage::traits::StorageQueryContext::new(
             Arc::new(search_params),
             collection.clone(),
         );
-        
+
         // Call the trait method through the Arc
-        let storage_results = self.storage_engine.search_vectors_unified(&search_context).await?;
-        info!("✅ Stage 2 complete: Found {} vectors from storage", storage_results.len());
-        
+        let storage_results = self
+            .storage_engine
+            .search_vectors_unified(&search_context)
+            .await?;
+        info!(
+            "✅ Stage 2 complete: Found {} vectors from storage",
+            storage_results.len()
+        );
+
         // Merge and rank results from both stages
         let mut all_results = Vec::with_capacity(wal_results.len() + storage_results.len());
         all_results.extend(wal_results);
         all_results.extend(storage_results);
-        
+
         // Sort by similarity score in descending order (higher = more similar)
         // All engines now return standardized similarity scores via InternalSearchResult::from_distance_standard
         all_results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         // Take top-k
         all_results.truncate(top_k);
-        
-        info!("✅ TWO-STAGE search complete: Returning {} results", all_results.len());
+
+        info!(
+            "✅ TWO-STAGE search complete: Returning {} results",
+            all_results.len()
+        );
         Ok(all_results)
     }
-    
+
     // Helper methods (simplified for demonstration)
-    
+
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
         let collection_id_string = collection_id.to_string();
         if let Some(cached) = self.collection_cache.get(&collection_id_string) {
@@ -644,33 +728,38 @@ impl VectorOperationsService {
             // Load from storage
             let collection = self.storage_engine.collection(collection_id).await?;
             let arc_collection = Arc::new(collection);
-            self.collection_cache.insert(collection_id_string, arc_collection.clone());
+            self.collection_cache
+                .insert(collection_id_string, arc_collection.clone());
             Ok(arc_collection)
         }
     }
-    
+
     async fn get_available_files(&self, collection_id: &str) -> Result<Vec<String>> {
-        self.storage_engine.list_collection_files(collection_id).await
+        self.storage_engine
+            .list_collection_files(collection_id)
+            .await
     }
-    
+
     async fn get_vector_count(&self, collection_id: &str) -> Result<usize> {
         let stats = self.storage_engine.collection_stats(collection_id)?;
         // Stats is a serde_json::Value, extract the vector count
-        let count = stats.get("vector_count")
+        let count = stats
+            .get("vector_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
         Ok(count)
     }
-    
+
     async fn get_column_count(&self, collection_id: &str) -> Result<usize> {
         let meta = self.storage_engine.collection_metadata(collection_id)?;
         // Meta is a serde_json::Value, extract the column count
-        let count = meta.get("column_count")
+        let count = meta
+            .get("column_count")
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as usize; // Default to 10 columns
         Ok(count)
     }
-    
+
     // Stub implementations for execution methods
     async fn execute_filter(
         &self,
@@ -679,7 +768,10 @@ impl VectorOperationsService {
         _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
         _input: Option<&Vec<crate::core::search::InternalSearchResult>>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        debug!("🔍 Executing metadata filter for collection {}", collection_id);
+        debug!(
+            "🔍 Executing metadata filter for collection {}",
+            collection_id
+        );
 
         let collection = self.get_or_load_collection(collection_id).await?;
 
@@ -689,21 +781,27 @@ impl VectorOperationsService {
             .map(|condition| {
                 use crate::query::unified_query_optimizer::FilterCondition;
                 match condition {
-                    FilterCondition::Equals { column, value } => crate::core::search::FilterExpression::Comparison {
-                        field: column,
-                        operator: crate::core::search::ComparisonOperator::Equals,
-                        value,
-                    },
-                    FilterCondition::NotEquals { column, value } => crate::core::search::FilterExpression::Comparison {
-                        field: column,
-                        operator: crate::core::search::ComparisonOperator::NotEquals,
-                        value,
-                    },
-                    FilterCondition::GreaterThan { column, value } => crate::core::search::FilterExpression::Comparison {
-                        field: column,
-                        operator: crate::core::search::ComparisonOperator::GreaterThan,
-                        value,
-                    },
+                    FilterCondition::Equals { column, value } => {
+                        crate::core::search::FilterExpression::Comparison {
+                            field: column,
+                            operator: crate::core::search::ComparisonOperator::Equals,
+                            value,
+                        }
+                    }
+                    FilterCondition::NotEquals { column, value } => {
+                        crate::core::search::FilterExpression::Comparison {
+                            field: column,
+                            operator: crate::core::search::ComparisonOperator::NotEquals,
+                            value,
+                        }
+                    }
+                    FilterCondition::GreaterThan { column, value } => {
+                        crate::core::search::FilterExpression::Comparison {
+                            field: column,
+                            operator: crate::core::search::ComparisonOperator::GreaterThan,
+                            value,
+                        }
+                    }
                     // Default case for other variants - map them to Equals for simplicity
                     _ => crate::core::search::FilterExpression::Comparison {
                         field: "unknown".to_string(),
@@ -745,12 +843,15 @@ impl VectorOperationsService {
         );
 
         // Call the storage engine to perform filtering
-        let results = self.storage_engine.search_vectors_unified(&search_context).await?;
+        let results = self
+            .storage_engine
+            .search_vectors_unified(&search_context)
+            .await?;
 
         debug!("✅ Metadata filter returned {} results", results.len());
         Ok(results)
     }
-    
+
     async fn execute_search(
         &self,
         collection_id: &str,
@@ -759,7 +860,10 @@ impl VectorOperationsService {
         candidates: usize,
         input: Option<&Vec<crate::core::search::InternalSearchResult>>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        debug!("🎯 Executing vector search for collection {} with method {:?}", collection_id, method);
+        debug!(
+            "🎯 Executing vector search for collection {} with method {:?}",
+            collection_id, method
+        );
 
         let collection = self.get_or_load_collection(collection_id).await?;
 
@@ -793,19 +897,25 @@ impl VectorOperationsService {
         );
 
         // Call the storage engine to perform search
-        let results = self.storage_engine.search_vectors_unified(&search_context).await?;
+        let results = self
+            .storage_engine
+            .search_vectors_unified(&search_context)
+            .await?;
 
         debug!("✅ Vector search returned {} results", results.len());
         Ok(results)
     }
-    
+
     async fn execute_index_lookup(
         &self,
         collection_id: &str,
         index_type: crate::query::unified_query_optimizer::Index,
         params: crate::query::unified_query_optimizer::IndexLookupParams,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        debug!("📚 Executing index lookup for collection {} with index type {:?}", collection_id, index_type);
+        debug!(
+            "📚 Executing index lookup for collection {} with index type {:?}",
+            collection_id, index_type
+        );
 
         // Convert IndexLookupParams to SearchParams
         let search_params = crate::core::search::SearchParams {
@@ -834,18 +944,22 @@ impl VectorOperationsService {
         // Convert SearchParams to HybridQuery for AxisManager
         let vector_query = if let Some(vectors) = search_params.query_vectors {
             if let Some(vector) = vectors.first() {
-                Some(crate::index::axis::management::manager::VectorQuery::Dense {
-                    vector: vector.clone(),
-                    similarity_threshold: 0.0,
-                })
+                Some(
+                    crate::index::axis::management::manager::VectorQuery::Dense {
+                        vector: vector.clone(),
+                        similarity_threshold: 0.0,
+                    },
+                )
             } else {
                 None
             }
         } else if let Some(vector) = search_params.vector {
-            Some(crate::index::axis::management::manager::VectorQuery::Dense {
-                vector,
-                similarity_threshold: 0.0,
-            })
+            Some(
+                crate::index::axis::management::manager::VectorQuery::Dense {
+                    vector,
+                    similarity_threshold: 0.0,
+                },
+            )
         } else {
             None
         };
@@ -863,7 +977,8 @@ impl VectorOperationsService {
         let query_result = self.axis_index_manager.query(hybrid_query).await?;
 
         // Convert QueryResult to Vec<InternalSearchResult>
-        let results: Vec<crate::core::search::InternalSearchResult> = query_result.results
+        let results: Vec<crate::core::search::InternalSearchResult> = query_result
+            .results
             .into_iter()
             .map(|scored_result| crate::core::search::InternalSearchResult {
                 id: scored_result.vector_id.clone(),
@@ -889,14 +1004,17 @@ impl VectorOperationsService {
         debug!("✅ Index lookup returned {} results", results.len());
         Ok(results)
     }
-    
+
     async fn apply_bloom_filter(
         &self,
         collection_id: &str,
         filter_type: crate::query::unified_query_optimizer::BloomFilter,
         input: Option<&Vec<crate::core::search::InternalSearchResult>>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        debug!("🌸 Applying bloom filter {:?} for collection {}", filter_type, collection_id);
+        debug!(
+            "🌸 Applying bloom filter {:?} for collection {}",
+            filter_type, collection_id
+        );
 
         // For now, just return the input as is. Actual bloom filter application
         // would involve checking each InternalSearchResult against the bloom filter
@@ -908,7 +1026,7 @@ impl VectorOperationsService {
             Ok(Vec::new())
         }
     }
-    
+
     // Additional service methods
     pub async fn handle_vector_batch_proto_vec(
         &self,
@@ -916,28 +1034,31 @@ impl VectorOperationsService {
         vectors: Vec<VectorRecord>,
     ) -> Result<Vec<u8>> {
         // Validate vectors before insertion
-        self.validate_vectors_for_insert(collection_id, &vectors).await?;
-        
+        self.validate_vectors_for_insert(collection_id, &vectors)
+            .await?;
+
         // Convert to Arc for zero-copy sharing
         let vectors_arc = Arc::new(vectors);
-        
+
         // Write vectors to WAL
         let start = std::time::Instant::now();
-        let batch_result = self.wal_manager.write_vector_batch_native_arc(
-            collection_id,
-            vectors_arc.clone(),
-        ).await?;
-        
+        let batch_result = self
+            .wal_manager
+            .write_vector_batch_native_arc(collection_id, vectors_arc.clone())
+            .await?;
+
         let duration_micros = start.elapsed().as_micros() as i64;
-        
+
         // Collect vector IDs for response
-        let vector_ids: Vec<String> = vectors_arc.iter()
-            .map(|v| v.id.clone())
-            .collect();
-        
-        debug!("✅ Wrote {} vectors to WAL for collection {} in {}μs", 
-               vector_ids.len(), collection_id, duration_micros);
-        
+        let vector_ids: Vec<String> = vectors_arc.iter().map(|v| v.id.clone()).collect();
+
+        debug!(
+            "✅ Wrote {} vectors to WAL for collection {} in {}μs",
+            vector_ids.len(),
+            collection_id,
+            duration_micros
+        );
+
         let response = serde_json::json!({
             "success": true,
             "vector_ids": vector_ids,
@@ -945,40 +1066,46 @@ impl VectorOperationsService {
             "duration_micros": duration_micros,
             "batch_ids": batch_result,
         });
-        
+
         Ok(serde_json::to_vec(&response)?)
     }
-    
+
     pub async fn insert_vectors_direct(
         &self,
         collection_id: &str,
         vectors: Arc<Vec<VectorRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
         // Validate vectors before insertion
-        self.validate_vectors_for_insert(collection_id, &vectors).await?;
-        
+        self.validate_vectors_for_insert(collection_id, &vectors)
+            .await?;
+
         // Write vectors to WAL
         let start = std::time::Instant::now();
-        let batch_result = self.wal_manager.write_vector_batch_native_arc(
-            collection_id,
-            vectors.clone(),
-        ).await?;
-        
+        let batch_result = self
+            .wal_manager
+            .write_vector_batch_native_arc(collection_id, vectors.clone())
+            .await?;
+
         let duration_micros = start.elapsed().as_micros() as i64;
-        let bytes_written = vectors.iter()
+        let bytes_written = vectors
+            .iter()
             .map(|v| v.vector.len() * 4 + v.id.len() + 32) // Approximate size
             .sum::<usize>() as i64;
-        
-        debug!("✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs", 
-               vectors.len(), collection_id, duration_micros);
-        
+
+        debug!(
+            "✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs",
+            vectors.len(),
+            collection_id,
+            duration_micros
+        );
+
         Ok(crate::storage::engines::InsertResult {
             entries_written: vectors.len() as i64,
             duration_micros,
             bytes_written,
         })
     }
-    
+
     /// Validate vectors for insertion based on collection requirements
     /// OPTIMIZED: Purely in-memory validation with inline operations
     #[inline(always)]
@@ -989,53 +1116,59 @@ impl VectorOperationsService {
     ) -> Result<()> {
         // Get collection configuration - this is cached after first load
         let collection = self.get_or_load_collection(collection_id).await?;
-        
+
         // Fast path: extract config once
         let config = match &collection.config {
             Some(c) => c,
             None => return Ok(()), // No config, no validation needed
         };
-        
+
         // INLINE: Check if IDs are required (pure computation, no I/O)
         let has_indexes = !config.index_configs.is_empty();
         // TODO: Add RAPTOR engine check when it's added to proto StorageEngine enum
         let requires_id = has_indexes; // For now, only require IDs when indexes are configured
-        
+
         let expected_dimension = config.dimension as usize;
-        
+
         // Fast path: no validation needed
         if !requires_id && expected_dimension == 0 {
             return Ok(());
         }
-        
+
         // Pre-allocate HashSet with capacity hint for better performance
         // Use &str references to avoid cloning strings
         let mut seen_ids = if requires_id {
-            Some(std::collections::HashSet::<&str>::with_capacity(vectors.len()))
+            Some(std::collections::HashSet::<&str>::with_capacity(
+                vectors.len(),
+            ))
         } else {
             None
         };
-        
+
         // Single pass validation loop - check everything at once
         for (i, vector) in vectors.iter().enumerate() {
             // INLINE: Dimension check (simple integer comparison)
             if expected_dimension > 0 && vector.vector.len() != expected_dimension {
                 return Err(anyhow::anyhow!(
                     "Vector at index {} has dimension {} but collection '{}' expects dimension {}",
-                    i, vector.vector.len(), collection_id, expected_dimension
+                    i,
+                    vector.vector.len(),
+                    collection_id,
+                    expected_dimension
                 ));
             }
-            
+
             // INLINE: ID validation (only if required)
             if let Some(ref mut seen) = seen_ids {
                 // Check ID exists and is not empty (single byte check)
                 if vector.id.is_empty() {
                     return Err(anyhow::anyhow!(
                         "Vector at index {} has empty ID. Collection '{}' requires valid IDs (has indexing or uses RAPTOR engine)",
-                        i, collection_id
+                        i,
+                        collection_id
                     ));
                 }
-                
+
                 // Check ID length (simple length comparison)
                 if vector.id.len() > 256 {
                     return Err(anyhow::anyhow!(
@@ -1043,7 +1176,7 @@ impl VectorOperationsService {
                         vector.id
                     ));
                 }
-                
+
                 // Check for duplicate IDs (HashSet O(1) operation)
                 // Use string slice reference to avoid any allocation
                 if !seen.insert(vector.id.as_str()) {
@@ -1054,10 +1187,10 @@ impl VectorOperationsService {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn vector(
         &self,
         collection_id: &str,
@@ -1066,7 +1199,11 @@ impl VectorOperationsService {
         include_metadata: bool,
     ) -> Result<Option<VectorRecord>> {
         // First check WAL for unflushed vectors
-        if let Some(record) = self.wal_manager.search_vector_by_id(collection_id, &vector_id.to_string()).await? {
+        if let Some(record) = self
+            .wal_manager
+            .search_vector_by_id(collection_id, &vector_id.to_string())
+            .await?
+        {
             // Apply include flags
             let mut result = record.clone();
             if !include_vector {
@@ -1077,50 +1214,51 @@ impl VectorOperationsService {
             }
             return Ok(Some(result));
         }
-        
+
         // Storage engine doesn't have direct vector retrieval currently
         // This would require iteration through SST files which is not yet implemented
         // For now, returning None if not found in WAL
         // Future: Implement SST iteration for single vector retrieval
         Ok(None)
     }
-    
-    
+
     pub async fn force_flush_all(&self) -> Result<()> {
         info!("🔄 Force flushing all collections");
-        
+
         // Flush the WAL manager
         self.wal_manager.force_flush_all().await?;
-        
+
         // Trigger compaction in storage engine
         // TODO: Implement compact_all in storage engine
         // self.storage_engine.compact_all().await?;
-        
+
         info!("✅ Force flush all completed");
         Ok(())
     }
-    
+
     pub async fn force_flush_collection(&self, collection_id: &str) -> Result<()> {
         info!("🔄 Force flushing collection: {}", collection_id);
-        
+
         // Flush the WAL manager for this collection
-        self.wal_manager.force_flush_collection(collection_id, None).await?;
-        
+        self.wal_manager
+            .force_flush_collection(collection_id, None)
+            .await?;
+
         // Trigger compaction for this collection
         // TODO: Implement compact_collection in storage engine
         // self.storage_engine.compact_collection(collection_id).await?;
-        
+
         info!("✅ Force flush for collection {} completed", collection_id);
         Ok(())
     }
-    
+
     pub async fn metrics(&self) -> Result<serde_json::Value> {
         // Collect metrics from various components
         let wal_stats = self.wal_manager.stats().await?;
-        
+
         // Get storage engine metrics - not implemented yet
         let storage_metrics = serde_json::json!({"status": "not_implemented"});
-        
+
         // Get query cache metrics - not implemented yet
         let cache_stats = serde_json::json!({
             "hit_rate": 0.0,
@@ -1128,7 +1266,7 @@ impl VectorOperationsService {
             "cache_hits": 0,
             "cache_misses": 0
         });
-        
+
         // Combine all metrics
         Ok(serde_json::json!({
             "wal": {
@@ -1143,17 +1281,17 @@ impl VectorOperationsService {
             "collections": self.collection_cache.len(),
         }))
     }
-    
+
     pub async fn health_check(&self) -> Result<serde_json::Value> {
         let mut status = "healthy";
         let mut issues: Vec<String> = Vec::new();
-        
+
         // Check WAL health - method not implemented yet
         // TODO: Implement health_check in WAL manager
-        
+
         // Check storage engine health - method not implemented yet
         // TODO: Implement health_check in storage engine
-        
+
         Ok(serde_json::json!({
             "status": status,
             "timestamp": std::time::SystemTime::now()
@@ -1164,17 +1302,20 @@ impl VectorOperationsService {
             "collections": self.collection_cache.len(),
         }))
     }
-    
+
     /// Debug method to list unflushed vectors
-    pub async fn debug_list_all_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    pub async fn debug_list_all_unflushed_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
         // Get all unflushed vectors from WAL
         // TODO: Implement list_unflushed_vectors in WAL manager
         let unflushed = Vec::new();
-        
+
         // Already in proto format
         Ok(unflushed)
     }
-    
+
     /// Helper method to convert InternalSearchResult to proto SearchResult
     /// This is the standard conversion point from internal to API types
     fn convert_to_proto_search_result(
@@ -1185,11 +1326,18 @@ impl VectorOperationsService {
         include_metadata: bool,
         include_source: bool,
     ) -> crate::proto::proximadb::SearchResult {
-        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> = internal_results
-            .iter()
-            .map(|result| result.to_search_vector_record(include_vectors, include_metadata, include_source))
-            .collect();
-        
+        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> =
+            internal_results
+                .iter()
+                .map(|result| {
+                    result.to_search_vector_record(
+                        include_vectors,
+                        include_metadata,
+                        include_source,
+                    )
+                })
+                .collect();
+
         crate::proto::proximadb::SearchResult {
             results: search_vector_records,
             total_found: internal_results.len() as i64,
@@ -1205,30 +1353,34 @@ impl VectorOperationsService {
 #[cfg(test)]
 mod migration_example {
     use super::*;
-    
+
     /// OLD WAY - Using separate optimizers
     struct OldVectorOperationsService {
         search_optimizer: crate::query::unified_search_optimizer::UnifiedSearchOptimizer,
-        filter_optimizer: crate::storage::engines::core::ops::metadata_filters::UniversalFilterOptimizer,
+        filter_optimizer:
+            crate::storage::engines::core::ops::metadata_filters::UniversalFilterOptimizer,
     }
-    
+
     impl OldVectorOperationsService {
         async fn old_search_with_filters(&self) -> Result<Vec<VectorRecord>> {
             // Problem 1: Two separate optimization calls
-            let search_strategy = self.search_optimizer.optimize_search(search_context).await?;
+            let search_strategy = self
+                .search_optimizer
+                .optimize_search(search_context)
+                .await?;
             let filter_plan = self.filter_optimizer.optimize_filter(&filter).await?;
-            
+
             // Problem 2: Manual coordination required
             let filtered_ids = self.execute_filter(filter_plan)?;
             let search_results = self.execute_search(search_strategy, Some(filtered_ids))?;
-            
+
             // Problem 3: No cross-optimization possible
             // Filters and search are optimized independently
-            
+
             Ok(search_results)
         }
     }
-    
+
     // Duplicate impl block removed - methods moved to main impl above
 }
 

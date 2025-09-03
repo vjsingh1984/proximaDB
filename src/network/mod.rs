@@ -96,25 +96,25 @@
 //! bind_address = "0.0.0.0"
 //! rest_port = 5678
 //! grpc_port = 5679
-//! 
+//!
 //! # Protocol settings
 //! enable_rest = true
 //! enable_grpc = true
 //! enable_dashboard = true
-//! 
+//!
 //! # Performance tuning
 //! request_timeout_secs = 30
 //! max_request_size = 67108864  # 64MB
 //! keep_alive_timeout_secs = 60
 //! tcp_nodelay = true
-//! 
+//!
 //! # Authentication
 //! [network.auth]
 //! enabled = false
 //! jwt_secret = "your-secret-key"
 //! jwt_expiration_secs = 3600
 //! api_keys = ["key1", "key2"]
-//! 
+//!
 //! # Rate limiting
 //! [network.rate_limit]
 //! enabled = true
@@ -143,7 +143,7 @@
 //!
 //! ```rust
 //! use proximadb::network::{NetworkConfig, MultiServer};
-//! 
+//!
 //! // Configure network settings
 //! let config = NetworkConfig {
 //!     bind_address: "0.0.0.0".to_string(),
@@ -152,7 +152,7 @@
 //!     enable_grpc: true,
 //!     ..Default::default()
 //! };
-//! 
+//!
 //! // Start multi-protocol server
 //! let server = MultiServer::new(config, service_layer)?;
 //! server.start().await?;
@@ -184,12 +184,12 @@ pub mod server_builder;
 #[cfg(test)]
 mod tests;
 
-use serde::{Deserialize, Serialize};
 pub use metrics_service::*;
 pub use middleware::*;
 pub use multi_server::{
     GrpcHttpServerConfig, MultiServer, MultiServerConfig, RestHttpServerConfig,
 };
+use serde::{Deserialize, Serialize};
 pub use server_builder::{GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder};
 
 /// Network server configuration

@@ -256,11 +256,11 @@ pub enum RecommendationPriority {
 /// Implementation effort estimation
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImplementationEffort {
-    Minimal,    // < 1 hour
-    Low,        // 1-4 hours
-    Medium,     // 1-2 days
-    High,       // 1 week
-    Extensive,  // > 1 week
+    Minimal,   // < 1 hour
+    Low,       // 1-4 hours
+    Medium,    // 1-2 days
+    High,      // 1 week
+    Extensive, // > 1 week
 }
 
 /// Metrics collector with atomic counters for thread-safe updates
@@ -276,7 +276,7 @@ pub struct MetricsCollector {
     total_operations: AtomicU64,
     total_bytes_processed: AtomicU64,
     errors: AtomicU64,
-    
+
     // Memory and disk cache metrics (unified framework integration)
     memory_cache_size_bytes: AtomicU64,
     disk_cache_size_bytes: AtomicU64,
@@ -284,21 +284,21 @@ pub struct MetricsCollector {
     disk_cache_entries: AtomicU64,
     cache_evictions: AtomicU64,
     cache_insertions: AtomicU64,
-    
+
     // Latency tracking for unified framework
     total_cache_hit_latency_ns: AtomicU64,
     total_cache_miss_latency_ns: AtomicU64,
-    
+
     // Start time for uptime calculation
     start_time: Instant,
-    
+
     // Alert handlers
     alert_handlers: Vec<Box<dyn Fn(AlertEvent) + Send + Sync>>,
-    
+
     // Historical data for trend analysis
     historical_metrics: Vec<SystemPerformanceMetrics>,
     max_history_size: usize,
-    
+
     // Integration with unified metrics framework
     unified_collector: Option<Arc<crate::metrics::collectors::FilesystemMetricsCollector>>,
 }
@@ -307,8 +307,10 @@ impl MetricsCollector {
     /// Create new metrics collector
     pub fn new() -> Self {
         // Create unified metrics collector
-        let unified_collector = Some(Arc::new(crate::metrics::collectors::FilesystemMetricsCollector::new()));
-        
+        let unified_collector = Some(Arc::new(
+            crate::metrics::collectors::FilesystemMetricsCollector::new(),
+        ));
+
         Self {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
@@ -339,12 +341,13 @@ impl MetricsCollector {
     pub fn record_cache_hit(&self) {
         self.cache_hits.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Record cache hit with timing for unified metrics
     pub fn record_cache_hit_with_timing(&self, latency_ns: u64) {
         self.cache_hits.fetch_add(1, Ordering::Relaxed);
-        self.total_cache_hit_latency_ns.fetch_add(latency_ns, Ordering::Relaxed);
-        
+        self.total_cache_hit_latency_ns
+            .fetch_add(latency_ns, Ordering::Relaxed);
+
         // Update unified collector
         if let Some(ref collector) = self.unified_collector {
             collector.zerocopy_metrics().record_cache_hit(latency_ns);
@@ -354,64 +357,79 @@ impl MetricsCollector {
     /// Record cache miss
     pub fn record_cache_miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
-        
+
         // Update unified collector
         if let Some(ref collector) = self.unified_collector {
-            collector.zerocopy_metrics().memory_cache_misses.fetch_add(1, Ordering::Relaxed);
+            collector
+                .zerocopy_metrics()
+                .memory_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
         }
     }
-    
+
     /// Record cache miss with timing for unified metrics
     pub fn record_cache_miss_with_timing(&self, latency_ns: u64) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
-        self.total_cache_miss_latency_ns.fetch_add(latency_ns, Ordering::Relaxed);
-        
+        self.total_cache_miss_latency_ns
+            .fetch_add(latency_ns, Ordering::Relaxed);
+
         // Update unified collector
         if let Some(ref collector) = self.unified_collector {
             collector.zerocopy_metrics().record_cache_miss(latency_ns);
         }
     }
-    
+
     /// Update memory cache metrics
     pub fn update_memory_cache_metrics(&self, size_bytes: u64, entries: u64) {
-        self.memory_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+        self.memory_cache_size_bytes
+            .store(size_bytes, Ordering::Relaxed);
         self.memory_cache_entries.store(entries, Ordering::Relaxed);
-        
+
         // Update unified collector
         if let Some(ref collector) = self.unified_collector {
             let metrics = collector.zerocopy_metrics();
-            metrics.memory_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
-            metrics.memory_cache_entries.store(entries, Ordering::Relaxed);
+            metrics
+                .memory_cache_size_bytes
+                .store(size_bytes, Ordering::Relaxed);
+            metrics
+                .memory_cache_entries
+                .store(entries, Ordering::Relaxed);
         }
     }
-    
+
     /// Update disk cache metrics
     pub fn update_disk_cache_metrics(&self, size_bytes: u64, entries: u64) {
-        self.disk_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+        self.disk_cache_size_bytes
+            .store(size_bytes, Ordering::Relaxed);
         self.disk_cache_entries.store(entries, Ordering::Relaxed);
-        
+
         // Update unified collector
         if let Some(ref collector) = self.unified_collector {
             let metrics = collector.zerocopy_metrics();
-            metrics.disk_cache_size_bytes.store(size_bytes, Ordering::Relaxed);
+            metrics
+                .disk_cache_size_bytes
+                .store(size_bytes, Ordering::Relaxed);
             metrics.disk_cache_entries.store(entries, Ordering::Relaxed);
         }
     }
-    
+
     /// Record cache eviction
     pub fn record_cache_eviction(&self, count: u64) {
         self.cache_evictions.fetch_add(count, Ordering::Relaxed);
-        
+
         // Update unified collector
         if let Some(ref collector) = self.unified_collector {
-            collector.zerocopy_metrics().memory_cache_evictions.fetch_add(count, Ordering::Relaxed);
+            collector
+                .zerocopy_metrics()
+                .memory_cache_evictions
+                .fetch_add(count, Ordering::Relaxed);
         }
     }
-    
+
     /// Record cache insertion
     pub fn record_cache_insertion(&self) {
         self.cache_insertions.fetch_add(1, Ordering::Relaxed);
-        
+
         // Update unified collector - no direct equivalent, tracked via cache size updates
     }
 
@@ -433,7 +451,8 @@ impl MetricsCollector {
     /// Record operation completion
     pub fn record_operation(&self, bytes_processed: u64) {
         self.total_operations.fetch_add(1, Ordering::Relaxed);
-        self.total_bytes_processed.fetch_add(bytes_processed, Ordering::Relaxed);
+        self.total_bytes_processed
+            .fetch_add(bytes_processed, Ordering::Relaxed);
     }
 
     /// Record error
@@ -446,7 +465,7 @@ impl MetricsCollector {
         let cache_hits = self.cache_hits.load(Ordering::Relaxed);
         let cache_misses = self.cache_misses.load(Ordering::Relaxed);
         let total_cache_ops = cache_hits + cache_misses;
-        
+
         let hit_rate = if total_cache_ops > 0 {
             cache_hits as f64 / total_cache_ops as f64
         } else {
@@ -458,7 +477,7 @@ impl MetricsCollector {
         let selective = self.selective_downloads.load(Ordering::Relaxed);
         let full = self.full_downloads.load(Ordering::Relaxed);
         let total_downloads = selective + full;
-        
+
         let request_reduction_ratio = if total_downloads > 0 {
             selective as f64 / total_downloads as f64
         } else {
@@ -483,11 +502,11 @@ impl MetricsCollector {
                 total_misses: cache_misses,
                 files_skipped: self.files_skipped.load(Ordering::Relaxed),
                 bytes_saved_by_skipping: self.bytes_saved.load(Ordering::Relaxed),
-                avg_metadata_size_kb: 50.0, // Placeholder
-                cache_memory_usage_mb: 256.0, // Placeholder
-                evictions: 0, // Would track from cache
-                invalidations: 0, // Would track from cache
-                avg_serialization_time_ms: 2.5, // Placeholder
+                avg_metadata_size_kb: 50.0,       // Placeholder
+                cache_memory_usage_mb: 256.0,     // Placeholder
+                evictions: 0,                     // Would track from cache
+                invalidations: 0,                 // Would track from cache
+                avg_serialization_time_ms: 2.5,   // Placeholder
                 avg_deserialization_time_ms: 1.0, // Placeholder
                 efficiency_score: hit_rate as f32,
             },
@@ -498,21 +517,25 @@ impl MetricsCollector {
                 avg_decision_time_ms: 5.0, // Placeholder
                 bandwidth_efficiency: 0.7, // Placeholder
                 request_reduction_ratio,
-                prediction_accuracy: 0.75, // Placeholder
-                cost_savings_dollars: 12.50, // Placeholder calculation
+                prediction_accuracy: 0.75,              // Placeholder
+                cost_savings_dollars: 12.50,            // Placeholder calculation
                 threshold_adaptation_success_rate: 0.8, // Placeholder
-                network_condition_impact: 0.3, // Placeholder
+                network_condition_impact: 0.3,          // Placeholder
             },
             system: SystemWideMetrics {
                 total_operations: total_ops,
                 total_bytes_processed: self.total_bytes_processed.load(Ordering::Relaxed),
                 total_bytes_saved: self.bytes_saved.load(Ordering::Relaxed),
                 avg_operation_latency_ms: 15.0, // Placeholder
-                throughput_ops_per_sec: if uptime > 0 { total_ops as f32 / uptime as f32 } else { 0.0 },
+                throughput_ops_per_sec: if uptime > 0 {
+                    total_ops as f32 / uptime as f32
+                } else {
+                    0.0
+                },
                 efficiency_score: (1.0 - error_rate) as f32,
                 error_rate,
                 uptime_seconds: uptime,
-                peak_memory_usage_mb: 512.0, // Placeholder
+                peak_memory_usage_mb: 512.0,       // Placeholder
                 avg_cpu_utilization_percent: 25.0, // Placeholder
             },
             cost_analysis: CostAnalysisMetrics {
@@ -557,7 +580,7 @@ impl MetricsCollector {
     /// Check alert conditions and fire alerts if needed
     pub fn check_alerts(&self) {
         let metrics = self.get_metrics();
-        
+
         // Check cache hit rate
         if metrics.metadata_cache.hit_rate < 0.8 {
             self.fire_alert(AlertEvent {
@@ -630,7 +653,9 @@ impl MetricsCollector {
             recommendations.push(OptimizationRecommendation {
                 category: RecommendationCategory::ThresholdTuning,
                 priority: RecommendationPriority::Medium,
-                description: "Low selective download rate suggests thresholds may be too conservative".to_string(),
+                description:
+                    "Low selective download rate suggests thresholds may be too conservative"
+                        .to_string(),
                 expected_impact: "15-25% bandwidth savings".to_string(),
                 implementation_effort: ImplementationEffort::Minimal,
                 estimated_savings: 75.0,
@@ -643,7 +668,9 @@ impl MetricsCollector {
             recommendations.push(OptimizationRecommendation {
                 category: RecommendationCategory::CostOptimization,
                 priority: RecommendationPriority::High,
-                description: "High cost per operation. Review pricing model and optimization strategies".to_string(),
+                description:
+                    "High cost per operation. Review pricing model and optimization strategies"
+                        .to_string(),
                 expected_impact: "20-30% cost reduction".to_string(),
                 implementation_effort: ImplementationEffort::Medium,
                 estimated_savings: 200.0,
@@ -671,7 +698,7 @@ impl MetricsCollector {
     pub fn store_historical_metrics(&mut self) {
         let current_metrics = self.get_metrics();
         self.historical_metrics.push(current_metrics);
-        
+
         // Maintain history size limit
         if self.historical_metrics.len() > self.max_history_size {
             self.historical_metrics.remove(0);
@@ -685,19 +712,29 @@ impl MetricsCollector {
         }
 
         let recent_window = std::cmp::min(window_size, self.historical_metrics.len());
-        let recent_metrics = &self.historical_metrics[self.historical_metrics.len() - recent_window..];
+        let recent_metrics =
+            &self.historical_metrics[self.historical_metrics.len() - recent_window..];
 
         // Calculate trends
         let hit_rate_trend = self.calculate_trend(
-            recent_metrics.iter().map(|m| m.metadata_cache.hit_rate).collect()
+            recent_metrics
+                .iter()
+                .map(|m| m.metadata_cache.hit_rate)
+                .collect(),
         );
 
         let throughput_trend = self.calculate_trend(
-            recent_metrics.iter().map(|m| m.system.throughput_ops_per_sec as f64).collect()
+            recent_metrics
+                .iter()
+                .map(|m| m.system.throughput_ops_per_sec as f64)
+                .collect(),
         );
 
         let cost_trend = self.calculate_trend(
-            recent_metrics.iter().map(|m| m.cost_analysis.cost_per_operation).collect()
+            recent_metrics
+                .iter()
+                .map(|m| m.cost_analysis.cost_per_operation)
+                .collect(),
         );
 
         TrendAnalysis {
@@ -725,17 +762,19 @@ impl MetricsCollector {
     }
 
     /// Get the unified metrics collector for registration
-    pub fn unified_collector(&self) -> Option<Arc<crate::metrics::collectors::FilesystemMetricsCollector>> {
+    pub fn unified_collector(
+        &self,
+    ) -> Option<Arc<crate::metrics::collectors::FilesystemMetricsCollector>> {
         self.unified_collector.clone()
     }
-    
+
     fn calculate_trend(&self, values: Vec<f64>) -> TrendDirection {
         if values.len() < 2 {
             return TrendDirection::Stable;
         }
 
-        let first_half = &values[0..values.len()/2];
-        let second_half = &values[values.len()/2..];
+        let first_half = &values[0..values.len() / 2];
+        let second_half = &values[values.len() / 2..];
 
         let first_avg = first_half.iter().sum::<f64>() / first_half.len() as f64;
         let second_avg = second_half.iter().sum::<f64>() / second_half.len() as f64;
@@ -789,11 +828,11 @@ mod tests {
     #[test]
     fn test_cache_hit_recording() {
         let collector = MetricsCollector::new();
-        
+
         collector.record_cache_hit();
         collector.record_cache_hit();
         collector.record_cache_miss();
-        
+
         let metrics = collector.metrics();
         assert_eq!(metrics.metadata_cache.total_hits, 2);
         assert_eq!(metrics.metadata_cache.total_misses, 1);
@@ -803,25 +842,27 @@ mod tests {
     #[test]
     fn test_download_strategy_recording() {
         let collector = MetricsCollector::new();
-        
-        collector.record_download_strategy(true);  // selective
+
+        collector.record_download_strategy(true); // selective
         collector.record_download_strategy(false); // full
-        collector.record_download_strategy(true);  // selective
-        
+        collector.record_download_strategy(true); // selective
+
         let metrics = collector.metrics();
         assert_eq!(metrics.download_optimizer.selective_downloads, 2);
         assert_eq!(metrics.download_optimizer.full_downloads, 1);
-        assert!((metrics.download_optimizer.request_reduction_ratio - 0.6666666666666666).abs() < 0.001);
+        assert!(
+            (metrics.download_optimizer.request_reduction_ratio - 0.6666666666666666).abs() < 0.001
+        );
     }
 
     #[test]
     fn test_error_rate_calculation() {
         let collector = MetricsCollector::new();
-        
+
         collector.record_operation(1000);
         collector.record_operation(2000);
         collector.record_error();
-        
+
         let metrics = collector.metrics();
         assert_eq!(metrics.system.total_operations, 2);
         assert!((metrics.system.error_rate - 0.5).abs() < 0.001);
@@ -830,17 +871,18 @@ mod tests {
     #[test]
     fn test_recommendation_generation() {
         let collector = MetricsCollector::new();
-        
+
         // Create conditions that should trigger recommendations
         collector.record_cache_miss();
         collector.record_cache_miss();
         collector.record_cache_hit();
-        
+
         let recommendations = collector.generate_recommendations();
         assert!(!recommendations.is_none());
-        
+
         // Should have cache optimization recommendation due to low hit rate
-        let cache_rec = recommendations.iter()
+        let cache_rec = recommendations
+            .iter()
             .find(|r| r.category == RecommendationCategory::CacheOptimization);
         assert!(cache_rec.is_some());
     }
@@ -848,17 +890,17 @@ mod tests {
     #[test]
     fn test_trend_calculation() {
         let collector = MetricsCollector::new();
-        
+
         // Test increasing trend
         let increasing_values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let trend = collector.calculate_trend(increasing_values);
         assert_eq!(trend, TrendDirection::Increasing);
-        
+
         // Test decreasing trend
         let decreasing_values = vec![6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
         let trend = collector.calculate_trend(decreasing_values);
         assert_eq!(trend, TrendDirection::Decreasing);
-        
+
         // Test stable trend
         let stable_values = vec![5.0, 5.1, 4.9, 5.0, 5.2, 4.8];
         let trend = collector.calculate_trend(stable_values);

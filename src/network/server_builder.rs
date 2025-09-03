@@ -20,7 +20,7 @@ pub struct RestHttpServerBuilder {
     enable_dashboard: bool,
     enable_metrics: bool,
     enable_health: bool,
-    rest_compression: bool,  // Clear, specific naming
+    rest_compression: bool, // Clear, specific naming
     tls_cert_file: Option<String>,
     tls_key_file: Option<String>,
 }
@@ -33,7 +33,7 @@ impl Default for RestHttpServerBuilder {
             enable_dashboard: true,
             enable_metrics: true,
             enable_health: true,
-            rest_compression: false,  // Clear naming, default false
+            rest_compression: false, // Clear naming, default false
             tls_cert_file: None,
             tls_key_file: None,
         }
@@ -179,7 +179,7 @@ impl RestHttpServerBuilder {
 pub struct GrpcHttpServerBuilder {
     bind_address: SocketAddr,
     enable_grpc: bool,
-    grpc_compression: bool,  // Clear, specific naming
+    grpc_compression: bool, // Clear, specific naming
     tls_cert_file: Option<String>,
     tls_key_file: Option<String>,
     max_message_size: usize,
@@ -189,9 +189,9 @@ pub struct GrpcHttpServerBuilder {
 impl Default for GrpcHttpServerBuilder {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5679".parse().unwrap(),  // Standard gRPC port
+            bind_address: "0.0.0.0:5679".parse().unwrap(), // Standard gRPC port
             enable_grpc: true,
-            grpc_compression: false,  // Clear naming, default false
+            grpc_compression: false, // Clear naming, default false
             tls_cert_file: None,
             tls_key_file: None,
             max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts
@@ -288,7 +288,7 @@ impl GrpcHttpServerBuilder {
         Ok(GrpcHttpServerConfig {
             port: self.bind_address.port(),
             bind_address: self.bind_address,
-            tls_bind_address: None,  // No separate TLS port - same port for TLS
+            tls_bind_address: None, // No separate TLS port - same port for TLS
             enable_grpc: self.enable_grpc,
             max_message_size: self.max_message_size,
             enable_reflection: self.enable_reflection,
@@ -402,8 +402,12 @@ impl MultiServerBuilder {
     pub fn build(mut self) -> Result<MultiServerConfig> {
         // Apply API config compression settings to builders if available
         if let Some(ref api_config) = self.api_config {
-            self.http_builder = self.http_builder.rest_compression(api_config.rest_compression);
-            self.grpc_builder = self.grpc_builder.grpc_compression(api_config.grpc_compression);
+            self.http_builder = self
+                .http_builder
+                .rest_compression(api_config.rest_compression);
+            self.grpc_builder = self
+                .grpc_builder
+                .grpc_compression(api_config.grpc_compression);
         }
 
         let http_config = self

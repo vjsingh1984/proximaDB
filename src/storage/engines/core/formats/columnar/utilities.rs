@@ -7,21 +7,21 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use super::{ColumnarConfig, ColumnarFileMetadata, RowGroupStats};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use super::{ColumnarConfig, ColumnarFileMetadata, RowGroupStats};
 
 /// Utility functions for columnar storage operations
 pub struct ColumnarUtilities {
     /// Filesystem factory for storage operations
     filesystem: Arc<FilesystemFactory>,
-    
+
     /// Hardware capabilities
     hardware: Arc<HardwareCapabilities>,
-    
+
     /// Configuration
     config: ColumnarConfig,
-    
+
     /// Performance metrics cache
     metrics_cache: Arc<RwLock<HashMap<String, PerformanceMetrics>>>,
 }
@@ -40,7 +40,7 @@ impl ColumnarUtilities {
             metrics_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Optimize file layout for columnar access patterns
     pub async fn optimize_file_layout(
         &self,
@@ -48,11 +48,11 @@ impl ColumnarUtilities {
         target_row_group_size: Option<usize>,
     ) -> Result<FileLayoutOptimization> {
         info!("Optimizing file layout for {} files", file_paths.len());
-        
+
         let mut file_stats = Vec::new();
         let mut total_vectors = 0;
         let mut total_size_bytes = 0;
-        
+
         // Analyze current file layout
         for file_path in file_paths {
             let stats = self.analyze_file_structure(file_path).await?;
@@ -60,20 +60,17 @@ impl ColumnarUtilities {
             total_size_bytes += stats.total_size_bytes;
             file_stats.push(stats);
         }
-        
+
         // Calculate optimal layout
-        let optimal_row_group_size = target_row_group_size.unwrap_or(
-            self.calculate_optimal_row_group_size(total_vectors, total_size_bytes)
-        );
-        
-        let recommended_file_count = self.calculate_optimal_file_count(
-            total_vectors,
-            optimal_row_group_size,
-        );
-        
+        let optimal_row_group_size = target_row_group_size
+            .unwrap_or(self.calculate_optimal_row_group_size(total_vectors, total_size_bytes));
+
+        let recommended_file_count =
+            self.calculate_optimal_file_count(total_vectors, optimal_row_group_size);
+
         // Generate optimization recommendations
         let mut recommendations = Vec::new();
-        
+
         // Check for undersized row groups
         for stats in &file_stats {
             if stats.avg_row_group_size < optimal_row_group_size / 2 {
@@ -89,7 +86,7 @@ impl ColumnarUtilities {
                 });
             }
         }
-        
+
         // Check for oversized files
         for stats in &file_stats {
             if stats.total_vectors > optimal_row_group_size * 20 {
@@ -98,37 +95,40 @@ impl ColumnarUtilities {
                     issue: "Oversized file".to_string(),
                     action: format!(
                         "Split into {} smaller files",
-                        (stats.total_vectors + optimal_row_group_size * 10 - 1) / (optimal_row_group_size * 10)
+                        (stats.total_vectors + optimal_row_group_size * 10 - 1)
+                            / (optimal_row_group_size * 10)
                     ),
                     priority: RecommendationPriority::Medium,
                 });
             }
         }
-        
+
         Ok(FileLayoutOptimization {
             current_file_count: file_stats.len(),
             recommended_file_count,
             current_total_vectors: total_vectors,
             current_total_size_bytes: total_size_bytes,
             optimal_row_group_size,
-            current_avg_row_group_size: file_stats.iter()
+            current_avg_row_group_size: file_stats
+                .iter()
                 .map(|s| s.avg_row_group_size)
-                .sum::<usize>() / file_stats.len().max(1),
+                .sum::<usize>()
+                / file_stats.len().max(1),
             recommendations,
             file_statistics: file_stats,
         })
     }
-    
+
     /// Analyze structure of a single file
     async fn analyze_file_structure(&self, file_path: &str) -> Result<FileStatistics> {
         debug!("Analyzing file structure: {}", file_path);
-        
+
         // In production, would read actual Parquet metadata
         // For now, provide reasonable estimates
         let estimated_vectors = 10000; // Placeholder
         let estimated_size = 10 * 1024 * 1024; // 10MB placeholder
         let estimated_row_groups = 5; // Placeholder
-        
+
         Ok(FileStatistics {
             file_path: file_path.to_string(),
             total_vectors: estimated_vectors,
@@ -139,114 +139,122 @@ impl ColumnarUtilities {
             has_quantization: true,
         })
     }
-    
+
     /// Calculate optimal row group size based on hardware and data characteristics
-    fn calculate_optimal_row_group_size(&self, total_vectors: usize, total_size_bytes: usize) -> usize {
+    fn calculate_optimal_row_group_size(
+        &self,
+        total_vectors: usize,
+        total_size_bytes: usize,
+    ) -> usize {
         let avg_vector_size = if total_vectors > 0 {
             total_size_bytes / total_vectors
         } else {
             3072 // Assume 768-dim float32 vector
         };
-        
+
         // Target 128MB row groups for optimal Parquet performance
         const TARGET_ROW_GROUP_SIZE_BYTES: usize = 128 * 1024 * 1024;
-        
+
         let optimal_size = TARGET_ROW_GROUP_SIZE_BYTES / avg_vector_size.max(1);
-        
+
         // Clamp to reasonable bounds
         optimal_size.clamp(1000, 100000)
     }
-    
+
     /// Calculate optimal number of files
     fn calculate_optimal_file_count(&self, total_vectors: usize, row_group_size: usize) -> usize {
         // Target 10 row groups per file for good parallelism
         const TARGET_ROW_GROUPS_PER_FILE: usize = 10;
-        
+
         let vectors_per_file = row_group_size * TARGET_ROW_GROUPS_PER_FILE;
         (total_vectors + vectors_per_file - 1) / vectors_per_file
     }
-    
+
     /// Analyze query patterns for optimization
     pub async fn analyze_query_patterns(
         &self,
         query_log: &[QueryLogEntry],
     ) -> Result<QueryPatternAnalysis> {
         info!("Analyzing {} query log entries", query_log.len());
-        
+
         let mut column_access_count = HashMap::new();
         let mut filter_frequency = HashMap::new();
         let mut row_group_access_patterns = HashMap::new();
-        
+
         for entry in query_log {
             // Count column accesses
             for column in &entry.accessed_columns {
                 *column_access_count.entry(column.clone()).or_insert(0) += 1;
             }
-            
+
             // Count filter usage
             for filter in &entry.filters_used {
                 *filter_frequency.entry(filter.clone()).or_insert(0) += 1;
             }
-            
+
             // Track row group access patterns
             for rg_id in &entry.row_groups_accessed {
                 *row_group_access_patterns.entry(*rg_id).or_insert(0) += 1;
             }
         }
-        
+
         // Identify hot columns (frequently accessed)
-        let mut hot_columns: Vec<_> = column_access_count.iter()
+        let mut hot_columns: Vec<_> = column_access_count
+            .iter()
             .map(|(col, count)| (col.clone(), *count))
             .collect();
         hot_columns.sort_by(|a, b| b.1.cmp(&a.1));
         hot_columns.truncate(10); // Top 10 hot columns
-        
+
         // Identify frequently used filters
-        let mut popular_filters: Vec<_> = filter_frequency.iter()
+        let mut popular_filters: Vec<_> = filter_frequency
+            .iter()
             .map(|(filter, count)| (filter.clone(), *count))
             .collect();
         popular_filters.sort_by(|a, b| b.1.cmp(&a.1));
         popular_filters.truncate(10); // Top 10 filters
-        
+
         // Identify hot row groups
-        let mut hot_row_groups: Vec<_> = row_group_access_patterns.iter()
+        let mut hot_row_groups: Vec<_> = row_group_access_patterns
+            .iter()
             .map(|(rg_id, count)| (*rg_id, *count))
             .collect();
         hot_row_groups.sort_by(|a, b| b.1.cmp(&a.1));
         hot_row_groups.truncate(20); // Top 20 hot row groups
-        
+
         Ok(QueryPatternAnalysis {
             total_queries: query_log.len(),
             hot_columns,
             popular_filters,
             hot_row_groups,
             avg_columns_per_query: column_access_count.len() as f64 / query_log.len() as f64,
-            avg_row_groups_per_query: row_group_access_patterns.len() as f64 / query_log.len() as f64,
+            avg_row_groups_per_query: row_group_access_patterns.len() as f64
+                / query_log.len() as f64,
         })
     }
-    
+
     /// Generate compression recommendations
     pub async fn recommend_compression(
         &self,
         file_metadata: &[ColumnarFileMetadata],
     ) -> Result<CompressionRecommendation> {
         info!("Analyzing compression for {} files", file_metadata.len());
-        
+
         let mut total_uncompressed = 0;
         let mut total_compressed = 0;
         let mut dimension_frequencies = HashMap::new();
         let mut quantization_usage = HashMap::new();
-        
+
         for metadata in file_metadata {
             // Estimate sizes (in production, would read from file stats)
             let estimated_uncompressed = metadata.num_vectors * (metadata.dimension as u64) * 4; // float32
             let estimated_compressed = (estimated_uncompressed as f32 * 0.3) as u64; // Estimate 30% compression
-            
+
             total_uncompressed += estimated_uncompressed;
             total_compressed += estimated_compressed;
-            
+
             *dimension_frequencies.entry(metadata.dimension).or_insert(0) += 1;
-            
+
             // Track quantization usage
             if metadata.quantization.enable_binary {
                 *quantization_usage.entry("binary".to_string()).or_insert(0) += 1;
@@ -258,29 +266,30 @@ impl ColumnarUtilities {
                 *quantization_usage.entry("pq".to_string()).or_insert(0) += 1;
             }
         }
-        
+
         let overall_ratio = if total_compressed > 0 {
             total_uncompressed as f64 / total_compressed as f64
         } else {
             1.0
         };
-        
+
         // Generate recommendations based on analysis
         let mut recommendations = Vec::new();
-        
+
         if overall_ratio < 2.0 {
             recommendations.push("Consider enabling more aggressive quantization".to_string());
         }
-        
+
         if quantization_usage.get("pq").copied().unwrap_or(0) < file_metadata.len() / 2 {
             recommendations.push("Enable PQ quantization for better compression".to_string());
         }
-        
+
         // Find most common dimension for optimization
-        let most_common_dimension = dimension_frequencies.iter()
+        let most_common_dimension = dimension_frequencies
+            .iter()
             .max_by_key(|(_, count)| *count)
             .map(|(dim, _)| *dim);
-        
+
         if let Some(dim) = most_common_dimension {
             if dim >= 512 {
                 recommendations.push(format!(
@@ -289,7 +298,7 @@ impl ColumnarUtilities {
                 ));
             }
         }
-        
+
         Ok(CompressionRecommendation {
             overall_compression_ratio: overall_ratio,
             total_uncompressed_bytes: total_uncompressed,
@@ -300,27 +309,28 @@ impl ColumnarUtilities {
             most_common_dimension,
         })
     }
-    
+
     /// Validate file integrity
     pub async fn validate_file_integrity(
         &self,
         file_paths: &[String],
     ) -> Result<FileIntegrityReport> {
         info!("Validating integrity of {} files", file_paths.len());
-        
+
         let mut valid_files = Vec::new();
         let mut corrupted_files = Vec::new();
         let mut missing_files = Vec::new();
         let mut total_size_bytes = 0;
-        
+
         for file_path in file_paths {
             match self.check_single_file_integrity(file_path).await {
                 Ok(stats) => {
                     valid_files.push(stats.clone());
                     total_size_bytes += stats.size_bytes;
-                },
+                }
                 Err(e) => {
-                    if e.to_string().contains("not found") || e.to_string().contains("No such file") {
+                    if e.to_string().contains("not found") || e.to_string().contains("No such file")
+                    {
                         missing_files.push(file_path.clone());
                     } else {
                         corrupted_files.push(FileCorruption {
@@ -331,9 +341,9 @@ impl ColumnarUtilities {
                 }
             }
         }
-        
+
         let integrity_score = valid_files.len() as f64 / file_paths.len() as f64;
-        
+
         Ok(FileIntegrityReport {
             total_files_checked: file_paths.len(),
             valid_files,
@@ -343,32 +353,32 @@ impl ColumnarUtilities {
             integrity_score,
         })
     }
-    
+
     /// Check integrity of a single file
     async fn check_single_file_integrity(&self, file_path: &str) -> Result<ValidFileInfo> {
         debug!("Checking file integrity: {}", file_path);
-        
+
         // Get filesystem for the file
         let fs = self.filesystem.get_filesystem(file_path)?;
-        
+
         // Check if file exists and get metadata
         let file_info = fs.metadata(file_path).await?;
-        
+
         // For Parquet files, we would validate:
         // 1. File can be opened
         // 2. Metadata is readable
         // 3. All row groups are accessible
         // 4. Schema is valid
-        
+
         Ok(ValidFileInfo {
             file_path: file_path.to_string(),
             size_bytes: file_info.size,
             last_modified: file_info.modified.unwrap_or_else(chrono::Utc::now),
-            row_group_count: 5, // Placeholder
+            row_group_count: 5,  // Placeholder
             vector_count: 10000, // Placeholder
         })
     }
-    
+
     /// Record performance metrics
     pub async fn record_operation_metrics(
         &self,
@@ -376,7 +386,7 @@ impl ColumnarUtilities {
         metrics: OperationMetrics,
     ) -> Result<()> {
         debug!("Recording metrics for operation: {}", operation);
-        
+
         let perf_metrics = PerformanceMetrics {
             operation: operation.to_string(),
             duration_ms: metrics.duration_ms,
@@ -386,10 +396,10 @@ impl ColumnarUtilities {
             memory_usage_bytes: metrics.memory_usage_bytes,
             timestamp: chrono::Utc::now(),
         };
-        
+
         let mut cache = self.metrics_cache.write().await;
         cache.insert(operation.to_string(), perf_metrics);
-        
+
         // Keep only recent metrics (last 100 operations)
         if cache.len() > 100 {
             let oldest_key = cache.keys().next().cloned();
@@ -397,14 +407,17 @@ impl ColumnarUtilities {
                 cache.remove(&key);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get performance statistics
-    pub async fn get_performance_stats(&self, operation: Option<&str>) -> Result<Vec<PerformanceMetrics>> {
+    pub async fn get_performance_stats(
+        &self,
+        operation: Option<&str>,
+    ) -> Result<Vec<PerformanceMetrics>> {
         let cache = self.metrics_cache.read().await;
-        
+
         if let Some(op) = operation {
             if let Some(metrics) = cache.get(op) {
                 Ok(vec![metrics.clone()])
@@ -415,7 +428,7 @@ impl ColumnarUtilities {
             Ok(cache.values().cloned().collect())
         }
     }
-    
+
     /// Clear performance metrics cache
     pub async fn clear_metrics_cache(&self) {
         let mut cache = self.metrics_cache.write().await;
@@ -552,22 +565,22 @@ pub struct PerformanceMetrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-    
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+
     #[tokio::test]
     async fn test_columnar_utilities_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let filesystem = Arc::new(
             FilesystemFactory::new(FilesystemConfig::default())
                 .await
-                .unwrap()
+                .unwrap(),
         );
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let config = ColumnarConfig::default();
-        
+
         let utilities = ColumnarUtilities::new(filesystem, hardware, config);
-        
+
         // Test metrics recording
         let metrics = OperationMetrics {
             duration_ms: 100.0,
@@ -576,32 +589,41 @@ mod tests {
             cpu_usage_percent: 50.0,
             memory_usage_bytes: 1024 * 1024,
         };
-        
-        utilities.record_operation_metrics("test_operation", metrics).await.unwrap();
-        
-        let stats = utilities.get_performance_stats(Some("test_operation")).await.unwrap();
+
+        utilities
+            .record_operation_metrics("test_operation", metrics)
+            .await
+            .unwrap();
+
+        let stats = utilities
+            .get_performance_stats(Some("test_operation"))
+            .await
+            .unwrap();
         assert_eq!(stats.len(), 1);
         assert_eq!(stats[0].operation, "test_operation");
     }
-    
+
     #[test]
     fn test_row_group_size_calculation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let filesystem = Arc::new(tokio::runtime::Runtime::new().unwrap().block_on(async {
-            FilesystemFactory::new(FilesystemConfig::default()).await.unwrap()
+            FilesystemFactory::new(FilesystemConfig::default())
+                .await
+                .unwrap()
         }));
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let config = ColumnarConfig::default();
-        
+
         let utilities = ColumnarUtilities::new(filesystem, hardware, config);
-        
+
         // Test with typical vector data
         let total_vectors = 100000;
         let total_size_bytes = 100000 * 768 * 4; // 768-dim float32 vectors
-        
-        let optimal_size = utilities.calculate_optimal_row_group_size(total_vectors, total_size_bytes);
-        
+
+        let optimal_size =
+            utilities.calculate_optimal_row_group_size(total_vectors, total_size_bytes);
+
         // Should be reasonable size for 128MB target
         assert!(optimal_size >= 1000);
         assert!(optimal_size <= 100000);

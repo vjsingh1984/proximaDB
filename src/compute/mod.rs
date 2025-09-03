@@ -100,21 +100,21 @@
 //! # Hardware acceleration
 //! backend_priority = ["cuda", "rocm", "avx2", "neon"]
 //! auto_detect = true
-//! 
+//!
 //! # CPU vectorization
 //! [compute.cpu]
 //! avx512 = true
 //! avx2 = true
 //! sse42 = true
 //! neon = true  # ARM
-//! 
+//!
 //! # GPU configuration
 //! [compute.gpu]
 //! memory_pool = "pooled"
 //! batch_size = 1024
 //! unified_memory = true
 //! memory_limit_gb = 8.0
-//! 
+//!
 //! # Quantization
 //! [compute.quantization]
 //! default = "adaptive"
@@ -126,18 +126,18 @@
 //!
 //! ```rust
 //! use proximadb::compute::{ComputeConfig, UnifiedDistanceCompute};
-//! 
+//!
 //! // Auto-detect hardware and create engine
 //! let config = ComputeConfig::default();
 //! let engine = UnifiedDistanceCompute::new(config)?;
-//! 
+//!
 //! // Compute distances with automatic acceleration
 //! let distances = engine.compute_distances(
 //!     query_vector,
 //!     database_vectors,
 //!     DistanceMetric::Cosine
 //! )?;
-//! 
+//!
 //! // Use quantization for speed
 //! let quantized = engine.quantize_int8(vectors)?;
 //! let approx_distances = engine.compute_int8_distances(
@@ -160,7 +160,7 @@
 //! - **NUMA Awareness**: Pin threads to local memory nodes
 //! - **Huge Pages**: 2MB pages for reduced TLB misses
 
-// Semantic module organization  
+// Semantic module organization
 pub mod distance_computation;
 pub mod gpu;
 pub mod quantization;
@@ -471,10 +471,10 @@ pub struct HardwareInfo {
 }
 
 // Re-export CpuFeatures and CacheSizes from centralized hardware capabilities module
-pub use crate::core::hardware_capabilities::{CpuFeatures, CacheSizes};
+pub use crate::core::hardware_capabilities::{CacheSizes, CpuFeatures};
 
 // Using central GpuDevice and GpuBackend from hardware_capabilities module
-pub use crate::core::hardware_capabilities::{GpuDevice, GpuBackend};
+pub use crate::core::hardware_capabilities::{GpuBackend, GpuDevice};
 
 #[derive(Debug, Clone)]
 pub struct MemoryInfo {
@@ -501,7 +501,7 @@ pub struct NumaNode {
 /// Get hardware info from centralized hardware capabilities (no duplicate detection)
 pub fn get_hardware_info() -> HardwareInfo {
     let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-    
+
     HardwareInfo {
         cpu_features: caps.cpu.features.clone(),
         gpu_devices: caps.gpu.devices.clone(),

@@ -1,5 +1,5 @@
 //! Vector serialization utilities with bytemuck and ZSTD support
-//! 
+//!
 //! This module provides high-performance zero-copy serialization for Vec<f32> data
 //! using bytemuck for direct memory mapping and ZSTD for compression.
 
@@ -7,20 +7,20 @@ pub mod fixed_length;
 pub mod streaming;
 
 use anyhow::{Context, Result};
-use bytemuck::{cast_slice, from_bytes, try_cast_slice};
-use serde::{Deserialize, Serialize};
-use std::mem::size_of;
-use zstd::{encode_all, decode_all};
-use lz4_flex::{compress_prepend_size, decompress_size_prepended};
-use snap::{raw::Encoder as SnapEncoder, raw::Decoder as SnapDecoder};
-use flate2::write::{GzEncoder, DeflateEncoder, ZlibEncoder};
-use flate2::read::{GzDecoder, DeflateDecoder, ZlibDecoder};
 use brotli::{CompressorWriter, Decompressor};
-use bzip2::write::BzEncoder;
+use bytemuck::{cast_slice, from_bytes, try_cast_slice};
 use bzip2::read::BzDecoder;
-use xz2::write::XzEncoder;
+use bzip2::write::BzEncoder;
+use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
+use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+use serde::{Deserialize, Serialize};
+use snap::{raw::Decoder as SnapDecoder, raw::Encoder as SnapEncoder};
+use std::io::{Read, Write};
+use std::mem::size_of;
 use xz2::read::XzDecoder;
-use std::io::{Write, Read};
+use xz2::write::XzEncoder;
+use zstd::{decode_all, encode_all};
 
 /// Vector serialization configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +149,7 @@ impl VectorSerializationConfig {
     /// This is now a suggestion - users can override via collection config
     pub fn for_dimension(dimension: usize) -> Self {
         let mut config = Self::default();
-        
+
         // Suggest optimization based on dimension (user can override)
         match dimension {
             // Small vectors: suggest no compression for low latency
@@ -168,7 +168,7 @@ impl VectorSerializationConfig {
                 config.compression_level = 6;
             }
         }
-        
+
         config
     }
 
@@ -182,7 +182,7 @@ impl VectorSerializationConfig {
         // Convert to bytes using bytemuck (zero-copy)
         let bytes = cast_slice(vector);
         let checksum = crc32fast::hash(bytes);
-        
+
         let (format, compressed_data) = if vector.len() >= self.compression_threshold {
             match self.compression_algorithm {
                 CompressionAlgorithm::Zstd => {
@@ -196,32 +196,47 @@ impl VectorSerializationConfig {
                 }
                 CompressionAlgorithm::Snappy => {
                     let mut encoder = SnapEncoder::new();
-                    let compressed = encoder.compress_vec(bytes)
+                    let compressed = encoder
+                        .compress_vec(bytes)
                         .map_err(|e| anyhow::anyhow!("Snappy compression failed: {}", e))?;
                     (SerializationFormat::SnappyBytemuck, compressed)
                 }
                 CompressionAlgorithm::Gzip => {
-                    let mut encoder = GzEncoder::new(Vec::new(), flate2::Compression::new(self.compression_level as u32));
+                    let mut encoder = GzEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::new(self.compression_level as u32),
+                    );
                     encoder.write_all(bytes)?;
                     let compressed = encoder.finish()?;
                     (SerializationFormat::GzipBytemuck, compressed)
                 }
                 CompressionAlgorithm::Brotli => {
                     let mut compressed = Vec::new();
-                    let mut encoder = CompressorWriter::new(&mut compressed, 4096, self.compression_level as u32, 22);
+                    let mut encoder = CompressorWriter::new(
+                        &mut compressed,
+                        4096,
+                        self.compression_level as u32,
+                        22,
+                    );
                     encoder.write_all(bytes)?;
                     encoder.flush()?;
                     drop(encoder);
                     (SerializationFormat::BrotliBytemuck, compressed)
                 }
                 CompressionAlgorithm::Bzip2 => {
-                    let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::new(self.compression_level as u32));
+                    let mut encoder = BzEncoder::new(
+                        Vec::new(),
+                        bzip2::Compression::new(self.compression_level as u32),
+                    );
                     encoder.write_all(bytes)?;
                     let compressed = encoder.finish()?;
                     (SerializationFormat::Bzip2Bytemuck, compressed)
                 }
                 CompressionAlgorithm::Deflate => {
-                    let mut encoder = DeflateEncoder::new(Vec::new(), flate2::Compression::new(self.compression_level as u32));
+                    let mut encoder = DeflateEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::new(self.compression_level as u32),
+                    );
                     encoder.write_all(bytes)?;
                     let compressed = encoder.finish()?;
                     (SerializationFormat::DeflateBytemuck, compressed)
@@ -233,7 +248,10 @@ impl VectorSerializationConfig {
                     (SerializationFormat::XzBytemuck, compressed)
                 }
                 CompressionAlgorithm::Zlib => {
-                    let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::new(self.compression_level as u32));
+                    let mut encoder = ZlibEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::new(self.compression_level as u32),
+                    );
                     encoder.write_all(bytes)?;
                     let compressed = encoder.finish()?;
                     (SerializationFormat::ZlibBytemuck, compressed)
@@ -261,9 +279,7 @@ impl VectorSerializationConfig {
                         .context("Failed to compress vector with Mixed strategy (ZSTD)")?;
                     (SerializationFormat::ZstdBytemuck, compressed)
                 }
-                CompressionAlgorithm::None => {
-                    (SerializationFormat::RawBytemuck, bytes.to_vec())
-                }
+                CompressionAlgorithm::None => (SerializationFormat::RawBytemuck, bytes.to_vec()),
             }
         } else {
             (SerializationFormat::RawBytemuck, bytes.to_vec())
@@ -297,7 +313,9 @@ impl VectorSerializationConfig {
         let payload = &data[size_of::<VectorHeader>()..];
 
         if payload.len() != header.data_len as usize {
-            return Err(anyhow::anyhow!("Invalid vector data: payload length mismatch"));
+            return Err(anyhow::anyhow!(
+                "Invalid vector data: payload length mismatch"
+            ));
         }
 
         let format = match header.format {
@@ -314,7 +332,12 @@ impl VectorSerializationConfig {
             0x0B => SerializationFormat::LzoBytemuck,
             0x0C => SerializationFormat::Lz4hcBytemuck,
             0x0D => SerializationFormat::LzmaBytemuck,
-            _ => return Err(anyhow::anyhow!("Unknown serialization format: {:#x}", header.format)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown serialization format: {:#x}",
+                    header.format
+                ));
+            }
         };
 
         let decompressed_bytes = match format {
@@ -322,13 +345,14 @@ impl VectorSerializationConfig {
             SerializationFormat::ZstdBytemuck => {
                 decode_all(payload).context("Failed to decompress ZSTD vector data")?
             }
-            SerializationFormat::Lz4Bytemuck | SerializationFormat::LzoBytemuck | SerializationFormat::Lz4hcBytemuck => {
-                decompress_size_prepended(payload)
-                    .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {}", e))?
-            }
+            SerializationFormat::Lz4Bytemuck
+            | SerializationFormat::LzoBytemuck
+            | SerializationFormat::Lz4hcBytemuck => decompress_size_prepended(payload)
+                .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {}", e))?,
             SerializationFormat::SnappyBytemuck => {
                 let mut decoder = SnapDecoder::new();
-                decoder.decompress_vec(payload)
+                decoder
+                    .decompress_vec(payload)
                     .map_err(|e| anyhow::anyhow!("Snappy decompression failed: {}", e))?
             }
             SerializationFormat::GzipBytemuck => {
@@ -382,8 +406,11 @@ impl VectorSerializationConfig {
         // Copy values from packed struct to avoid unaligned reference
         let expected_len = header.vector_len;
         if floats.len() != expected_len as usize {
-            return Err(anyhow::anyhow!("Vector length mismatch: expected {}, got {}", 
-                expected_len, floats.len()));
+            return Err(anyhow::anyhow!(
+                "Vector length mismatch: expected {}, got {}",
+                expected_len,
+                floats.len()
+            ));
         }
 
         Ok(floats.to_vec())
@@ -438,8 +465,8 @@ impl VectorSerializationConfig {
             self.compression_level = std::cmp::max(6, self.compression_level);
             self.compression_threshold = std::cmp::min(128, self.compression_threshold);
         }
-        
-        // Low variance vectors compress well  
+
+        // Low variance vectors compress well
         if analysis.variance < 0.1 {
             self.compression_level = std::cmp::max(4, self.compression_level);
         }
@@ -455,10 +482,10 @@ impl VectorSerializationConfig {
 #[derive(Debug, Clone)]
 pub struct VectorAnalysis {
     pub dimension: usize,
-    pub sparsity: f32,    // Ratio of zero/near-zero elements
+    pub sparsity: f32, // Ratio of zero/near-zero elements
     pub mean: f32,
     pub variance: f32,
-    pub zero_ratio: f32,  // Ratio of exact zero elements
+    pub zero_ratio: f32, // Ratio of exact zero elements
 }
 
 #[cfg(test)]
@@ -468,11 +495,11 @@ mod tests {
     fn create_test_vector(size: usize, sparsity: f32) -> Vec<f32> {
         let mut vector = vec![0.0; size];
         let non_zero_count = ((1.0 - sparsity) * size as f32) as usize;
-        
+
         for i in 0..non_zero_count {
             vector[i] = (i as f32 + 1.0) * 0.1;
         }
-        
+
         vector
     }
 
@@ -480,10 +507,10 @@ mod tests {
     fn test_vector_serialization_roundtrip() {
         let config = VectorSerializationConfig::default();
         let vector = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        
+
         let serialized = config.serialize_vector(&vector).unwrap();
         let deserialized = config.deserialize_vector(&serialized).unwrap();
-        
+
         assert_eq!(vector, deserialized);
     }
 
@@ -491,10 +518,10 @@ mod tests {
     fn test_zero_copy_performance() {
         let config = VectorSerializationConfig::default();
         let large_vector: Vec<f32> = (0..10000).map(|i| i as f32 * 0.001).collect();
-        
+
         let serialized = config.serialize_vector(&large_vector).unwrap();
         let deserialized = config.deserialize_vector(&serialized).unwrap();
-        
+
         assert_eq!(large_vector.len(), deserialized.len());
         for (original, recovered) in large_vector.iter().zip(deserialized.iter()) {
             assert!((original - recovered).abs() < f32::EPSILON);
@@ -504,26 +531,29 @@ mod tests {
     #[test]
     fn test_compression_effectiveness() {
         let config = VectorSerializationConfig::default();
-        
+
         // Sparse vector should compress well
         let sparse_vector = create_test_vector(1000, 0.9);
         let sparse_ratio = config.compression_ratio(&sparse_vector).unwrap();
-        
+
         // Dense vector compresses less
         let dense_vector = create_test_vector(1000, 0.1);
         let dense_ratio = config.compression_ratio(&dense_vector).unwrap();
-        
-        assert!(sparse_ratio < dense_ratio, "Sparse vectors should compress better");
+
+        assert!(
+            sparse_ratio < dense_ratio,
+            "Sparse vectors should compress better"
+        );
     }
 
     #[test]
     fn test_small_vector_no_compression() {
         let mut config = VectorSerializationConfig::default();
         config.compression_threshold = 100;
-        
+
         let small_vector = vec![1.0, 2.0, 3.0]; // Below threshold
         let serialized = config.serialize_vector(&small_vector).unwrap();
-        
+
         // Should use raw format
         let header_bytes = &serialized[..size_of::<VectorHeader>()];
         let header: &VectorHeader = from_bytes(header_bytes);
@@ -533,11 +563,11 @@ mod tests {
     #[test]
     fn test_vector_analysis() {
         let config = VectorSerializationConfig::default();
-        
+
         // Create a sparse vector (90% zeros)
         let sparse_vector = create_test_vector(1000, 0.9);
         let analysis = config.analyze_vector(&sparse_vector);
-        
+
         assert!(analysis.sparsity > 0.8);
         assert!(analysis.zero_ratio > 0.8);
         assert_eq!(analysis.dimension, 1000);
@@ -547,11 +577,11 @@ mod tests {
     fn test_adaptive_optimization() {
         let mut config = VectorSerializationConfig::default();
         config.adaptive_compression = true;
-        
+
         let sparse_vector = create_test_vector(1000, 0.9);
         let analysis = config.analyze_vector(&sparse_vector);
         config.optimize_for_analysis(&analysis);
-        
+
         // Should have increased compression level for sparse data
         assert!(config.compression_level >= 6);
     }
@@ -560,12 +590,18 @@ mod tests {
     fn test_dimension_optimized_config() {
         let small_config = VectorSerializationConfig::for_dimension(64);
         let large_config = VectorSerializationConfig::for_dimension(2048);
-        
+
         // Small vectors should avoid compression
-        assert_eq!(small_config.compression_algorithm, CompressionAlgorithm::None);
-        
+        assert_eq!(
+            small_config.compression_algorithm,
+            CompressionAlgorithm::None
+        );
+
         // Large vectors should use compression
-        assert_ne!(large_config.compression_algorithm, CompressionAlgorithm::None);
+        assert_ne!(
+            large_config.compression_algorithm,
+            CompressionAlgorithm::None
+        );
         assert!(large_config.compression_level > small_config.compression_level);
     }
 }

@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::compression::{CompressionAlgorithm, CompressionContext};
-use crate::core::serialization::{VectorSerializationConfig, VectorAnalysis};
 use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::serialization::{VectorAnalysis, VectorSerializationConfig};
 use crate::proto::proximadb::CompressionConfig as ProtoCompressionConfig;
 
 /// Row-based compression configuration
@@ -18,19 +18,19 @@ pub struct RowBasedCompressionConfig {
     pub algorithm: CompressionAlgorithm,
     pub compression_level: u8,
     pub compression_ratio_estimate: f32,
-    
+
     /// Vector-specific compression
     pub vector_compression: VectorCompressionStrategy,
-    
+
     /// Metadata compression
     pub metadata_compression: MetadataCompressionConfig,
-    
+
     /// Block-level compression
     pub block_compression: BlockLevelCompressionConfig,
-    
+
     /// Dynamic compression adjustment
     pub adaptive_compression: AdaptiveCompressionConfig,
-    
+
     /// Performance thresholds
     pub compression_thresholds: CompressionThresholds,
 }
@@ -39,13 +39,13 @@ pub struct RowBasedCompressionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorCompressionStrategy {
     /// Strategy type
-    
+
     /// Dimension-specific settings
     pub dimension_thresholds: HashMap<usize, CompressionSettings>,
-    
+
     /// Hardware-optimized settings
     pub hardware_optimizations: HardwareCompressionConfig,
-    
+
     /// Quantization integration
     pub quantization_aware: bool,
     pub quantization_first: bool,
@@ -82,13 +82,13 @@ pub struct CompressionSettings {
 pub struct HardwareCompressionConfig {
     /// Use hardware acceleration when available
     pub use_hardware_acceleration: bool,
-    
+
     /// SIMD-optimized algorithms
     pub simd_algorithms: Vec<CompressionAlgorithm>,
-    
+
     /// GPU-accelerated compression
     pub gpu_acceleration: bool,
-    
+
     /// Memory-bandwidth optimized settings
     pub memory_bandwidth_optimization: bool,
 }
@@ -98,13 +98,13 @@ pub struct HardwareCompressionConfig {
 pub struct MetadataCompressionConfig {
     /// Enable metadata compression
     pub enabled: bool,
-    
+
     /// JSON-specific compression
     pub json_compression: JsonCompressionConfig,
-    
+
     /// String compression strategies
     pub string_compression: StringCompressionConfig,
-    
+
     /// Timestamp compression
     pub timestamp_compression: TimestampCompressionConfig,
 }
@@ -145,13 +145,13 @@ pub enum TimestampPrecision {
 pub struct BlockLevelCompressionConfig {
     /// Compression per block
     pub per_block_compression: bool,
-    
+
     /// Inter-block compression
     pub inter_block_compression: bool,
-    
+
     /// Block size optimization
     pub optimal_block_sizes: HashMap<CompressionAlgorithm, usize>,
-    
+
     /// Compression pipeline
     pub multi_stage_compression: bool,
     pub compression_stages: Vec<CompressionStage>,
@@ -178,15 +178,15 @@ pub enum CompressionCondition {
 pub struct AdaptiveCompressionConfig {
     /// Enable adaptive compression
     pub enabled: bool,
-    
+
     /// Adaptation triggers
     pub adaptation_triggers: Vec<AdaptationTrigger>,
-    
+
     /// Performance monitoring
     pub monitor_compression_ratio: bool,
     pub monitor_compression_time: bool,
     pub monitor_decompression_time: bool,
-    
+
     /// Adjustment parameters
     pub adjustment_frequency: AdaptationFrequency,
     pub max_level_increase: u8,
@@ -215,16 +215,16 @@ pub enum AdaptationFrequency {
 pub struct CompressionThresholds {
     /// Minimum size to enable compression
     pub min_compression_size: usize,
-    
+
     /// Maximum compression time
     pub max_compression_time_ms: f64,
-    
+
     /// Minimum compression ratio to be worthwhile
     pub min_compression_ratio: f32,
-    
+
     /// Memory usage limits
     pub max_memory_overhead_percent: f32,
-    
+
     /// CPU usage limits
     pub max_cpu_usage_percent: f32,
 }
@@ -245,17 +245,17 @@ pub struct CompressionStats {
     pub original_size: usize,
     pub compressed_size: usize,
     pub compression_ratio: f32,
-    
+
     /// Performance metrics
     pub compression_time_ms: f64,
     pub decompression_time_ms: f64,
     pub throughput_mbps: f32,
-    
+
     /// Algorithm information
     pub algorithm_used: CompressionAlgorithm,
     pub level_used: u8,
     pub hardware_accelerated: bool,
-    
+
     /// Quality metrics
     pub memory_overhead: usize,
     pub cpu_usage_percent: f32,
@@ -273,7 +273,7 @@ impl RowBasedCompressionConfig {
             Ok(ProtoAlgorithm::CompressionBrotli) => CompressionAlgorithm::Brotli,
             _ => CompressionAlgorithm::Zstd,
         };
-        
+
         Self {
             enabled: proto_config.adaptive, // Use adaptive field as enabled
             algorithm,
@@ -286,7 +286,7 @@ impl RowBasedCompressionConfig {
             compression_thresholds: CompressionThresholds::default(),
         }
     }
-    
+
     /// Get compression settings for specific dimension
     pub fn get_vector_settings(&self, dimension: usize) -> CompressionSettings {
         let key = &dimension;
@@ -296,7 +296,7 @@ impl RowBasedCompressionConfig {
             .cloned()
             .unwrap_or_else(|| self.default_vector_settings(dimension))
     }
-    
+
     /// Get default vector settings for dimension
     fn default_vector_settings(&self, dimension: usize) -> CompressionSettings {
         let (algorithm, enable_bytemuck) = match dimension {
@@ -307,40 +307,42 @@ impl RowBasedCompressionConfig {
             // Other dimensions - use general compression
             _ => (self.algorithm, false),
         };
-        
+
         CompressionSettings {
             algorithm,
             level: self.compression_level,
             enable_dictionary: dimension > 1000, // Dictionary helps for large vectors
-            enable_delta: false, // Generally not beneficial for random vectors
+            enable_delta: false,                 // Generally not beneficial for random vectors
             block_size_hint: (dimension * 4 * 2000).max(64 * 1024), // ~2000 vectors or 64KB min
         }
     }
-    
+
     /// Check if compression should be applied
     pub fn should_compress(&self, data_size: usize, context: &CompressionContext) -> bool {
         if !self.enabled {
             return false;
         }
-        
+
         if data_size < self.compression_thresholds.min_compression_size {
             return false;
         }
-        
+
         // Context-specific decisions
         match context {
-            CompressionContext::Column => { // Use Column for vector data
+            CompressionContext::Column => {
+                // Use Column for vector data
                 // Check if vector compression is enabled based on hardware optimizations or quantization
-                self.vector_compression.quantization_aware || 
-                self.vector_compression.hardware_optimizations.use_hardware_acceleration
+                self.vector_compression.quantization_aware
+                    || self
+                        .vector_compression
+                        .hardware_optimizations
+                        .use_hardware_acceleration
             }
-            CompressionContext::Block => {
-                self.block_compression.per_block_compression
-            }
+            CompressionContext::Block => self.block_compression.per_block_compression,
             _ => true,
         }
     }
-    
+
     /// Get optimal algorithm for context and size
     pub fn get_optimal_algorithm(
         &self,
@@ -349,12 +351,16 @@ impl RowBasedCompressionConfig {
         hardware: &HardwareCapabilities,
     ) -> CompressionAlgorithm {
         // Hardware-specific optimizations
-        if self.vector_compression.hardware_optimizations.use_hardware_acceleration {
+        if self
+            .vector_compression
+            .hardware_optimizations
+            .use_hardware_acceleration
+        {
             if let Some(simd_algorithm) = self.get_simd_optimal_algorithm(hardware) {
                 return simd_algorithm;
             }
         }
-        
+
         // Size-based selection
         match data_size {
             // Small data - prioritize speed
@@ -365,14 +371,22 @@ impl RowBasedCompressionConfig {
             _ => CompressionAlgorithm::Brotli,
         }
     }
-    
+
     /// Get SIMD-optimal algorithm
-    fn get_simd_optimal_algorithm(&self, hardware: &HardwareCapabilities) -> Option<CompressionAlgorithm> {
-        let simd_algos = &self.vector_compression.hardware_optimizations.simd_algorithms;
-        
+    fn get_simd_optimal_algorithm(
+        &self,
+        hardware: &HardwareCapabilities,
+    ) -> Option<CompressionAlgorithm> {
+        let simd_algos = &self
+            .vector_compression
+            .hardware_optimizations
+            .simd_algorithms;
+
         if hardware.has_avx512() && simd_algos.contains(&CompressionAlgorithm::Lz4) {
             Some(CompressionAlgorithm::Lz4)
-        } else if hardware.cpu.features.avx2_support && simd_algos.contains(&CompressionAlgorithm::Snappy) {
+        } else if hardware.cpu.features.avx2_support
+            && simd_algos.contains(&CompressionAlgorithm::Snappy)
+        {
             Some(CompressionAlgorithm::Snappy)
         } else {
             None
@@ -399,18 +413,21 @@ impl Default for RowBasedCompressionConfig {
 impl Default for VectorCompressionStrategy {
     fn default() -> Self {
         let mut dimension_thresholds = HashMap::new();
-        
+
         // Add optimized settings for common dimensions
         for &dim in &[64, 128, 256, 384, 512, 768, 1024, 1536, 2048] {
-            dimension_thresholds.insert(dim, CompressionSettings {
-                algorithm: CompressionAlgorithm::Lz4,
-                level: 1,
-                enable_dictionary: false,
-                enable_delta: false,
-                block_size_hint: dim * 4 * 2000,
-            });
+            dimension_thresholds.insert(
+                dim,
+                CompressionSettings {
+                    algorithm: CompressionAlgorithm::Lz4,
+                    level: 1,
+                    enable_dictionary: false,
+                    enable_delta: false,
+                    block_size_hint: dim * 4 * 2000,
+                },
+            );
         }
-        
+
         Self {
             // strategy removed -  VectorCompressionType::Adaptive,
             dimension_thresholds,
@@ -425,10 +442,7 @@ impl Default for HardwareCompressionConfig {
     fn default() -> Self {
         Self {
             use_hardware_acceleration: true,
-            simd_algorithms: vec![
-                CompressionAlgorithm::Lz4,
-                CompressionAlgorithm::Snappy,
-            ],
+            simd_algorithms: vec![CompressionAlgorithm::Lz4, CompressionAlgorithm::Snappy],
             gpu_acceleration: false,
             memory_bandwidth_optimization: true,
         }
@@ -484,7 +498,7 @@ impl Default for BlockLevelCompressionConfig {
         optimal_sizes.insert(CompressionAlgorithm::Zstd, 64 * 1024);
         optimal_sizes.insert(CompressionAlgorithm::Lz4, 32 * 1024);
         optimal_sizes.insert(CompressionAlgorithm::Snappy, 32 * 1024);
-        
+
         Self {
             per_block_compression: true,
             inter_block_compression: false,
@@ -528,44 +542,44 @@ impl Default for CompressionThresholds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_compression_config_defaults() {
         let config = RowBasedCompressionConfig::default();
-        
+
         assert!(config.enabled);
         assert_eq!(config.algorithm, CompressionAlgorithm::Zstd);
         assert_eq!(config.compression_level, 3);
         assert!(config.vector_compression.quantization_aware);
     }
-    
+
     #[test]
     fn test_vector_settings_for_common_dimensions() {
         let config = RowBasedCompressionConfig::default();
-        
+
         let settings_768 = config.get_vector_settings(768);
         assert_eq!(settings_768.algorithm, CompressionAlgorithm::Lz4);
-        
+
         let settings_random = config.get_vector_settings(999);
         assert_eq!(settings_random.algorithm, CompressionAlgorithm::Zstd);
     }
-    
+
     #[test]
     fn test_compression_decision_logic() {
         let config = RowBasedCompressionConfig::default();
-        
+
         // Should compress large data
         assert!(config.should_compress(100 * 1024, &CompressionContext::VectorData));
-        
+
         // Should not compress tiny data
         assert!(!config.should_compress(100, &CompressionContext::VectorData));
-        
+
         // Disabled config should not compress
         let mut disabled_config = config.clone();
         disabled_config.enabled = false;
         assert!(!disabled_config.should_compress(100 * 1024, &CompressionContext::VectorData));
     }
-    
+
     #[test]
     fn test_proto_config_conversion() {
         let proto_config = ProtoCompressionConfig {
@@ -574,9 +588,9 @@ mod tests {
             level: 2,
             compression_ratio: 0.6,
         };
-        
+
         let config = RowBasedCompressionConfig::from_proto_config(&proto_config);
-        
+
         assert!(config.enabled);
         assert_eq!(config.algorithm, CompressionAlgorithm::Lz4);
         assert_eq!(config.compression_level, 2);

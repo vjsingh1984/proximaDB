@@ -30,7 +30,7 @@ use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 pub struct AtomicWriteConfig {
     /// Strategy to use based on environment
     pub strategy: AtomicWriteStrategy,
-    
+
     /// Temp directory configuration
     pub temp_config: TempDirectoryConfig,
 
@@ -181,7 +181,11 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
             if let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
                 return Err(FilesystemError::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to create parent directory {}: {}", parent.display(), e)
+                    format!(
+                        "Failed to create parent directory {}: {}",
+                        parent.display(),
+                        e
+                    ),
                 )));
             }
         }
@@ -218,22 +222,22 @@ impl SameMountTempExecutor {
     fn generate_temp_path(&self, final_path: &str) -> FsResult<String> {
         // Use centralized URL path extraction for consistent handling
         use super::FilesystemFactory;
-        
+
         let (base_url, path_part) = if final_path.contains("://") {
             // Extract scheme for URL reconstruction
             use url::Url;
             let parsed_url = Url::parse(final_path)?;
             let scheme = parsed_url.scheme();
-            
+
             // Use centralized path extraction (handles relative paths correctly)
             let path = FilesystemFactory::resolve_path(final_path)?;
-            
+
             (format!("{}://", scheme), path)
         } else {
             // Not a URL, treat as regular path
             ("".to_string(), final_path.to_string())
         };
-        
+
         let final_path = Path::new(&path_part);
         let parent = final_path.parent();
         let filename = final_path
@@ -291,16 +295,18 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
                 None
             }
         } else {
-            Path::new(&temp_path).parent().map(|p| p.to_string_lossy().to_string())
+            Path::new(&temp_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
         };
-        
+
         if let Some(parent) = temp_parent {
             if let Err(e) = filesystem.create_dir_all(&parent).await {
                 tracing::warn!("Failed to create temp parent directory {}: {}", parent, e);
                 // Try to continue, as the directory might already exist
             }
         }
-        
+
         let final_parent = if final_path.contains("://") {
             // For URLs, find the parent directory part
             if let Some(last_slash) = final_path.rfind('/') {
@@ -309,14 +315,16 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
                 None
             }
         } else {
-            Path::new(final_path).parent().map(|p| p.to_string_lossy().to_string())
+            Path::new(final_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
         };
-        
+
         if let Some(parent) = final_parent {
             if let Err(e) = filesystem.create_dir_all(&parent).await {
                 return Err(FilesystemError::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    format!("Failed to create parent directory {}: {}", parent, e)
+                    format!("Failed to create parent directory {}: {}", parent, e),
                 )));
             }
         }
@@ -324,12 +332,21 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         // Write to temp file
         debug!("🔍 DEBUG ATOMIC: Writing to temp_path: {}", temp_path);
         filesystem.write(&temp_path, data, None).await?;
-        debug!("🔍 DEBUG ATOMIC: Successfully wrote to temp_path: {}", temp_path);
+        debug!(
+            "🔍 DEBUG ATOMIC: Successfully wrote to temp_path: {}",
+            temp_path
+        );
 
         // Atomic move to final location (move is atomic, copy is not)
-        debug!("🔍 DEBUG ATOMIC: Moving from temp_path: {} to final_path: {}", temp_path, final_path);
+        debug!(
+            "🔍 DEBUG ATOMIC: Moving from temp_path: {} to final_path: {}",
+            temp_path, final_path
+        );
         filesystem.move_file(&temp_path, final_path).await?;
-        debug!("🔍 DEBUG ATOMIC: Successfully moved to final_path: {}", final_path);
+        debug!(
+            "🔍 DEBUG ATOMIC: Successfully moved to final_path: {}",
+            final_path
+        );
 
         Ok(())
     }
@@ -375,8 +392,8 @@ impl CloudOptimizedExecutor {
         }
 
         // Use compression (e.g., Snappy for speed or ZSTD for ratio)
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         use std::io::Write;
 
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());

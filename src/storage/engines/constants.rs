@@ -1,6 +1,6 @@
 // Engine type constants for consistent identification across the system
 // These are used for:
-// 1. IntelligentFilesystem cache segregation  
+// 1. IntelligentFilesystem cache segregation
 // 2. Magic bytes in file formats
 // 3. Metrics and logging
 

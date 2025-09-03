@@ -7,8 +7,15 @@ fn test_data_type_creation() {
     let dense_vector = Data::DenseVector { dimension: 128 };
     assert!(matches!(dense_vector, Data::DenseVector { dimension: 128 }));
 
-    let sparse_vector = Data::SparseVector { max_dimension: 1000 };
-    assert!(matches!(sparse_vector, Data::SparseVector { max_dimension: 1000 }));
+    let sparse_vector = Data::SparseVector {
+        max_dimension: 1000,
+    };
+    assert!(matches!(
+        sparse_vector,
+        Data::SparseVector {
+            max_dimension: 1000
+        }
+    ));
 
     let metadata = Data::Metadata;
     assert!(matches!(metadata, Data::Metadata));
@@ -51,13 +58,24 @@ fn test_index_algorithm_creation() {
     let btree = IndexAlgorithm::BTree {
         max_keys_per_node: 256,
     };
-    assert!(matches!(btree, IndexAlgorithm::BTree { max_keys_per_node: 256 }));
+    assert!(matches!(
+        btree,
+        IndexAlgorithm::BTree {
+            max_keys_per_node: 256
+        }
+    ));
 
     let bloom = IndexAlgorithm::BloomFilter {
         expected_elements: 1_000_000,
         false_positive_rate: 0.01,
     };
-    assert!(matches!(bloom, IndexAlgorithm::BloomFilter { expected_elements: 1_000_000, .. }));
+    assert!(matches!(
+        bloom,
+        IndexAlgorithm::BloomFilter {
+            expected_elements: 1_000_000,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -103,7 +121,10 @@ fn test_serialization_deserialization() {
 
     let deserialized: IndexSpecification = serde_json::from_str(&serialized).unwrap();
     assert!(matches!(deserialized.data_type, Data::DenseVector { .. }));
-    assert!(matches!(deserialized.algorithm, IndexAlgorithm::HNSW { .. }));
+    assert!(matches!(
+        deserialized.algorithm,
+        IndexAlgorithm::HNSW { .. }
+    ));
     assert_eq!(deserialized.name, Some("vector_index".to_string()));
     assert!(deserialized.is_primary);
 }

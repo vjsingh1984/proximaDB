@@ -37,7 +37,7 @@
 //!     category TEXT,
 //!     price FLOAT
 //! );
-//! 
+//!
 //! -- Vector similarity search with filters
 //! SELECT id, category, COSINE_DISTANCE(embedding, [0.1, 0.2, ...]) as score
 //! FROM products
@@ -119,16 +119,16 @@
 //!
 //! ```rust
 //! use proximadb::query::{QueryEngine, VectorSearchQuery};
-//! 
+//!
 //! let engine = QueryEngine::new_with_storage(storage).await?;
-//! 
+//!
 //! // SQL query
 //! let results = engine.execute_sql(
-//!     "SELECT * FROM products 
+//!     "SELECT * FROM products
 //!      WHERE COSINE_DISTANCE(embedding, [0.1, 0.2, ...]) < 0.5
 //!      LIMIT 10"
 //! ).await?;
-//! 
+//!
 //! // Native vector search
 //! let query = VectorSearchQuery {
 //!     vector: vec![0.1, 0.2, ...],
@@ -142,44 +142,42 @@
 //! ## Execution Plan Example
 //!
 //! ```text
-//! EXPLAIN SELECT * FROM products 
-//! WHERE category = 'electronics' 
-//! ORDER BY COSINE_DISTANCE(embedding, [...]) 
+//! EXPLAIN SELECT * FROM products
+//! WHERE category = 'electronics'
+//! ORDER BY COSINE_DISTANCE(embedding, [...])
 //! LIMIT 10;
-//! 
+//!
 //! Execution Plan:
 //! └── Limit (10)
 //!     └── Sort (score DESC)
 //!         └── Filter (category = 'electronics')
 //!             └── IndexScan (HNSW, cosine)
 //!                 └── TableScan (products)
-//! 
+//!
 //! Estimated Cost: 245
 //! Estimated Rows: 10
 //! ```
 
 pub mod sql_engine;
-pub mod vector_search;
 pub mod unified_query_optimizer;
+pub mod vector_search;
 
 // Re-export main types
-pub use sql_engine::{SqlEngine, SqlExecutionResult, SqlParser, QueryPlanner};
-pub use vector_search::{VectorSearchQuery, VectorSearchResult, SearchParameters};
+pub use sql_engine::{QueryPlanner, SqlEngine, SqlExecutionResult, SqlParser};
 pub use unified_query_optimizer::{
-    UnifiedQueryOptimizer as QueryOptimizer, 
-    UnifiedExecutionPlan as QueryPlan,
-    UnifiedMetadataFilter as MetadataFilter,
-    UnifiedOptimizerConfig, UnifiedCostWeights,
+    UnifiedCostWeights, UnifiedExecutionPlan as QueryPlan, UnifiedMetadataFilter as MetadataFilter,
+    UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };
+pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult};
 
-use crate::storage::StorageEngine;
 use crate::services::VectorOperationsService;
+use crate::storage::StorageEngine;
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use anyhow::Result;
 
 /// Query Engine for ProximaDB
-/// 
+///
 /// Unified interface for SQL and vector search queries with optimization
 #[derive(Clone)]
 pub struct QueryEngine {
@@ -198,7 +196,7 @@ impl QueryEngine {
             sql_engine: None,
             vector_service: None,
             optimizer: Arc::new(unified_query_optimizer::UnifiedQueryOptimizer::new(
-                unified_query_optimizer::UnifiedOptimizerConfig::default()
+                unified_query_optimizer::UnifiedOptimizerConfig::default(),
             )),
         })
     }
@@ -209,7 +207,7 @@ impl QueryEngine {
             sql_engine: None,
             vector_service: None,
             optimizer: Arc::new(unified_query_optimizer::UnifiedQueryOptimizer::new(
-                unified_query_optimizer::UnifiedOptimizerConfig::default()
+                unified_query_optimizer::UnifiedOptimizerConfig::default(),
             )),
         })
     }
@@ -220,24 +218,24 @@ impl QueryEngine {
             sql_engine: None,
             vector_service: None,
             optimizer: Arc::new(unified_query_optimizer::UnifiedQueryOptimizer::new(
-                unified_query_optimizer::UnifiedOptimizerConfig::default()
+                unified_query_optimizer::UnifiedOptimizerConfig::default(),
             )),
         })
     }
-    
+
     /// Create with vector service
     pub fn new_with_vector_service(vector_service: Arc<VectorOperationsService>) -> Self {
         let sql_engine = Arc::new(SqlEngine::new(vector_service.clone()));
-        
+
         Self {
             sql_engine: Some(sql_engine),
             vector_service: Some(vector_service),
             optimizer: Arc::new(unified_query_optimizer::UnifiedQueryOptimizer::new(
-                unified_query_optimizer::UnifiedOptimizerConfig::default()
+                unified_query_optimizer::UnifiedOptimizerConfig::default(),
             )),
         }
     }
-    
+
     /// Execute SQL query with optimization
     pub async fn execute_sql(&self, sql: &str) -> Result<SqlExecutionResult> {
         if let Some(sql_engine) = &self.sql_engine {
@@ -248,9 +246,12 @@ impl QueryEngine {
             Err(anyhow::anyhow!("SQL engine not initialized"))
         }
     }
-    
+
     /// Execute vector search query
-    pub async fn execute_vector_search(&self, query: &VectorSearchQuery) -> Result<VectorSearchResult> {
+    pub async fn execute_vector_search(
+        &self,
+        query: &VectorSearchQuery,
+    ) -> Result<VectorSearchResult> {
         if let Some(vector_service) = &self.vector_service {
             // Convert SearchQuery to SearchConfig for execution
             let config = vector_search::SearchConfig {
@@ -262,12 +263,12 @@ impl QueryEngine {
             Err(anyhow::anyhow!("Vector service not initialized"))
         }
     }
-    
+
     /// Get vector service reference
     pub fn vector_service(&self) -> Option<&Arc<VectorOperationsService>> {
         self.vector_service.as_ref()
     }
-    
+
     /// Get query optimizer
     pub fn optimizer(&self) -> &Arc<unified_query_optimizer::UnifiedQueryOptimizer> {
         &self.optimizer

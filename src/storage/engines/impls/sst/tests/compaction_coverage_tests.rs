@@ -39,20 +39,20 @@ mod tests {
         }
     }
 
-    // Note: SstRecord and should_replace_record are private, 
+    // Note: SstRecord and should_replace_record are private,
     // so we focus on testing public APIs of Compaction
 
     #[test]
     fn test_compaction_priority_ordering() {
         // Test CompactionPriority enum ordering
         assert!(CompactionPriority::Low < CompactionPriority::Medium);
-        assert!(CompactionPriority::Medium < CompactionPriority::High);  
+        assert!(CompactionPriority::Medium < CompactionPriority::High);
         assert!(CompactionPriority::High < CompactionPriority::Critical);
-        
+
         // Test equality
         assert_eq!(CompactionPriority::Low, CompactionPriority::Low);
         assert_ne!(CompactionPriority::Low, CompactionPriority::High);
-        
+
         // Test clone
         let priority = CompactionPriority::High;
         let cloned = priority.clone();
@@ -71,7 +71,7 @@ mod tests {
         assert!(stats.last_compaction_time.is_none());
         assert_eq!(stats.expired_records_deleted, 0);
         assert_eq!(stats.tombstones_removed, 0);
-        
+
         // Test clone
         let cloned_stats = stats.clone();
         assert_eq!(cloned_stats.total_compactions, stats.total_compactions);
@@ -85,36 +85,39 @@ mod tests {
         assert!(enhanced_stats.deleted_vector_ids.is_none());
         assert!(enhanced_stats.merged_vectors.is_none());
         assert!(!enhanced_stats.recommend_full_rebuild);
-        
+
         // Test clone
         let cloned = enhanced_stats.clone();
-        assert_eq!(cloned.deleted_vector_ids.len(), enhanced_stats.deleted_vector_ids.len());
+        assert_eq!(
+            cloned.deleted_vector_ids.len(),
+            enhanced_stats.deleted_vector_ids.len()
+        );
     }
 
     #[test]
     fn test_compaction_task_creation_and_cloning() {
         // Test CompactionTask creation
         let input_files = vec![
-            PathBuf::from("/tmp/input1.sstable"), 
-            PathBuf::from("/tmp/input2.sstable")
+            PathBuf::from("/tmp/input1.sstable"),
+            PathBuf::from("/tmp/input2.sstable"),
         ];
         let output_file = PathBuf::from("/tmp/output.sstable");
-        
+
         let task = CompactionTask {
             level: 2,
             input_files: input_files.clone(),
             output_file: output_file.clone(),
             priority: CompactionPriority::High,
-            block_size_kb: None, // Use server default for tests
+            block_size_kb: None,      // Use server default for tests
             compression_config: None, // Use server default for tests
         };
-        
+
         // Test field access
         assert_eq!(task.level, 2);
         assert_eq!(task.input_files.len(), 2);
         assert_eq!(task.output_file, output_file);
         assert_eq!(task.priority, CompactionPriority::High);
-        
+
         // Test clone
         let cloned_task = task.clone();
         assert_eq!(cloned_task.level, task.level);
@@ -128,14 +131,14 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_manager_constructor_variants() {
         let config = create_test_sst_config();
-        
+
         // Test basic constructor
         let manager1 = Compaction::new(config.clone()).await.unwrap();
-        
+
         // Test manager creation (creation success indicates correct setup)
         // Note: with_atomic_coordinator method may not be available in current implementation
         let manager2 = Compaction::new(config.clone()).await.unwrap();
-        
+
         // Both should be successfully created (can't access private fields, but creation success indicates correct setup)
         drop(manager1);
         drop(manager2);
@@ -145,14 +148,14 @@ mod tests {
     async fn test_compaction_manager_worker_lifecycle() {
         let config = create_test_sst_config();
         let mut manager = Compaction::new(config).await.unwrap();
-        
+
         // Test starting workers with different counts
         assert!(manager.start_workers(0).await.is_ok()); // Zero workers should be OK
         assert!(manager.stop().await.is_ok());
-        
+
         assert!(manager.start_workers(1).await.is_ok()); // Single worker
         assert!(manager.stop().await.is_ok());
-        
+
         assert!(manager.start_workers(3).await.is_ok()); // Multiple workers
         assert!(manager.stop().await.is_ok());
     }
@@ -161,7 +164,7 @@ mod tests {
     async fn test_compaction_task_scheduling_with_priorities() {
         let config = create_test_sst_config();
         let manager = Compaction::new(config).await.unwrap();
-        
+
         // Schedule tasks with different priorities
         let tasks = vec![
             create_test_compaction_task("collection1", 0, CompactionPriority::Low),
@@ -169,7 +172,7 @@ mod tests {
             create_test_compaction_task("collection3", 2, CompactionPriority::Critical),
             create_test_compaction_task("collection4", 0, CompactionPriority::Medium),
         ];
-        
+
         for task in tasks {
             assert!(manager.schedule_compaction(task).await.is_ok());
         }
@@ -179,13 +182,13 @@ mod tests {
     async fn test_compaction_manager_statistics() {
         let config = create_test_sst_config();
         let manager = Compaction::new(config).await.unwrap();
-        
+
         // Get initial stats
         let initial_stats = manager.stats().await;
         assert_eq!(initial_stats.total_compactions, 0);
         assert_eq!(initial_stats.bytes_written, 0);
         assert_eq!(initial_stats.files_merged, 0);
-        
+
         // Stats should be consistent across multiple calls
         let stats2 = manager.stats().await;
         assert_eq!(initial_stats.total_compactions, stats2.total_compactions);
@@ -195,7 +198,7 @@ mod tests {
     async fn test_compaction_task_with_empty_input_files() {
         let config = create_test_sst_config();
         let manager = Compaction::new(config).await.unwrap();
-        
+
         // Test scheduling task with empty input files
         let task = CompactionTask {
             level: 1,
@@ -205,7 +208,7 @@ mod tests {
             block_size_kb: None,
             compression_config: None,
         };
-        
+
         assert!(manager.schedule_compaction(task).await.is_ok());
     }
 
@@ -213,12 +216,12 @@ mod tests {
     async fn test_compaction_task_with_multiple_input_files() {
         let config = create_test_sst_config();
         let manager = Compaction::new(config).await.unwrap();
-        
+
         // Test scheduling task with many input files
         let many_files: Vec<PathBuf> = (0..10)
             .map(|i| PathBuf::from(format!("/tmp/input_{}.sstable", i)))
             .collect();
-        
+
         let task = CompactionTask {
             level: 2,
             input_files: many_files,
@@ -227,7 +230,7 @@ mod tests {
             block_size_kb: None,
             compression_config: None,
         };
-        
+
         assert!(manager.schedule_compaction(task).await.is_ok());
     }
 
@@ -235,16 +238,18 @@ mod tests {
     async fn test_compaction_manager_edge_case_levels() {
         let mut config = create_test_sst_config();
         config.level_count = 1; // Minimum level count
-        
+
         let manager = Compaction::new(config.clone()).await.unwrap();
-        
+
         // Test with level 0 (minimum)
-        let task_level_0 = create_test_compaction_task("collection_level0", 0, CompactionPriority::Medium);
+        let task_level_0 =
+            create_test_compaction_task("collection_level0", 0, CompactionPriority::Medium);
         assert!(manager.schedule_compaction(task_level_0).await.is_ok());
-        
+
         // Test with maximum level (level_count - 1)
         let max_level = (config.level_count - 1) as u8;
-        let task_max_level = create_test_compaction_task("collection_max", max_level, CompactionPriority::High);
+        let task_max_level =
+            create_test_compaction_task("collection_max", max_level, CompactionPriority::High);
         assert!(manager.schedule_compaction(task_max_level).await.is_ok());
     }
 
@@ -252,23 +257,23 @@ mod tests {
     async fn test_compaction_manager_concurrent_operations() {
         let config = create_test_sst_config();
         let manager = Arc::new(Compaction::new(config).await.unwrap());
-        
+
         // Test concurrent task scheduling
         let mut handles = vec![];
-        
+
         for i in 0..5 {
             let manager_clone = manager.clone();
             let handle = tokio::spawn(async move {
                 let task = create_test_compaction_task(
                     &format!("concurrent_collection_{}", i),
                     (i % 3) as u8,
-                    CompactionPriority::Medium
+                    CompactionPriority::Medium,
                 );
                 manager_clone.schedule_compaction(task).await
             });
             handles.push(handle);
         }
-        
+
         // All concurrent operations should succeed
         for handle in handles {
             let result = handle.await.expect("Task should complete");
@@ -280,9 +285,9 @@ mod tests {
     async fn test_compaction_stats_tracking_fields() {
         let config = create_test_sst_config();
         let manager = Compaction::new(config).await.unwrap();
-        
+
         let stats = manager.stats().await;
-        
+
         // Test all fields are accessible and have expected initial values
         assert_eq!(stats.total_compactions, 0);
         assert_eq!(stats.bytes_written, 0);
@@ -297,18 +302,22 @@ mod tests {
     #[test]
     fn test_enhanced_compaction_stats_field_access() {
         let mut enhanced_stats = EnhancedCompactionStats::default();
-        
+
         // Test field modifications
-        enhanced_stats.deleted_vector_ids.push("deleted_1".to_string());
-        enhanced_stats.deleted_vector_ids.push("deleted_2".to_string());
-        
+        enhanced_stats
+            .deleted_vector_ids
+            .push("deleted_1".to_string());
+        enhanced_stats
+            .deleted_vector_ids
+            .push("deleted_2".to_string());
+
         let test_vector = create_test_vector_record("merged_1", 100, 1000);
         enhanced_stats.merged_vectors.push(test_vector);
-        
+
         enhanced_stats.recommend_full_rebuild = true;
         enhanced_stats.base_stats.total_compactions = 5;
         enhanced_stats.base_stats.bytes_written = 1024;
-        
+
         // Verify all modifications
         assert_eq!(enhanced_stats.deleted_vector_ids.len(), 2);
         assert_eq!(enhanced_stats.merged_vectors.len(), 1);
@@ -318,7 +327,11 @@ mod tests {
     }
 
     /// Helper function to create test compaction tasks
-    fn create_test_compaction_task(collection_id: &str, level: u8, priority: CompactionPriority) -> CompactionTask {
+    fn create_test_compaction_task(
+        collection_id: &str,
+        level: u8,
+        priority: CompactionPriority,
+    ) -> CompactionTask {
         CompactionTask {
             level,
             input_files: vec![

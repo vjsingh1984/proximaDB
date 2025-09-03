@@ -15,11 +15,11 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::core::VectorRecord;
-use crate::core::search::{MetadataFilter, FilterExpression};
+use crate::core::search::{FilterExpression, MetadataFilter};
 use crate::proto::proximadb::Collection;
 
 /// Unified scan strategy based on RAPTOR's successful pattern
@@ -37,7 +37,7 @@ pub enum ScanStrategy {
         /// Use cache if available (from SST)
         use_cache: bool,
     },
-    
+
     /// Filtered scan with optimizations
     /// Based on: VIPER's predicate_pushdown, NOVA's progressive search, RAPTOR's Filtering
     FilteredScan {
@@ -56,7 +56,7 @@ pub enum ScanStrategy {
         /// Result limit
         limit: Option<usize>,
     },
-    
+
     /// Progressive scan with quantization stages (from NOVA)
     ProgressiveScan {
         /// Binary filtering stage
@@ -70,7 +70,7 @@ pub enum ScanStrategy {
         /// Latency budget
         latency_budget_ms: Option<u64>,
     },
-    
+
     /// Range scan for ordered data (from SST)
     RangeScan {
         /// Start key (inclusive)
@@ -92,18 +92,18 @@ pub struct ScanCapabilities {
     pub supports_column_projection: bool,
     pub supports_row_group_pruning: bool,
     pub supports_parallel_column_evaluation: bool,
-    
+
     // From SST (row-based engine)
     pub supports_bloom_filters: bool,
     pub supports_block_cache: bool,
     pub supports_range_scans: bool,
     pub supports_index_scans: bool,
-    
+
     // From NOVA (progressive search)
     pub supports_progressive_quantization: bool,
     pub supports_zone_maps: bool,
     pub supports_streaming: bool,
-    
+
     // From RAPTOR (tiered storage)
     pub supports_tier_aware_scanning: bool,
     pub supports_consolidated_reading: bool,
@@ -114,15 +114,15 @@ pub struct ScanCapabilities {
 pub trait ScanIterator: Send {
     /// Get next batch (all engines use batched reading)
     async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>>;
-    
+
     /// Skip to position (for range scans)
     async fn seek(&mut self, key: &str) -> Result<()> {
         Err(anyhow::anyhow!("Seek not supported by this iterator"))
     }
-    
+
     /// Get current statistics
     fn statistics(&self) -> ScanStatistics;
-    
+
     /// Cancel scan
     fn cancel(&mut self);
 }
@@ -134,24 +134,24 @@ pub struct ScanStatistics {
     pub records_scanned: usize,
     pub records_matched: usize,
     pub bytes_read: usize,
-    
+
     // From columnar engines (VIPER/NOVA)
     pub row_groups_scanned: usize,
     pub row_groups_pruned: usize,
     pub columns_read: usize,
-    
+
     // From SST
     pub blocks_scanned: usize,
     pub blocks_filtered: usize,
     pub bloom_filter_hits: usize,
     pub cache_hits: usize,
     pub cache_misses: usize,
-    
+
     // From NOVA progressive search
     pub binary_candidates: usize,
     pub int8_candidates: usize,
     pub fp32_candidates: usize,
-    
+
     // Timing
     pub io_time_ms: u64,
     pub filter_time_ms: u64,
@@ -163,7 +163,7 @@ pub struct ScanStatistics {
 pub trait UnifiedScanEngine: Send + Sync {
     /// Get scan capabilities for this engine
     fn scan_capabilities(&self) -> ScanCapabilities;
-    
+
     /// Create a scan iterator based on strategy
     /// This is the main entry point, similar to RAPTOR's scan_vectors_with_strategy
     async fn create_scan_iterator(
@@ -172,14 +172,14 @@ pub trait UnifiedScanEngine: Send + Sync {
         strategy: ScanStrategy,
         collection_config: Option<&Collection>,
     ) -> Result<Box<dyn ScanIterator>>;
-    
+
     /// Estimate scan cost for query planning
     async fn estimate_scan_cost(
         &self,
         collection_id: &str,
         strategy: &ScanStrategy,
     ) -> Result<ScanCostEstimate>;
-    
+
     /// Optimize scan strategy based on statistics
     /// Engines can upgrade/downgrade strategies based on their capabilities
     async fn optimize_scan_strategy(
@@ -205,7 +205,7 @@ pub struct ScanCostEstimate {
 /// Engine-specific implementations based on actual code patterns
 pub mod engine_impl {
     use super::*;
-    
+
     /// SST scan implementation traits
     pub struct SSTScanIterator {
         /// Based on sst_query_engine.rs patterns
@@ -214,7 +214,7 @@ pub mod engine_impl {
         pub parallel_files: bool,
         pub bloom_filter_enabled: bool,
     }
-    
+
     /// VIPER scan implementation traits  
     pub struct VIPERScanIterator {
         /// Based on column_filter.rs patterns
@@ -223,7 +223,7 @@ pub mod engine_impl {
         pub selective_column_loading: bool,
         pub qualifying_indices: Vec<usize>,
     }
-    
+
     /// NOVA scan implementation traits
     pub struct NOVAScanIterator {
         /// Based on columnar_search.rs patterns
@@ -232,7 +232,7 @@ pub mod engine_impl {
         pub zone_map_pruning: bool,
         pub memory_budget: usize,
     }
-    
+
     /// RAPTOR scan implementation traits
     pub struct RAPTORScanIterator {
         /// Based on consolidated_reader.rs patterns
@@ -246,7 +246,7 @@ pub mod engine_impl {
 /// Helper functions extracted from existing implementations
 pub mod scan_helpers {
     use super::*;
-    
+
     /// From VIPER: Extract columns needed for filter evaluation
     pub fn extract_filter_columns(filter: &FilterExpression) -> HashSet<String> {
         let mut columns = HashSet::new();
@@ -263,7 +263,7 @@ pub mod scan_helpers {
         }
         columns
     }
-    
+
     /// From SST: Check if block should be scanned based on bloom filter
     pub async fn should_scan_block(
         block_id: &str,
@@ -277,7 +277,7 @@ pub mod scan_helpers {
         // Check bloom filter (simplified)
         true
     }
-    
+
     /// From NOVA: Determine if progressive search is beneficial
     pub fn should_use_progressive(
         total_vectors: usize,
@@ -287,7 +287,7 @@ pub mod scan_helpers {
         // Based on NOVA's heuristics
         total_vectors > 10000 && selectivity < 0.1 && latency_budget_ms.is_some()
     }
-    
+
     /// From RAPTOR: Estimate row group selectivity
     pub fn estimate_rowgroup_selectivity(
         predicates: &[FilterExpression],
@@ -314,7 +314,7 @@ pub struct RowGroupStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_scan_strategy_creation() {
         // Test patterns from existing engines
@@ -324,7 +324,7 @@ mod tests {
             parallel: true,
             use_cache: true,
         };
-        
+
         let filtered_scan = ScanStrategy::FilteredScan {
             target_ids: Some(vec!["id1".to_string()]),
             predicates: None,
@@ -334,7 +334,7 @@ mod tests {
             early_termination: true,
             limit: Some(10),
         };
-        
+
         let progressive_scan = ScanStrategy::ProgressiveScan {
             binary_candidates: 10000,
             int8_candidates: 1000,
@@ -342,7 +342,7 @@ mod tests {
             memory_budget_bytes: Some(1024 * 1024 * 1024),
             latency_budget_ms: Some(1000),
         };
-        
+
         // All strategies should be constructible
         matches!(full_scan, ScanStrategy::FullScan { .. });
         matches!(filtered_scan, ScanStrategy::FilteredScan { .. });

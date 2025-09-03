@@ -131,20 +131,20 @@
 //! [storage]
 //! default_engine = "sst"  # or "viper", "nova", etc.
 //! data_directory = "/data/proximadb"
-//! 
+//!
 //! # WAL configuration
 //! [storage.wal]
 //! enabled = true
 //! sync_mode = "batch"  # or "immediate"
 //! batch_size = 100
 //! flush_interval_ms = 1000
-//! 
+//!
 //! # MemTable configuration
 //! [storage.memtable]
 //! type = "skiplist"  # or "btree", "art"
 //! max_size_mb = 256
 //! flush_threshold = 0.8
-//! 
+//!
 //! # Compaction settings
 //! [storage.compaction]
 //! strategy = "leveled"  # or "tiered", "unified"
@@ -183,8 +183,8 @@
 pub mod builder;
 pub mod traits;
 pub mod types;
-pub mod validation;
 pub mod unified_scan_strategy;
+pub mod validation;
 
 // Common reusable components
 pub mod common;
@@ -221,7 +221,6 @@ pub mod cache;
 // TransactionCoordinator now uses DashMap for active_operations
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers
 
-
 // Main exports from organized structure
 pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
 pub use types::StorageEngineType;
@@ -243,17 +242,16 @@ pub use persistence::{DiskManager, FilesystemConfig, FilesystemFactory};
 
 // Atomic operations exports
 pub use transaction_coordinator::{
-    TransactionalOperationMetadata, TransactionalOperationStatus, StagingConfig, TransactionStageType,
-    TransactionCoordinator, ViperTransactionalOperations, WalTransactionalOperations,
+    StagingConfig, TransactionCoordinator, TransactionStageType, TransactionalOperationMetadata,
+    TransactionalOperationStatus, ViperTransactionalOperations, WalTransactionalOperations,
 };
-
 
 // Storage engine exports
 pub use engine::StorageEngine;
 // Write Buffer system exports
 use crate::core::StorageError;
 pub use metadata::{MetadataStore, SystemMetadata};
-pub use persistence::write_ahead_log::{BatchId, WALConfig, WriteAheadLogManager, WALOperation};
+pub use persistence::write_ahead_log::{BatchId, WALConfig, WALOperation, WriteAheadLogManager};
 
 // ResultProcessor has naming conflicts, import explicitly when needed
 

@@ -15,27 +15,29 @@
  */
 
 //! SQL Query Engine for ProximaDB
-//! 
+//!
 //! Provides SQL-like query interface for vector search with metadata filtering.
 
+pub mod executor;
 pub mod parser;
+pub mod planner;
 pub mod pool;
 pub mod vector_array_parser;
-pub mod executor;
-pub mod planner;
 
 #[cfg(test)]
 pub mod comprehensive_sql_tests;
 
-pub use parser::{SqlParser, ParsedQuery};
-pub use pool::{LockFreeParserPool, global_pool, parse_sql_global, PoolStats};
-pub use vector_array_parser::{SimdVectorParser, SimdCapabilities, parse_vector_simd, global_simd_parser};
-pub use executor::{SqlExecutor, SqlExecutionResult};
-pub use planner::{QueryPlanner, ExecutionPlan};
+pub use executor::{SqlExecutionResult, SqlExecutor};
+pub use parser::{ParsedQuery, SqlParser};
+pub use planner::{ExecutionPlan, QueryPlanner};
+pub use pool::{LockFreeParserPool, PoolStats, global_pool, parse_sql_global};
+pub use vector_array_parser::{
+    SimdCapabilities, SimdVectorParser, global_simd_parser, parse_vector_simd,
+};
 
+use crate::services::{CollectionService, VectorOperationsService};
 use anyhow::Result;
 use std::sync::Arc;
-use crate::services::{VectorOperationsService, CollectionService};
 
 /// SQL Engine for ProximaDB with unified caching
 pub struct SqlEngine {
@@ -55,7 +57,7 @@ impl SqlEngine {
             executor: SqlExecutor::new(vector_service),
         }
     }
-    
+
     /// Create new SQL engine with collection service for name resolution
     pub fn with_collection_service(
         vector_service: Arc<VectorOperationsService>,
@@ -68,48 +70,59 @@ impl SqlEngine {
             executor: SqlExecutor::new(vector_service),
         }
     }
-    
+
     /// Execute SQL query
     pub async fn execute(&self, sql: &str) -> Result<SqlExecutionResult> {
         // Parse SQL using lock-free parser pool
         let mut parsed_query = global_pool().parse_sql(sql.to_string())?;
-        
+
         // Resolve collection name to UUID if we have a collection service
         if let Some(collection_service) = &self.collection_service {
             if !parsed_query.from_collection.is_empty() {
                 // Try to resolve the collection identifier
-                match collection_service.resolve_collection_id(&parsed_query.from_collection).await {
+                match collection_service
+                    .resolve_collection_id(&parsed_query.from_collection)
+                    .await
+                {
                     Ok(Some(resolved_id)) => {
                         // Only update if we got a different ID (name was resolved)
                         if resolved_id != parsed_query.from_collection {
-                            tracing::debug!("🔄 Resolved collection name '{}' to UUID '{}'", 
-                                parsed_query.from_collection, resolved_id);
+                            tracing::debug!(
+                                "🔄 Resolved collection name '{}' to UUID '{}'",
+                                parsed_query.from_collection,
+                                resolved_id
+                            );
                             parsed_query.from_collection = resolved_id;
                         }
                     }
                     Ok(None) => {
                         // Collection not found - let it fail in executor with clear error
-                        tracing::debug!("⚠️ Collection '{}' not found during resolution", 
-                            parsed_query.from_collection);
+                        tracing::debug!(
+                            "⚠️ Collection '{}' not found during resolution",
+                            parsed_query.from_collection
+                        );
                     }
                     Err(e) => {
                         // Log error but continue - let executor handle it
-                        tracing::warn!("⚠️ Error resolving collection '{}': {}", 
-                            parsed_query.from_collection, e);
+                        tracing::warn!(
+                            "⚠️ Error resolving collection '{}': {}",
+                            parsed_query.from_collection,
+                            e
+                        );
                     }
                 }
             }
         }
-        
+
         // Create execution plan
         let plan = self.planner.create_plan(parsed_query)?;
-        
+
         // Execute plan
         let result = self.executor.execute_plan(plan).await?;
-        
+
         Ok(result)
     }
-    
+
     /// Extract collection ID from SQL query for caching
     fn extract_collection_from_sql(&self, sql: &str) -> String {
         // Simple extraction - in real implementation might parse more thoroughly
@@ -119,71 +132,82 @@ impl SqlEngine {
             "unknown".to_string()
         }
     }
-    
+
     /// Execute SQL query without caching (for debugging or one-time queries)
     pub async fn execute_uncached(&self, sql: &str) -> Result<SqlExecutionResult> {
         // Parse SQL using lock-free parser pool
         let mut parsed_query = global_pool().parse_sql(sql.to_string())?;
-        
+
         // Resolve collection name to UUID if we have a collection service
         if let Some(collection_service) = &self.collection_service {
             if !parsed_query.from_collection.is_empty() {
                 // Try to resolve the collection identifier
-                match collection_service.resolve_collection_id(&parsed_query.from_collection).await {
+                match collection_service
+                    .resolve_collection_id(&parsed_query.from_collection)
+                    .await
+                {
                     Ok(Some(resolved_id)) => {
                         // Only update if we got a different ID (name was resolved)
                         if resolved_id != parsed_query.from_collection {
-                            tracing::debug!("🔄 Resolved collection name '{}' to UUID '{}'", 
-                                parsed_query.from_collection, resolved_id);
+                            tracing::debug!(
+                                "🔄 Resolved collection name '{}' to UUID '{}'",
+                                parsed_query.from_collection,
+                                resolved_id
+                            );
                             parsed_query.from_collection = resolved_id;
                         }
                     }
                     Ok(None) => {
                         // Collection not found - let it fail in executor with clear error
-                        tracing::debug!("⚠️ Collection '{}' not found during resolution", 
-                            parsed_query.from_collection);
+                        tracing::debug!(
+                            "⚠️ Collection '{}' not found during resolution",
+                            parsed_query.from_collection
+                        );
                     }
                     Err(e) => {
                         // Log error but continue - let executor handle it
-                        tracing::warn!("⚠️ Error resolving collection '{}': {}", 
-                            parsed_query.from_collection, e);
+                        tracing::warn!(
+                            "⚠️ Error resolving collection '{}': {}",
+                            parsed_query.from_collection,
+                            e
+                        );
                     }
                 }
             }
         }
-        
+
         // Create execution plan
         let plan = self.planner.create_plan(parsed_query)?;
-        
+
         // Execute plan
         self.executor.execute_plan(plan).await
     }
-    
+
     /// Get query cache statistics
     pub fn cache_stats(&self) -> String {
         let cache = global_query_cache();
         let stats = cache.stats();
         stats.summary()
     }
-    
+
     /// Clear query cache
     pub fn clear_cache(&self) {
         let cache = global_query_cache();
         cache.clear();
     }
-    
+
     /// Get cache utilization summary
     pub fn cache_utilization_summary(&self) -> String {
         let cache = global_query_cache();
         let stats = cache.stats();
         format!(
-            "Unified Query Cache: {:.1}% hit rate, {} entries, {:.1}KB mem", 
+            "Unified Query Cache: {:.1}% hit rate, {} entries, {:.1}KB mem",
             stats.hit_ratio(),
             cache.size(),
             cache.get_total_memory_usage() as f64 / 1024.0
         )
     }
-    
+
     /// Invalidate cache entries for a specific collection
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
         let cache = global_query_cache();
@@ -193,8 +217,8 @@ impl SqlEngine {
 // Temporary stub types and functions for query cache
 // TODO: Properly implement query cache functionality
 
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -221,10 +245,7 @@ impl QueryCache {
     }
 
     pub fn stats(&self) -> CacheStats {
-        CacheStats {
-            hits: 0,
-            misses: 0,
-        }
+        CacheStats { hits: 0, misses: 0 }
     }
 
     pub fn size(&self) -> usize {
@@ -281,10 +302,13 @@ pub fn global_query_cache() -> &'static QueryCache {
 /// Cache a query result
 pub fn cache_query_result(key: QueryCacheKey, result: Vec<u8>) {
     let mut cache = GLOBAL_QUERY_CACHE.cache.lock().unwrap();
-    cache.insert(key, CachedQueryResult {
-        result,
-        timestamp: 0, // Stub timestamp
-    });
+    cache.insert(
+        key,
+        CachedQueryResult {
+            result,
+            timestamp: 0, // Stub timestamp
+        },
+    );
 }
 
 /// Get a cached query result

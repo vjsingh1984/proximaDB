@@ -17,7 +17,7 @@
 //! Adaptive data structures foundation for ProximaDB
 //!
 //! This module provides the unified foundation for adaptive data structures that
-//! automatically adjust their behavior based on workload characteristics and 
+//! automatically adjust their behavior based on workload characteristics and
 //! integrate with the GlobalTier for multi-tier storage.
 //!
 //! ## Architecture Overview
@@ -44,7 +44,7 @@
 //! 4. **Collection-Aware Policies**: Per-collection constraints from base_location
 //! 5. **Unified Metrics**: Comprehensive observability across all backends
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use moka::future::Cache as MokaCache;
@@ -58,8 +58,8 @@ use tracing::{debug, info};
 
 use crate::infrastructure::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
 use crate::infrastructure::tier_policy_engine::{
-    GlobalTier, SmartTierPolicy, StorageTier, WorkloadPattern, WorkloadMetrics,
-    CollectionStorageConfig, CollectionStorageLimits,
+    CollectionStorageConfig, CollectionStorageLimits, GlobalTier, SmartTierPolicy, StorageTier,
+    WorkloadMetrics, WorkloadPattern,
 };
 
 /// Adaptive storage interface that chooses optimal backend based on workload
@@ -139,9 +139,7 @@ pub enum IndexStructure {
         memory_limit_mb: Option<usize>,
     },
     /// HashMap with RwLock for simple cases
-    RwLockHashMap {
-        initial_capacity: usize,
-    },
+    RwLockHashMap { initial_capacity: usize },
 }
 
 /// Cache-specific data structures  
@@ -154,9 +152,7 @@ pub enum CacheStructure {
         time_to_idle: Option<Duration>,
     },
     /// LRU cache for simple eviction
-    Lru {
-        max_capacity: usize,
-    },
+    Lru { max_capacity: usize },
 }
 
 /// Hybrid structure that can switch between backends
@@ -329,7 +325,8 @@ impl UniversalTier {
             collection_id
         );
 
-        self.collection_configs.insert(collection_id.clone(), tier_policy);
+        self.collection_configs
+            .insert(collection_id.clone(), tier_policy);
 
         // Initialize collection in global manager
         self.global_manager
@@ -413,9 +410,7 @@ impl AdaptiveStoreFactory {
         K: Hash + Eq + Clone + Send + Sync + 'static,
         V: Clone + Send + Sync + 'static,
     {
-        let config = config.unwrap_or_else(|| {
-            self.get_default_config(&collection_id)
-        });
+        let config = config.unwrap_or_else(|| self.get_default_config(&collection_id));
 
         // Register collection with tier manager
         let tier_policy = self.create_tier_policy(&config)?;
@@ -425,14 +420,41 @@ impl AdaptiveStoreFactory {
 
         // Create appropriate backend
         match &config.backend_type {
-            BackendType::Index { structure, tier_policy } => {
-                self.create_index_backend(collection_id, structure.clone(), tier_policy.clone(), config).await
+            BackendType::Index {
+                structure,
+                tier_policy,
+            } => {
+                self.create_index_backend(
+                    collection_id,
+                    structure.clone(),
+                    tier_policy.clone(),
+                    config,
+                )
+                .await
             }
-            BackendType::Cache { structure, tier_policy } => {
-                self.create_cache_backend(collection_id, structure.clone(), tier_policy.clone(), config).await
+            BackendType::Cache {
+                structure,
+                tier_policy,
+            } => {
+                self.create_cache_backend(
+                    collection_id,
+                    structure.clone(),
+                    tier_policy.clone(),
+                    config,
+                )
+                .await
             }
-            BackendType::Hybrid { active_structure, detection_config } => {
-                self.create_hybrid_backend(collection_id, active_structure.clone(), detection_config.clone(), config).await
+            BackendType::Hybrid {
+                active_structure,
+                detection_config,
+            } => {
+                self.create_hybrid_backend(
+                    collection_id,
+                    active_structure.clone(),
+                    detection_config.clone(),
+                    config,
+                )
+                .await
             }
         }
     }
@@ -450,29 +472,30 @@ impl AdaptiveStoreFactory {
         V: Clone + Send + Sync + 'static,
     {
         match structure {
-            IndexStructure::DashMap { initial_capacity, memory_limit_mb } => {
-                Ok(Box::new(
-                    IndexBackend::new_dashmap(
-                        collection_id,
-                        initial_capacity,
-                        memory_limit_mb,
-                        tier_policy,
-                        config,
-                        self.tier_manager.clone(),
-                    ).await?
-                ))
-            }
-            IndexStructure::RwLockHashMap { initial_capacity } => {
-                Ok(Box::new(
-                    IndexBackend::new_rwlock_hashmap(
-                        collection_id,
-                        initial_capacity,
-                        tier_policy,
-                        config,
-                        self.tier_manager.clone(),
-                    ).await?
-                ))
-            }
+            IndexStructure::DashMap {
+                initial_capacity,
+                memory_limit_mb,
+            } => Ok(Box::new(
+                IndexBackend::new_dashmap(
+                    collection_id,
+                    initial_capacity,
+                    memory_limit_mb,
+                    tier_policy,
+                    config,
+                    self.tier_manager.clone(),
+                )
+                .await?,
+            )),
+            IndexStructure::RwLockHashMap { initial_capacity } => Ok(Box::new(
+                IndexBackend::new_rwlock_hashmap(
+                    collection_id,
+                    initial_capacity,
+                    tier_policy,
+                    config,
+                    self.tier_manager.clone(),
+                )
+                .await?,
+            )),
         }
     }
 
@@ -489,30 +512,32 @@ impl AdaptiveStoreFactory {
         V: Clone + Send + Sync + 'static,
     {
         match structure {
-            CacheStructure::Moka { max_capacity, time_to_live, time_to_idle } => {
-                Ok(Box::new(
-                    CacheBackend::new_moka(
-                        collection_id,
-                        max_capacity,
-                        time_to_live,
-                        time_to_idle,
-                        tier_policy,
-                        config,
-                        self.tier_manager.clone(),
-                    ).await?
-                ))
-            }
-            CacheStructure::Lru { max_capacity } => {
-                Ok(Box::new(
-                    CacheBackend::new_lru(
-                        collection_id,
-                        max_capacity,
-                        tier_policy,
-                        config,
-                        self.tier_manager.clone(),
-                    ).await?
-                ))
-            }
+            CacheStructure::Moka {
+                max_capacity,
+                time_to_live,
+                time_to_idle,
+            } => Ok(Box::new(
+                CacheBackend::new_moka(
+                    collection_id,
+                    max_capacity,
+                    time_to_live,
+                    time_to_idle,
+                    tier_policy,
+                    config,
+                    self.tier_manager.clone(),
+                )
+                .await?,
+            )),
+            CacheStructure::Lru { max_capacity } => Ok(Box::new(
+                CacheBackend::new_lru(
+                    collection_id,
+                    max_capacity,
+                    tier_policy,
+                    config,
+                    self.tier_manager.clone(),
+                )
+                .await?,
+            )),
         }
     }
 
@@ -535,7 +560,8 @@ impl AdaptiveStoreFactory {
                 detection_config,
                 config,
                 self.tier_manager.clone(),
-            ).await?
+            )
+            .await?,
         ))
     }
 
@@ -543,12 +569,14 @@ impl AdaptiveStoreFactory {
     fn create_tier_policy(&self, config: &AdaptiveStoreConfig) -> Result<SmartTierPolicy> {
         // This would integrate with the actual GlobalTier's policy creation
         // For now, return a default policy based on backend type
-        
+
         // Create collection config
         let collection_config = CollectionStorageConfig {
             collection_id: config.collection_id.clone(),
             base_location: "/tmp".to_string(),
-            durable_baseline: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+            durable_baseline: StorageTier::HardDisk {
+                mount_path: "/mnt/hdd".to_string(),
+            },
             max_acceleration_tier: Some(StorageTier::Memory),
             storage_limits: CollectionStorageLimits {
                 max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
@@ -556,42 +584,40 @@ impl AdaptiveStoreFactory {
                 max_monthly_cost_usd: None,
             },
         };
-        
+
         // Create default available tiers
         let available_tiers = vec![
             StorageTier::Memory,
-            StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
-            StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
+            StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string(),
+            },
+            StorageTier::HardDisk {
+                mount_path: "/mnt/hdd".to_string(),
+            },
         ];
-        
+
         // Create tier configs
         let tier_configs = HashMap::new();
-        
+
         // Use the appropriate constructor based on backend type
         let policy = match &config.backend_type {
-            BackendType::Index { .. } => {
-                SmartTierPolicy::for_index_workload_constrained(
-                    collection_config,
-                    &available_tiers,
-                    &tier_configs,
-                )
-            },
-            BackendType::Cache { .. } => {
-                SmartTierPolicy::for_cache_workload_constrained(
-                    collection_config,
-                    &available_tiers,
-                    &tier_configs,
-                )
-            },
-            BackendType::Hybrid { .. } => {
-                SmartTierPolicy::for_hybrid_workload_constrained(
-                    collection_config,
-                    &available_tiers,
-                    &tier_configs,
-                )
-            },
+            BackendType::Index { .. } => SmartTierPolicy::for_index_workload_constrained(
+                collection_config,
+                &available_tiers,
+                &tier_configs,
+            ),
+            BackendType::Cache { .. } => SmartTierPolicy::for_cache_workload_constrained(
+                collection_config,
+                &available_tiers,
+                &tier_configs,
+            ),
+            BackendType::Hybrid { .. } => SmartTierPolicy::for_hybrid_workload_constrained(
+                collection_config,
+                &available_tiers,
+                &tier_configs,
+            ),
         };
-        
+
         Ok(policy)
     }
 
@@ -611,87 +637,97 @@ impl AdaptiveStoreFactory {
         let mut configs = HashMap::new();
 
         // Default index configuration
-        configs.insert("index_default".to_string(), AdaptiveStoreConfig {
-            collection_id: "index_default".to_string(),
-            backend_type: BackendType::Index {
-                structure: IndexStructure::DashMap {
-                    initial_capacity: 1024,
-                    memory_limit_mb: Some(512),
+        configs.insert(
+            "index_default".to_string(),
+            AdaptiveStoreConfig {
+                collection_id: "index_default".to_string(),
+                backend_type: BackendType::Index {
+                    structure: IndexStructure::DashMap {
+                        initial_capacity: 1024,
+                        memory_limit_mb: Some(512),
+                    },
+                    tier_policy: UnifiedTierPolicy {
+                        eviction_policy: EvictionPolicy::SizeBased { max_memory_mb: 512 },
+                        promotion_criteria: PromotionCriteria {
+                            min_access_frequency: 100,
+                            frequency_window: Duration::from_secs(3600),
+                            min_promotion_tier: StorageTier::Memory,
+                        },
+                        demotion_criteria: DemotionCriteria {
+                            max_idle_time: Duration::from_secs(7200),
+                            memory_pressure_threshold: 0.85,
+                            min_tier: StorageTier::HardDisk {
+                                mount_path: "/mnt/hdd".to_string(),
+                            },
+                        },
+                        reload_strategy: ReloadStrategy {
+                            load_on_startup: true,
+                            prefetch_hot_data: true,
+                            max_initial_load: 10000,
+                            axis_storage_path: "{baseurl}/{collection_id}/indexes/".to_string(),
+                        },
+                    },
                 },
-                tier_policy: UnifiedTierPolicy {
-                    eviction_policy: EvictionPolicy::SizeBased { max_memory_mb: 512 },
-                    promotion_criteria: PromotionCriteria {
-                        min_access_frequency: 100,
-                        frequency_window: Duration::from_secs(3600),
-                        min_promotion_tier: StorageTier::Memory,
-                    },
-                    demotion_criteria: DemotionCriteria {
-                        max_idle_time: Duration::from_secs(7200),
-                        memory_pressure_threshold: 0.85,
-                        min_tier: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
-                    },
-                    reload_strategy: ReloadStrategy {
-                        load_on_startup: true,
-                        prefetch_hot_data: true,
-                        max_initial_load: 10000,
-                        axis_storage_path: "{baseurl}/{collection_id}/indexes/".to_string(),
-                    },
+                tier_config: TierConfig {
+                    enable_tiering: true,
+                    rebalance_interval: Duration::from_secs(300),
+                    memory_pressure_threshold: 0.8,
+                    max_concurrent_operations: 4,
+                },
+                metrics_config: MetricsConfig {
+                    enable_workload_metrics: true,
+                    collection_interval: Duration::from_secs(60),
+                    history_retention: Duration::from_secs(3600),
                 },
             },
-            tier_config: TierConfig {
-                enable_tiering: true,
-                rebalance_interval: Duration::from_secs(300),
-                memory_pressure_threshold: 0.8,
-                max_concurrent_operations: 4,
-            },
-            metrics_config: MetricsConfig {
-                enable_workload_metrics: true,
-                collection_interval: Duration::from_secs(60),
-                history_retention: Duration::from_secs(3600),
-            },
-        });
+        );
 
         // Default cache configuration
-        configs.insert("cache_default".to_string(), AdaptiveStoreConfig {
-            collection_id: "cache_default".to_string(),
-            backend_type: BackendType::Cache {
-                structure: CacheStructure::Moka {
-                    max_capacity: 10000,
-                    time_to_live: Some(Duration::from_secs(3600)),
-                    time_to_idle: Some(Duration::from_secs(1800)),
+        configs.insert(
+            "cache_default".to_string(),
+            AdaptiveStoreConfig {
+                collection_id: "cache_default".to_string(),
+                backend_type: BackendType::Cache {
+                    structure: CacheStructure::Moka {
+                        max_capacity: 10000,
+                        time_to_live: Some(Duration::from_secs(3600)),
+                        time_to_idle: Some(Duration::from_secs(1800)),
+                    },
+                    tier_policy: UnifiedTierPolicy {
+                        eviction_policy: EvictionPolicy::Lru { max_entries: 10000 },
+                        promotion_criteria: PromotionCriteria {
+                            min_access_frequency: 10,
+                            frequency_window: Duration::from_secs(300),
+                            min_promotion_tier: StorageTier::Memory,
+                        },
+                        demotion_criteria: DemotionCriteria {
+                            max_idle_time: Duration::from_secs(1800),
+                            memory_pressure_threshold: 0.9,
+                            min_tier: StorageTier::HardDisk {
+                                mount_path: "/mnt/hdd".to_string(),
+                            },
+                        },
+                        reload_strategy: ReloadStrategy {
+                            load_on_startup: false,
+                            prefetch_hot_data: false,
+                            max_initial_load: 0,
+                            axis_storage_path: "{baseurl}/{collection_id}/cache/".to_string(),
+                        },
+                    },
                 },
-                tier_policy: UnifiedTierPolicy {
-                    eviction_policy: EvictionPolicy::Lru { max_entries: 10000 },
-                    promotion_criteria: PromotionCriteria {
-                        min_access_frequency: 10,
-                        frequency_window: Duration::from_secs(300),
-                        min_promotion_tier: StorageTier::Memory,
-                    },
-                    demotion_criteria: DemotionCriteria {
-                        max_idle_time: Duration::from_secs(1800),
-                        memory_pressure_threshold: 0.9,
-                        min_tier: StorageTier::HardDisk { mount_path: "/mnt/hdd".to_string() },
-                    },
-                    reload_strategy: ReloadStrategy {
-                        load_on_startup: false,
-                        prefetch_hot_data: false,
-                        max_initial_load: 0,
-                        axis_storage_path: "{baseurl}/{collection_id}/cache/".to_string(),
-                    },
+                tier_config: TierConfig {
+                    enable_tiering: true,
+                    rebalance_interval: Duration::from_secs(120),
+                    memory_pressure_threshold: 0.9,
+                    max_concurrent_operations: 2,
+                },
+                metrics_config: MetricsConfig {
+                    enable_workload_metrics: true,
+                    collection_interval: Duration::from_secs(30),
+                    history_retention: Duration::from_secs(1800),
                 },
             },
-            tier_config: TierConfig {
-                enable_tiering: true,
-                rebalance_interval: Duration::from_secs(120),
-                memory_pressure_threshold: 0.9,
-                max_concurrent_operations: 2,
-            },
-            metrics_config: MetricsConfig {
-                enable_workload_metrics: true,
-                collection_interval: Duration::from_secs(30),
-                history_retention: Duration::from_secs(1800),
-            },
-        });
+        );
 
         configs
     }
@@ -815,49 +851,49 @@ where
             workload_metrics: RwLock::new(WorkloadMetrics::new(WorkloadPattern::WriteHeavy)),
         })
     }
-    
+
     /// Flush write buffer to storage for bulk operations
     pub async fn flush_write_buffer(&self) -> Result<usize> {
         let mut buffer = self.write_buffer.write().await;
-        
+
         if buffer.is_empty() {
             return Ok(0);
         }
-        
+
         let count = buffer.len();
         let start = Instant::now();
-        
+
         // Bulk insert into DashMap
         for (key, value) in buffer.drain(..) {
             self.storage.insert(key, value);
         }
-        
+
         // Update metrics
         self.metrics.record_operation("bulk_flush", start.elapsed());
-        
+
         info!(
             "IndexBackend: Flushed {} items to storage for collection {} in {:?}",
             count,
             self.collection_id,
             start.elapsed()
         );
-        
+
         Ok(count)
     }
-    
+
     /// Add to write buffer for batching
     pub async fn buffer_write(&self, key: K, value: V) -> Result<bool> {
         let mut buffer = self.write_buffer.write().await;
-        
+
         buffer.push((key, value));
-        
+
         // Auto-flush if buffer is full
         if buffer.len() >= self.write_buffer_size {
             drop(buffer); // Release lock before flushing
             self.flush_write_buffer().await?;
             return Ok(true); // Flushed
         }
-        
+
         Ok(false) // Buffered
     }
 }
@@ -876,8 +912,7 @@ where
         config: AdaptiveStoreConfig,
         tier_manager: Arc<UniversalTier>,
     ) -> Result<Self> {
-        let mut builder = MokaCache::builder()
-            .max_capacity(max_capacity);
+        let mut builder = MokaCache::builder().max_capacity(max_capacity);
 
         if let Some(ttl) = time_to_live {
             builder = builder.time_to_live(ttl);
@@ -933,18 +968,16 @@ where
     ) -> Result<Self> {
         // Initialize storage based on active structure
         let (index_storage, cache_storage) = match active_structure {
-            HybridStructure::IndexMode(_) => {
-                (Some(DashMap::with_capacity(1000)), None)
-            },
+            HybridStructure::IndexMode(_) => (Some(DashMap::with_capacity(1000)), None),
             HybridStructure::CacheMode(_) => {
                 let cache = MokaCache::builder()
                     .max_capacity(10000)
                     .time_to_live(Duration::from_secs(300))
                     .build();
                 (None, Some(cache))
-            },
+            }
         };
-        
+
         Ok(Self {
             collection_id,
             active_structure: RwLock::new(active_structure),
@@ -970,35 +1003,35 @@ where
 {
     async fn insert(&self, key: K, value: V) -> Result<Option<V>> {
         let start = Instant::now();
-        
+
         // Insert into DashMap storage
         let old_value = self.storage.insert(key.clone(), value.clone());
-        
+
         // Update metrics
         self.metrics.record_operation("insert", start.elapsed());
-        
+
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
             wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
             wm.avg_latency_ms = start.elapsed().as_millis() as f64;
         }
-        
+
         debug!(
             "IndexBackend: Inserted key into collection {}, storage size: {}",
             self.collection_id,
             self.storage.len()
         );
-        
+
         Ok(old_value)
     }
 
     async fn get(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         // Get from DashMap storage
         let value = self.storage.get(key).map(|entry| entry.value().clone());
-        
+
         // Update metrics
         self.metrics.record_operation("get", start.elapsed());
         if value.is_some() {
@@ -1006,7 +1039,7 @@ where
         } else {
             self.metrics.record_miss();
         }
-        
+
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
@@ -1015,42 +1048,42 @@ where
                 wm.cache_hit_rate = self.metrics.hit_rate() * 100.0;
             }
         }
-        
+
         value
     }
 
     async fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         // Remove from DashMap storage
         let removed = self.storage.remove(key).map(|(_, v)| v);
-        
+
         // Update metrics
         self.metrics.record_operation("remove", start.elapsed());
-        
+
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
             wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
         }
-        
+
         debug!(
             "IndexBackend: Removed key from collection {}, storage size: {}",
             self.collection_id,
             self.storage.len()
         );
-        
+
         removed
     }
 
     async fn contains(&self, key: &K) -> bool {
         let start = Instant::now();
-        
+
         let exists = self.storage.contains_key(key);
-        
+
         // Update metrics
         self.metrics.record_operation("contains", start.elapsed());
-        
+
         exists
     }
 
@@ -1063,18 +1096,21 @@ where
     }
 
     async fn keys(&self) -> Vec<K> {
-        self.storage.iter().map(|entry| entry.key().clone()).collect()
+        self.storage
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     async fn clear(&self) {
         let start = Instant::now();
         let size_before = self.storage.len();
-        
+
         self.storage.clear();
-        
+
         // Update metrics
         self.metrics.record_operation("clear", start.elapsed());
-        
+
         info!(
             "IndexBackend: Cleared {} entries from collection {}",
             size_before, self.collection_id
@@ -1090,7 +1126,9 @@ where
     }
 
     async fn rebalance_tiers(&self) -> Result<TierRebalanceResult> {
-        self.tier_manager.rebalance_collection(&self.collection_id).await
+        self.tier_manager
+            .rebalance_collection(&self.collection_id)
+            .await
     }
 }
 
@@ -1102,37 +1140,37 @@ where
 {
     async fn insert(&self, key: K, value: V) -> Result<Option<V>> {
         let start = Instant::now();
-        
+
         // Get existing value before insertion
         let old_value = self.storage.get(&key).await;
-        
+
         // Insert into Moka cache
         self.storage.insert(key.clone(), value.clone()).await;
-        
+
         // Update metrics
         self.metrics.record_operation("insert", start.elapsed());
-        
+
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
             wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
             wm.avg_latency_ms = start.elapsed().as_millis() as f64;
         }
-        
+
         debug!(
             "CacheBackend: Inserted key into collection {} cache",
             self.collection_id
         );
-        
+
         Ok(old_value)
     }
 
     async fn get(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         // Get from Moka cache
         let value = self.storage.get(key).await;
-        
+
         // Update metrics
         self.metrics.record_operation("get", start.elapsed());
         if value.is_some() {
@@ -1140,7 +1178,7 @@ where
         } else {
             self.metrics.record_miss();
         }
-        
+
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
@@ -1149,44 +1187,44 @@ where
                 wm.cache_hit_rate = self.metrics.hit_rate() * 100.0;
             }
         }
-        
+
         value
     }
 
     async fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         // Get value before removal
         let removed = self.storage.get(key).await;
-        
+
         // Remove from Moka cache
         self.storage.remove(key).await;
-        
+
         // Update metrics
         self.metrics.record_operation("remove", start.elapsed());
-        
+
         // Update workload metrics
         {
             let mut wm = self.workload_metrics.write().await;
             wm.writes_per_second += 1.0; // Simplified - should be rate-calculated
         }
-        
+
         debug!(
             "CacheBackend: Removed key from collection {} cache",
             self.collection_id
         );
-        
+
         removed
     }
 
     async fn contains(&self, key: &K) -> bool {
         let start = Instant::now();
-        
+
         let exists = self.storage.contains_key(key);
-        
+
         // Update metrics
         self.metrics.record_operation("contains", start.elapsed());
-        
+
         exists
     }
 
@@ -1209,13 +1247,13 @@ where
     async fn clear(&self) {
         let start = Instant::now();
         let size_before = self.storage.entry_count();
-        
+
         // Clear all entries from Moka cache
         self.storage.invalidate_all();
-        
+
         // Update metrics
         self.metrics.record_operation("clear", start.elapsed());
-        
+
         info!(
             "CacheBackend: Cleared {} entries from collection {} cache_info",
             size_before, self.collection_id
@@ -1231,7 +1269,9 @@ where
     }
 
     async fn rebalance_tiers(&self) -> Result<TierRebalanceResult> {
-        self.tier_manager.rebalance_collection(&self.collection_id).await
+        self.tier_manager
+            .rebalance_collection(&self.collection_id)
+            .await
     }
 }
 
@@ -1243,7 +1283,7 @@ where
 {
     async fn insert(&self, key: K, value: V) -> Result<Option<V>> {
         let start = Instant::now();
-        
+
         // Use the active storage based on current mode
         let result = if let Some(ref index) = self.index_storage {
             Ok(index.insert(key, value))
@@ -1253,14 +1293,14 @@ where
         } else {
             Err(anyhow!("No active storage backend"))
         };
-        
+
         self.metrics.record_operation("insert", start.elapsed());
         result
     }
 
     async fn get(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         let result = if let Some(ref index) = self.index_storage {
             index.get(key).map(|r| r.clone())
         } else if let Some(ref cache) = self.cache_storage {
@@ -1268,14 +1308,14 @@ where
         } else {
             None
         };
-        
+
         self.metrics.record_operation("get", start.elapsed());
         result
     }
 
     async fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         let result = if let Some(ref index) = self.index_storage {
             index.remove(key).map(|(_, v)| v)
         } else if let Some(ref cache) = self.cache_storage {
@@ -1283,7 +1323,7 @@ where
         } else {
             None
         };
-        
+
         self.metrics.record_operation("remove", start.elapsed());
         result
     }
@@ -1341,7 +1381,9 @@ where
     }
 
     async fn rebalance_tiers(&self) -> Result<TierRebalanceResult> {
-        self.tier_manager.rebalance_collection(&self.collection_id).await
+        self.tier_manager
+            .rebalance_collection(&self.collection_id)
+            .await
     }
 }
 
@@ -1357,32 +1399,32 @@ mod tests {
         // CREATE: Insert new key-value pairs
         assert_eq!(backend.insert("key1".to_string(), "value1".to_string()).await.unwrap(), None);
         assert_eq!(backend.insert("key2".to_string(), "value2".to_string()).await.unwrap(), None);
-        
+
         // READ: Get values by key
         assert_eq!(backend.get(key)).await, Some("value1".to_string()));
         assert_eq!(backend.get(key)).await, Some("value2".to_string()));
         assert_eq!(backend.get(key)).await, None);
-        
+
         // UPDATE: Replace existing value
-        assert_eq!(backend.insert("key1".to_string(), "updated".to_string()).await.unwrap(), 
+        assert_eq!(backend.insert("key1".to_string(), "updated".to_string()).await.unwrap(),
                    Some("value1".to_string()));
         assert_eq!(backend.get(key)).await, Some("updated".to_string()));
-        
+
         // DELETE: Remove key-value pairs
         assert_eq!(backend.remove(&"key1".to_string()).await, Some("updated".to_string()));
         assert_eq!(backend.get(key)).await, None);
-        
+
         // Utility methods
         assert!(backend.contains(&"key2".to_string()).await);
         assert!(!backend.contains(&"key1".to_string()).await);
         assert_eq!(backend.len().await, 1);
         assert!(!backend.is_none().await);
-        
+
         backend.clear().await;
         assert!(backend.is_none().await);
         */
     }
-    
+
     #[tokio::test]
     #[ignore] // TODO: Fix test - API has changed
     async fn test_index_backend_write_buffering() {
@@ -1395,26 +1437,26 @@ mod tests {
             AdaptiveStoreConfig::default(),
             Arc::new(UniversalTier::new()),
         ).await.unwrap();
-        
+
         // Buffer writes without immediate insertion
         for i in 0..500 {
             let flushed = backend.buffer_write(format!("key{}", i), i).await.unwrap();
             assert!(!flushed, "Should buffer, not flush at {}", i);
         }
-        
+
         // Verify buffered writes are not in storage yet
         assert_eq!(backend.len().await, 0, "Storage should be empty before flush");
-        
+
         // Manually flush buffer
         let flushed_count = backend.flush_write_buffer().await.unwrap();
         assert_eq!(flushed_count, 500);
         assert_eq!(backend.len().await, 500);
-        
+
         // Verify data integrity after flush
         for i in 0..500 {
             assert_eq!(backend.get(key)).await, Some(i));
         }
-        
+
         // Test auto-flush at buffer size limit (1000)
         for i in 500..1500 {
             let flushed = backend.buffer_write(format!("key{}", i), i).await.unwrap();
@@ -1422,11 +1464,11 @@ mod tests {
                 assert!(flushed, "Should auto-flush at buffer limit");
             }
         }
-        
+
         assert_eq!(backend.len().await, 1500);
         */
     }
-    
+
     #[tokio::test]
     #[ignore] // TODO: Fix test - API has changed
     async fn test_cache_backend_operations() {
@@ -1438,20 +1480,20 @@ mod tests {
             AdaptiveStoreConfig::default(),
             Arc::new(UniversalTier::new()),
         ).await.unwrap();
-        
+
         // Test basic operations
         backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
         assert_eq!(backend.get(key)).await, Some("value1".to_string()));
-        
+
         // Test update
         backend.insert("key1".to_string(), "updated".to_string()).await.unwrap();
         assert_eq!(backend.get(key)).await, Some("updated".to_string()));
-        
+
         // Test remove
         let removed = backend.remove(&"key1".to_string()).await;
         assert_eq!(removed, Some("updated".to_string()));
         assert_eq!(backend.get(key)).await, None);
-        
+
         // Test clear
         for i in 0..10 {
             backend.insert(format!("key{}", i), format!("value{}", i)).await.unwrap();
@@ -1461,7 +1503,7 @@ mod tests {
         assert_eq!(backend.len().await, 0);
         */
     }
-    
+
     #[tokio::test]
     #[ignore] // TODO: Fix test - API has changed
     async fn test_metrics_and_workload_tracking() {
@@ -1474,20 +1516,20 @@ mod tests {
             AdaptiveStoreConfig::default(),
             Arc::new(UniversalTier::new()),
         ).await.unwrap();
-        
+
         // Perform mixed operations
         backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
         backend.insert("key2".to_string(), "value2".to_string()).await.unwrap();
         backend.get(key)).await; // Hit
         backend.get(key)).await; // Miss
         backend.remove(&"key2".to_string()).await;
-        
+
         // Check operation metrics
         let metrics = backend.metrics().await;
         assert_eq!(metrics.hit_count, 1);
         assert_eq!(metrics.miss_count, 1);
         assert_eq!(metrics.operation_count, 5); // 2 inserts + 2 gets + 1 remove
-        
+
         // Check workload metrics
         let workload = backend.workload_metrics().await;
         assert_eq!(workload.total_operations, 5);
@@ -1496,7 +1538,7 @@ mod tests {
         assert!(workload.cache_hit_ratio > 0.0);
         */
     }
-    
+
     #[tokio::test]
     #[ignore] // TODO: Fix test - API has changed
     async fn test_concurrent_index_backend_access() {
@@ -1509,10 +1551,10 @@ mod tests {
             AdaptiveStoreConfig::default(),
             Arc::new(UniversalTier::new()),
         ).await.unwrap());
-        
+
         // Spawn multiple concurrent tasks
         let mut handles = vec![];
-        
+
         // Writers
         for thread_id in 0..5 {
             let backend_clone = backend.clone();
@@ -1523,7 +1565,7 @@ mod tests {
                 }
             }));
         }
-        
+
         // Readers
         for thread_id in 5..10 {
             let backend_clone = backend.clone();
@@ -1535,26 +1577,26 @@ mod tests {
                 }
             }));
         }
-        
+
         // Wait for all tasks
         for handle in handles {
             handle.await.unwrap();
         }
-        
+
         // Verify all writes succeeded
         assert_eq!(backend.len().await, 500);
-        
+
         // Verify data integrity
         for i in 0..500 {
             assert_eq!(backend.get(key).await, Some(i * 2));
         }
         */
     }
-    
+
     #[tokio::test]
     async fn test_adaptive_store_factory_creation() {
         // Test configuration serialization/deserialization
-        
+
         let config = AdaptiveStoreConfig {
             collection_id: "test".to_string(),
             backend_type: BackendType::Index {
@@ -1572,7 +1614,9 @@ mod tests {
                     demotion_criteria: DemotionCriteria {
                         max_idle_time: Duration::from_secs(300),
                         memory_pressure_threshold: 0.8,
-                        min_tier: StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
+                        min_tier: StorageTier::NvmeSsd {
+                            mount_path: "/mnt/nvme".to_string(),
+                        },
                     },
                     reload_strategy: ReloadStrategy {
                         load_on_startup: false,

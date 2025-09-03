@@ -16,16 +16,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult, MetricProperties};
 use super::hardware_accelerated::AcceleratedQuantization;
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::{
+    MetricProperties, SimilarityResult, UnifiedDistanceCompute,
+};
 
 // Use internal types (Release 1 - no legacy proto compatibility)
 pub use super::types::{
-    UnifiedQuantizationLevel,
-    QuantizationLevel,
-    NoQuantization, UniformQuantization, ProductQuantization, 
-    ScalarQuantization, BinaryQuantization, CustomQuantization
+    BinaryQuantization, CustomQuantization, NoQuantization, ProductQuantization, QuantizationLevel,
+    ScalarQuantization, UnifiedQuantizationLevel, UniformQuantization,
 };
 
 // Implementation is in types.rs to maintain single source of truth
@@ -34,10 +34,10 @@ pub use super::types::{
 pub struct UnifiedQuantizationEngine {
     /// Distance computation engine
     distance_compute: Arc<UnifiedDistanceCompute>,
-    
+
     /// Codebook storage for PQ and other methods
     codebook_store: Arc<dyn CodebookStore>,
-    
+
     /// Hardware-accelerated quantization
     accelerated: AcceleratedQuantization,
 }
@@ -47,10 +47,10 @@ pub struct UnifiedQuantizationEngine {
 pub trait CodebookStore: Send + Sync {
     /// Store a codebook
     async fn store_codebook(&self, id: &str, codebook: &Codebook) -> Result<()>;
-    
+
     /// Retrieve a codebook
     async fn get_codebook(&self, id: &str) -> Result<Option<Codebook>>;
-    
+
     /// List available codebooks
     async fn list_codebooks(&self) -> Result<Vec<String>>;
 }
@@ -60,16 +60,16 @@ pub trait CodebookStore: Send + Sync {
 pub struct Codebook {
     /// Unique identifier
     pub id: String,
-    
+
     /// Quantization level this codebook is for
     pub quantization_level: UnifiedQuantizationLevel,
-    
+
     /// Creation timestamp
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    
+
     /// Training configuration
     pub training_config: TrainingConfig,
-    
+
     /// The actual codebook data
     pub data: CodebookData,
 }
@@ -79,13 +79,13 @@ pub struct Codebook {
 pub struct TrainingConfig {
     /// Number of training vectors used
     pub num_training_vectors: usize,
-    
+
     /// Number of iterations
     pub iterations: usize,
-    
+
     /// Convergence threshold
     pub convergence_threshold: f32,
-    
+
     /// Random seed for reproducibility
     pub seed: Option<u64>,
 }
@@ -100,7 +100,7 @@ pub enum CodebookData {
         /// Dimension of each subvector
         subvector_dim: usize,
     },
-    
+
     /// Scalar quantization parameters
     Scalar {
         /// Per-dimension scale factors
@@ -108,13 +108,13 @@ pub enum CodebookData {
         /// Per-dimension offsets
         offsets: Vec<f32>,
     },
-    
+
     /// Binary quantization thresholds
     Binary {
         /// Per-dimension thresholds
         thresholds: Vec<f32>,
     },
-    
+
     /// Custom codebook data
     Custom(serde_json::Value),
 }
@@ -141,7 +141,7 @@ impl UnifiedQuantizationEngine {
             accelerated: AcceleratedQuantization::new(),
         }
     }
-    
+
     /// Quantize a vector with multiple levels based on parsed config
     pub async fn quantize_with_config(
         &self,
@@ -149,7 +149,7 @@ impl UnifiedQuantizationEngine {
         config: &crate::storage::traits::ParsedQuantizationConfig,
     ) -> Result<Vec<QuantizedVector>> {
         let mut quantized_vectors = Vec::new();
-        
+
         // Convert QuantizationLevel to UnifiedQuantizationLevel for each configured level
         for level in &config.progressive_levels {
             // Create UnifiedQuantizationLevel from QuantizationLevel
@@ -157,14 +157,17 @@ impl UnifiedQuantizationEngine {
             let quantized = self.quantize(vector, &unified_level).await?;
             quantized_vectors.push(quantized);
         }
-        
+
         Ok(quantized_vectors)
     }
-    
+
     /// Convert QuantizationLevel to UnifiedQuantizationLevel
-    fn convert_to_unified_level(&self, level: &crate::storage::traits::QuantizationLevel) -> Result<UnifiedQuantizationLevel> {
+    fn convert_to_unified_level(
+        &self,
+        level: &crate::storage::traits::QuantizationLevel,
+    ) -> Result<UnifiedQuantizationLevel> {
         use crate::storage::traits::QuantizationType;
-        
+
         let level_type = match level.quantization_type {
             QuantizationType::None => Some(QuantizationLevel::None(NoQuantization {})),
             QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {
@@ -190,12 +193,10 @@ impl UnifiedQuantizationEngine {
             })),
             QuantizationType::None => None,
         };
-        
-        Ok(UnifiedQuantizationLevel {
-            level_type,
-        })
+
+        Ok(UnifiedQuantizationLevel { level_type })
     }
-    
+
     /// Calculate progressive distance using quantization config
     pub async fn calculate_progressive_distance(
         &self,
@@ -207,55 +208,55 @@ impl UnifiedQuantizationEngine {
     ) -> Result<Vec<SimilarityResult>> {
         if !config.progressive_search_enabled || quantized_vectors.is_empty() {
             // Fallback to regular distance calculation
-            return self.calculate_batch_distances(query, quantized_vectors, metric).await;
+            return self
+                .calculate_batch_distances(query, quantized_vectors, metric)
+                .await;
         }
-        
+
         let mut candidates = (0..quantized_vectors.len()).collect::<Vec<_>>();
-        
+
         // Progressive filtering through quantization levels
         for (level_idx, level) in config.progressive_levels.iter().enumerate() {
             if candidates.is_empty() {
                 break;
             }
-            
+
             // Calculate distances at this quantization level
             let mut level_results = Vec::new();
             for &idx in &candidates {
-                let distance = self.calculate_distance(
-                    query,
-                    &quantized_vectors[idx],
-                    metric
-                ).await?;
+                let distance = self
+                    .calculate_distance(query, &quantized_vectors[idx], metric)
+                    .await?;
                 level_results.push((idx, distance));
             }
-            
+
             // Sort by distance
             level_results.sort_by(|a, b| {
-                a.1.rank_value.partial_cmp(&b.1.rank_value)
+                a.1.rank_value
+                    .partial_cmp(&b.1.rank_value)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            
+
             // Apply selectivity for this level (except last level)
             if level_idx < config.progressive_levels.len() - 1 {
                 use crate::storage::traits::QuantizationType;
                 let selectivity = match level.quantization_type {
                     QuantizationType::Binary => config.binary_filter_selectivity,
-                    QuantizationType::Scalar if level.bits == 8 => {
-                        config.int8_ranking_selectivity
-                    }
+                    QuantizationType::Scalar if level.bits == 8 => config.int8_ranking_selectivity,
                     QuantizationType::Product => config.pq_ranking_selectivity,
                     _ => 1.0, // No filtering for other types
                 };
-                
+
                 let keep_count = ((candidates.len() as f32 * selectivity).ceil() as usize)
                     .max(top_k)
                     .min(candidates.len());
-                    
-                candidates = level_results.iter()
+
+                candidates = level_results
+                    .iter()
                     .take(keep_count)
                     .map(|(idx, _)| *idx)
                     .collect();
-                    
+
                 debug!(
                     "Progressive search at level {:?}: {} -> {} candidates",
                     level.quantization_type,
@@ -264,17 +265,18 @@ impl UnifiedQuantizationEngine {
                 );
             } else {
                 // Last level - return top-k results
-                return Ok(level_results.into_iter()
+                return Ok(level_results
+                    .into_iter()
                     .take(top_k)
                     .map(|(_, result)| result)
                     .collect());
             }
         }
-        
+
         // Should not reach here if levels are configured correctly
         Ok(Vec::new())
     }
-    
+
     /// Quantize a vector using the specified quantization level
     pub async fn quantize(
         &self,
@@ -284,45 +286,48 @@ impl UnifiedQuantizationEngine {
         match &level.level_type {
             None | Some(QuantizationLevel::None(_)) => {
                 // No quantization - store as FP32 bytes
-                let bytes = vector.iter()
-                    .flat_map(|f| f.to_le_bytes())
-                    .collect();
-                    
+                let bytes = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
+
                 Ok(QuantizedVector {
                     data: bytes,
                     quantization_level: level.clone(),
                     metadata: QuantizationMetadata::default(),
                 })
             }
-            
+
             Some(QuantizationLevel::Pq(pq)) => {
-                let codebook_id = pq.codebook_id.as_ref()
+                let codebook_id = pq
+                    .codebook_id
+                    .as_ref()
                     .context("PQ quantization requires codebook_id")?;
-                    
-                let codebook = self.codebook_store.get_codebook(codebook_id).await?
+
+                let codebook = self
+                    .codebook_store
+                    .get_codebook(codebook_id)
+                    .await?
                     .context("Codebook not found")?;
-                    
+
                 self.quantize_pq(vector, &codebook)
             }
-            
+
             Some(QuantizationLevel::Scalar(s)) => {
                 self.quantize_scalar(vector, s.bits as u8, s.scale, s.offset)
             }
-            
+
             Some(QuantizationLevel::Uniform(u)) => {
                 self.quantize_uniform(vector, u.bits as u8, u.scale.as_ref(), u.offset.as_ref())
             }
-            
+
             Some(QuantizationLevel::Binary(b)) => {
                 self.quantize_binary(vector, b.threshold.as_ref())
             }
-            
+
             Some(QuantizationLevel::Custom(_)) => {
                 anyhow::bail!("Custom quantization not yet implemented")
             }
         }
     }
-    
+
     /// Calculate distance between query and quantized vector
     pub async fn calculate_distance(
         &self,
@@ -334,28 +339,37 @@ impl UnifiedQuantizationEngine {
             None | Some(QuantizationLevel::None(_)) => {
                 // Direct FP32 comparison
                 let vector = self.dequantize_fp32(&quantized_vector.data)?;
-                Ok(self.distance_compute.calculate_distance(query, &vector, metric))
+                Ok(self
+                    .distance_compute
+                    .calculate_distance(query, &vector, metric))
             }
-            
+
             Some(QuantizationLevel::Pq(pq)) => {
                 // Use asymmetric distance computation for efficiency
-                let codebook_id = pq.codebook_id.as_ref()
+                let codebook_id = pq
+                    .codebook_id
+                    .as_ref()
                     .context("PQ distance requires codebook_id")?;
-                    
-                let codebook = self.codebook_store.get_codebook(codebook_id).await?
+
+                let codebook = self
+                    .codebook_store
+                    .get_codebook(codebook_id)
+                    .await?
                     .context("Codebook not found")?;
-                    
+
                 self.calculate_pq_distance_async(query, quantized_vector, &codebook, metric)
             }
-            
+
             _ => {
                 // Dequantize and compute
                 let vector = self.dequantize(quantized_vector).await?;
-                Ok(self.distance_compute.calculate_distance(query, &vector, metric))
+                Ok(self
+                    .distance_compute
+                    .calculate_distance(query, &vector, metric))
             }
         }
     }
-    
+
     /// Batch distance calculation with optimization
     pub async fn calculate_batch_distances(
         &self,
@@ -366,45 +380,51 @@ impl UnifiedQuantizationEngine {
         if quantized_batch.is_empty() {
             return Ok(vec![]);
         }
-        
+
         // Group by quantization level for efficient processing
         let mut distances = vec![SimilarityResult::default(); quantized_batch.len()];
-        
+
         // Check if all vectors have the same quantization level
         let first_level = &quantized_batch[0].quantization_level;
-        let all_same = quantized_batch.iter()
+        let all_same = quantized_batch
+            .iter()
             .all(|v| &v.quantization_level == first_level);
-            
+
         if all_same {
             // Optimized batch processing for same quantization level
             match &first_level.level_type {
                 Some(QuantizationLevel::Pq(pq)) => {
                     if let Some(codebook_id) = &pq.codebook_id {
-                        let codebook = self.codebook_store.get_codebook(codebook_id).await?
+                        let codebook = self
+                            .codebook_store
+                            .get_codebook(codebook_id)
+                            .await?
                             .context("Codebook not found")?;
-                        
+
                         // Precompute distance tables for PQ
-                        let distance_tables = self.precompute_pq_distance_tables(query, &codebook, metric)?;
-                        
+                        let distance_tables =
+                            self.precompute_pq_distance_tables(query, &codebook, metric)?;
+
                         for (i, quantized) in quantized_batch.iter().enumerate() {
-                            distances[i] = self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
+                            distances[i] =
+                                self.lookup_pq_distance(&quantized.data, &distance_tables, metric)?;
                         }
-                        
+
                         return Ok(distances);
                     }
                 }
                 _ => {}
             }
         }
-        
+
         // Fallback to individual distance calculations
         for (i, quantized) in quantized_batch.iter().enumerate() {
             distances[i] = self.calculate_distance(query, quantized, metric).await?;
         }
-        
+
         Ok(distances)
     }
-    
+
     /// Train a PQ codebook from training vectors
     pub async fn train_pq_codebook(
         &self,
@@ -416,34 +436,35 @@ impl UnifiedQuantizationEngine {
         if training_vectors.is_empty() {
             anyhow::bail!("No training vectors provided");
         }
-        
+
         let dimension = training_vectors[0].len();
         let subvector_dim = (dimension + num_subvectors - 1) / num_subvectors;
         let num_centroids = 1 << bits_per_code;
-        
+
         // Initialize centroids for each subspace using k-means++
         let mut centroids = Vec::with_capacity(num_subvectors);
-        
+
         for subspace in 0..num_subvectors {
             let start = subspace * subvector_dim;
             let end = (start + subvector_dim).min(dimension);
-            
+
             // Extract subvectors for this subspace
-            let subvectors: Vec<Vec<f32>> = training_vectors.iter()
+            let subvectors: Vec<Vec<f32>> = training_vectors
+                .iter()
                 .map(|v| v[start..end].to_vec())
                 .collect();
-            
+
             // Run k-means for this subspace
             let subspace_centroids = self.kmeans_clustering(
                 &subvectors,
                 num_centroids,
-                100, // max iterations
+                100,  // max iterations
                 1e-4, // convergence threshold
             )?;
-            
+
             centroids.push(subspace_centroids);
         }
-        
+
         // Create and store the codebook
         let codebook = Codebook {
             id: codebook_id.to_string(),
@@ -467,11 +488,13 @@ impl UnifiedQuantizationEngine {
                 subvector_dim,
             },
         };
-        
-        self.codebook_store.store_codebook(codebook_id, &codebook).await?;
+
+        self.codebook_store
+            .store_codebook(codebook_id, &codebook)
+            .await?;
         Ok(())
     }
-    
+
     /// Simple k-means clustering implementation
     fn kmeans_clustering(
         &self,
@@ -481,24 +504,24 @@ impl UnifiedQuantizationEngine {
         convergence_threshold: f32,
     ) -> Result<Vec<Vec<f32>>> {
         use rand::seq::SliceRandom;
-        
+
         if vectors.is_empty() || k == 0 {
             anyhow::bail!("Invalid input for k-means");
         }
-        
+
         let mut rng = rand::thread_rng();
         let dimension = vectors[0].len();
-        
+
         // Initialize centroids using k-means++
         let mut centroids = Vec::with_capacity(k);
-        
+
         // First centroid is chosen randomly
         centroids.push(vectors.choose(&mut rng).unwrap().clone());
-        
+
         // Choose remaining centroids using k-means++ algorithm
         for _ in 1..k {
             let mut distances = vec![f32::INFINITY; vectors.len()];
-            
+
             // Compute distance to nearest centroid for each point
             for (i, vector) in vectors.iter().enumerate() {
                 for centroid in &centroids {
@@ -510,12 +533,12 @@ impl UnifiedQuantizationEngine {
                     distances[i] = distances[i].min(result.rank_value);
                 }
             }
-            
+
             // Choose next centroid proportional to squared distance
             let total_dist: f32 = distances.iter().map(|d| d * d).sum();
             let mut cumulative = 0.0;
             let threshold = rand::random::<f32>() * total_dist;
-            
+
             for (i, &dist) in distances.iter().enumerate() {
                 cumulative += dist * dist;
                 if cumulative >= threshold {
@@ -524,18 +547,18 @@ impl UnifiedQuantizationEngine {
                 }
             }
         }
-        
+
         // Run k-means iterations
         let mut assignments = vec![0; vectors.len()];
-        
+
         for _iteration in 0..max_iterations {
             let old_centroids = centroids.clone();
-            
+
             // Assignment step
             for (i, vector) in vectors.iter().enumerate() {
                 let mut best_idx = 0;
                 let mut best_dist = f32::INFINITY;
-                
+
                 for (j, centroid) in centroids.iter().enumerate() {
                     let result = self.distance_compute.calculate_distance(
                         vector,
@@ -547,15 +570,15 @@ impl UnifiedQuantizationEngine {
                         best_idx = j;
                     }
                 }
-                
+
                 assignments[i] = best_idx;
             }
-            
+
             // Update step
             for j in 0..k {
                 let mut sum = vec![0.0; dimension];
                 let mut count = 0;
-                
+
                 for (i, &assignment) in assignments.iter().enumerate() {
                     if assignment == j {
                         for (dim, val) in vectors[i].iter().enumerate() {
@@ -564,28 +587,27 @@ impl UnifiedQuantizationEngine {
                         count += 1;
                     }
                 }
-                
+
                 if count > 0 {
                     centroids[j] = sum.iter().map(|&s| s / count as f32).collect();
                 }
             }
-            
+
             // Check convergence
             let mut max_change = 0.0f32;
             for (old, new) in old_centroids.iter().zip(&centroids) {
-                let change = self.distance_compute.calculate_distance(
-                    old,
-                    new,
-                    &DistanceMetric::Euclidean,
-                ).rank_value;
+                let change = self
+                    .distance_compute
+                    .calculate_distance(old, new, &DistanceMetric::Euclidean)
+                    .rank_value;
                 max_change = max_change.max(change);
             }
-            
+
             if max_change < convergence_threshold {
                 break;
             }
         }
-        
+
         Ok(centroids)
     }
 
@@ -593,12 +615,16 @@ impl UnifiedQuantizationEngine {
     pub fn quantize_to_binary(&self, vector: &[f32]) -> Result<Vec<u8>> {
         self.quantize_to_binary_with_threshold(vector, None)
     }
-    
+
     /// Quantize vector to binary with custom threshold
-    pub fn quantize_to_binary_with_threshold(&self, vector: &[f32], threshold: Option<f32>) -> Result<Vec<u8>> {
+    pub fn quantize_to_binary_with_threshold(
+        &self,
+        vector: &[f32],
+        threshold: Option<f32>,
+    ) -> Result<Vec<u8>> {
         let threshold = threshold.unwrap_or(0.0);
         let mut binary = vec![0u8; (vector.len() + 7) / 8];
-        
+
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {
                 let byte_idx = i / 8;
@@ -606,45 +632,47 @@ impl UnifiedQuantizationEngine {
                 binary[byte_idx] |= 1 << bit_idx;
             }
         }
-        
+
         Ok(binary)
     }
-    
+
     /// Quantize vector to INT8 representation
     pub fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<u8>> {
         // Find min and max for scaling
-        let (min_val, max_val) = vector.iter()
+        let (min_val, max_val) = vector
+            .iter()
             .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &v| {
                 (min.min(v), max.max(v))
             });
-        
+
         let range = max_val - min_val;
         let scale = if range > 0.0 { 255.0 / range } else { 1.0 };
-        
-        let quantized: Vec<u8> = vector.iter()
+
+        let quantized: Vec<u8> = vector
+            .iter()
             .map(|&v| {
                 let normalized = (v - min_val) * scale;
                 normalized.round().clamp(0.0, 255.0) as u8
             })
             .collect();
-        
+
         Ok(quantized)
     }
-    
+
     /// Quantize vector to 4-bit representation with min/max
     /// Returns (packed_values, min, max, num_values)
     /// Uses hardware acceleration when available
     pub fn quantize_to_u4(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
         self.accelerated.quantize_u4_accelerated(vector)
     }
-    
+
     /// Quantize vector to 6-bit representation with min/max
     /// Returns (packed_values, min, max, num_values)
     /// Uses hardware acceleration when available
     pub fn quantize_to_u6(&self, vector: &[f32]) -> Result<(Vec<u8>, f32, f32, usize)> {
         self.accelerated.quantize_u6_accelerated(vector)
     }
-    
+
     /// Quantize vector to 8-bit representation with min/max  
     /// Returns (quantized_values, min, max)
     /// Uses hardware acceleration when available
@@ -652,14 +680,14 @@ impl UnifiedQuantizationEngine {
         // Use hardware-accelerated implementation
         self.accelerated.quantize_u8_accelerated(vector)
     }
-    
+
     /// Quantize vector to 16-bit representation with min/max
     /// Returns (quantized_values, min, max)
     /// Uses hardware acceleration when available
     pub fn quantize_to_u16(&self, vector: &[f32]) -> Result<(Vec<u16>, f32, f32)> {
         self.accelerated.quantize_u16_accelerated(vector)
     }
-    
+
     /// Quantize vector to Product Quantization
     pub fn quantize_to_pq(
         &self,
@@ -671,102 +699,105 @@ impl UnifiedQuantizationEngine {
         let subvector_dim = (dimension + num_subvectors - 1) / num_subvectors;
         let bytes_per_code = ((bits_per_code + 7) / 8) as usize;
         let mut codes = Vec::with_capacity(num_subvectors * bytes_per_code);
-        
+
         for i in 0..num_subvectors {
             let start = i * subvector_dim;
             let end = (start + subvector_dim).min(dimension);
             let subvector = &vector[start..end];
-            
+
             // For now, use simple quantization (in production, would use trained codebook)
             // This is a placeholder that quantizes each subvector to a code
             let code = self.simple_pq_encode(subvector, bits_per_code)?;
             codes.extend_from_slice(&code);
         }
-        
+
         Ok(codes)
     }
-    
+
     /// Simple PQ encoding (placeholder for actual codebook-based encoding)
     fn simple_pq_encode(&self, subvector: &[f32], bits_per_code: u32) -> Result<Vec<u8>> {
         let num_centroids = 1 << bits_per_code;
         let bytes_per_code = ((bits_per_code + 7) / 8) as usize;
-        
+
         // Simple hash-based code assignment (placeholder)
         let mut hash = 0u32;
         for &val in subvector {
             hash = hash.wrapping_mul(31).wrapping_add(val.to_bits());
         }
         let code = (hash % num_centroids) as u64;
-        
+
         // Convert to bytes
         let mut bytes = vec![0u8; bytes_per_code];
         for i in 0..bytes_per_code {
             bytes[i] = ((code >> (i * 8)) & 0xFF) as u8;
         }
-        
+
         Ok(bytes)
     }
-    
+
     /// Dequantize back to approximate FP32 vector
     pub async fn dequantize(&self, quantized_vector: &QuantizedVector) -> Result<Vec<f32>> {
         match &quantized_vector.quantization_level.level_type {
-            None | Some(QuantizationLevel::None(_)) => {
-                self.dequantize_fp32(&quantized_vector.data)
-            }
-            
+            None | Some(QuantizationLevel::None(_)) => self.dequantize_fp32(&quantized_vector.data),
+
             Some(QuantizationLevel::Scalar(s)) => {
                 self.dequantize_scalar(&quantized_vector.data, s.bits as u8, s.scale, s.offset)
             }
-            
-            Some(QuantizationLevel::Uniform(u)) => {
-                self.dequantize_uniform(
-                    &quantized_vector.data, 
-                    u.bits as u8, 
-                    u.scale.unwrap_or(1.0), 
-                    u.offset.unwrap_or(0.0)
-                )
-            }
-            
+
+            Some(QuantizationLevel::Uniform(u)) => self.dequantize_uniform(
+                &quantized_vector.data,
+                u.bits as u8,
+                u.scale.unwrap_or(1.0),
+                u.offset.unwrap_or(0.0),
+            ),
+
             _ => {
-                anyhow::bail!("Dequantization not implemented for {:?}", quantized_vector.quantization_level)
+                anyhow::bail!(
+                    "Dequantization not implemented for {:?}",
+                    quantized_vector.quantization_level
+                )
             }
         }
     }
-    
+
     // Private helper methods
-    
+
     fn quantize_pq(&self, vector: &[f32], codebook: &Codebook) -> Result<QuantizedVector> {
-        let CodebookData::ProductQuantization { centroids, subvector_dim } = &codebook.data else {
+        let CodebookData::ProductQuantization {
+            centroids,
+            subvector_dim,
+        } = &codebook.data
+        else {
             anyhow::bail!("Invalid codebook type for PQ");
         };
-        
+
         let mut codes = Vec::new();
-        
+
         for (i, centroids_for_subspace) in centroids.iter().enumerate() {
             let start = i * subvector_dim;
             let end = (start + subvector_dim).min(vector.len());
             let subvector = &vector[start..end];
-            
+
             // Find nearest centroid
             let mut best_idx = 0;
             let mut best_dist = f32::INFINITY;
-            
+
             for (idx, centroid) in centroids_for_subspace.iter().enumerate() {
                 let result = self.distance_compute.calculate_distance(
-                    subvector, 
-                    centroid, 
-                    &DistanceMetric::Euclidean
+                    subvector,
+                    centroid,
+                    &DistanceMetric::Euclidean,
                 );
-                
+
                 if result.rank_value < best_dist {
                     best_dist = result.rank_value;
                     best_idx = idx;
                 }
             }
-            
+
             codes.push(best_idx as u8);
         }
-        
+
         Ok(QuantizedVector {
             data: codes,
             quantization_level: codebook.quantization_level.clone(),
@@ -776,17 +807,26 @@ impl UnifiedQuantizationEngine {
             },
         })
     }
-    
-    fn quantize_scalar(&self, vector: &[f32], bits: u8, scale: f32, offset: f32) -> Result<QuantizedVector> {
+
+    fn quantize_scalar(
+        &self,
+        vector: &[f32],
+        bits: u8,
+        scale: f32,
+        offset: f32,
+    ) -> Result<QuantizedVector> {
         let max_val = (1 << bits) - 1;
-        let bytes: Vec<u8> = vector.iter()
+        let bytes: Vec<u8> = vector
+            .iter()
             .map(|&v| {
                 let normalized = (v - offset) / scale;
-                let quantized = (normalized * max_val as f32).round().clamp(0.0, max_val as f32);
+                let quantized = (normalized * max_val as f32)
+                    .round()
+                    .clamp(0.0, max_val as f32);
                 quantized as u8
             })
             .collect();
-            
+
         Ok(QuantizedVector {
             data: bytes,
             quantization_level: UnifiedQuantizationLevel {
@@ -800,10 +840,10 @@ impl UnifiedQuantizationEngine {
             metadata: QuantizationMetadata::default(),
         })
     }
-    
+
     fn quantize_uniform(
-        &self, 
-        vector: &[f32], 
+        &self,
+        vector: &[f32],
         bits: u8,
         scale: Option<&f32>,
         offset: Option<&f32>,
@@ -813,24 +853,27 @@ impl UnifiedQuantizationEngine {
             let min = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
             let max = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
             let range = max - min;
-            
+
             let scale = if range > 0.0 { range } else { 1.0 };
             let offset = min;
-            
+
             (scale, offset)
         } else {
             (*scale.unwrap(), *offset.unwrap())
         };
-        
+
         let max_val = (1 << bits) - 1;
-        let bytes: Vec<u8> = vector.iter()
+        let bytes: Vec<u8> = vector
+            .iter()
             .map(|&v| {
                 let normalized = (v - offset) / scale;
-                let quantized = (normalized * max_val as f32).round().clamp(0.0, max_val as f32);
+                let quantized = (normalized * max_val as f32)
+                    .round()
+                    .clamp(0.0, max_val as f32);
                 quantized as u8
             })
             .collect();
-            
+
         Ok(QuantizedVector {
             data: bytes,
             quantization_level: UnifiedQuantizationLevel {
@@ -847,17 +890,17 @@ impl UnifiedQuantizationEngine {
             },
         })
     }
-    
+
     fn quantize_binary(&self, vector: &[f32], threshold: Option<&f32>) -> Result<QuantizedVector> {
         let threshold = threshold.copied().unwrap_or(0.0);
         let mut bytes = vec![0u8; (vector.len() + 7) / 8];
-        
+
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {
                 bytes[i / 8] |= 1 << (i % 8);
             }
         }
-        
+
         Ok(QuantizedVector {
             data: bytes,
             quantization_level: UnifiedQuantizationLevel {
@@ -869,66 +912,80 @@ impl UnifiedQuantizationEngine {
             metadata: QuantizationMetadata::default(),
         })
     }
-    
+
     fn dequantize_fp32(&self, bytes: &[u8]) -> Result<Vec<f32>> {
         if bytes.len() % 4 != 0 {
             anyhow::bail!("Invalid FP32 byte array length");
         }
-        
-        Ok(bytes.chunks_exact(4)
+
+        Ok(bytes
+            .chunks_exact(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect())
     }
-    
-    fn dequantize_scalar(&self, bytes: &[u8], bits: u8, scale: f32, offset: f32) -> Result<Vec<f32>> {
+
+    fn dequantize_scalar(
+        &self,
+        bytes: &[u8],
+        bits: u8,
+        scale: f32,
+        offset: f32,
+    ) -> Result<Vec<f32>> {
         let max_val = (1 << bits) - 1;
-        
-        Ok(bytes.iter()
+
+        Ok(bytes
+            .iter()
             .map(|&b| {
                 let normalized = b as f32 / max_val as f32;
                 normalized * scale + offset
             })
             .collect())
     }
-    
-    fn dequantize_uniform(&self, bytes: &[u8], bits: u8, scale: f32, offset: f32) -> Result<Vec<f32>> {
+
+    fn dequantize_uniform(
+        &self,
+        bytes: &[u8],
+        bits: u8,
+        scale: f32,
+        offset: f32,
+    ) -> Result<Vec<f32>> {
         // Same as scalar for now
         self.dequantize_scalar(bytes, bits, scale, offset)
     }
-    
+
     /// Dequantize 4-bit packed values back to f32
     pub fn dequantize_u4(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
         let range = if max > min { max - min } else { 1.0 };
         let mut result = Vec::with_capacity(num_values);
-        
+
         for &byte in packed.iter() {
             // Extract high nibble (first value)
             let high = (byte >> 4) as f32 / 15.0;
             result.push(min + high * range);
-            
+
             // Only extract low nibble if we haven't reached num_values
             if result.len() < num_values {
                 let low = (byte & 0x0F) as f32 / 15.0;
                 result.push(min + low * range);
             }
         }
-        
+
         result.truncate(num_values);
         result
     }
-    
+
     /// Dequantize 6-bit packed values back to f32
     pub fn dequantize_u6(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
         let range = if max > min { max - min } else { 1.0 };
         let mut result = Vec::with_capacity(num_values);
         let max_val = 63.0;
-        
+
         // Process in groups of 3 bytes (which contain 4 6-bit values)
         for chunk in packed.chunks(3) {
             if result.len() >= num_values {
                 break;
             }
-            
+
             match chunk.len() {
                 1 => {
                     let val0 = (chunk[0] >> 2) as f32 / max_val;
@@ -947,7 +1004,7 @@ impl UnifiedQuantizationEngine {
                     let val1 = (((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as f32 / max_val;
                     let val2 = (((chunk[1] & 0x0F) << 2) | (chunk[2] >> 6)) as f32 / max_val;
                     let val3 = (chunk[2] & 0x3F) as f32 / max_val;
-                    
+
                     result.push(min + val0 * range);
                     if result.len() < num_values {
                         result.push(min + val1 * range);
@@ -962,29 +1019,35 @@ impl UnifiedQuantizationEngine {
                 _ => {}
             }
         }
-        
+
         result.truncate(num_values);
         result
     }
-    
+
     /// Dequantize 8-bit values back to f32
     pub fn dequantize_u8(&self, quantized: &[u8], min: f32, max: f32) -> Vec<f32> {
         let range = if max > min { max - min } else { 1.0 };
-        quantized.iter().map(|&q| {
-            let normalized = q as f32 / 255.0;
-            min + normalized * range
-        }).collect()
+        quantized
+            .iter()
+            .map(|&q| {
+                let normalized = q as f32 / 255.0;
+                min + normalized * range
+            })
+            .collect()
     }
-    
+
     /// Dequantize 16-bit values back to f32
     pub fn dequantize_u16(&self, quantized: &[u16], min: f32, max: f32) -> Vec<f32> {
         let range = if max > min { max - min } else { 1.0 };
-        quantized.iter().map(|&q| {
-            let normalized = q as f32 / 65535.0;
-            min + normalized * range
-        }).collect()
+        quantized
+            .iter()
+            .map(|&q| {
+                let normalized = q as f32 / 65535.0;
+                min + normalized * range
+            })
+            .collect()
     }
-    
+
     pub fn calculate_pq_distance_async(
         &self,
         query: &[f32],
@@ -992,23 +1055,29 @@ impl UnifiedQuantizationEngine {
         codebook: &Codebook,
         metric: &DistanceMetric,
     ) -> Result<SimilarityResult> {
-        let CodebookData::ProductQuantization { centroids, subvector_dim } = &codebook.data else {
+        let CodebookData::ProductQuantization {
+            centroids,
+            subvector_dim,
+        } = &codebook.data
+        else {
             anyhow::bail!("Invalid codebook type for PQ");
         };
-        
+
         let mut total_distance = 0.0;
-        
+
         for (i, &code) in quantized_vector.data.iter().enumerate() {
             let start = i * subvector_dim;
             let end = (start + subvector_dim).min(query.len());
             let query_subvec = &query[start..end];
-            
+
             let centroid = &centroids[i][code as usize];
-            let result = self.distance_compute.calculate_distance(query_subvec, centroid, metric);
-            
+            let result = self
+                .distance_compute
+                .calculate_distance(query_subvec, centroid, metric);
+
             total_distance += result.rank_value * result.rank_value; // Square for L2
         }
-        
+
         // Create SimilarityResult for the final distance
         let final_distance = total_distance.sqrt();
         Ok(SimilarityResult {
@@ -1021,44 +1090,55 @@ impl UnifiedQuantizationEngine {
             rank_value: final_distance,
         })
     }
-    
+
     fn precompute_pq_distance_tables(
         &self,
         query: &[f32],
         codebook: &Codebook,
         metric: &DistanceMetric,
     ) -> Result<Vec<Vec<f32>>> {
-        let CodebookData::ProductQuantization { centroids, subvector_dim } = &codebook.data else {
+        let CodebookData::ProductQuantization {
+            centroids,
+            subvector_dim,
+        } = &codebook.data
+        else {
             anyhow::bail!("Invalid codebook type for PQ");
         };
-        
+
         let mut tables = Vec::new();
-        
+
         for (i, centroids_for_subspace) in centroids.iter().enumerate() {
             let start = i * subvector_dim;
             let end = (start + subvector_dim).min(query.len());
             let query_subvec = &query[start..end];
-            
+
             let mut table = Vec::with_capacity(centroids_for_subspace.len());
-            
+
             for centroid in centroids_for_subspace {
-                let result = self.distance_compute.calculate_distance(query_subvec, centroid, metric);
+                let result =
+                    self.distance_compute
+                        .calculate_distance(query_subvec, centroid, metric);
                 table.push(result.rank_value);
             }
-            
+
             tables.push(table);
         }
-        
+
         Ok(tables)
     }
-    
-    fn lookup_pq_distance(&self, codes: &[u8], distance_tables: &[Vec<f32>], metric: &DistanceMetric) -> Result<SimilarityResult> {
+
+    fn lookup_pq_distance(
+        &self,
+        codes: &[u8],
+        distance_tables: &[Vec<f32>],
+        metric: &DistanceMetric,
+    ) -> Result<SimilarityResult> {
         let mut total = 0.0;
-        
+
         for (i, &code) in codes.iter().enumerate() {
             total += distance_tables[i][code as usize].powi(2);
         }
-        
+
         let distance = total.sqrt();
         Ok(SimilarityResult {
             raw_value: distance,
@@ -1070,9 +1150,9 @@ impl UnifiedQuantizationEngine {
             rank_value: distance,
         })
     }
-    
+
     /// Calculate distance between Product Quantized vectors
-    /// 
+    ///
     /// Implements asymmetric distance computation (ADC) for PQ codes
     /// with hardware acceleration support
     pub fn calculate_pq_distance(
@@ -1090,7 +1170,7 @@ impl UnifiedQuantizationEngine {
             );
             return f32::INFINITY;
         }
-        
+
         match metric {
             DistanceMetric::Euclidean | DistanceMetric::Cosine => {
                 // L2 distance between PQ codes
@@ -1121,15 +1201,20 @@ impl UnifiedQuantizationEngine {
                     let d_code = data_codes[i] as f32;
                     sum += q_code * d_code;
                 }
-                -sum  // Negate so lower values mean more similar
+                -sum // Negate so lower values mean more similar
             }
             _ => {
                 // Fallback to L2
-                self.calculate_pq_distance(query_codes, data_codes, &DistanceMetric::Euclidean, num_subvectors)
+                self.calculate_pq_distance(
+                    query_codes,
+                    data_codes,
+                    &DistanceMetric::Euclidean,
+                    num_subvectors,
+                )
             }
         }
     }
-    
+
     /// Calculate Hamming distance between binary vectors
     pub fn calculate_hamming_distance(&self, a: &[u8], b: &[u8]) -> u32 {
         if a.len() != b.len() {
@@ -1140,21 +1225,22 @@ impl UnifiedQuantizationEngine {
             );
             return u32::MAX;
         }
-        
+
         // Use platform-specific optimizations if available
         #[cfg(target_arch = "x86_64")]
         {
             // Use optimized popcount implementation (Rust's count_ones uses POPCNT when available)
-            return a.iter()
+            return a
+                .iter()
                 .zip(b.iter())
                 .map(|(byte_a, byte_b)| (*byte_a ^ *byte_b).count_ones())
                 .sum();
         }
-        
+
         // Fallback to generic implementation
         self.calculate_hamming_generic(a, b)
     }
-    
+
     /// Generic Hamming distance calculation
     fn calculate_hamming_generic(&self, a: &[u8], b: &[u8]) -> u32 {
         a.iter()
@@ -1162,9 +1248,9 @@ impl UnifiedQuantizationEngine {
             .map(|(byte_a, byte_b)| (*byte_a ^ *byte_b).count_ones())
             .sum()
     }
-    
+
     /// Calculate distance between quantized vectors
-    /// 
+    ///
     /// This method handles all quantization types and dispatches to appropriate
     /// distance calculation based on the quantization level
     pub fn calculate_quantized_distance(
@@ -1176,39 +1262,38 @@ impl UnifiedQuantizationEngine {
         // Ensure same quantization level by comparing the level_type variant
         let query_type = &query.quantization_level.level_type;
         let data_type = &data.quantization_level.level_type;
-        
+
         // Check if both have the same variant
         let same_type = match (query_type, data_type) {
-            (Some(QuantizationLevel::None(_)), 
-             Some(QuantizationLevel::None(_))) => true,
-            (Some(QuantizationLevel::Uniform(_)), 
-             Some(QuantizationLevel::Uniform(_))) => true,
-            (Some(QuantizationLevel::Pq(_)), 
-             Some(QuantizationLevel::Pq(_))) => true,
-            (Some(QuantizationLevel::Scalar(_)), 
-             Some(QuantizationLevel::Scalar(_))) => true,
-            (Some(QuantizationLevel::Binary(_)), 
-             Some(QuantizationLevel::Binary(_))) => true,
-            (Some(QuantizationLevel::Custom(_)), 
-             Some(QuantizationLevel::Custom(_))) => true,
+            (Some(QuantizationLevel::None(_)), Some(QuantizationLevel::None(_))) => true,
+            (Some(QuantizationLevel::Uniform(_)), Some(QuantizationLevel::Uniform(_))) => true,
+            (Some(QuantizationLevel::Pq(_)), Some(QuantizationLevel::Pq(_))) => true,
+            (Some(QuantizationLevel::Scalar(_)), Some(QuantizationLevel::Scalar(_))) => true,
+            (Some(QuantizationLevel::Binary(_)), Some(QuantizationLevel::Binary(_))) => true,
+            (Some(QuantizationLevel::Custom(_)), Some(QuantizationLevel::Custom(_))) => true,
             _ => false,
         };
-        
+
         if !same_type {
             debug!("⚠️ Quantization level mismatch");
             return f32::INFINITY;
         }
-        
+
         match &query.quantization_level.level_type {
             None | Some(QuantizationLevel::None(_)) => {
                 // FP32 vectors stored as bytes
                 let query_floats = self.bytes_to_f32(&query.data);
                 let data_floats = self.bytes_to_f32(&data.data);
-                self.distance_compute.calculate_distance(&query_floats, &data_floats, metric).rank_value
+                self.distance_compute
+                    .calculate_distance(&query_floats, &data_floats, metric)
+                    .rank_value
             }
-            Some(QuantizationLevel::Pq(pq)) => {
-                self.calculate_pq_distance(&query.data, &data.data, metric, pq.num_subvectors as usize)
-            }
+            Some(QuantizationLevel::Pq(pq)) => self.calculate_pq_distance(
+                &query.data,
+                &data.data,
+                metric,
+                pq.num_subvectors as usize,
+            ),
             Some(QuantizationLevel::Binary(_)) => {
                 self.calculate_hamming_distance(&query.data, &data.data) as f32
             }
@@ -1217,7 +1302,9 @@ impl UnifiedQuantizationEngine {
                 // This is less efficient but ensures correctness
                 match (self.dequantize_sync(query), self.dequantize_sync(data)) {
                     (Ok(q_vec), Ok(d_vec)) => {
-                        self.distance_compute.calculate_distance(&q_vec, &d_vec, metric).rank_value
+                        self.distance_compute
+                            .calculate_distance(&q_vec, &d_vec, metric)
+                            .rank_value
                     }
                     _ => f32::INFINITY,
                 }
@@ -1225,14 +1312,15 @@ impl UnifiedQuantizationEngine {
             Some(QuantizationLevel::Custom(_)) => f32::INFINITY,
         }
     }
-    
+
     /// Helper to convert bytes back to f32 vector
     fn bytes_to_f32(&self, bytes: &[u8]) -> Vec<f32> {
-        bytes.chunks_exact(4)
+        bytes
+            .chunks_exact(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect()
     }
-    
+
     /// Synchronous dequantize for use in distance calculations
     fn dequantize_sync(&self, quantized_vector: &QuantizedVector) -> Result<Vec<f32>> {
         // For now, use a simple implementation
@@ -1254,10 +1342,10 @@ impl UnifiedQuantizationEngine {
 pub struct QuantizedVector {
     /// The quantized data
     pub data: Vec<u8>,
-    
+
     /// Quantization level used
     pub quantization_level: UnifiedQuantizationLevel,
-    
+
     /// Additional metadata (scale, offset, codebook reference)
     pub metadata: QuantizationMetadata,
 }
@@ -1267,13 +1355,13 @@ pub struct QuantizedVector {
 pub struct QuantizationMetadata {
     /// Reference to codebook (for PQ)
     pub codebook_id: Option<String>,
-    
+
     /// Scale factor (for scalar/uniform)
     pub scale: Option<f32>,
-    
+
     /// Offset (for scalar/uniform)
     pub offset: Option<f32>,
-    
+
     /// Original vector norm (useful for some metrics)
     pub norm: Option<f32>,
 }
@@ -1298,12 +1386,12 @@ impl CodebookStore for InMemoryCodebookStore {
         codebooks.insert(id.to_string(), codebook.clone());
         Ok(())
     }
-    
+
     async fn get_codebook(&self, id: &str) -> Result<Option<Codebook>> {
         let codebooks = self.codebooks.read().await;
         Ok(codebooks.get(id).cloned())
     }
-    
+
     async fn list_codebooks(&self) -> Result<Vec<String>> {
         let codebooks = self.codebooks.read().await;
         Ok(codebooks.keys().cloned().collect())

@@ -3,25 +3,25 @@
 
 use super::{MetricsCollector, MetricsSample};
 use anyhow::Result;
+use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{RwLock, Mutex};
-use dashmap::DashMap;
-use serde::{Serialize, Deserialize};
+use tokio::sync::{Mutex, RwLock};
 
 /// Access pattern metrics collector that integrates with unified framework
 pub struct AccessPatternMetricsCollector {
     /// Current access pattern metrics (atomic counters for lock-free updates)
     metrics: Arc<AccessPatternMetrics>,
-    
+
     /// Historical data for pattern analysis (beyond what unified framework rolls)
     historical_data: Arc<RwLock<HistoricalAccessData>>,
-    
+
     /// Correlation tracking for predictive prefetching
     correlation_tracker: Arc<CorrelationTracker>,
-    
+
     /// Pattern recognition engine
     pattern_engine: Arc<PatternRecognitionEngine>,
 }
@@ -33,28 +33,28 @@ pub struct AccessPatternMetrics {
     pub unique_files_accessed: AtomicUsize,
     pub hot_files_count: AtomicUsize,
     pub cold_files_count: AtomicUsize,
-    
+
     // Collection access metrics
     pub total_collection_accesses: AtomicU64,
     pub unique_collections_accessed: AtomicUsize,
-    
+
     // Pattern detection metrics
     pub sequential_access_count: AtomicU64,
     pub random_access_count: AtomicU64,
     pub batch_access_count: AtomicU64,
     pub repeated_access_count: AtomicU64,
-    
+
     // Correlation metrics
     pub correlation_hits: AtomicU64,
     pub correlation_misses: AtomicU64,
     pub prefetch_opportunities: AtomicU64,
     pub successful_prefetches: AtomicU64,
-    
+
     // Temporal metrics
     pub peak_access_rate: AtomicU64,
     pub average_access_interval_ms: AtomicU64,
     pub burst_detection_count: AtomicU64,
-    
+
     // Cache effectiveness metrics
     pub cache_friendly_patterns: AtomicU64,
     pub cache_hostile_patterns: AtomicU64,
@@ -66,19 +66,19 @@ pub struct AccessPatternMetrics {
 pub struct HistoricalAccessData {
     /// Rolling window of access events (kept longer than metrics framework)
     access_events: VecDeque<AccessEvent>,
-    
+
     /// Daily access summaries (for trend analysis)
     daily_summaries: VecDeque<DailyAccessSummary>,
-    
+
     /// Hourly access patterns (for time-based predictions)
     hourly_patterns: HashMap<u32, HourlyPattern>,
-    
+
     /// Access frequency histogram
     frequency_histogram: HashMap<String, u64>,
-    
+
     /// Maximum events to retain
     max_events: usize,
-    
+
     /// Maximum days of summaries to retain
     max_days: usize,
 }
@@ -130,10 +130,10 @@ pub struct HourlyPattern {
 pub struct CorrelationTracker {
     /// File correlation matrix (file -> correlated files)
     file_correlations: Arc<DashMap<String, Vec<CorrelatedItem>>>,
-    
+
     /// Collection correlation matrix
     collection_correlations: Arc<DashMap<String, Vec<CorrelatedItem>>>,
-    
+
     /// Temporal correlations (time-based patterns)
     temporal_correlations: Arc<RwLock<TemporalCorrelations>>,
 }
@@ -152,7 +152,7 @@ pub struct CorrelatedItem {
 pub struct TemporalCorrelations {
     /// Files accessed together within time windows
     time_window_correlations: HashMap<Duration, Vec<(String, String, f64)>>,
-    
+
     /// Periodic access patterns
     periodic_patterns: Vec<PeriodicPattern>,
 }
@@ -170,10 +170,10 @@ pub struct PeriodicPattern {
 pub struct PatternRecognitionEngine {
     /// Sliding window for pattern detection
     detection_window: Arc<Mutex<VecDeque<AccessEvent>>>,
-    
+
     /// Recognized patterns
     recognized_patterns: Arc<RwLock<Vec<RecognizedPattern>>>,
-    
+
     /// Pattern detection thresholds
     thresholds: PatternThresholds,
 }
@@ -224,7 +224,7 @@ impl AccessPatternMetricsCollector {
             pattern_engine: Arc::new(PatternRecognitionEngine::new()),
         }
     }
-    
+
     /// Record an access event
     pub async fn record_access(
         &self,
@@ -235,15 +235,23 @@ impl AccessPatternMetricsCollector {
         cache_hit: bool,
     ) {
         // Update atomic metrics
-        self.metrics.total_file_accesses.fetch_add(1, Ordering::Relaxed);
-        self.metrics.total_collection_accesses.fetch_add(1, Ordering::Relaxed);
-        
+        self.metrics
+            .total_file_accesses
+            .fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .total_collection_accesses
+            .fetch_add(1, Ordering::Relaxed);
+
         if cache_hit {
-            self.metrics.correlation_hits.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .correlation_hits
+                .fetch_add(1, Ordering::Relaxed);
         } else {
-            self.metrics.correlation_misses.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .correlation_misses
+                .fetch_add(1, Ordering::Relaxed);
         }
-        
+
         // Create access event
         let event = AccessEvent {
             timestamp: SystemTime::now(),
@@ -254,38 +262,43 @@ impl AccessPatternMetricsCollector {
             latency_ms,
             cache_hit,
         };
-        
+
         // Update historical data
         self.update_historical_data(event.clone()).await;
-        
+
         // Update correlations
-        self.correlation_tracker.update_correlations(&file_key, &collection_id).await;
-        
+        self.correlation_tracker
+            .update_correlations(&file_key, &collection_id)
+            .await;
+
         // Detect patterns
         self.pattern_engine.process_event(event).await;
     }
-    
+
     /// Update historical data with new event
     async fn update_historical_data(&self, event: AccessEvent) {
         let mut historical = self.historical_data.write().await;
-        
+
         // Add event to rolling window
         historical.access_events.push_back(event.clone());
         while historical.access_events.len() > historical.max_events {
             historical.access_events.pop_front();
         }
-        
+
         // Update frequency histogram
-        *historical.frequency_histogram.entry(event.file_key.clone())
+        *historical
+            .frequency_histogram
+            .entry(event.file_key.clone())
             .or_insert(0) += 1;
-        
+
         // Update hourly patterns
         use chrono::Timelike;
         let hour = chrono::Utc::now().hour();
-        historical.hourly_patterns.entry(hour)
+        historical
+            .hourly_patterns
+            .entry(hour)
             .and_modify(|pattern| {
-                pattern.average_accesses = 
-                    (pattern.average_accesses * 0.9) + (1.0 * 0.1); // Exponential moving average
+                pattern.average_accesses = (pattern.average_accesses * 0.9) + (1.0 * 0.1); // Exponential moving average
             })
             .or_insert(HourlyPattern {
                 hour,
@@ -294,56 +307,73 @@ impl AccessPatternMetricsCollector {
                 access_variance: 0.0,
             });
     }
-    
+
     /// Get pattern predictions for prefetching
     pub async fn predictions(&self) -> Vec<AccessPrediction> {
         let patterns = self.pattern_engine.recognized_patterns.read().await;
-        patterns.iter()
+        patterns
+            .iter()
             .filter_map(|p| p.prediction.clone())
             .collect()
     }
-    
+
     /// Get correlation suggestions for a file
     pub async fn correlated_files(&self, file_key: &str) -> Vec<CorrelatedItem> {
-        self.correlation_tracker.file_correlations
+        self.correlation_tracker
+            .file_correlations
             .get(file_key)
             .map(|entry| entry.clone())
             .unwrap_or_default()
     }
-    
+
     /// Export metrics for unified framework
     pub async fn export_metrics(&self) -> HashMap<String, f64> {
         let mut metrics = HashMap::new();
-        
+
         // Export atomic metrics
-        metrics.insert("access_pattern.total_file_accesses".to_string(), 
-            self.metrics.total_file_accesses.load(Ordering::Relaxed) as f64);
-        metrics.insert("access_pattern.unique_files".to_string(),
-            self.metrics.unique_files_accessed.load(Ordering::Relaxed) as f64);
-        metrics.insert("access_pattern.hot_files".to_string(),
-            self.metrics.hot_files_count.load(Ordering::Relaxed) as f64);
-        metrics.insert("access_pattern.cold_files".to_string(),
-            self.metrics.cold_files_count.load(Ordering::Relaxed) as f64);
-        
+        metrics.insert(
+            "access_pattern.total_file_accesses".to_string(),
+            self.metrics.total_file_accesses.load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "access_pattern.unique_files".to_string(),
+            self.metrics.unique_files_accessed.load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "access_pattern.hot_files".to_string(),
+            self.metrics.hot_files_count.load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "access_pattern.cold_files".to_string(),
+            self.metrics.cold_files_count.load(Ordering::Relaxed) as f64,
+        );
+
         // Calculate and export derived metrics
-        let correlation_total = self.metrics.correlation_hits.load(Ordering::Relaxed) +
-            self.metrics.correlation_misses.load(Ordering::Relaxed);
+        let correlation_total = self.metrics.correlation_hits.load(Ordering::Relaxed)
+            + self.metrics.correlation_misses.load(Ordering::Relaxed);
         if correlation_total > 0 {
-            let hit_rate = self.metrics.correlation_hits.load(Ordering::Relaxed) as f64 / 
-                correlation_total as f64;
+            let hit_rate = self.metrics.correlation_hits.load(Ordering::Relaxed) as f64
+                / correlation_total as f64;
             metrics.insert("access_pattern.correlation_hit_rate".to_string(), hit_rate);
         }
-        
+
         let prefetch_total = self.metrics.prefetch_opportunities.load(Ordering::Relaxed);
         if prefetch_total > 0 {
-            let success_rate = self.metrics.successful_prefetches.load(Ordering::Relaxed) as f64 /
-                prefetch_total as f64;
-            metrics.insert("access_pattern.prefetch_success_rate".to_string(), success_rate);
+            let success_rate = self.metrics.successful_prefetches.load(Ordering::Relaxed) as f64
+                / prefetch_total as f64;
+            metrics.insert(
+                "access_pattern.prefetch_success_rate".to_string(),
+                success_rate,
+            );
         }
-        
-        metrics.insert("access_pattern.working_set_size".to_string(),
-            self.metrics.working_set_size_estimate.load(Ordering::Relaxed) as f64);
-        
+
+        metrics.insert(
+            "access_pattern.working_set_size".to_string(),
+            self.metrics
+                .working_set_size_estimate
+                .load(Ordering::Relaxed) as f64,
+        );
+
         metrics
     }
 }
@@ -399,7 +429,7 @@ impl CorrelationTracker {
             })),
         }
     }
-    
+
     pub async fn update_correlations(&self, file_key: &str, collection_id: &str) {
         // This would implement correlation tracking logic
         // For now, just increment counters
@@ -419,16 +449,16 @@ impl PatternRecognitionEngine {
             },
         }
     }
-    
+
     pub async fn process_event(&self, event: AccessEvent) {
         let mut window = self.detection_window.lock().await;
         window.push_back(event);
-        
+
         // Keep window size bounded
         while window.len() > 1000 {
             window.pop_front();
         }
-        
+
         // Pattern detection would happen here
         // For now, just a placeholder
     }
@@ -438,18 +468,18 @@ impl PatternRecognitionEngine {
 impl MetricsCollector for AccessPatternMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
         let values = self.export_metrics().await;
-        
+
         Ok(MetricsSample {
             timestamp: Instant::now(),
             collector: "access_pattern".to_string(),
             values,
         })
     }
-    
+
     fn name(&self) -> &'static str {
         "AccessPatternMetrics"
     }
-    
+
     fn recommended_interval(&self) -> Duration {
         Duration::from_secs(30) // Collect every 30 seconds
     }

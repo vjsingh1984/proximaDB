@@ -21,10 +21,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb::Collection as Collection;
-use crate::storage::metadata::backends::filestore_backend::{
-    IncrementalOperation, OperationType,
-};
+use crate::proto::proximadb::Collection;
+use crate::storage::metadata::backends::filestore_backend::{IncrementalOperation, OperationType};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 // NOTE: Using unified CompactionConfig from unified_types.rs
@@ -130,7 +128,9 @@ impl FilestoreCheckpoint {
         let initial_count = memtable.len();
 
         // Step 2: Apply incremental operations
-        let (ops_count, ops_size) = self.apply_incremental_operations(fs.as_ref(), &mut memtable).await?;
+        let (ops_count, ops_size) = self
+            .apply_incremental_operations(fs.as_ref(), &mut memtable)
+            .await?;
 
         // Step 3: Create new snapshot
         self.create_new_snapshot(fs.as_ref(), &memtable).await?;
@@ -305,11 +305,12 @@ impl FilestoreCheckpoint {
             _ => return Err(anyhow::anyhow!("Invalid operation type: {}", op_type_str)),
         };
 
-        let collection_data = collection_data_json
-            .and_then(|json| serde_json::from_str::<Collection>(&json).ok());
+        let collection_data =
+            collection_data_json.and_then(|json| serde_json::from_str::<Collection>(&json).ok());
 
         // Parse timestamp string to i64
-        let timestamp_i64 = timestamp.parse::<i64>()
+        let timestamp_i64 = timestamp
+            .parse::<i64>()
             .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis());
 
         Ok(IncrementalOperation {
@@ -341,14 +342,14 @@ impl FilestoreCheckpoint {
         for record in memtable.values() {
             collections.push(record.clone());
         }
-        
+
         // Create a wrapper message for all collections
         let snapshot = crate::proto::proximadb::CollectionSnapshot {
             collections,
             version: 1,
             timestamp: chrono::Utc::now().timestamp_micros(),
         };
-        
+
         // Serialize to protobuf binary
         let data = if self.config.compress_snapshots {
             // Compress with zstd

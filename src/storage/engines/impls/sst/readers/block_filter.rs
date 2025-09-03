@@ -6,7 +6,7 @@
  */
 
 //! Intelligent DataBlock filtering using hierarchical bloom filters and metadata
-//! 
+//!
 //! Provides efficient block skipping for reads while allowing full streaming for compaction
 
 use anyhow::Result;
@@ -79,7 +79,7 @@ impl BlockFilterStrategy {
             skip_all_filtering: true,
         }
     }
-    
+
     /// Create strategy for point queries (bloom filters only)
     pub fn for_point_query() -> Self {
         Self {
@@ -88,7 +88,7 @@ impl BlockFilterStrategy {
             skip_all_filtering: false,
         }
     }
-    
+
     /// Create strategy for range/metadata queries (min/max stats)
     pub fn for_range_query() -> Self {
         Self {
@@ -107,9 +107,11 @@ pub struct IntelligentBlockFilter {
 impl IntelligentBlockFilter {
     /// Create a new block filter with given strategy
     pub fn new(strategy: BlockFilterStrategy) -> Self {
-        Self { search_strategy: strategy }
+        Self {
+            search_strategy: strategy,
+        }
     }
-    
+
     /// Create filter for specific query type
     pub fn for_query_type(query_type: &QueryType) -> Self {
         let strategy = match query_type {
@@ -121,7 +123,7 @@ impl IntelligentBlockFilter {
         };
         Self::new(strategy)
     }
-    
+
     /// Check if a block should be read based on its index entry
     pub fn should_read_block(
         &self,
@@ -134,7 +136,7 @@ impl IntelligentBlockFilter {
             trace!("🔄 Compaction mode: reading all blocks without filtering");
             return Ok(true);
         }
-        
+
         // Check point query with bloom filter
         if let Some(ref target_id) = filter.target_id {
             if self.search_strategy.use_bloom_filters {
@@ -145,55 +147,66 @@ impl IntelligentBlockFilter {
                         return Ok(false);
                     }
                 }
-                
+
                 // Check block-level bloom if available
                 if let Some(ref block_bloom_bytes) = index_entry.block_key_bloom {
                     let block_bloom: SstableBloomFilter = bincode::deserialize(block_bloom_bytes)?;
                     if !block_bloom.might_contain_key(target_id)? {
-                        debug!("🚫 Block {} bloom filter: ID '{}' not in block", 
-                               index_entry.block_id, target_id);
+                        debug!(
+                            "🚫 Block {} bloom filter: ID '{}' not in block",
+                            index_entry.block_id, target_id
+                        );
                         return Ok(false);
                     }
                 }
             }
-            
+
             // Check key range (blocks are sorted)
             if target_id < &index_entry.key {
-                debug!("🚫 Block {} key range: target '{}' < min key '{}'", 
-                       index_entry.block_id, target_id, index_entry.key);
+                debug!(
+                    "🚫 Block {} key range: target '{}' < min key '{}'",
+                    index_entry.block_id, target_id, index_entry.key
+                );
                 return Ok(false);
             }
         }
-        
+
         // Check range query with min/max
         if let Some((ref min_id, ref max_id)) = filter.id_range {
             if self.search_strategy.use_min_max_stats {
                 // Block's minimum key is after our max range
                 if &index_entry.key > max_id {
-                    debug!("🚫 Block {} range: min key '{}' > max range '{}'", 
-                           index_entry.block_id, index_entry.key, max_id);
+                    debug!(
+                        "🚫 Block {} range: min key '{}' > max range '{}'",
+                        index_entry.block_id, index_entry.key, max_id
+                    );
                     return Ok(false);
                 }
                 // Note: We can't skip if block's max < min_id without storing max_key per block
             }
         }
-        
+
         // Check metadata filters with min/max statistics
         if !filter.metadata_filters.is_empty() && self.search_strategy.use_min_max_stats {
             for (column, filter_value) in &filter.metadata_filters {
                 if !self.check_metadata_filter(index_entry, column, filter_value)? {
-                    debug!("🚫 Block {} metadata filter: column '{}' doesn't match", 
-                           index_entry.block_id, column);
+                    debug!(
+                        "🚫 Block {} metadata filter: column '{}' doesn't match",
+                        index_entry.block_id, column
+                    );
                     return Ok(false);
                 }
             }
         }
-        
+
         // Block passes all filters
-        trace!("✅ Block {} passes all filters, will be read", index_entry.block_id);
+        trace!(
+            "✅ Block {} passes all filters, will be read",
+            index_entry.block_id
+        );
         Ok(true)
     }
-    
+
     /// Check if metadata filter matches block statistics
     fn check_metadata_filter(
         &self,
@@ -214,7 +227,7 @@ impl IntelligentBlockFilter {
                     }
                 }
             }
-            
+
             MetadataFilter::Range(filter_min, filter_max) => {
                 // Check if ranges overlap
                 if let (Some(block_min), Some(block_max)) = (
@@ -222,13 +235,15 @@ impl IntelligentBlockFilter {
                     index_entry.metadata_max_values.get(column),
                 ) {
                     // No overlap if block_max < filter_min or block_min > filter_max
-                    if Self::compare_json_values(block_max, filter_min) == std::cmp::Ordering::Less ||
-                       Self::compare_json_values(block_min, filter_max) == std::cmp::Ordering::Greater {
+                    if Self::compare_json_values(block_max, filter_min) == std::cmp::Ordering::Less
+                        || Self::compare_json_values(block_min, filter_max)
+                            == std::cmp::Ordering::Greater
+                    {
                         return Ok(false);
                     }
                 }
             }
-            
+
             MetadataFilter::In(values) => {
                 // Check if any value could be in block's range
                 if let (Some(min), Some(max)) = (
@@ -241,7 +256,7 @@ impl IntelligentBlockFilter {
                     }
                 }
             }
-            
+
             MetadataFilter::NotNull => {
                 // Check if all values are null
                 if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
@@ -249,7 +264,7 @@ impl IntelligentBlockFilter {
                     // For now, we can't skip based on this alone
                 }
             }
-            
+
             MetadataFilter::IsNull => {
                 // Check if there are any nulls
                 if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
@@ -259,16 +274,16 @@ impl IntelligentBlockFilter {
                 }
             }
         }
-        
+
         Ok(true)
     }
-    
+
     /// Check if a value is within the min/max range
     fn value_in_range(value: &JsonValue, min: &JsonValue, max: &JsonValue) -> bool {
-        Self::compare_json_values(value, min) != std::cmp::Ordering::Less &&
-        Self::compare_json_values(value, max) != std::cmp::Ordering::Greater
+        Self::compare_json_values(value, min) != std::cmp::Ordering::Less
+            && Self::compare_json_values(value, max) != std::cmp::Ordering::Greater
     }
-    
+
     /// Compare two JSON values for ordering
     fn compare_json_values(a: &JsonValue, b: &JsonValue) -> std::cmp::Ordering {
         use serde_json::Value;
@@ -276,25 +291,27 @@ impl IntelligentBlockFilter {
             (Value::Null, Value::Null) => std::cmp::Ordering::Equal,
             (Value::Null, _) => std::cmp::Ordering::Less,
             (_, Value::Null) => std::cmp::Ordering::Greater,
-            
+
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-            
+
             (Value::Number(a), Value::Number(b)) => {
                 if let (Some(a_f64), Some(b_f64)) = (a.as_f64(), b.as_f64()) {
-                    a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
+                    a_f64
+                        .partial_cmp(&b_f64)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 } else if let (Some(a_i64), Some(b_i64)) = (a.as_i64(), b.as_i64()) {
                     a_i64.cmp(&b_i64)
                 } else {
                     std::cmp::Ordering::Equal
                 }
             }
-            
+
             (Value::String(a), Value::String(b)) => a.cmp(b),
-            
+
             _ => std::cmp::Ordering::Equal, // Can't compare arrays/objects simply
         }
     }
-    
+
     /// Get blocks that should be read for a query
     pub fn filter_blocks<'a>(
         &self,
@@ -303,19 +320,19 @@ impl IntelligentBlockFilter {
         global_bloom: Option<&SstableBloomFilter>,
     ) -> Result<Vec<&'a IndexEntry>> {
         let mut selected_blocks = Vec::new();
-        
+
         for entry in index_entries {
             if self.should_read_block(entry, filter, global_bloom)? {
                 selected_blocks.push(entry);
             }
         }
-        
+
         debug!(
             "📊 Block filtering: {} of {} blocks selected for reading",
             selected_blocks.len(),
             index_entries.len()
         );
-        
+
         Ok(selected_blocks)
     }
 }
@@ -323,7 +340,7 @@ impl IntelligentBlockFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_block_filter_for_compaction() {
         let filter = IntelligentBlockFilter::for_query_type(&QueryType::Compaction);
@@ -342,18 +359,22 @@ mod tests {
             vector_format: crate::storage::engines::impls::sst::VectorFormat::Variable,
             // REMOVED: compression_ratio
         };
-        
+
         let block_filter = BlockFilter {
             target_id: Some("test".to_string()),
             id_range: None,
             metadata_filters: HashMap::new(),
             query_type: QueryType::Compaction,
         };
-        
+
         // Compaction should read all blocks
-        assert!(filter.should_read_block(&index_entry, &block_filter, None).unwrap());
+        assert!(
+            filter
+                .should_read_block(&index_entry, &block_filter, None)
+                .unwrap()
+        );
     }
-    
+
     #[test]
     fn test_block_filter_point_query() {
         let filter = IntelligentBlockFilter::for_query_type(&QueryType::PointQuery);
@@ -372,7 +393,7 @@ mod tests {
             vector_format: crate::storage::engines::impls::sst::VectorFormat::Variable,
             // REMOVED: compression_ratio
         };
-        
+
         // Query for ID before block's minimum
         let block_filter = BlockFilter {
             target_id: Some("000".to_string()),
@@ -380,10 +401,14 @@ mod tests {
             metadata_filters: HashMap::new(),
             query_type: QueryType::PointQuery,
         };
-        
+
         // Should skip block since target < min key
-        assert!(!filter.should_read_block(&index_entry, &block_filter, None).unwrap());
-        
+        assert!(
+            !filter
+                .should_read_block(&index_entry, &block_filter, None)
+                .unwrap()
+        );
+
         // Query for ID after block's minimum
         let block_filter2 = BlockFilter {
             target_id: Some("bbb".to_string()),
@@ -391,8 +416,12 @@ mod tests {
             metadata_filters: HashMap::new(),
             query_type: QueryType::PointQuery,
         };
-        
+
         // Should read block since target >= min key
-        assert!(filter.should_read_block(&index_entry, &block_filter2, None).unwrap());
+        assert!(
+            filter
+                .should_read_block(&index_entry, &block_filter2, None)
+                .unwrap()
+        );
     }
 }

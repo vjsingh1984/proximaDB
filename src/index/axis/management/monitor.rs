@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::time::interval;
 use tracing::error;
 
@@ -389,7 +389,13 @@ impl PerformanceMonitor {
 
     /// Get active alerts
     pub async fn get_active_alerts(&self) -> Vec<Alert> {
-        self.alert_manager.active_alerts.read().await.values().cloned().collect()
+        self.alert_manager
+            .active_alerts
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Subscribe to monitoring events

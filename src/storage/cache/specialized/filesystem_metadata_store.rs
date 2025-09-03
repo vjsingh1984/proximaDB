@@ -1,5 +1,5 @@
 // Filesystem Metadata Cache - Specialized cache for zero-copy filesystem metadata
-// 
+//
 // This cache is specifically designed for filesystem metadata used by the zero-copy
 // I/O system. It stores lightweight file metadata with a structured key format.
 //
@@ -13,13 +13,13 @@
 // - High-frequency access patterns
 // - Different eviction strategies
 
-use std::sync::Arc;
-use dashmap::DashMap;
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
+use dashmap::DashMap;
+use std::sync::Arc;
 
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::traits::{BaseCache, CacheValue, CacheKey};
+use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 
 // Temporary placeholder for MmappedMetadata
 // TODO: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved
@@ -38,22 +38,22 @@ impl MmappedMetadata {
 pub struct FilesystemMetadata {
     /// Memory-mapped metadata for zero-copy access
     pub mmap_metadata: Option<Arc<MmappedMetadata>>,
-    
+
     /// File size in bytes
     pub file_size: u64,
-    
+
     /// Last modification time
     pub last_modified: u64,
-    
+
     /// Whether file can be skipped for current query
     pub can_skip: bool,
-    
+
     /// Selective ranges if partial read is needed
     pub selective_ranges: Option<Vec<(u64, u64)>>,
-    
+
     /// Collection ID this file belongs to
     pub collection_id: String,
-    
+
     /// Engine type (SST, VIPER, etc.)
     pub engine_type: String,
 }
@@ -62,21 +62,21 @@ impl CacheValue for FilesystemMetadata {
     fn size_bytes(&self) -> usize {
         // Base struct size
         let mut size = std::mem::size_of::<Self>();
-        
+
         // Add string allocations
         size += self.collection_id.len();
         size += self.engine_type.len();
-        
+
         // Add selective ranges if present
         if let Some(ref ranges) = self.selective_ranges {
             size += ranges.len() * std::mem::size_of::<(u64, u64)>();
         }
-        
+
         // Add mmap metadata footprint if present
         if let Some(ref mmap) = self.mmap_metadata {
             size += mmap.memory_footprint();
         }
-        
+
         size
     }
 }
@@ -85,11 +85,11 @@ impl CacheValue for FilesystemMetadata {
 pub struct FilesystemMetadataStore {
     /// Base cache implementation for integration with unified system
     base: BaseCacheImpl<String, FilesystemMetadata>,
-    
+
     /// Direct access map for hot paths (bypasses base cache overhead)
     /// This is for ultra-low latency access to most frequently used entries
     hot_cache: DashMap<String, Arc<FilesystemMetadata>>,
-    
+
     /// Maximum entries in hot cache
     max_hot_entries: usize,
 }
@@ -102,12 +102,12 @@ impl FilesystemMetadataStore {
             max_hot_entries,
         }
     }
-    
+
     /// Generate cache key from components
     pub fn make_key(filepath: &str, collection_id: &str, engine_type: &str) -> String {
         format!("{}:{}:{}", filepath, collection_id, engine_type)
     }
-    
+
     /// Put filesystem metadata with automatic hot cache promotion
     pub async fn put_metadata(
         &self,
@@ -117,10 +117,10 @@ impl FilesystemMetadataStore {
         metadata: FilesystemMetadata,
     ) -> Result<()> {
         let key = Self::make_key(filepath, collection_id, engine_type);
-        
+
         // Always put in base cache for unified management
         BaseCache::put_with_hooks(&self.base, key.clone(), metadata).await;
-        
+
         // Promote to hot cache if frequently accessed
         // (In real implementation, would track access frequency)
         if self.hot_cache.len() < self.max_hot_entries {
@@ -128,10 +128,10 @@ impl FilesystemMetadataStore {
                 self.hot_cache.insert(key, Arc::new(entry));
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get filesystem metadata with hot cache fast path
     pub async fn get_metadata(
         &self,
@@ -140,27 +140,27 @@ impl FilesystemMetadataStore {
         engine_type: &str,
     ) -> Option<Arc<FilesystemMetadata>> {
         let key = Self::make_key(filepath, collection_id, engine_type);
-        
+
         // Fast path: check hot cache first
         if let Some(entry) = self.hot_cache.get(&key) {
             return Some(Arc::clone(&entry));
         }
-        
+
         // Slow path: check base cache
         if let Some(metadata) = BaseCache::get_with_hooks(&self.base, &key).await {
             let arc_metadata = Arc::new(metadata);
-            
+
             // Consider promoting to hot cache
             if self.should_promote_to_hot_cache(&key) {
                 self.promote_to_hot_cache(key.clone(), Arc::clone(&arc_metadata));
             }
-            
+
             return Some(arc_metadata);
         }
-        
+
         None
     }
-    
+
     /// Check if file can be skipped for query
     pub async fn can_skip_file(
         &self,
@@ -168,12 +168,15 @@ impl FilesystemMetadataStore {
         collection_id: &str,
         engine_type: &str,
     ) -> bool {
-        if let Some(metadata) = self.get_metadata(filepath, collection_id, engine_type).await {
+        if let Some(metadata) = self
+            .get_metadata(filepath, collection_id, engine_type)
+            .await
+        {
             return metadata.can_skip;
         }
         false
     }
-    
+
     /// Get selective ranges for partial read
     pub async fn get_selective_ranges(
         &self,
@@ -181,39 +184,36 @@ impl FilesystemMetadataStore {
         collection_id: &str,
         engine_type: &str,
     ) -> Option<Vec<(u64, u64)>> {
-        if let Some(metadata) = self.get_metadata(filepath, collection_id, engine_type).await {
+        if let Some(metadata) = self
+            .get_metadata(filepath, collection_id, engine_type)
+            .await
+        {
             return metadata.selective_ranges.clone();
         }
         None
     }
-    
+
     /// Invalidate entry in both caches
-    pub async fn invalidate(
-        &self,
-        filepath: &str,
-        collection_id: &str,
-        engine_type: &str,
-    ) -> bool {
+    pub async fn invalidate(&self, filepath: &str, collection_id: &str, engine_type: &str) -> bool {
         let key = Self::make_key(filepath, collection_id, engine_type);
-        
+
         // Remove from hot cache
         self.hot_cache.remove(&key);
-        
+
         // Remove from base cache
         BaseCache::invalidate(&self.base, &key).await
     }
-    
+
     /// Clear entries for a specific collection
     pub async fn clear_collection(&self, collection_id: &str) {
         // Remove from hot cache
-        self.hot_cache.retain(|key, _| {
-            !key.contains(&format!(":{}", collection_id))
-        });
-        
+        self.hot_cache
+            .retain(|key, _| !key.contains(&format!(":{}", collection_id)));
+
         // Note: Base cache doesn't support pattern-based removal
         // Would need to track keys separately or enhance base cache
     }
-    
+
     /// Get cache statistics
     pub fn stats(&self) -> FilesystemCacheStats {
         FilesystemCacheStats {
@@ -223,14 +223,14 @@ impl FilesystemMetadataStore {
             hit_rate: self.base.metrics().hit_rate(),
         }
     }
-    
+
     // Private helper methods
-    
+
     fn should_promote_to_hot_cache(&self, _key: &str) -> bool {
         // Simple policy: promote if hot cache isn't full
         self.hot_cache.len() < self.max_hot_entries
     }
-    
+
     fn promote_to_hot_cache(&self, key: String, metadata: Arc<FilesystemMetadata>) {
         // Evict LRU if needed (simplified - in production would track access times)
         if self.hot_cache.len() >= self.max_hot_entries {
@@ -239,7 +239,7 @@ impl FilesystemMetadataStore {
                 self.hot_cache.remove(entry.key());
             }
         }
-        
+
         self.hot_cache.insert(key, metadata);
     }
 }
@@ -256,11 +256,11 @@ pub struct FilesystemCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_filesystem_metadata_cache() {
         let cache = FilesystemMetadataStore::new(100, 10);
-        
+
         let metadata = FilesystemMetadata {
             mmap_metadata: None,
             file_size: 1024 * 1024,
@@ -270,67 +270,51 @@ mod tests {
             collection_id: "test_collection".to_string(),
             engine_type: "SST".to_string(),
         };
-        
+
         // Test put and get
-        cache.put_metadata(
-            "/data/file.sst",
-            "test_collection",
-            "SST",
-            metadata,
-        ).await.unwrap();
-        
-        let retrieved = cache.get_metadata(
-            "/data/file.sst",
-            "test_collection",
-            "SST",
-        ).await;
-        
+        cache
+            .put_metadata("/data/file.sst", "test_collection", "SST", metadata)
+            .await
+            .unwrap();
+
+        let retrieved = cache
+            .get_metadata("/data/file.sst", "test_collection", "SST")
+            .await;
+
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.file_size, 1024 * 1024);
         assert_eq!(retrieved.collection_id, "test_collection");
-        
+
         // Test can_skip_file
-        let can_skip = cache.can_skip_file(
-            "/data/file.sst",
-            "test_collection",
-            "SST",
-        ).await;
+        let can_skip = cache
+            .can_skip_file("/data/file.sst", "test_collection", "SST")
+            .await;
         assert!(!can_skip);
-        
+
         // Test selective ranges
-        let ranges = cache.get_selective_ranges(
-            "/data/file.sst",
-            "test_collection",
-            "SST",
-        ).await;
+        let ranges = cache
+            .get_selective_ranges("/data/file.sst", "test_collection", "SST")
+            .await;
         assert!(ranges.is_some());
         assert_eq!(ranges.unwrap().len(), 2);
-        
+
         // Test invalidation
-        let invalidated = cache.invalidate(
-            "/data/file.sst",
-            "test_collection",
-            "SST",
-        ).await;
+        let invalidated = cache
+            .invalidate("/data/file.sst", "test_collection", "SST")
+            .await;
         assert!(invalidated);
-        
+
         // Verify it's gone
-        let retrieved = cache.get_metadata(
-            "/data/file.sst",
-            "test_collection",
-            "SST",
-        ).await;
+        let retrieved = cache
+            .get_metadata("/data/file.sst", "test_collection", "SST")
+            .await;
         assert!(retrieved.is_none());
     }
-    
+
     #[test]
     fn test_key_generation() {
-        let key = FilesystemMetadataStore::make_key(
-            "/path/to/file.sst",
-            "collection1",
-            "SST"
-        );
+        let key = FilesystemMetadataStore::make_key("/path/to/file.sst", "collection1", "SST");
         assert_eq!(key, "/path/to/file.sst:collection1:SST");
     }
 }

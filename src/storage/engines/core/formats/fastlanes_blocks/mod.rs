@@ -1,8 +1,8 @@
 //! Shared Row-based Storage Infrastructure for SST and SWIFT engines
-//! 
+//!
 //! This module provides common row-based storage functionality used by both SST and SWIFT engines,
 //! eliminating code duplication and ensuring consistent optimizations across row-based storage engines.
-//! 
+//!
 //! Now includes SharedSstFormatReader for bandwidth-optimized cloud storage access.
 //!
 //! ## Common Capabilities Provided
@@ -71,55 +71,45 @@
 //! - **Testing**: Unified test suite for common components
 
 pub mod block_structures;
-pub mod bloom_filter;  // Row-based bloom filter for SST and Swift
+pub mod bloom_filter; // Row-based bloom filter for SST and Swift
 pub mod compression_config;
 pub mod index_structures;
 // Quantization now handled by unified compute module
 pub mod batch_operations;
-pub mod utilities;
 pub mod header_metadata;
-pub mod sst_io_layer;  // Low-level I/O operations (formerly sst_io_layer)
-pub mod sst_metadata;  // NEW: Zero-copy metadata serialization for SST
-pub mod swift_metadata;  // NEW: Zero-copy metadata serialization for SWIFT
+pub mod sst_io_layer; // Low-level I/O operations (formerly sst_io_layer)
+pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
+pub mod swift_metadata;
+pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 
 // Re-exports for common use
 pub use block_structures::{
-    FastLanesDataBlock, FastLanesBlockMetadata, BlockLocation, 
-    SuperBlock, BlockLayout, BlockCompressionConfig,
+    BlockCompressionConfig, BlockLayout, BlockLocation, FastLanesBlockMetadata, FastLanesDataBlock,
+    SuperBlock,
 };
 pub use compression_config::{
-    RowBasedCompressionConfig, CompressionParameters, 
-    VectorCompressionStrategy, CompressionStats,
+    CompressionParameters, CompressionStats, RowBasedCompressionConfig, VectorCompressionStrategy,
 };
 pub use index_structures::{
-    RowBasedIdIndex, BloomFilterConfig, IndexEntry, 
-    HierarchicalIndex, MultiLevelIndex,
+    BloomFilterConfig, HierarchicalIndex, IndexEntry, MultiLevelIndex, RowBasedIdIndex,
 };
 // Quantization now handled by unified compute module
 pub use batch_operations::{
-    RowBasedBatchOperations, BatchConfig, BatchResult, 
-    BatchProcessingStrategy, ConcurrencyConfig,
+    BatchConfig, BatchProcessingStrategy, BatchResult, ConcurrencyConfig, RowBasedBatchOperations,
 };
 pub use header_metadata::{
-    RowBasedHeader, FileMetadata, EngineMetadata, 
-    VersionInfo, ChecksumConfig,
+    ChecksumConfig, EngineMetadata, FileMetadata, RowBasedHeader, VersionInfo,
 };
-pub use utilities::{
-    RowBasedUtilities, PathResolver, 
-    MemoryEstimator, PerformanceProfiler,
-};
+pub use utilities::{MemoryEstimator, PathResolver, PerformanceProfiler, RowBasedUtilities};
 
 // NEW: Export shared SST reader components
 pub use sst_io_layer::{
-    SharedSstFormatReader as SstIOLayer, SstMmapStrategy, SstRegion,
-    BlockInfo, ReaderStatsSummary as SstReaderStats,
+    BlockInfo, ReaderStatsSummary as SstReaderStats, SharedSstFormatReader as SstIOLayer,
+    SstMmapStrategy, SstRegion,
 };
 
 // NEW: Export zero-copy metadata serialization components
-pub use sst_metadata::{
-    SstMetadataSerializer, SstMetadata, SstGlobalHeader,
-    SstBlockHeader,
-};
+pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadataSerializer};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -127,12 +117,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::CompressionAlgorithm;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::core::memory::pool::VectorMemoryPool;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::core::compression::CompressionAlgorithm;
+use crate::core::memory::pool::VectorMemoryPool;
+use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 /// Common configuration for row-based storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,26 +130,26 @@ pub struct RowBasedConfig {
     /// Engine identification
     pub engine_name: String,
     pub engine_version: String,
-    
+
     /// Storage configuration
     pub dimension: usize,
     pub distance_metric: DistanceMetric,
     pub collection_id: String,
-    
+
     /// Block organization
     pub records_per_block: u32,
     pub blocks_per_superblock: u32,
-    pub superblock_size_target: u64,  // Target size in bytes
-    
+    pub superblock_size_target: u64, // Target size in bytes
+
     /// Compression configuration
     pub compression: RowBasedCompressionConfig,
-    
+
     /// Quantization configuration
     pub quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig,
-    
+
     /// Index configuration
     pub indexing: IndexConfiguration,
-    
+
     /// Performance tuning
     pub performance: PerformanceConfiguration,
 }
@@ -171,15 +161,15 @@ pub struct IndexConfiguration {
     pub bloom_filter_enabled: bool,
     pub bloom_filter_false_positive_rate: f64,
     pub bloom_filter_per_block: bool,
-    
+
     /// ID index settings
     pub id_index_type: IdIndex,
     pub id_index_compression: bool,
-    
+
     /// Hierarchical indexing
     pub enable_hierarchical_index: bool,
     pub index_levels: u8,
-    
+
     /// Metadata indexing
     pub enable_metadata_index: bool,
     pub filterable_columns: Vec<String>,
@@ -205,16 +195,16 @@ pub struct PerformanceConfiguration {
     pub memory_pool_enabled: bool,
     pub max_memory_per_operation: usize,
     pub cache_size_bytes: usize,
-    
+
     /// Concurrency settings
     pub max_concurrent_operations: usize,
     pub batch_size_optimization: bool,
-    
+
     /// I/O optimization
     pub prefetch_enabled: bool,
     pub async_io_enabled: bool,
     pub io_buffer_size: usize,
-    
+
     /// Hardware acceleration
     pub simd_enabled: bool,
     pub hardware_detection: bool,
@@ -228,14 +218,14 @@ pub enum RowBasedSearchMode {
         ids: Vec<String>,
         include_vectors: bool,
     },
-    
+
     /// Full similarity search without AXIS
     IndexFree {
         query: Vec<f32>,
         top_k: usize,
         filter: Option<MetadataFilter>,
     },
-    
+
     /// Hybrid mode - combine AXIS with local refinement
     Hybrid {
         axis_ids: Vec<String>,
@@ -290,22 +280,30 @@ pub struct OperationStats {
 pub trait RowBasedEngineCapabilities {
     /// Get engine configuration
     fn get_config(&self) -> &RowBasedConfig;
-    
+
     /// Supports dual-mode operation (ID lookup + similarity search)
-    fn supports_dual_mode(&self) -> bool { true }
-    
+    fn supports_dual_mode(&self) -> bool {
+        true
+    }
+
     /// Supports progressive search refinement
-    fn supports_progressive_search(&self) -> bool { true }
-    
+    fn supports_progressive_search(&self) -> bool {
+        true
+    }
+
     /// Supports quantization for memory savings
-    fn supports_quantization(&self) -> bool { true }
-    
+    fn supports_quantization(&self) -> bool {
+        true
+    }
+
     /// Supports hierarchical block structure
-    fn supports_hierarchical_blocks(&self) -> bool { true }
-    
+    fn supports_hierarchical_blocks(&self) -> bool {
+        true
+    }
+
     /// Get supported distance metrics
     fn supported_distance_metrics(&self) -> Vec<DistanceMetric>;
-    
+
     /// Get supported compression algorithms
     fn supported_compression_algorithms(&self) -> Vec<CompressionAlgorithm>;
 }
@@ -322,7 +320,8 @@ impl Default for RowBasedConfig {
             blocks_per_superblock: 64,
             superblock_size_target: 1024 * 1024 * 1024, // 1GB
             compression: RowBasedCompressionConfig::default(),
-            quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
+            quantization:
+                crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
             indexing: IndexConfiguration::default(),
             performance: PerformanceConfiguration::default(),
         }
@@ -354,7 +353,7 @@ impl Default for PerformanceConfiguration {
         Self {
             memory_pool_enabled: true,
             max_memory_per_operation: 512 * 1024 * 1024, // 512MB
-            cache_size_bytes: 1024 * 1024 * 1024, // 1GB
+            cache_size_bytes: 1024 * 1024 * 1024,        // 1GB
             max_concurrent_operations: 8,
             batch_size_optimization: true,
             prefetch_enabled: true,
@@ -369,7 +368,7 @@ impl Default for PerformanceConfiguration {
 /// Utility functions for row-based engines
 pub mod utils {
     use super::*;
-    
+
     /// Calculate optimal block size based on dimension and record count
     pub fn calculate_optimal_block_size(
         dimension: usize,
@@ -378,17 +377,17 @@ pub mod utils {
     ) -> usize {
         // Base vector size (4 bytes per float32)
         let vector_size = dimension * 4;
-        
+
         // Add metadata overhead (ID, timestamp, version, etc.)
         let metadata_overhead = 128; // Estimated overhead per record
-        
+
         let record_size = vector_size + metadata_overhead;
         let total_size = (record_size * target_records as usize) as f32;
-        
+
         // Apply compression ratio
         (total_size * compression_ratio) as usize
     }
-    
+
     /// Estimate memory usage for configuration
     pub fn estimate_memory_usage(config: &RowBasedConfig) -> usize {
         let block_size = calculate_optimal_block_size(
@@ -396,16 +395,16 @@ pub mod utils {
             config.records_per_block,
             config.compression.compression_ratio_estimate,
         );
-        
+
         let blocks_in_memory = config.performance.cache_size_bytes / block_size;
         let estimated_usage = blocks_in_memory * block_size;
-        
+
         // Add index overhead (10-20% of data size)
         let index_overhead = estimated_usage / 10;
-        
+
         estimated_usage + index_overhead
     }
-    
+
     /// Recommend engine configuration based on workload
     pub fn recommend_config_for_workload(
         dimension: usize,
@@ -414,7 +413,7 @@ pub mod utils {
     ) -> RowBasedConfig {
         let mut config = RowBasedConfig::default();
         config.dimension = dimension;
-        
+
         match workload_type {
             WorkloadType::HighThroughputWrite => {
                 // Optimize for writes
@@ -438,10 +437,10 @@ pub mod utils {
                 config.quantization.enable_progressive = true; // Enable progressive quantization
             }
         }
-        
+
         config
     }
-    
+
     #[derive(Debug, Clone)]
     pub enum WorkloadType {
         HighThroughputWrite,
@@ -453,68 +452,64 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::utils::*;
-    
+    use super::*;
+
     #[test]
     fn test_optimal_block_size_calculation() {
         let block_size = calculate_optimal_block_size(768, 2000, 0.7);
-        
+
         // Expected: 768 * 4 * 2000 + overhead, compressed by 0.7
         let expected_base = (768 * 4 + 128) * 2000;
         let expected_compressed = (expected_base as f32 * 0.7) as usize;
-        
+
         assert_eq!(block_size, expected_compressed);
     }
-    
+
     #[test]
     fn test_memory_usage_estimation() {
         let config = RowBasedConfig::default();
         let usage = estimate_memory_usage(&config);
-        
+
         // Should be reasonable (between 100MB and 10GB)
         assert!(usage > 100 * 1024 * 1024); // > 100MB
         assert!(usage < 10 * 1024 * 1024 * 1024); // < 10GB
     }
-    
+
     #[test]
     fn test_workload_config_recommendations() {
-        let config = recommend_config_for_workload(
-            384,
-            1_000_000,
-            WorkloadType::HighThroughputWrite,
-        );
-        
+        let config =
+            recommend_config_for_workload(384, 1_000_000, WorkloadType::HighThroughputWrite);
+
         assert_eq!(config.dimension, 384);
-        assert_eq!(config.compression.global_compression.algorithm, CompressionAlgorithm::Lz4);
+        assert_eq!(
+            config.compression.global_compression.algorithm,
+            CompressionAlgorithm::Lz4
+        );
         assert_eq!(config.records_per_block, 4000);
         assert_eq!(config.performance.max_concurrent_operations, 16);
     }
-    
+
     #[test]
     fn test_default_configurations() {
         let config = RowBasedConfig::default();
-        
+
         assert!(config.indexing.bloom_filter_enabled);
         assert!(config.performance.memory_pool_enabled);
         assert!(config.quantization.enable_progressive);
         assert_eq!(config.indexing.id_index_type, IdIndex::Hybrid);
     }
-    
+
     #[test]
     fn test_metadata_filter_creation() {
         let filter = MetadataFilter {
             conditions: vec![
                 FilterCondition::Equals("category".to_string(), "electronics".into()),
-                FilterCondition::Range(
-                    "price".to_string(),
-                    100.0.into(),
-                    1000.0.into(),
-                ),
+                FilterCondition::Range("price".to_string(), 100.0.into(), 1000.0.into()),
             ],
             logic: FilterLogic::And,
         };
-        
+
         assert_eq!(filter.conditions.len(), 2);
         assert!(matches!(filter.logic, FilterLogic::And));
     }

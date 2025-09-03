@@ -20,12 +20,12 @@ use axum::{Router, extract::DefaultBodyLimit};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::decompression::DecompressionLayer;
+use tower_http::trace::TraceLayer;
 
-use super::handlers::{create_router, AppState};
+use super::handlers::{AppState, create_router};
 use crate::api_handlers::UnifiedHandlers;
 
 /// REST server for ProximaDB
@@ -42,9 +42,7 @@ impl RestServer {
         max_request_size_mb: Option<u64>,
         compression: bool,
     ) -> Self {
-        let state = AppState {
-            unified_handlers,
-        };
+        let state = AppState { unified_handlers };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
         let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;
@@ -54,11 +52,11 @@ impl RestServer {
             // Create compression layer with support for multiple algorithms
             // Priority order (fastest to best compression): deflate, gzip, zstd, brotli
             let compression_layer = CompressionLayer::new()
-                .deflate(true)  // Fastest, low CPU usage
-                .gzip(true)     // Good balance of speed and compression
-                .zstd(true)     // Best compression ratio with good speed
-                .br(true);      // Brotli - slower but excellent compression
-            
+                .deflate(true) // Fastest, low CPU usage
+                .gzip(true) // Good balance of speed and compression
+                .zstd(true) // Best compression ratio with good speed
+                .br(true); // Brotli - slower but excellent compression
+
             // Create decompression layer for handling compressed requests
             let decompression_layer = DecompressionLayer::new()
                 .deflate(true)
@@ -69,8 +67,8 @@ impl RestServer {
             create_router(state).layer(
                 ServiceBuilder::new()
                     .layer(DefaultBodyLimit::max(max_size_bytes as usize))
-                    .layer(decompression_layer)  // Handle compressed requests
-                    .layer(compression_layer)    // Compress responses
+                    .layer(decompression_layer) // Handle compressed requests
+                    .layer(compression_layer) // Compress responses
                     .layer(TraceLayer::new_for_http())
                     .layer(
                         CorsLayer::new()
@@ -104,11 +102,15 @@ impl RestServer {
         tracing::info!("🗜️  Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
         tracing::info!("📋 Available endpoints:");
         tracing::info!("   GET    /health                           - Health check");
-        tracing::info!("   POST   /api/v1/collection                - Unified collection operations");
+        tracing::info!(
+            "   POST   /api/v1/collection                - Unified collection operations"
+        );
         tracing::info!("   POST   /api/v1/vector/batch              - Vector batch operations");
         tracing::info!("   POST   /api/v1/vector/search             - Vector search");
         tracing::info!("   POST   /internal/flush                   - Flush all (testing only)");
-        tracing::info!("   POST   /internal/flush/:id               - Flush collection (testing only)");
+        tracing::info!(
+            "   POST   /internal/flush/:id               - Flush collection (testing only)"
+        );
 
         // For axum 0.6, use axum::Server
         axum::Server::bind(&self.bind_addr)

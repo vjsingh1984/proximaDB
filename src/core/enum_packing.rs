@@ -1,5 +1,5 @@
 //! Ultra-efficient enum packing utilities
-//! 
+//!
 //! Provides 75% storage savings by packing multiple enums into single uint32 fields.
 //! Each enum uses only 1 byte (0-255) instead of 4 bytes, with 3 bytes available for
 //! future attributes or multiple packed enums.
@@ -113,7 +113,7 @@ pub enum LanguageCode {
 }
 
 /// Pack 4 processing enums into single uint32 (75% storage savings)
-/// 
+///
 /// Bit layout:
 /// - Bits 0-7:   ExtractionMethod (1-10)
 /// - Bits 8-15:  ProcessingStatus (1-7)
@@ -132,7 +132,9 @@ pub fn pack_processing_enums(
 }
 
 /// Unpack processing enums from uint32
-pub fn unpack_processing_enums(packed: u32) -> Result<(ExtractionMethod, ProcessingStatus, QualityLevel, DataSource)> {
+pub fn unpack_processing_enums(
+    packed: u32,
+) -> Result<(ExtractionMethod, ProcessingStatus, QualityLevel, DataSource)> {
     let extraction = (packed & 0xFF) as u8;
     let status = ((packed >> 8) & 0xFF) as u8;
     let quality = ((packed >> 16) & 0xFF) as u8;
@@ -147,15 +149,12 @@ pub fn unpack_processing_enums(packed: u32) -> Result<(ExtractionMethod, Process
 }
 
 /// Pack 2 source content attributes into uint32
-/// 
+///
 /// Bit layout:
 /// - Bits 0-7:   ContentCategory (1-15)
 /// - Bits 8-15:  QualityLevel (1-4)
 /// - Bits 16-31: Reserved for future attributes
-pub fn pack_source_attributes(
-    category: ContentCategory,
-    quality: QualityLevel,
-) -> u32 {
+pub fn pack_source_attributes(category: ContentCategory, quality: QualityLevel) -> u32 {
     ((quality as u32) << 8) | (category as u32)
 }
 
@@ -171,7 +170,7 @@ pub fn unpack_source_attributes(packed: u32) -> Result<(ContentCategory, Quality
 }
 
 /// Pack language code into uint32
-/// 
+///
 /// Bit layout:
 /// - Bits 0-7:   LanguageCode (1-28, 255 for custom)
 /// - Bits 8-31:  Reserved for future language attributes
@@ -373,7 +372,7 @@ mod tests {
     fn test_storage_efficiency() {
         // Old approach: 4 bytes per enum = 16 bytes total
         // New approach: 4 bytes for all enums = 75% savings
-        
+
         let packed = pack_processing_enums(
             ExtractionMethod::PdfParsing,
             ProcessingStatus::Processed,
@@ -383,7 +382,7 @@ mod tests {
 
         // Verify it fits in 4 bytes
         assert!(packed <= u32::MAX);
-        
+
         // Verify each enum value fits in 8 bits
         assert!(ExtractionMethod::ManualEntry as u8 <= 255);
         assert!(ProcessingStatus::Deprecated as u8 <= 255);

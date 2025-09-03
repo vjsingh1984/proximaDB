@@ -13,12 +13,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use super::flush_handler_trait::{FlushHandler, FlushHandlerFactory};
+use crate::core::config::CompactionConfig;
 use crate::storage::common::compaction_orchestrator::{GenericFileMetadata, TieredFileRegistry};
 use crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler;
 use crate::storage::engines::impls::viper::eventlog_flush::ViperFlushHandler;
-use super::flush_handler_trait::{FlushHandler, FlushHandlerFactory};
-use crate::core::config::CompactionConfig;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Storage engine type for EventLog filtering
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,7 +56,7 @@ impl StorageEngineType {
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }
-    
+
     /// Convert from string representation
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
@@ -69,7 +69,7 @@ impl StorageEngineType {
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }
-    
+
     /// Get file extension for this engine type
     pub fn file_extension(&self) -> &str {
         match self {
@@ -113,7 +113,7 @@ impl CompactionFileDiscovery {
             filesystem,
         }
     }
-    
+
     /// Discover and filter compactable files for a collection
     /// Files pending in EventLog (AXIS processing) are excluded
     pub async fn discover_compactable_files(
@@ -127,35 +127,36 @@ impl CompactionFileDiscovery {
             "📁 COMPACTION: Discovering {} files in {} for collection {}",
             extension, data_directory, collection_id
         );
-        
+
         // Discover all files using the unified registry
-        let all_files = self.registry.discover_files(
-            &self.filesystem,
-            data_directory,
-            extension,
-        ).await?;
-        
+        let all_files = self
+            .registry
+            .discover_files(&self.filesystem, data_directory, extension)
+            .await?;
+
         // Get appropriate EventLog handler based on engine type
         let mut compactable_files = HashMap::new();
         let mut pending_files = HashMap::new();
         let mut total_files = 0;
         let mut compactable_count = 0;
         let mut pending_count = 0;
-        
+
         // Process each level
         for (level, files) in all_files {
             let mut level_compactable = Vec::new();
             let mut level_pending = Vec::new();
-            
+
             for file_meta in files {
                 total_files += 1;
                 let file_path = file_meta.path.clone();
-                
+
                 // Check if file can be compacted using unified handler
                 let handler = FlushHandlerFactory::create(engine_type);
-                let can_compact = handler.can_compact_files(collection_id, &[file_path.clone()]).await
+                let can_compact = handler
+                    .can_compact_files(collection_id, &[file_path.clone()])
+                    .await
                     .unwrap_or(false);
-                
+
                 if can_compact {
                     level_compactable.push(file_meta);
                     compactable_count += 1;
@@ -172,7 +173,7 @@ impl CompactionFileDiscovery {
                     );
                 }
             }
-            
+
             if !level_compactable.is_empty() {
                 compactable_files.insert(level, level_compactable);
             }
@@ -180,22 +181,24 @@ impl CompactionFileDiscovery {
                 pending_files.insert(level, level_pending);
             }
         }
-        
+
         info!(
             "🔍 COMPACTION: Discovery complete for collection {}:\n  Total files: {}\n  Compactable: {}\n  Pending AXIS: {}",
             collection_id, total_files, compactable_count, pending_count
         );
-        
+
         // Log details by level if there are pending files
         if pending_count > 0 {
             for (level, files) in &pending_files {
                 debug!(
                     "  Level {} has {} pending files: {:?}",
-                    level, files.len(), files
+                    level,
+                    files.len(),
+                    files
                 );
             }
         }
-        
+
         Ok(FilteredCompactionFiles {
             compactable_files,
             pending_files,
@@ -204,7 +207,7 @@ impl CompactionFileDiscovery {
             pending_count,
         })
     }
-    
+
     /// Check if compaction should be triggered based on filtered files
     pub fn should_trigger_compaction(
         &self,
@@ -214,32 +217,37 @@ impl CompactionFileDiscovery {
     ) -> bool {
         if let Some(level_files) = filtered_files.compactable_files.get(&0) {
             let should_compact = level_files.len() >= threshold;
-            
+
             if should_compact {
                 info!(
                     "✅ COMPACTION: Level {} has {} compactable files (>= threshold {})",
-                    level, level_files.len(), threshold
+                    level,
+                    level_files.len(),
+                    threshold
                 );
             } else if filtered_files.pending_files.get(&0).is_some() {
                 debug!(
                     "⏸️ COMPACTION: Level {} has only {} compactable files (< threshold {}), some files pending",
-                    level, level_files.len(), threshold
+                    level,
+                    level_files.len(),
+                    threshold
                 );
             }
-            
+
             should_compact
         } else {
             false
         }
     }
-    
+
     /// Get compaction task files for a specific level
     pub fn get_compaction_files(
         &self,
         filtered_files: &FilteredCompactionFiles,
         level: u32,
     ) -> Vec<String> {
-        filtered_files.compactable_files
+        filtered_files
+            .compactable_files
             .get(&level)
             .map(|files| files.iter().map(|f| f.path.clone()).collect())
             .unwrap_or_default()
@@ -265,41 +273,60 @@ impl CompactionTaskBuilder {
             "🔍 UNIFIED COMPACTION: Checking compaction for {:?} collection {} in {}",
             engine_type, collection_id, data_directory
         );
-        
+
         // Use unified file discovery with EventLog filtering
         let file_discovery = CompactionFileDiscovery::new(filesystem);
-        let filtered_files = file_discovery.discover_compactable_files(
-            collection_id,
-            data_directory,
-            extension,
-            engine_type,
-        ).await?;
-        
+        let filtered_files = file_discovery
+            .discover_compactable_files(collection_id, data_directory, extension, engine_type)
+            .await?;
+
         // Determine thresholds based on strategy
         let should_compact_l0 = match config.strategy.as_str() {
-            "count" => file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold),
+            "count" => file_discovery.should_trigger_compaction(
+                &filtered_files,
+                0,
+                config.l0_file_threshold,
+            ),
             "size" => {
                 // Calculate total size at L0
-                let l0_total_size_mb = filtered_files.compactable_files.get(&0)
-                    .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
+                let l0_total_size_mb = filtered_files
+                    .compactable_files
+                    .get(&0)
+                    .map(|files| {
+                        files
+                            .iter()
+                            .map(|f| f.size_bytes / (1024 * 1024))
+                            .sum::<u64>() as usize
+                    })
                     .unwrap_or(0);
                 l0_total_size_mb >= config.l0_size_threshold_mb
             }
             "hybrid" | _ => {
                 // Use both count and size thresholds
-                let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, 0, config.l0_file_threshold);
-                let l0_total_size_mb = filtered_files.compactable_files.get(&0)
-                    .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
+                let count_triggered = file_discovery.should_trigger_compaction(
+                    &filtered_files,
+                    0,
+                    config.l0_file_threshold,
+                );
+                let l0_total_size_mb = filtered_files
+                    .compactable_files
+                    .get(&0)
+                    .map(|files| {
+                        files
+                            .iter()
+                            .map(|f| f.size_bytes / (1024 * 1024))
+                            .sum::<u64>() as usize
+                    })
                     .unwrap_or(0);
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
                 count_triggered || size_triggered
             }
         };
-        
+
         // Check if Level 0 compaction is needed
         if should_compact_l0 {
             let compactable_files = file_discovery.get_compaction_files(&filtered_files, 0);
-            
+
             info!(
                 "✅ {} COMPACTION: Triggering with {} compactable files for collection {} (excluded {} pending files)",
                 engine_type,
@@ -307,7 +334,7 @@ impl CompactionTaskBuilder {
                 collection_id,
                 filtered_files.pending_count
             );
-            
+
             return Ok(Some(CompactionTaskInfo {
                 collection_id: collection_id.to_string(),
                 source_level: 0,
@@ -318,39 +345,68 @@ impl CompactionTaskBuilder {
                 total_files_count: filtered_files.total_files,
             }));
         }
-        
+
         // Check higher levels if needed (using configured max_levels)
         for level in 1..config.max_levels as u32 {
             // Apply level multiplier to thresholds
-            let level_file_threshold = (config.l0_file_threshold as f64 * config.level_multiplier.powi(level as i32)) as usize;
-            let level_size_threshold_mb = (config.l0_size_threshold_mb as f64 * config.level_multiplier.powi(level as i32)) as usize;
-            
+            let level_file_threshold = (config.l0_file_threshold as f64
+                * config.level_multiplier.powi(level as i32))
+                as usize;
+            let level_size_threshold_mb = (config.l0_size_threshold_mb as f64
+                * config.level_multiplier.powi(level as i32))
+                as usize;
+
             let should_compact = match config.strategy.as_str() {
-                "count" => file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold),
+                "count" => file_discovery.should_trigger_compaction(
+                    &filtered_files,
+                    level,
+                    level_file_threshold,
+                ),
                 "size" => {
-                    let level_total_size_mb = filtered_files.compactable_files.get(&level)
-                        .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
+                    let level_total_size_mb = filtered_files
+                        .compactable_files
+                        .get(&level)
+                        .map(|files| {
+                            files
+                                .iter()
+                                .map(|f| f.size_bytes / (1024 * 1024))
+                                .sum::<u64>() as usize
+                        })
                         .unwrap_or(0);
                     level_total_size_mb >= level_size_threshold_mb
                 }
                 "hybrid" | _ => {
-                    let count_triggered = file_discovery.should_trigger_compaction(&filtered_files, level, level_file_threshold);
-                    let level_total_size_mb = filtered_files.compactable_files.get(&level)
-                        .map(|files| files.iter().map(|f| f.size_bytes / (1024 * 1024)).sum::<u64>() as usize)
+                    let count_triggered = file_discovery.should_trigger_compaction(
+                        &filtered_files,
+                        level,
+                        level_file_threshold,
+                    );
+                    let level_total_size_mb = filtered_files
+                        .compactable_files
+                        .get(&level)
+                        .map(|files| {
+                            files
+                                .iter()
+                                .map(|f| f.size_bytes / (1024 * 1024))
+                                .sum::<u64>() as usize
+                        })
                         .unwrap_or(0);
                     let size_triggered = level_total_size_mb >= level_size_threshold_mb;
                     count_triggered || size_triggered
                 }
             };
-            
+
             if should_compact {
                 let compactable_files = file_discovery.get_compaction_files(&filtered_files, level);
-                
+
                 info!(
                     "✅ {} COMPACTION: Level {} triggering with {} files for collection {}",
-                    engine_type, level, compactable_files.len(), collection_id
+                    engine_type,
+                    level,
+                    compactable_files.len(),
+                    collection_id
                 );
-                
+
                 return Ok(Some(CompactionTaskInfo {
                     collection_id: collection_id.to_string(),
                     source_level: level,
@@ -362,7 +418,7 @@ impl CompactionTaskBuilder {
                 }));
             }
         }
-        
+
         if filtered_files.pending_count > 0 {
             debug!(
                 "⏸️ {} COMPACTION: Not enough compactable files for collection {} ({} ready, {} pending AXIS)",
@@ -374,15 +430,13 @@ impl CompactionTaskBuilder {
         } else {
             debug!(
                 "📋 {} COMPACTION: No compaction needed for collection {} ({} total files)",
-                engine_type,
-                collection_id,
-                filtered_files.total_files
+                engine_type, collection_id, filtered_files.total_files
             );
         }
-        
+
         Ok(None)
     }
-    
+
     /// Get all compactable files for a collection (used by VIPER for size-based compaction)
     pub async fn get_all_compactable_files(
         collection_id: &str,
@@ -392,13 +446,10 @@ impl CompactionTaskBuilder {
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Vec<String>> {
         let file_discovery = CompactionFileDiscovery::new(filesystem);
-        let filtered_files = file_discovery.discover_compactable_files(
-            collection_id,
-            data_directory,
-            extension,
-            engine_type,
-        ).await?;
-        
+        let filtered_files = file_discovery
+            .discover_compactable_files(collection_id, data_directory, extension, engine_type)
+            .await?;
+
         // Get all compactable files across all levels
         let mut all_files = Vec::new();
         for (_level, files) in filtered_files.compactable_files {
@@ -406,16 +457,14 @@ impl CompactionTaskBuilder {
                 all_files.push(file_meta.path);
             }
         }
-        
+
         if all_files.is_empty() && filtered_files.pending_count > 0 {
             info!(
                 "⏸️ {} COMPACTION: All {} files are pending AXIS processing for collection {}",
-                engine_type,
-                filtered_files.pending_count,
-                collection_id
+                engine_type, filtered_files.pending_count, collection_id
             );
         }
-        
+
         Ok(all_files)
     }
 }
@@ -459,27 +508,28 @@ impl CompactionSelfHealing {
             file_path, collection_id
         );
     }
-    
+
     /// Check if self-healing occurred (previously pending files now ready)
     pub fn check_self_healing(
         previous_pending: &[String],
         current_compactable: &[String],
     ) -> Vec<String> {
         let mut healed_files = Vec::new();
-        
+
         for file in previous_pending {
             if current_compactable.contains(file) {
                 healed_files.push(file.clone());
             }
         }
-        
+
         if !healed_files.is_empty() {
             info!(
                 "🔄 SELF-HEALING: {} previously pending files are now compactable: {:?}",
-                healed_files.len(), healed_files
+                healed_files.len(),
+                healed_files
             );
         }
-        
+
         healed_files
     }
 }
@@ -487,7 +537,7 @@ impl CompactionSelfHealing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_self_healing_detection() {
         let previous_pending = vec![
@@ -495,18 +545,16 @@ mod tests {
             "file2.sstable".to_string(),
             "file3.sstable".to_string(),
         ];
-        
+
         let current_compactable = vec![
             "file1.sstable".to_string(),
             "file3.sstable".to_string(),
             "file4.sstable".to_string(),
         ];
-        
-        let healed = CompactionSelfHealing::check_self_healing(
-            &previous_pending,
-            &current_compactable,
-        );
-        
+
+        let healed =
+            CompactionSelfHealing::check_self_healing(&previous_pending, &current_compactable);
+
         assert_eq!(healed.len(), 2);
         assert!(healed.contains(&"file1.sstable".to_string()));
         assert!(healed.contains(&"file3.sstable".to_string()));

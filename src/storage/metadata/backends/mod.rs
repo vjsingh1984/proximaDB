@@ -13,7 +13,6 @@
 //! - Cosmos DB (Azure) - For multi-model serverless database
 //! - Firestore (GCP) - For serverless NoSQL document store
 
-
 // Active backends used in metadata-first architecture
 pub mod filestore_backend; // Primary filestore-based backend with Avro and filesystem API (includes snapshot/checkpoint)
 #[cfg(feature = "rocksdb")]
@@ -30,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{MetadataFilter, MetadataOperation, SystemMetadata};
-
 
 /// Metadata backend configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,12 +391,16 @@ impl MetadataBackendFactory {
             MetadataBackendType::Disk => {
                 // Use filestore backend for disk storage with pluggable filesystem support
                 // This will be replaced with a proper wrapper that implements MetadataBackend trait
-                Err(anyhow::anyhow!("Disk backend is being migrated to filestore architecture. Use the filestore backend directly."))
+                Err(anyhow::anyhow!(
+                    "Disk backend is being migrated to filestore architecture. Use the filestore backend directly."
+                ))
             }
             #[cfg(feature = "rocksdb")]
             MetadataBackendType::RocksDB => {
                 // TODO: Implement RocksDB backend wrapper
-                Err(anyhow::anyhow!("RocksDB backend wrapper not yet implemented"))
+                Err(anyhow::anyhow!(
+                    "RocksDB backend wrapper not yet implemented"
+                ))
             }
             MetadataBackendType::MultiBackend {
                 primary,

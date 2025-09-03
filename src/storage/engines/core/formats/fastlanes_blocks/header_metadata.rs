@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::core::compression::CompressionAlgorithm;
 use crate::compute::distance_computation::DistanceMetric;
+use crate::core::compression::CompressionAlgorithm;
 
 /// Row-based file header structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,33 +15,33 @@ pub struct RowBasedHeader {
     pub magic: [u8; 8],
     pub version: u32,
     pub format_version: String,
-    
+
     /// File identification
     pub file_id: Uuid,
     pub timestamp: i64,
     pub created_by: String,
-    
+
     /// Engine metadata
     pub engine_metadata: EngineMetadata,
-    
+
     /// Collection information
     pub collection_metadata: CollectionMetadata,
-    
+
     /// File layout information
     pub layout_metadata: LayoutMetadata,
-    
+
     /// Index offsets and sizes
     pub index_metadata: IndexMetadata,
-    
+
     /// Compression and quantization
     pub compression_metadata: CompressionMetadata,
-    
+
     /// Version and compatibility
     pub version_info: VersionInfo,
-    
+
     /// Integrity verification
     pub checksum_config: ChecksumConfig,
-    
+
     /// Extension points for future features
     pub extensions: HashMap<String, serde_json::Value>,
 }
@@ -169,7 +169,7 @@ pub struct LayoutMetadata {
     pub superblock_count: u32,
     pub blocks_per_superblock: u32,
     pub records_per_block: u32,
-    
+
     /// Size information
     pub header_size: u64,
     pub data_section_offset: u64,
@@ -178,10 +178,10 @@ pub struct LayoutMetadata {
     pub index_section_size: u64,
     pub footer_offset: u64,
     pub total_file_size: u64,
-    
+
     /// Block layout
     pub block_layout: BlockLayoutInfo,
-    
+
     /// Alignment and padding
     pub alignment_bytes: usize,
     pub padding_strategy: PaddingStrategy,
@@ -219,17 +219,17 @@ pub struct IndexMetadata {
     pub id_index_size: u64,
     pub id_index_type: Index,
     pub id_index_compression: Option<CompressionAlgorithm>,
-    
+
     /// Bloom filter information
     pub bloom_filter_offset: u64,
     pub bloom_filter_size: u64,
     pub bloom_filter_config: BloomFilterMetadata,
-    
+
     /// Quantization index information
     pub quantization_index_offset: u64,
     pub quantization_index_size: u64,
     pub quantization_metadata: QuantizationMetadata,
-    
+
     /// Hierarchical index information
     pub hierarchical_levels: u8,
     pub level_offsets: Vec<u64>,
@@ -306,12 +306,12 @@ pub struct CompressionMetadata {
     pub compression_enabled: bool,
     pub compression_algorithm: CompressionAlgorithm,
     pub compression_level: u8,
-    
+
     /// Per-section compression
     pub vector_compression: SectionCompressionInfo,
     pub metadata_compression: SectionCompressionInfo,
     pub index_compression: SectionCompressionInfo,
-    
+
     /// Compression statistics
     pub overall_compression_ratio: f32,
     pub compression_time_ms: u64,
@@ -336,17 +336,17 @@ pub struct FileMetadata {
     pub timestamp: i64,
     pub modified_at: i64,
     pub accessed_at: i64,
-    
+
     /// Content information
     pub content_hash: String,
     pub content_type: String,
     pub encoding: String,
-    
+
     /// Ownership and permissions
     pub owner: String,
     pub permissions: u32,
     pub access_control: AccessControl,
-    
+
     /// Storage information
     pub storage_location: StorageLocation,
     pub backup_info: Option<BackupInfo>,
@@ -363,9 +363,20 @@ pub struct AccessControl {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageLocation {
     Local(String),
-    S3 { bucket: String, key: String, region: String },
-    GCS { bucket: String, object: String },
-    Azure { container: String, blob: String, account: String },
+    S3 {
+        bucket: String,
+        key: String,
+        region: String,
+    },
+    GCS {
+        bucket: String,
+        object: String,
+    },
+    Azure {
+        container: String,
+        blob: String,
+        account: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,7 +494,7 @@ impl RowBasedHeader {
             extensions: HashMap::new(),
         }
     }
-    
+
     /// Create a new header for SWIFT engine
     pub fn new_swift(collection_id: String, dimension: usize) -> Self {
         Self {
@@ -503,27 +514,27 @@ impl RowBasedHeader {
             extensions: HashMap::new(),
         }
     }
-    
+
     /// Validate header integrity
     pub fn validate(&self) -> Result<()> {
         // Check magic bytes
         if &self.magic != b"PROXSST\0" && &self.magic != b"PROXSWF\0" {
             return Err(anyhow::anyhow!("Invalid magic bytes"));
         }
-        
+
         // Check version compatibility
         if self.version == 0 {
             return Err(anyhow::anyhow!("Invalid version"));
         }
-        
+
         // Check dimension
         if self.collection_metadata.dimension == 0 {
             return Err(anyhow::anyhow!("Invalid dimension"));
         }
-        
+
         Ok(())
     }
-    
+
     /// Calculate header size in bytes
     pub fn serialized_size(&self) -> usize {
         // Estimate based on typical header sizes
@@ -555,7 +566,7 @@ impl EngineMetadata {
             },
         }
     }
-    
+
     pub fn new_swift() -> Self {
         Self {
             engine_name: "SWIFT".to_string(),
@@ -746,49 +757,57 @@ impl Default for CollectionStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_sst_header_creation() {
         let header = RowBasedHeader::new_sst("test_collection".to_string(), 768);
-        
+
         assert_eq!(&header.magic, b"PROXSST\0");
         assert_eq!(header.engine_metadata.engine_name, "SST");
         assert_eq!(header.collection_metadata.collection_id, "test_collection");
         assert_eq!(header.collection_metadata.dimension, 768);
     }
-    
+
     #[test]
     fn test_swift_header_creation() {
         let header = RowBasedHeader::new_swift("test_collection".to_string(), 384);
-        
+
         assert_eq!(&header.magic, b"PROXSWF\0");
         assert_eq!(header.engine_metadata.engine_name, "SWIFT");
         assert_eq!(header.collection_metadata.collection_id, "test_collection");
         assert_eq!(header.collection_metadata.dimension, 384);
     }
-    
+
     #[test]
     fn test_header_validation() {
         let header = RowBasedHeader::new_sst("test".to_string(), 768);
         assert!(header.validate().is_ok());
-        
+
         let mut invalid_header = header.clone();
         invalid_header.magic = *b"INVALID\0";
         assert!(invalid_header.validate().is_err());
-        
+
         let mut zero_dim_header = header.clone();
         zero_dim_header.collection_metadata.dimension = 0;
         assert!(zero_dim_header.validate().is_err());
     }
-    
+
     #[test]
     fn test_engine_metadata_features() {
         let sst_meta = EngineMetadata::new_sst();
-        assert!(sst_meta.supported_features.contains_hash(&"bloom_filters".to_string()));
+        assert!(
+            sst_meta
+                .supported_features
+                .contains_hash(&"bloom_filters".to_string())
+        );
         assert!(sst_meta.optimization_hints.prefer_sequential_access);
-        
+
         let swift_meta = EngineMetadata::new_swift();
-        assert!(swift_meta.supported_features.contains_hash(&"dual_mode".to_string()));
+        assert!(
+            swift_meta
+                .supported_features
+                .contains_hash(&"dual_mode".to_string())
+        );
         assert!(swift_meta.optimization_hints.prefer_random_access);
     }
 }

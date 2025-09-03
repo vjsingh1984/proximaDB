@@ -6,18 +6,20 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
-use tracing::{trace, debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
-use crate::core::error::ProximaDBError;
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::cache::specialized::filesystem_metadata_store::{FilesystemMetadataStore, FilesystemMetadata};
+use super::access_tracker::{AccessEvent, AccessPatternTracker};
 use super::bandwidth_optimizer::{BandwidthOptimizer, DownloadStrategy, OptimizedRange};
-use super::access_tracker::{AccessPatternTracker, AccessEvent};
+use super::config::ZeroCopyIOConfig;
 use super::metrics::SystemPerformanceMetrics;
 use super::traits::{
-    MetadataSerializer, QueryContext, FileAccessRequest, RequestPriority, DataRange
+    DataRange, FileAccessRequest, MetadataSerializer, QueryContext, RequestPriority,
 };
-use super::config::ZeroCopyIOConfig;
+use crate::core::error::ProximaDBError;
+use crate::storage::cache::specialized::filesystem_metadata_store::{
+    FilesystemMetadata, FilesystemMetadataStore,
+};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Result of I/O optimization analysis
 #[derive(Debug, Clone)]
@@ -38,9 +40,7 @@ pub struct OptimizedIOResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IOStrategy {
     /// Skip file entirely (filtered out by metadata)
-    SkipFile {
-        reason: String,
-    },
+    SkipFile { reason: String },
     /// Use local cache if available
     LocalCache {
         cache_path: String,
@@ -211,12 +211,10 @@ impl ZeroCopyIOSystem {
         serializers: Vec<Box<dyn MetadataSerializer>>,
     ) -> Result<Self, ProximaDBError> {
         // Create metadata cache using unified cache infrastructure
-        let metadata_cache = Arc::new(
-            FilesystemMetadataStore::new(
-                config.metadata_cache.max_memory_mb,
-                config.metadata_cache.max_entries,
-            )
-        );
+        let metadata_cache = Arc::new(FilesystemMetadataStore::new(
+            config.metadata_cache.max_memory_mb,
+            config.metadata_cache.max_entries,
+        ));
 
         // Store serializers in a HashMap for engine-type based lookup
         let mut serializer_map = HashMap::new();
@@ -226,13 +224,13 @@ impl ZeroCopyIOSystem {
         }
 
         // Create download optimizer
-        let download_optimizer = Arc::new(RwLock::new(
-            BandwidthOptimizer::new(config.download_optimizer.clone())
-        ));
+        let download_optimizer = Arc::new(RwLock::new(BandwidthOptimizer::new(
+            config.download_optimizer.clone(),
+        )));
 
         // Create access pattern tracker
         let access_tracker = Arc::new(RwLock::new(
-            AccessPatternTracker::new(1000, Duration::from_secs(3600)) // 1000 entries, 1 hour window
+            AccessPatternTracker::new(1000, Duration::from_secs(3600)), // 1000 entries, 1 hour window
         ));
 
         // Initialize metrics
@@ -264,11 +262,11 @@ impl ZeroCopyIOSystem {
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self, ProximaDBError> {
         // Import all engine serializers
+        use crate::storage::engines::core::formats::columnar::nova_metadata::NovaMetadataSerializer;
+        use crate::storage::engines::core::formats::columnar::parquet_metadata::ParquetMetadataSerializer;
         use crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::SstMetadataSerializer;
         use crate::storage::engines::core::formats::fastlanes_blocks::swift_metadata::SwiftMetadataSerializer;
-        use crate::storage::engines::core::formats::columnar::parquet_metadata::ParquetMetadataSerializer;
-        use crate::storage::engines::core::formats::columnar::nova_metadata::NovaMetadataSerializer;
-        
+
         // Create all engine serializers
         let serializers: Vec<Box<dyn MetadataSerializer>> = vec![
             Box::new(SstMetadataSerializer::new(Arc::clone(&filesystem))),
@@ -276,12 +274,12 @@ impl ZeroCopyIOSystem {
             Box::new(ParquetMetadataSerializer::new(Arc::clone(&filesystem))),
             Box::new(NovaMetadataSerializer::new(Arc::clone(&filesystem))),
         ];
-        
+
         info!(
             "Creating zero-copy I/O orchestrator with {} engine serializers",
             serializers.len()
         );
-        
+
         Self::new(config, filesystem, serializers).await
     }
 
@@ -294,7 +292,7 @@ impl ZeroCopyIOSystem {
         query_context: &QueryContext,
     ) -> Result<OptimizedIOResult, ProximaDBError> {
         let start_time = Instant::now();
-        
+
         debug!(
             file_path,
             collection_id,
@@ -304,17 +302,16 @@ impl ZeroCopyIOSystem {
         );
 
         // Step 1: Check if file can be skipped entirely using metadata cache
-        let can_skip = self.metadata_cache.can_skip_file(
-            file_path,
-            collection_id,
-            engine_type,
-        ).await;
+        let can_skip = self
+            .metadata_cache
+            .can_skip_file(file_path, collection_id, engine_type)
+            .await;
 
         if can_skip {
             let savings = IOSavings {
                 bandwidth_saved_bytes: u64::MAX, // Would need actual file size
                 requests_saved: 1,
-                latency_saved_ms: 50.0, // Typical cloud request latency
+                latency_saved_ms: 50.0,    // Typical cloud request latency
                 cost_saved_dollars: 0.001, // Rough estimate
                 memory_saved_bytes: 0,
                 io_operations_saved: 1,
@@ -335,26 +332,34 @@ impl ZeroCopyIOSystem {
                 confidence: 0.95,
             };
 
-            self.record_optimization_result(&result, start_time.elapsed()).await;
+            self.record_optimization_result(&result, start_time.elapsed())
+                .await;
             return Ok(result);
         }
 
         // Step 2: Get required data ranges (selective ranges from metadata)
-        let range_tuples = self.metadata_cache.get_selective_ranges(
-            file_path,
-            collection_id,
-            engine_type,
-        ).await.unwrap_or_else(|| vec![(0, u64::MAX)]); // Full file if no selective ranges
-        
+        let range_tuples = self
+            .metadata_cache
+            .get_selective_ranges(file_path, collection_id, engine_type)
+            .await
+            .unwrap_or_else(|| vec![(0, u64::MAX)]); // Full file if no selective ranges
+
         // Convert to DataRange format
-        let required_ranges = if range_tuples.is_empty() || (range_tuples.len() == 1 && range_tuples[0].1 == u64::MAX) {
+        let required_ranges = if range_tuples.is_empty()
+            || (range_tuples.len() == 1 && range_tuples[0].1 == u64::MAX)
+        {
             None // Full file
         } else {
-            Some(range_tuples.into_iter().map(|(offset, end)| DataRange {
-                offset,
-                length: end.saturating_sub(offset),
-                priority: 128, // Medium priority
-            }).collect())
+            Some(
+                range_tuples
+                    .into_iter()
+                    .map(|(offset, end)| DataRange {
+                        offset,
+                        length: end.saturating_sub(offset),
+                        priority: 128, // Medium priority
+                    })
+                    .collect(),
+            )
         };
 
         // Step 3: Get file size (would need filesystem integration)
@@ -363,22 +368,22 @@ impl ZeroCopyIOSystem {
         // Step 4: Use download optimizer to decide strategy
         let download_strategy = {
             let optimizer = self.download_optimizer.read().await;
-            optimizer.decide_strategy(
-                file_path,
-                file_size,
-                required_ranges,
-                query_context,
-                RequestPriority::Normal,
-            ).await.map_err(|e| ProximaDBError::Internal(format!("Download strategy error: {}", e)))?
+            optimizer
+                .decide_strategy(
+                    file_path,
+                    file_size,
+                    required_ranges,
+                    query_context,
+                    RequestPriority::Normal,
+                )
+                .await
+                .map_err(|e| ProximaDBError::Internal(format!("Download strategy error: {}", e)))?
         };
 
         // Step 5: Convert to IOStrategy and create execution plan
-        let (io_strategy, execution_plan, savings) = self.create_execution_plan(
-            download_strategy,
-            file_path,
-            collection_id,
-            file_size,
-        ).await?;
+        let (io_strategy, execution_plan, savings) = self
+            .create_execution_plan(download_strategy, file_path, collection_id, file_size)
+            .await?;
 
         let result = OptimizedIOResult {
             strategy: io_strategy,
@@ -405,8 +410,9 @@ impl ZeroCopyIOSystem {
             });
         }
 
-        self.record_optimization_result(&result, start_time.elapsed()).await;
-        
+        self.record_optimization_result(&result, start_time.elapsed())
+            .await;
+
         debug!(
             file_path,
             strategy = ?result.strategy,
@@ -423,7 +429,7 @@ impl ZeroCopyIOSystem {
         requests: Vec<FileAccessRequest>,
     ) -> Result<BatchOptimizationResult, ProximaDBError> {
         let start_time = Instant::now();
-        
+
         debug!(
             request_count = requests.len(),
             "Starting batch file access optimization"
@@ -432,32 +438,30 @@ impl ZeroCopyIOSystem {
         // Step 1: Optimize each file individually
         let mut individual_results = Vec::with_capacity(requests.len());
         for request in &requests {
-            let result = self.optimize_file_access(
-                &request.file_path,
-                &request.collection_id,
-                &request.engine_type,
-                &request.query_context,
-            ).await?;
+            let result = self
+                .optimize_file_access(
+                    &request.file_path,
+                    &request.collection_id,
+                    &request.engine_type,
+                    &request.query_context,
+                )
+                .await?;
             individual_results.push(result);
         }
 
         // Step 2: Identify cross-file optimization opportunities
-        let cross_file_optimizations = self.identify_cross_file_optimizations(
-            &requests,
-            &individual_results,
-        ).await?;
+        let cross_file_optimizations = self
+            .identify_cross_file_optimizations(&requests, &individual_results)
+            .await?;
 
         // Step 3: Calculate total savings
-        let total_savings = self.calculate_total_savings(
-            &individual_results,
-            &cross_file_optimizations,
-        );
+        let total_savings =
+            self.calculate_total_savings(&individual_results, &cross_file_optimizations);
 
         // Step 4: Create batch execution plan
-        let batch_execution_plan = self.create_batch_execution_plan(
-            &individual_results,
-            &cross_file_optimizations,
-        ).await?;
+        let batch_execution_plan = self
+            .create_batch_execution_plan(&individual_results, &cross_file_optimizations)
+            .await?;
 
         let result = BatchOptimizationResult {
             individual_results,
@@ -482,7 +486,7 @@ impl ZeroCopyIOSystem {
         optimization: &OptimizedIOResult,
     ) -> Result<Vec<u8>, ProximaDBError> {
         let start_time = Instant::now();
-        
+
         debug!(
             strategy = ?optimization.strategy,
             "Executing optimized I/O operation"
@@ -493,19 +497,19 @@ impl ZeroCopyIOSystem {
                 debug!(reason, "Skipping file read");
                 Ok(Vec::new())
             }
-            
+
             IOStrategy::LocalCache { cache_path, .. } => {
                 debug!(cache_path, "Reading from local cache");
                 // Would implement cache reading logic
                 Ok(Vec::new())
             }
-            
+
             IOStrategy::FullDownload { cache_locally, .. } => {
                 debug!(cache_locally, "Executing full file download");
                 // Would implement full download logic via filesystem
                 Ok(Vec::new())
             }
-            
+
             IOStrategy::SelectiveRanges { ranges, .. } => {
                 debug!(
                     range_count = ranges.len(),
@@ -514,21 +518,29 @@ impl ZeroCopyIOSystem {
                 // Would implement range download logic
                 Ok(Vec::new())
             }
-            
-            IOStrategy::HybridStrategy { primary, fallback, condition } => {
+
+            IOStrategy::HybridStrategy {
+                primary,
+                fallback,
+                condition,
+            } => {
                 debug!(condition, "Executing hybrid strategy");
                 // Try primary strategy first, fallback on failure
-                match self.execute_optimized_read(&OptimizedIOResult {
-                    strategy: (**primary).clone(),
-                    ..optimization.clone()
-                }).await {
+                match self
+                    .execute_optimized_read(&OptimizedIOResult {
+                        strategy: (**primary).clone(),
+                        ..optimization.clone()
+                    })
+                    .await
+                {
                     Ok(data) => Ok(data),
                     Err(_) => {
                         warn!("Primary strategy failed, trying fallback");
                         self.execute_optimized_read(&OptimizedIOResult {
                             strategy: (**fallback).clone(),
                             ..optimization.clone()
-                        }).await
+                        })
+                        .await
                     }
                 }
             }
@@ -542,10 +554,13 @@ impl ZeroCopyIOSystem {
     }
 
     /// Invalidate cache for entire collection
-    pub async fn invalidate_collection_cache(&self, collection_id: &str) -> Result<u64, ProximaDBError> {
+    pub async fn invalidate_collection_cache(
+        &self,
+        collection_id: &str,
+    ) -> Result<u64, ProximaDBError> {
         // Clear all entries for this collection from unified cache
         self.metadata_cache.clear_collection(collection_id).await;
-        
+
         // Also clear access patterns for this collection
         {
             let mut tracker = self.access_tracker.write().await;
@@ -557,7 +572,10 @@ impl ZeroCopyIOSystem {
     }
 
     /// Warm cache for collection by preloading metadata
-    pub async fn warm_cache_for_collection(&self, collection_id: &str) -> Result<u64, ProximaDBError> {
+    pub async fn warm_cache_for_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<u64, ProximaDBError> {
         // This would implement cache warming logic by scanning collection files
         // and preloading their metadata
         debug!(collection_id, "Cache warming not yet implemented");
@@ -598,21 +616,22 @@ impl ZeroCopyIOSystem {
                 Ok((io_strategy, plan, savings))
             }
 
-            DownloadStrategy::FullDownload { cache_locally, reason } => {
+            DownloadStrategy::FullDownload {
+                cache_locally,
+                reason,
+            } => {
                 let io_strategy = IOStrategy::FullDownload {
                     cache_locally,
                     prefetch_related: false,
                 };
-                
-                let mut operations = vec![
-                    ExecutionOperation {
-                        operation_type: OperationType::DownloadFile,
-                        target: file_path.to_string(),
-                        parameters: HashMap::new(),
-                        estimated_duration: Duration::from_millis(100), // Placeholder
-                        dependencies: vec![],
-                    }
-                ];
+
+                let mut operations = vec![ExecutionOperation {
+                    operation_type: OperationType::DownloadFile,
+                    target: file_path.to_string(),
+                    parameters: HashMap::new(),
+                    estimated_duration: Duration::from_millis(100), // Placeholder
+                    dependencies: vec![],
+                }];
 
                 if cache_locally {
                     operations.push(ExecutionOperation {
@@ -642,27 +661,37 @@ impl ZeroCopyIOSystem {
                 Ok((io_strategy, plan, savings))
             }
 
-            DownloadStrategy::SelectiveRanges { ranges, total_bytes, reason } => {
+            DownloadStrategy::SelectiveRanges {
+                ranges,
+                total_bytes,
+                reason,
+            } => {
                 let io_strategy = IOStrategy::SelectiveRanges {
                     ranges: ranges.clone(),
-                    parallel_downloads: self.config.download_optimizer.range_optimization.enable_parallel_downloads,
-                    merge_threshold: self.config.download_optimizer.range_optimization.max_merge_gap,
+                    parallel_downloads: self
+                        .config
+                        .download_optimizer
+                        .range_optimization
+                        .enable_parallel_downloads,
+                    merge_threshold: self
+                        .config
+                        .download_optimizer
+                        .range_optimization
+                        .max_merge_gap,
                 };
 
-                let operations = vec![
-                    ExecutionOperation {
-                        operation_type: OperationType::DownloadRanges,
-                        target: file_path.to_string(),
-                        parameters: {
-                            let mut params = HashMap::new();
-                            params.insert("range_count".to_string(), ranges.len().to_string());
-                            params.insert("total_bytes".to_string(), total_bytes.to_string());
-                            params
-                        },
-                        estimated_duration: Duration::from_millis(ranges.len() as u64 * 20),
-                        dependencies: vec![],
-                    }
-                ];
+                let operations = vec![ExecutionOperation {
+                    operation_type: OperationType::DownloadRanges,
+                    target: file_path.to_string(),
+                    parameters: {
+                        let mut params = HashMap::new();
+                        params.insert("range_count".to_string(), ranges.len().to_string());
+                        params.insert("total_bytes".to_string(), total_bytes.to_string());
+                        params
+                    },
+                    estimated_duration: Duration::from_millis(ranges.len() as u64 * 20),
+                    dependencies: vec![],
+                }];
 
                 let plan = ExecutionPlan {
                     operations,
@@ -689,15 +718,19 @@ impl ZeroCopyIOSystem {
                 Ok((io_strategy, plan, savings))
             }
 
-            DownloadStrategy::HybridStrategy { primary, fallback, condition } => {
+            DownloadStrategy::HybridStrategy {
+                primary,
+                fallback,
+                condition,
+            } => {
                 // Recursively create plans for primary and fallback
-                let (primary_strategy, primary_plan, primary_savings) = self.create_execution_plan(
-                    *primary, file_path, collection_id, file_size
-                ).await?;
-                
-                let (fallback_strategy, fallback_plan, _) = self.create_execution_plan(
-                    *fallback, file_path, collection_id, file_size
-                ).await?;
+                let (primary_strategy, primary_plan, primary_savings) = self
+                    .create_execution_plan(*primary, file_path, collection_id, file_size)
+                    .await?;
+
+                let (fallback_strategy, fallback_plan, _) = self
+                    .create_execution_plan(*fallback, file_path, collection_id, file_size)
+                    .await?;
 
                 let io_strategy = IOStrategy::HybridStrategy {
                     primary: Box::new(primary_strategy),
@@ -802,12 +835,15 @@ impl ZeroCopyIOSystem {
         // Parse cache key format: "file_path:collection_id:engine" (filename-first for optimal matching)
         let parts: Vec<&str> = cache_key.rsplitn(3, ':').collect();
         if parts.len() < 3 {
-            return Err(ProximaDBError::Config(format!("Invalid cache key: {}", cache_key)));
+            return Err(ProximaDBError::Config(format!(
+                "Invalid cache key: {}",
+                cache_key
+            )));
         }
 
         // Since rsplitn splits from the right, reverse the order
         let engine_type = parts[0];
-        let collection_id = parts[1];  
+        let collection_id = parts[1];
         let file_path = parts[2]; // File path is now the remaining part
 
         debug!(
@@ -819,7 +855,11 @@ impl ZeroCopyIOSystem {
         );
 
         // Try to get from cache first
-        if let Some(cached_metadata) = self.metadata_cache.get_metadata(&file_path, collection_id, engine_type).await {
+        if let Some(cached_metadata) = self
+            .metadata_cache
+            .get_metadata(&file_path, collection_id, engine_type)
+            .await
+        {
             trace!(cache_key, "Cache HIT for metadata");
             // Create a synthetic EngineMetadata from FilesystemMetadata
             // This would need actual deserialization using the appropriate serializer
@@ -833,9 +873,12 @@ impl ZeroCopyIOSystem {
             }
         } else {
             trace!(cache_key, "Cache MISS - metadata not in cache");
-            
+
             // CACHE POPULATION: Load metadata from file and populate cache
-            match self.populate_cache_from_file(&file_path, collection_id, engine_type).await {
+            match self
+                .populate_cache_from_file(&file_path, collection_id, engine_type)
+                .await
+            {
                 Ok(metadata) => {
                     debug!(cache_key, "Successfully populated cache from file");
                     Ok(Some(metadata))
@@ -861,49 +904,49 @@ impl ZeroCopyIOSystem {
     ) -> Result<Arc<Box<dyn super::traits::EngineMetadata>>, ProximaDBError> {
         debug!(
             file_path,
-            collection_id,
-            engine_type,
-            "Populating cache from file"
+            collection_id, engine_type, "Populating cache from file"
         );
 
         // Load metadata from file using the appropriate serializer
         if let Some(serializer) = self.serializers.get(engine_type) {
             // Load metadata from filesystem
-            let actual_fs = self.filesystem.get_filesystem(file_path)
-                .map_err(|e| ProximaDBError::Internal(format!("Failed to get filesystem: {}", e)))?;
-            let file_data = actual_fs.read_range(file_path, 0, 4096).await
+            let actual_fs = self.filesystem.get_filesystem(file_path).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to get filesystem: {}", e))
+            })?;
+            let file_data = actual_fs
+                .read_range(file_path, 0, 4096)
+                .await
                 .map_err(|e| ProximaDBError::Internal(format!("Failed to read file: {}", e)))?; // Read header
-            
+
             // Parse metadata using serializer
-            let engine_metadata = serializer.deserialize_metadata(&file_data)
-                .map_err(|e| ProximaDBError::Internal(format!("Failed to deserialize metadata: {}", e)))?;
-            
+            let engine_metadata = serializer.deserialize_metadata(&file_data).map_err(|e| {
+                ProximaDBError::Internal(format!("Failed to deserialize metadata: {}", e))
+            })?;
+
             // Create filesystem metadata entry for caching
             let fs_metadata = FilesystemMetadata {
-                mmap_metadata: None, // Would be populated with actual mmap data
-                file_size: 0, // Would get actual size from filesystem
-                last_modified: 0, // Would get actual timestamp
-                can_skip: false, // Would be determined by metadata analysis
+                mmap_metadata: None,    // Would be populated with actual mmap data
+                file_size: 0,           // Would get actual size from filesystem
+                last_modified: 0,       // Would get actual timestamp
+                can_skip: false,        // Would be determined by metadata analysis
                 selective_ranges: None, // Would be computed based on query
                 collection_id: collection_id.to_string(),
                 engine_type: engine_type.to_string(),
             };
-            
+
             // Store in unified cache
-            self.metadata_cache.put_metadata(
-                file_path,
-                collection_id,
-                engine_type,
-                fs_metadata,
-            ).await.map_err(|e| ProximaDBError::Internal(format!("Failed to cache metadata: {}", e)))?;
-            
+            self.metadata_cache
+                .put_metadata(file_path, collection_id, engine_type, fs_metadata)
+                .await
+                .map_err(|e| {
+                    ProximaDBError::Internal(format!("Failed to cache metadata: {}", e))
+                })?;
+
             debug!(
                 file_path,
-                collection_id,
-                engine_type,
-                "Successfully populated cache from file"
+                collection_id, engine_type, "Successfully populated cache from file"
             );
-            
+
             Ok(Arc::new(engine_metadata))
         } else {
             Err(ProximaDBError::Internal(format!(
@@ -940,7 +983,10 @@ mod tests {
         };
 
         // Manual calculation for testing
-        assert_eq!(savings1.bandwidth_saved_bytes + savings2.bandwidth_saved_bytes, 3000);
+        assert_eq!(
+            savings1.bandwidth_saved_bytes + savings2.bandwidth_saved_bytes,
+            3000
+        );
         assert_eq!(savings1.requests_saved + savings2.requests_saved, 8);
     }
 

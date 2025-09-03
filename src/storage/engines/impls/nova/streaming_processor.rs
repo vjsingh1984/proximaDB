@@ -1,22 +1,22 @@
 // Streaming row group processor for memory-efficient NOVA operations
 // Implements async streaming with bounded memory and backpressure control
 
-use anyhow::{anyhow, Result};
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use crate::core::VectorRecord;
+use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
-use parquet::file::metadata::{RowGroupMetaData, ParquetMetaData};
+use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Semaphore, RwLock};
-use tokio::time::{timeout, Duration};
+use tokio::sync::{RwLock, Semaphore, mpsc};
+use tokio::time::{Duration, timeout};
 use tracing::{debug, info, warn};
-use crate::core::VectorRecord;
-use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
 /// Configuration for streaming row group processing
 #[derive(Debug, Clone)]
 pub struct StreamingConfig {
     /// Maximum memory usage per processing pipeline
     pub max_memory_bytes: usize,
-    
+
     /// Number of row groups to prefetch
     pub prefetch_queue_size: usize,
     /// Maximum concurrent row group processors
@@ -116,7 +116,7 @@ impl StreamingRowGroupProcessor {
     pub fn new(config: StreamingConfig) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_processors));
         let memory_tracker = Arc::new(RwLock::new(MemoryTracker::new(config.max_memory_bytes)));
-        
+
         // Default processing pipeline with all quantization levels
         let processing_pipeline = vec![
             ProcessingStage::BloomFilter,
@@ -127,7 +127,7 @@ impl StreamingRowGroupProcessor {
             ProcessingStage::PQ8Filter,
             ProcessingStage::FullPrecision,
         ];
-        
+
         Self {
             config,
             memory_tracker,
@@ -135,7 +135,7 @@ impl StreamingRowGroupProcessor {
             processing_pipeline,
         }
     }
-    
+
     /// Process row groups with streaming and memory management
     pub async fn process_row_groups_streaming(
         &self,
@@ -149,28 +149,25 @@ impl StreamingRowGroupProcessor {
         );
         // Create processing channels
         let (sender, receiver) = mpsc::channel(self.config.prefetch_queue_size);
-        let (result_sender, mut result_receiver) = mpsc::channel(self.config.max_concurrent_processors);
-        
+        let (result_sender, mut result_receiver) =
+            mpsc::channel(self.config.max_concurrent_processors);
+
         // Wrap receiver in Arc<Mutex> for sharing among consumer tasks
         let receiver = Arc::new(tokio::sync::Mutex::new(receiver));
-        
+
         // Start producer task
-        let producer_handle = self.start_producer_task(
-            context.clone(),
-            parquet_metadata.clone(),
-            sender,
-        ).await?;
+        let producer_handle = self
+            .start_producer_task(context.clone(), parquet_metadata.clone(), sender)
+            .await?;
         // Start consumer tasks
         let mut consumer_handles = Vec::new();
         for _ in 0..self.config.max_concurrent_processors {
-            let handle = self.start_consumer_task(
-                context.clone(),
-                receiver.clone(),
-                result_sender.clone(),
-            ).await?;
+            let handle = self
+                .start_consumer_task(context.clone(), receiver.clone(), result_sender.clone())
+                .await?;
             consumer_handles.push(handle);
         }
-        
+
         // Close channels
         drop(result_sender);
         // Collect results
@@ -178,14 +175,17 @@ impl StreamingRowGroupProcessor {
         while let Some(result) = result_receiver.recv().await {
             results.push(result);
         }
-        
+
         // Wait for all tasks to complete
         producer_handle.await??;
         for handle in consumer_handles {
             handle.await??;
         }
-        
-        info!("Completed streaming processing with {} results", results.len());
+
+        info!(
+            "Completed streaming processing with {} results",
+            results.len()
+        );
         Ok(results)
     }
     /// Start producer task for row group scheduling
@@ -199,20 +199,20 @@ impl StreamingRowGroupProcessor {
         let memory_tracker = self.memory_tracker.clone();
         let handle = tokio::spawn(async move {
             let ordered_row_groups = Self::order_row_groups_by_cost(&context, &parquet_metadata)?;
-            
+
             for (priority, row_group_id) in ordered_row_groups.into_iter().enumerate() {
                 // Check memory pressure
                 if config.enable_backpressure {
                     let memory_guard = memory_tracker.read().await;
                     if memory_guard.is_under_pressure(config.backpressure_threshold) {
                         drop(memory_guard);
-                        
+
                         // Wait for memory to free up
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         continue;
                     }
                 }
-                
+
                 let row_group_metadata = parquet_metadata.row_group(row_group_id as usize);
                 let task = RowGroupTask {
                     row_group_id,
@@ -228,7 +228,7 @@ impl StreamingRowGroupProcessor {
         });
         Ok(handle)
     }
-    
+
     /// Start consumer task for row group processing
     async fn start_consumer_task(
         &self,
@@ -240,7 +240,7 @@ impl StreamingRowGroupProcessor {
         let config = self.config.clone();
         let memory_tracker = self.memory_tracker.clone();
         let pipeline = self.processing_pipeline.clone();
-        
+
         let handle = tokio::spawn(async move {
             loop {
                 // Lock the receiver to get the next task
@@ -248,22 +248,29 @@ impl StreamingRowGroupProcessor {
                     let mut recv = receiver.lock().await;
                     recv.recv().await
                 };
-                
+
                 let Some(task) = task else {
                     break; // Channel closed
                 };
-                let _permit = semaphore.acquire().await.map_err(|e| anyhow!("Semaphore error: {}", e))?;
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
                 let memory_reservation = {
                     let mut tracker = memory_tracker.write().await;
-                    tracker.reserve_memory(&format!("rg_{}", task.row_group_id), task.estimated_memory)?
+                    tracker.reserve_memory(
+                        &format!("rg_{}", task.row_group_id),
+                        task.estimated_memory,
+                    )?
                 };
-                
+
                 // Process row group with timeout
                 let processing_result = timeout(
                     config.processing_timeout,
                     Self::process_single_row_group(&context, &task, &pipeline),
-                ).await;
+                )
+                .await;
                 // Release memory
                 {
                     let mut tracker = memory_tracker.write().await;
@@ -285,10 +292,10 @@ impl StreamingRowGroupProcessor {
             }
             Ok::<(), anyhow::Error>(())
         });
-        
+
         Ok(handle)
     }
-    
+
     /// Process a single row group through the pipeline
     async fn process_single_row_group(
         context: &StreamingContext,
@@ -301,7 +308,9 @@ impl StreamingRowGroupProcessor {
         let mut records_filtered = 0;
         let mut current_stage = ProcessingStage::BloomFilter;
         // Find relevant enhanced stats for this row group
-        let enhanced_stats = context.enhanced_stats.iter()
+        let enhanced_stats = context
+            .enhanced_stats
+            .iter()
             .find(|stats| stats.row_group_id == task.row_group_id);
         for stage in pipeline {
             current_stage = stage.clone();
@@ -329,31 +338,65 @@ impl StreamingRowGroupProcessor {
                 }
                 ProcessingStage::BinaryFilter => {
                     // Binary quantization filtering
-                    candidates = Self::apply_binary_filtering(context, task, &mut records_processed, &mut records_filtered).await?;
-                    
+                    candidates = Self::apply_binary_filtering(
+                        context,
+                        task,
+                        &mut records_processed,
+                        &mut records_filtered,
+                    )
+                    .await?;
+
                     if candidates.is_empty() {
                         break;
                     }
                 }
                 ProcessingStage::Int8Filter => {
                     // INT8 quantization filtering with Parquet encoding
-                    candidates = Self::apply_int8_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
+                    candidates = Self::apply_int8_filtering(
+                        context,
+                        task,
+                        candidates,
+                        &mut records_processed,
+                        &mut records_filtered,
+                    )
+                    .await?;
                 }
                 ProcessingStage::PQ4Filter => {
                     // PQ4 quantization filtering with Parquet encoding
-                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
+                    candidates = Self::apply_pq_filtering(
+                        context,
+                        task,
+                        candidates,
+                        &mut records_processed,
+                        &mut records_filtered,
+                    )
+                    .await?;
                 }
                 ProcessingStage::PQ8Filter => {
                     // PQ8 quantization filtering with Parquet encoding
-                    candidates = Self::apply_pq_filtering(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
+                    candidates = Self::apply_pq_filtering(
+                        context,
+                        task,
+                        candidates,
+                        &mut records_processed,
+                        &mut records_filtered,
+                    )
+                    .await?;
                 }
                 ProcessingStage::FullPrecision => {
                     // Full precision processing
-                    candidates = Self::apply_full_precision(context, task, candidates, &mut records_processed, &mut records_filtered).await?;
+                    candidates = Self::apply_full_precision(
+                        context,
+                        task,
+                        candidates,
+                        &mut records_processed,
+                        &mut records_filtered,
+                    )
+                    .await?;
                 }
             }
         }
-        
+
         let processing_time_ms = start_time.elapsed().as_millis() as u64;
         Ok(RowGroupProcessingResult {
             row_group_id: task.row_group_id,
@@ -365,7 +408,7 @@ impl StreamingRowGroupProcessor {
             records_filtered,
         })
     }
-    
+
     // Processing stage implementations
     async fn apply_binary_filtering(
         _context: &StreamingContext,
@@ -379,7 +422,7 @@ impl StreamingRowGroupProcessor {
         // Simulate 90% filtering at binary stage
         let surviving_records = (total_records as f32 * 0.1) as usize;
         *records_filtered += total_records - surviving_records;
-        
+
         let mut candidates = Vec::new();
         for i in 0..surviving_records {
             candidates.push(RowGroupCandidate {
@@ -393,7 +436,7 @@ impl StreamingRowGroupProcessor {
         }
         Ok(candidates)
     }
-    
+
     async fn apply_int8_filtering(
         _context: &StreamingContext,
         _task: &RowGroupTask,
@@ -408,7 +451,7 @@ impl StreamingRowGroupProcessor {
         *records_filtered += original_count - candidates.len();
         Ok(candidates)
     }
-    
+
     async fn apply_pq_filtering(
         _context: &StreamingContext,
         _task: &RowGroupTask,
@@ -423,7 +466,7 @@ impl StreamingRowGroupProcessor {
         *records_filtered += original_count - candidates.len();
         Ok(candidates)
     }
-    
+
     async fn apply_full_precision(
         context: &StreamingContext,
         _task: &RowGroupTask,
@@ -436,7 +479,10 @@ impl StreamingRowGroupProcessor {
         for candidate in &mut candidates {
             // Would load actual vectors and compute real distances
             candidate.record = Some(VectorRecord {
-                id: candidate.vector_id.clone().unwrap_or_else(|| format!("row_{}", candidate.row_offset)),
+                id: candidate
+                    .vector_id
+                    .clone()
+                    .unwrap_or_else(|| format!("row_{}", candidate.row_offset)),
                 vector: vec![0.0f32; context.query_vector.len()],
                 metadata: vec![],
                 timestamp: 0,
@@ -449,7 +495,7 @@ impl StreamingRowGroupProcessor {
         }
         Ok(candidates)
     }
-    
+
     /// Order row groups by estimated processing cost
     fn order_row_groups_by_cost(
         context: &StreamingContext,
@@ -457,18 +503,19 @@ impl StreamingRowGroupProcessor {
     ) -> Result<Vec<u32>> {
         let mut row_group_costs = Vec::new();
         for i in 0..parquet_metadata.num_row_groups() {
-            let cost = context.enhanced_stats.iter()
+            let cost = context
+                .enhanced_stats
+                .iter()
                 .find(|stats| stats.row_group_id == i as u32)
-                .map(|stats| stats.search_cost_estimate.estimated_latency_ms)
-                ; // Default cost
+                .map(|stats| stats.search_cost_estimate.estimated_latency_ms); // Default cost
             row_group_costs.push((i as u32, cost));
         }
-        
+
         // Sort by cost (ascending)
         row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         Ok(row_group_costs.into_iter().map(|(id, _)| id).collect())
     }
-    
+
     /// Estimate memory usage for a row group
     fn estimate_row_group_memory(metadata: &RowGroupMetaData) -> usize {
         // Conservative estimate: uncompressed size plus overhead
@@ -495,7 +542,7 @@ impl MemoryTracker {
             allocations: std::collections::HashMap::new(),
         }
     }
-    
+
     fn reserve_memory(&mut self, identifier: &str, amount: usize) -> Result<()> {
         if self.current_usage + amount > self.max_usage {
             return Err(anyhow!(
@@ -504,26 +551,32 @@ impl MemoryTracker {
                 self.max_usage - self.current_usage
             ));
         }
-        
+
         self.current_usage += amount;
         self.peak_usage = self.peak_usage.max(self.current_usage);
         self.allocations.insert(identifier.to_string(), amount);
-        debug!("Reserved {} bytes for {}, total usage: {}", amount, identifier, self.current_usage);
+        debug!(
+            "Reserved {} bytes for {}, total usage: {}",
+            amount, identifier, self.current_usage
+        );
         Ok(())
     }
-    
+
     fn release_memory(&mut self, identifier: &str) {
         if let Some(amount) = self.allocations.remove(identifier) {
             self.current_usage = self.current_usage.saturating_sub(amount);
-            debug!("Released {} bytes for {}, total usage: {}", amount, identifier, self.current_usage);
+            debug!(
+                "Released {} bytes for {}, total usage: {}",
+                amount, identifier, self.current_usage
+            );
         }
     }
-    
+
     fn is_under_pressure(&self, threshold: f32) -> bool {
         let usage_ratio = self.current_usage as f32 / self.max_usage as f32;
         usage_ratio > threshold
     }
-    
+
     fn get_memory_stats(&self) -> (usize, usize, usize) {
         (self.current_usage, self.max_usage, self.peak_usage)
     }
@@ -541,7 +594,7 @@ mod tests {
         assert_eq!(config.max_concurrent_processors, 8);
         assert!(config.enable_backpressure);
     }
-    
+
     #[test]
     fn test_memory_tracker() {
         let mut tracker = MemoryTracker::new(1000);
@@ -560,13 +613,19 @@ mod tests {
         assert!(tracker.is_under_pressure(0.2)); // 30% > 20%
         assert!(!tracker.is_under_pressure(0.5)); // 30% < 50%
     }
-    
+
     #[tokio::test]
     async fn test_streaming_processor_creation() {
         let config = StreamingConfig::default();
         let processor = StreamingRowGroupProcessor::new(config);
         assert_eq!(processor.processing_pipeline.len(), 6);
-        assert_eq!(processor.processing_pipeline[0], ProcessingStage::BloomFilter);
-        assert_eq!(processor.processing_pipeline[5], ProcessingStage::FullPrecision);
+        assert_eq!(
+            processor.processing_pipeline[0],
+            ProcessingStage::BloomFilter
+        );
+        assert_eq!(
+            processor.processing_pipeline[5],
+            ProcessingStage::FullPrecision
+        );
     }
 }

@@ -4,16 +4,19 @@
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
-    use tokio::sync::Mutex;
     use anyhow::Result;
-
-    use crate::storage::background_flush_context::{
-        BackgroundFlushContext, StorageEngineType, CompressionConfig, OperationPriority
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
     };
+    use tokio::sync::Mutex;
+
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::background_flush_context::{
+        BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
+    };
     use std::collections::HashMap;
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     /// Mock collection service that tracks how many times it's called
     struct MockCollectionService {
@@ -49,22 +52,25 @@ use tracing::{debug, error, info};
 
         // OLD APPROACH (simulated): Multiple service calls
         debug!("📊 Simulating OLD approach - multiple service calls:");
-        
+
         // Simulate VectorOperationsService call
         let _result1 = mock_service.collection("test_collection").await;
         debug!("   VectorOperationsService → Collection Service Call #1");
-        
+
         // Simulate BackgroundManager call
         let _result2 = mock_service.collection("test_collection").await;
         debug!("   BackgroundManager → Collection Service Call #2");
-        
+
         // Simulate FlushCoordinator call
         let _result3 = mock_service.collection("test_collection").await;
         debug!("   FlushCoordinator → Collection Service Call #3");
 
         let old_call_count = mock_service.get_call_count();
         debug!("   Total calls in OLD approach: {}", old_call_count);
-        assert_eq!(old_call_count, 3, "OLD approach should make 3 service calls");
+        assert_eq!(
+            old_call_count, 3,
+            "OLD approach should make 3 service calls"
+        );
 
         // Reset counter for new approach
         mock_service.call_count.store(0, Ordering::SeqCst);
@@ -100,7 +106,7 @@ use tracing::{debug, error, info};
         let engine_name = context.engine_name();
         let dimension = context.dimension;
         let batch_hint = context.batch_size_hint;
-        
+
         // Verify context contains all needed information
         assert_eq!(engine_name, "viper");
         assert_eq!(dimension, 384);
@@ -108,15 +114,29 @@ use tracing::{debug, error, info};
 
         let new_call_count = mock_service.get_call_count();
         debug!("   Total calls in NEW approach: {}", new_call_count);
-        assert_eq!(new_call_count, 1, "NEW approach should make only 1 service call");
+        assert_eq!(
+            new_call_count, 1,
+            "NEW approach should make only 1 service call"
+        );
 
         // Calculate optimization
-        let reduction_percentage = ((old_call_count - new_call_count) as f64 / old_call_count as f64) * 100.0;
+        let reduction_percentage =
+            ((old_call_count - new_call_count) as f64 / old_call_count as f64) * 100.0;
         info!("✅ OPTIMIZATION VALIDATED:");
-        debug!("   Service calls reduced from {} to {}", old_call_count, new_call_count);
-        debug!("   Reduction: {:.1}% ({}x fewer calls)", reduction_percentage, old_call_count / new_call_count);
-        
-        assert!(reduction_percentage > 60.0, "Should achieve at least 60% reduction");
+        debug!(
+            "   Service calls reduced from {} to {}",
+            old_call_count, new_call_count
+        );
+        debug!(
+            "   Reduction: {:.1}% ({}x fewer calls)",
+            reduction_percentage,
+            old_call_count / new_call_count
+        );
+
+        assert!(
+            reduction_percentage > 60.0,
+            "Should achieve at least 60% reduction"
+        );
         debug!("🎉 Background flush optimization successfully validated!");
     }
 
@@ -156,29 +176,36 @@ use tracing::{debug, error, info};
         assert_eq!(context.dimension, 512);
         assert_eq!(context.distance_metric, DistanceMetric::Euclidean);
         assert_eq!(context.base_location, "file:///tmp/test");
-        
+
         // Verify compression config
         assert!(context.compression_config.enabled);
         assert_eq!(context.compression_config.compression_type, "zstd");
         assert_eq!(context.compression_config.level, 3);
-        
+
         // Verify performance hints
         assert_eq!(context.batch_size_hint, Some(2000));
         assert_eq!(context.priority, OperationPriority::High);
         assert_eq!(context.timeout_ms, Some(120_000));
-        
+
         // Verify derived performance settings
         let row_group_size = context.row_group_size();
         let flush_threshold = context.flush_threshold();
-        
+
         assert!(row_group_size > 0, "Row group size should be calculated");
         assert!(flush_threshold > 0, "Flush threshold should be calculated");
-        
+
         // Verify extra metadata
-        assert_eq!(context.extra_metadata.get(key), Some(&"test_value".to_string()));
-        
+        assert_eq!(
+            context.extra_metadata.get(key),
+            Some(&"test_value".to_string())
+        );
+
         info!("✅ Context metadata completeness validated");
-        debug!("   Engine: {} ({})", context.engine_name(), context.storage_engine.clone() as u8);
+        debug!(
+            "   Engine: {} ({})",
+            context.engine_name(),
+            context.storage_engine.clone() as u8
+        );
         debug!("   Dimension: {}", context.dimension);
         debug!("   Distance metric: {:?}", context.distance_metric);
         debug!("   Row group size: {}", row_group_size);

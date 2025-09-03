@@ -5,41 +5,41 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
-use std::collections::HashMap;
 use futures::stream::{self, StreamExt};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::core::search::FilterExpression;
-use crate::core::VectorRecord;
-use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, SimilarityResult};
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::distance_computation::engine::{SimilarityResult, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::core::VectorRecord;
+use crate::core::search::FilterExpression;
 
 /// Configuration for the universal search pipeline
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
     /// Number of results to return
     pub top_k: usize,
-    
+
     /// Distance metric to use
     pub distance_metric: DistanceMetric,
-    
+
     /// Optional filter expression
     pub filter: Option<FilterExpression>,
-    
+
     /// Include vectors in results
     pub include_vectors: bool,
-    
+
     /// Include metadata in results
     pub include_metadata: bool,
-    
+
     /// Enable final reranking stage
     pub enable_reranking: bool,
-    
+
     /// Maximum files to search in parallel
     pub max_parallel_files: usize,
-    
+
     /// Enable progressive quantization
     pub enable_progressive_search: bool,
 }
@@ -64,22 +64,22 @@ impl Default for SearchConfig {
 pub struct ProgressiveConfig {
     /// Enable binary filtering stage
     pub enable_binary: bool,
-    
+
     /// Threshold for binary filtering (0.0 - 1.0)
     pub binary_threshold: f32,
-    
+
     /// Enable INT8 approximation stage
     pub enable_int8: bool,
-    
+
     /// Number of candidates to keep after INT8
     pub int8_top_k: usize,
-    
+
     /// Enable product quantization stage
     pub enable_pq: bool,
-    
+
     /// Number of candidates to keep after PQ
     pub pq_top_k: usize,
-    
+
     /// Final number of results
     pub final_top_k: usize,
 }
@@ -102,10 +102,10 @@ impl Default for ProgressiveConfig {
 pub trait SearchableFile: Send + Sync {
     /// Get unique identifier for the file
     fn id(&self) -> &str;
-    
+
     /// Get file size in bytes
     fn size(&self) -> u64;
-    
+
     /// Check if file might contain relevant data (bloom filter, metadata, etc.)
     fn might_contain(&self, filter: &Option<FilterExpression>) -> bool;
 }
@@ -114,10 +114,10 @@ pub trait SearchableFile: Send + Sync {
 pub trait SearchableBlock: Send + Sync {
     /// Get block identifier
     fn id(&self) -> &str;
-    
+
     /// Get records in this block
     fn records(&self) -> &[VectorRecord];
-    
+
     /// Check if block is relevant for the search
     fn is_relevant(&self, filter: &Option<FilterExpression>) -> bool;
 }
@@ -132,10 +132,10 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         query_vector: &[f32],
         config: &SearchConfig,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
-    
+
     /// Get searchable blocks from a file
     async fn get_blocks(&self, file: &F) -> Result<Vec<B>>;
-    
+
     /// Search a single block
     async fn search_block(
         &self,
@@ -165,7 +165,7 @@ impl UniversalSearchPipeline {
             result_manager: Arc::new(ResultManager::new(distance_compute)),
         }
     }
-    
+
     /// Common search pipeline for all engines
     pub async fn search_pipeline<F, B, S>(
         &self,
@@ -173,7 +173,7 @@ impl UniversalSearchPipeline {
         query_vector: &[f32],
         config: SearchConfig,
         file_searcher: Arc<S>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> 
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>>
     where
         F: SearchableFile + Send + 'static,
         B: SearchableBlock + Send + 'static,
@@ -181,37 +181,36 @@ impl UniversalSearchPipeline {
     {
         // 1. File-level filtering
         let filtered_files = self.filter_files(files, &config.filter)?;
-        
+
         if filtered_files.is_empty() {
             return Ok(Vec::new());
         }
-        
+
         // 2. Parallel file search with controlled concurrency
-        let file_results = self.search_files_parallel(
-            filtered_files,
-            query_vector,
-            &config,
-            file_searcher,
-        ).await?;
-        
+        let file_results = self
+            .search_files_parallel(filtered_files, query_vector, &config, file_searcher)
+            .await?;
+
         // 3. Merge and rank results
         let mut merged = self.result_manager.merge_results(file_results)?;
-        
+
         // 4. Apply final ranking
-        merged = self.result_manager.rank_by_distance(merged, &config.distance_metric)?;
-        
+        merged = self
+            .result_manager
+            .rank_by_distance(merged, &config.distance_metric)?;
+
         // 5. Select top-k
         merged = self.result_manager.select_top_k(merged, config.top_k)?;
-        
+
         // 6. Final reranking if enabled
         if config.enable_reranking && !merged.is_empty() {
             merged = self.rerank_results(merged, query_vector, &config).await?;
         }
-        
+
         // 7. Include/exclude fields as requested
         self.result_manager.apply_field_config(merged, &config)
     }
-    
+
     /// Filter files based on bloom filters and metadata
     fn filter_files<F: SearchableFile>(
         &self,
@@ -221,12 +220,13 @@ impl UniversalSearchPipeline {
         if filter.is_none() {
             return Ok(files);
         }
-        
-        Ok(files.into_iter()
+
+        Ok(files
+            .into_iter()
             .filter(|f| f.might_contain(filter))
             .collect())
     }
-    
+
     /// Search files in parallel with controlled concurrency
     async fn search_files_parallel<F, B, S>(
         &self,
@@ -243,28 +243,27 @@ impl UniversalSearchPipeline {
         let query_vector = query_vector.to_vec();
         let config = config.clone();
         let max_parallel = config.max_parallel_files;
-        
+
         // Create futures for parallel search
         let search_futures = files.into_iter().map(move |file| {
             let searcher = file_searcher.clone();
             let query = query_vector.clone();
             let cfg = config.clone();
-            
-            async move {
-                searcher.search_file(&file, &query, &cfg).await
-            }
+
+            async move { searcher.search_file(&file, &query, &cfg).await }
         });
-        
+
         // Execute with controlled parallelism
-        let results: Vec<Result<Vec<crate::core::search::InternalSearchResult>>> = stream::iter(search_futures)
-            .buffer_unordered(max_parallel)
-            .collect()
-            .await;
-        
+        let results: Vec<Result<Vec<crate::core::search::InternalSearchResult>>> =
+            stream::iter(search_futures)
+                .buffer_unordered(max_parallel)
+                .collect()
+                .await;
+
         // Collect successful results
         results.into_iter().collect()
     }
-    
+
     /// Rerank top results with full precision
     async fn rerank_results(
         &self,
@@ -276,10 +275,10 @@ impl UniversalSearchPipeline {
             // Can't rerank without vectors
             return Ok(candidates);
         }
-        
+
         // Recompute distances with full precision
         let mut reranked = Vec::with_capacity(candidates.len());
-        
+
         for mut result in candidates {
             if let Some(ref vector) = result.vector {
                 let similarity_result = self.distance_compute.as_ref().calculate_distance(
@@ -291,15 +290,17 @@ impl UniversalSearchPipeline {
             }
             reranked.push(result);
         }
-        
+
         // Sort by distance
         reranked.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity
+                .partial_cmp(&b.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         Ok(reranked)
     }
-    
+
     /// Progressive quantization search implementation
     pub async fn progressive_search(
         &self,
@@ -308,26 +309,33 @@ impl UniversalSearchPipeline {
         config: &ProgressiveConfig,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut candidates = records;
-        
+
         // Stage 1: Binary filtering
         if config.enable_binary && !candidates.is_empty() {
-            candidates = self.binary_filter(candidates, query_vector, config.binary_threshold).await?;
+            candidates = self
+                .binary_filter(candidates, query_vector, config.binary_threshold)
+                .await?;
         }
-        
+
         // Stage 2: INT8 approximation
         if config.enable_int8 && !candidates.is_empty() {
-            candidates = self.int8_rank(candidates, query_vector, config.int8_top_k).await?;
+            candidates = self
+                .int8_rank(candidates, query_vector, config.int8_top_k)
+                .await?;
         }
-        
+
         // Stage 3: PQ ranking
         if config.enable_pq && !candidates.is_empty() {
-            candidates = self.pq_rank(candidates, query_vector, config.pq_top_k).await?;
+            candidates = self
+                .pq_rank(candidates, query_vector, config.pq_top_k)
+                .await?;
         }
-        
+
         // Stage 4: Full precision ranking
-        self.full_precision_rank(candidates, query_vector, config.final_top_k).await
+        self.full_precision_rank(candidates, query_vector, config.final_top_k)
+            .await
     }
-    
+
     /// Binary filtering stage
     async fn binary_filter(
         &self,
@@ -337,16 +345,21 @@ impl UniversalSearchPipeline {
     ) -> Result<Vec<VectorRecord>> {
         // Use quantization engine for binary filtering
         // Create a binary quantization level
-        use crate::compute::quantization::unified::{UnifiedQuantizationLevel, QuantizationLevel, BinaryQuantization};
+        use crate::compute::quantization::unified::{
+            BinaryQuantization, QuantizationLevel, UnifiedQuantizationLevel,
+        };
         let binary_level = UnifiedQuantizationLevel {
             level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                 sign_based: true,
                 threshold: Some(threshold),
             })),
         };
-        
-        let binary_query = self.quantization_engine.quantize(query_vector, &binary_level).await?;
-        
+
+        let binary_query = self
+            .quantization_engine
+            .quantize(query_vector, &binary_level)
+            .await?;
+
         let mut filtered = Vec::new();
         for record in records {
             if let Some(ref binary) = record.quantized_vector {
@@ -361,10 +374,10 @@ impl UniversalSearchPipeline {
                 filtered.push(record);
             }
         }
-        
+
         Ok(filtered)
     }
-    
+
     /// INT8 approximation stage
     async fn int8_rank(
         &self,
@@ -378,7 +391,7 @@ impl UniversalSearchPipeline {
         candidates.truncate(top_k.min(candidates.len()));
         Ok(candidates)
     }
-    
+
     /// Product quantization ranking stage
     async fn pq_rank(
         &self,
@@ -392,7 +405,7 @@ impl UniversalSearchPipeline {
         candidates.truncate(top_k.min(candidates.len()));
         Ok(candidates)
     }
-    
+
     /// Full precision final ranking
     async fn full_precision_rank(
         &self,
@@ -401,22 +414,33 @@ impl UniversalSearchPipeline {
         top_k: usize,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results = Vec::with_capacity(records.len());
-        
+
         for record in records {
             let similarity_result = self.distance_compute.as_ref().calculate_distance(
                 query_vector,
                 &record.vector,
                 &DistanceMetric::Cosine, // Use default for now
             );
-            
+
             // Convert metadata from Vec<MetadataItem> to HashMap<String, Value>
-            let metadata_map = record.metadata.into_iter()
+            let metadata_map = record
+                .metadata
+                .into_iter()
                 .filter_map(|item| {
                     item.value.map(|v| {
                         let json_value = match v {
-                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s),
-                            crate::proto::proximadb::metadata_item::Value::NumberValue(f) => serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0))),
-                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(b),
+                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                                serde_json::Value::String(s)
+                            }
+                            crate::proto::proximadb::metadata_item::Value::NumberValue(f) => {
+                                serde_json::Value::Number(
+                                    serde_json::Number::from_f64(f)
+                                        .unwrap_or(serde_json::Number::from(0)),
+                                )
+                            }
+                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                                serde_json::Value::Bool(b)
+                            }
                         };
                         (item.key, json_value)
                     })
@@ -434,12 +458,14 @@ impl UniversalSearchPipeline {
                 ..Default::default()
             });
         }
-        
+
         // Sort by score (higher score = better result)
         results.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
-        
+
         results.truncate(top_k.min(results.len()));
         Ok(results)
     }
@@ -454,14 +480,14 @@ impl FilterProcessor {
     pub fn new() -> Self {
         Self {}
     }
-    
+
     pub fn process_filter(&self, filter: &FilterExpression) -> Result<FilterPlan> {
         // Convert filter expression to execution plan
         Ok(FilterPlan {
             // Implementation details
         })
     }
-    
+
     pub fn apply_to_metadata(
         &self,
         metadata: &Option<serde_json::Value>,
@@ -472,11 +498,11 @@ impl FilterProcessor {
         if metadata.is_none() {
             return false;
         }
-        
+
         // Actual filter logic would go here
         true
     }
-    
+
     pub fn optimize_filter(&self, filter: FilterExpression) -> FilterExpression {
         // Optimize filter expression (e.g., push down predicates)
         filter
@@ -497,16 +523,19 @@ impl ResultManager {
     pub fn new(distance_compute: Arc<UnifiedDistanceCompute>) -> Self {
         Self { distance_compute }
     }
-    
+
     /// Merge multiple result sets
-    pub fn merge_results(&self, results: Vec<Vec<crate::core::search::InternalSearchResult>>) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    pub fn merge_results(
+        &self,
+        results: Vec<Vec<crate::core::search::InternalSearchResult>>,
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut merged = Vec::new();
         for result_set in results {
             merged.extend(result_set);
         }
         Ok(merged)
     }
-    
+
     /// Rank results by distance
     pub fn rank_by_distance(
         &self,
@@ -514,17 +543,23 @@ impl ResultManager {
         _distance_metric: &DistanceMetric,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         results.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity
+                .partial_cmp(&b.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(results)
     }
-    
+
     /// Select top-k results
-    pub fn select_top_k(&self, mut results: Vec<crate::core::search::InternalSearchResult>, k: usize) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    pub fn select_top_k(
+        &self,
+        mut results: Vec<crate::core::search::InternalSearchResult>,
+        k: usize,
+    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         results.truncate(k.min(results.len()));
         Ok(results)
     }
-    
+
     /// Apply field configuration to results
     pub fn apply_field_config(
         &self,
@@ -546,7 +581,7 @@ impl ResultManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_search_config_default() {
         let config = SearchConfig::default();
@@ -554,7 +589,7 @@ mod tests {
         assert_eq!(config.max_parallel_files, 4);
         assert!(config.enable_progressive_search);
     }
-    
+
     #[test]
     fn test_progressive_config_default() {
         let config = ProgressiveConfig::default();

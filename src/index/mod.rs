@@ -10,13 +10,13 @@ pub mod config;
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};
-pub use config::{IndexConfig, IndexUpdateMode, HnswConfig, IvfConfig};
+pub use config::{HnswConfig, IndexConfig, IndexUpdateMode, IvfConfig};
 
 // Placeholder index structures for compilation
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{VectorRecord, VectorId};
+use crate::core::{VectorId, VectorRecord};
 
 /// Placeholder Global ID Index
 #[derive(Debug)]

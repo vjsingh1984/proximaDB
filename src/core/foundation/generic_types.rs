@@ -4,8 +4,8 @@ use super::base_traits::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::marker::PhantomData;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 /// Generic configuration wrapper that implements BaseConfig
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,9 +16,9 @@ pub struct GenericConfig<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T> GenericConfig<T> 
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+impl<T> GenericConfig<T>
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     pub fn new(data: T) -> Self {
         Self {
@@ -27,7 +27,7 @@ where
             _phantom: PhantomData,
         }
     }
-    
+
     pub fn with_validation(mut self, rules: HashMap<String, String>) -> Self {
         self.validation_rules = rules;
         self
@@ -35,8 +35,8 @@ where
 }
 
 impl<T> BaseConfig for GenericConfig<T>
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     fn validate(&self) -> Result<(), String> {
         // Apply validation rules
@@ -62,9 +62,9 @@ pub struct GenericMetadata<T> {
     pub properties: HashMap<String, serde_json::Value>,
 }
 
-impl<T> GenericMetadata<T> 
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+impl<T> GenericMetadata<T>
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     pub fn new(id: String, data: T) -> Self {
         let now = Utc::now();
@@ -78,12 +78,12 @@ where
             properties: HashMap::new(),
         }
     }
-    
+
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
         self
     }
-    
+
     pub fn with_properties(mut self, properties: HashMap<String, serde_json::Value>) -> Self {
         self.properties = properties;
         self
@@ -91,21 +91,21 @@ where
 }
 
 impl<T> BaseMetadata for GenericMetadata<T>
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     fn version(&self) -> u64 {
         self.version
     }
-    
+
     fn id(&self) -> String {
         self.id.clone()
     }
-    
+
     fn created_at(&self) -> DateTime<Utc> {
         self.timestamp
     }
-    
+
     fn updated_at(&self) -> DateTime<Utc> {
         self.updated_at
     }
@@ -120,9 +120,9 @@ pub struct GenericStats<T> {
     pub reset_count: u64,
 }
 
-impl<T> GenericStats<T> 
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+impl<T> GenericStats<T>
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     pub fn new(data: T) -> Self {
         Self {
@@ -132,7 +132,7 @@ where
             reset_count: 0,
         }
     }
-    
+
     pub fn update_data(&mut self, data: T) {
         self.data = data;
         self.timestamp = Utc::now();
@@ -140,20 +140,20 @@ where
 }
 
 impl<T> BaseStats for GenericStats<T>
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     fn aggregate(&mut self, other: &Self) {
         self.collection_count += other.collection_count;
         self.timestamp = Utc::now();
     }
-    
+
     fn reset(&mut self) {
         self.collection_count = 0;
         self.reset_count += 1;
         self.timestamp = Utc::now();
     }
-    
+
     fn timestamp(&self) -> DateTime<Utc> {
         self.timestamp
     }
@@ -169,9 +169,9 @@ pub struct GenericResult<T> {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-impl<T> GenericResult<T> 
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+impl<T> GenericResult<T>
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     pub fn success(data: T) -> Self {
         Self {
@@ -183,7 +183,7 @@ where
             metadata: HashMap::new(),
         }
     }
-    
+
     pub fn error() -> Self {
         Self {
             success: false,
@@ -193,12 +193,12 @@ where
             metadata: HashMap::new(),
         }
     }
-    
+
     pub fn with_processing_time(mut self, time_us: u64) -> Self {
         self.processing_time_us = Some(time_us);
         self
     }
-    
+
     pub fn with_error_code(mut self, code: String) -> Self {
         self.error_code = Some(code);
         self
@@ -206,21 +206,21 @@ where
 }
 
 impl<T> BaseResult<T> for GenericResult<T>
-where 
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync 
+where
+    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     fn is_success(&self) -> bool {
         self.success
     }
-    
+
     fn data(&self) -> Option<&T> {
         self.data.as_ref()
     }
-    
+
     fn error(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
-    
+
     fn processing_time_us(&self) -> Option<u64> {
         self.processing_time_us
     }

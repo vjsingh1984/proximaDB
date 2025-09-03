@@ -26,7 +26,7 @@ mod tests {
     async fn test_compaction_axis_updater_with_no_manager() {
         // Test that CompactionAxisUpdater works without an AxisManager
         let updater = CompactionAxisUpdater::new(None);
-        
+
         let compaction_result = CompactionResult {
             success: true,
             collections_affected: vec!["test_collection".to_string()],
@@ -40,10 +40,10 @@ mod tests {
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         };
-        
+
         let deleted_vector_ids = vec!["vec_1".to_string(), "vec_3".to_string()];
         let merged_vectors = vec![];
-        
+
         // Should succeed without doing anything
         updater
             .update_indexes_after_compaction(
@@ -60,15 +60,18 @@ mod tests {
     async fn test_compaction_stats_no_manager() {
         // Test stats retrieval without an AxisManager
         let updater = CompactionAxisUpdater::new(None);
-        let stats = updater.get_compaction_stats("test_collection").await.unwrap();
-        
+        let stats = updater
+            .get_compaction_stats("test_collection")
+            .await
+            .unwrap();
+
         assert_eq!(stats.total_indexes, 0);
         assert_eq!(stats.dynamic_indexes, 0);
         assert_eq!(stats.static_indexes, 0);
         assert_eq!(stats.total_vectors_indexed, 0);
         assert_eq!(stats.total_memory_usage_bytes, 0);
     }
-    
+
     #[tokio::test]
     async fn test_compaction_result_structure() {
         // Test that CompactionResult structure is correctly handled
@@ -85,7 +88,7 @@ mod tests {
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         };
-        
+
         assert!(compaction_result.success);
         assert_eq!(compaction_result.collections_affected.len(), 1);
         assert_eq!(compaction_result.entries_processed, 100);

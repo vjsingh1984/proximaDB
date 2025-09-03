@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
-use crate::compute::distance_computation::DistanceMetric;
 use super::config::CacheConfig;
+use crate::compute::distance_computation::DistanceMetric;
 
 /// Cache key for distance tables
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -67,7 +67,7 @@ impl DistanceTableCache {
             stats: Arc::new(RwLock::new(CacheStats::default())),
         })
     }
-    
+
     /// Get or compute distance table
     pub async fn get_or_compute<F>(
         &self,
@@ -84,40 +84,40 @@ impl DistanceTableCache {
                 let mut stats = self.stats.write().await;
                 stats.hits += 1;
                 stats.total_requests += 1;
-                
+
                 trace!("Cache hit for distance table");
                 return Ok(table.distances.clone());
             }
         }
-        
+
         // Cache miss - compute new table
         let mut stats = self.stats.write().await;
         stats.misses += 1;
         stats.total_requests += 1;
         drop(stats);
-        
+
         debug!("Cache miss - computing distance table");
         let distances = compute_fn()?;
-        
+
         // Store in cache
         let cached_table = CachedDistanceTable {
             distances: distances.clone(),
             timestamp: std::time::Instant::now(),
             access_count: 1,
         };
-        
+
         let mut cache = self.cache.write().await;
-        
+
         // Check cache size and evict if needed
         if cache.len() >= self.config.max_entries {
             self.evict_lru(&mut cache).await;
         }
-        
+
         cache.insert(key, cached_table);
-        
+
         Ok(distances)
     }
-    
+
     /// Evict least recently used entry
     async fn evict_lru(&self, cache: &mut HashMap<DistanceTableKey, CachedDistanceTable>) {
         if let Some((key, _)) = cache
@@ -130,31 +130,31 @@ impl DistanceTableCache {
             stats.evictions += 1;
         }
     }
-    
+
     /// Get cache statistics
     pub async fn get_statistics(&self) -> CacheStats {
         let stats = self.stats.read().await;
         let mut result = (*stats).clone();
-        
+
         if result.total_requests > 0 {
             result.hit_rate_percent = (result.hits as f32 / result.total_requests as f32) * 100.0;
         }
-        
+
         // Estimate size
         let cache = self.cache.read().await;
-        let entry_size = std::mem::size_of::<DistanceTableKey>() + 
-                        std::mem::size_of::<CachedDistanceTable>() +
-                        1024 * 4; // Estimate for distance data
+        let entry_size = std::mem::size_of::<DistanceTableKey>()
+            + std::mem::size_of::<CachedDistanceTable>()
+            + 1024 * 4; // Estimate for distance data
         result.size_mb = (cache.len() * entry_size) / (1024 * 1024);
-        
+
         result
     }
-    
+
     /// Clear cache
     pub async fn clear(&self) {
         let mut cache = self.cache.write().await;
         cache.clear();
-        
+
         let mut stats = self.stats.write().await;
         stats.evictions += cache.len() as u64;
     }

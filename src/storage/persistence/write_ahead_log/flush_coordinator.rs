@@ -19,10 +19,10 @@ use tracing::{debug, info, warn};
 
 use super::config::SyncMode;
 
-use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
-use crate::storage::background_flush_context::BackgroundFlushContext;
 use super::enhanced_flush_result::EnhancedFlushResult;
 use super::flush_result_optimization::OptimizedFlushCoordinator;
+use crate::storage::background_flush_context::BackgroundFlushContext;
+use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
 
 /// Flush state tracking for coordinated WAL cleanup
 #[derive(Debug, Clone)]
@@ -101,30 +101,47 @@ impl WALFlushCoordinator {
             metrics_updater: None,
         }
     }
-    
+
     /// Set collection service for metadata fetching
-    pub fn set_collection_service(&mut self, service: Arc<crate::services::collection::manager::CollectionService>) {
+    pub fn set_collection_service(
+        &mut self,
+        service: Arc<crate::services::collection::manager::CollectionService>,
+    ) {
         self.collection_service = Some(service);
     }
-    
+
     /// Set metrics updater for tracking flush operations
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::InternalMetricsUpdater>) {
+    pub fn set_metrics_updater(
+        &mut self,
+        updater: Arc<dyn crate::metrics::InternalMetricsUpdater>,
+    ) {
         self.metrics_updater = Some(updater);
         info!("🔗 FlushCoordinator: Metrics updater registered for flush operation tracking");
     }
-    
+
     /// Enable optimized flush processing
-    pub fn enable_optimized_flush(&mut self, batch_size: usize, worker_count: usize, dimension: usize) {
+    pub fn enable_optimized_flush(
+        &mut self,
+        batch_size: usize,
+        worker_count: usize,
+        dimension: usize,
+    ) {
         self.optimized_coordinator = Some(Arc::new(OptimizedFlushCoordinator::new(
             batch_size,
             worker_count,
             dimension,
         )));
-        info!("🚀 FlushCoordinator: Optimized flush enabled with batch_size={}, workers={}", batch_size, worker_count);
+        info!(
+            "🚀 FlushCoordinator: Optimized flush enabled with batch_size={}, workers={}",
+            batch_size, worker_count
+        );
     }
 
     /// Set the AXIS manager for IndexConfig-based indexing
-    pub fn set_axis_manager(&mut self, axis_manager: Arc<crate::index::axis::management::manager::AxisManager>) {
+    pub fn set_axis_manager(
+        &mut self,
+        axis_manager: Arc<crate::index::axis::management::manager::AxisManager>,
+    ) {
         self.axis_manager = Some(axis_manager);
         info!("🔗 FlushCoordinator: AXIS manager registered for IndexConfig-based indexing");
     }
@@ -175,7 +192,9 @@ impl WALFlushCoordinator {
         let vector_records = match &flush_data {
             FlushDataSource::Memory => {
                 // Memory flush is handled by VectorOperationsService in the optimized architecture
-                warn!("📋 Coordinator: Memory flush source used - should be handled by VectorOperationsService with context");
+                warn!(
+                    "📋 Coordinator: Memory flush source used - should be handled by VectorOperationsService with context"
+                );
                 Vec::new()
             }
             FlushDataSource::DiskWalFiles(files) => {
@@ -202,16 +221,16 @@ impl WALFlushCoordinator {
             );
             return Ok(EnhancedFlushResult::new(
                 FlushResult {
-                success: true,
-                collections_affected: vec![collection_id.to_string()],
-                entries_flushed: Some(0),
-                bytes_written: Some(0),
-                files_created: Some(0),
-                duration_ms: Some(0),
-                completed_at: chrono::Utc::now(),
-                engine_metrics: std::collections::HashMap::new(),
-                compaction_triggered: false,
-                flushed_batch_ids: vec![],
+                    success: true,
+                    collections_affected: vec![collection_id.to_string()],
+                    entries_flushed: Some(0),
+                    bytes_written: Some(0),
+                    files_created: Some(0),
+                    duration_ms: Some(0),
+                    completed_at: chrono::Utc::now(),
+                    engine_metrics: std::collections::HashMap::new(),
+                    compaction_triggered: false,
+                    flushed_batch_ids: vec![],
                 },
                 Vec::new(),
             ));
@@ -225,7 +244,10 @@ impl WALFlushCoordinator {
         // Step 2: 🚀 OPTIMIZATION: Use pre-computed context metadata when available (eliminates service calls)
         // This includes: storage engine type, compression settings, storage assignment, etc.
         let collection_metadata = if let Some(context) = flush_context {
-            info!("✅ CONTEXT_OPTIMIZED: Using pre-computed metadata for collection {}", collection_id);
+            info!(
+                "✅ CONTEXT_OPTIMIZED: Using pre-computed metadata for collection {}",
+                collection_id
+            );
             // Use centralized helper method for consistent collection proto creation
             Some(context.to_collection_proto())
         } else if let Some(ref collection_service) = self.collection_service {
@@ -237,12 +259,18 @@ impl WALFlushCoordinator {
                         "📋 Coordinator: Fetched collection metadata for '{}' - engine: {:?}, compression: {:?}",
                         collection_id,
                         collection.config.as_ref().map(|c| c.storage_engine),
-                        collection.config.as_ref().and_then(|c| c.quantization.as_ref())
+                        collection
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.quantization.as_ref())
                     );
                     Some(collection)
                 }
                 Ok(None) => {
-                    warn!("⚠️ Coordinator: Collection '{}' not found in metadata_info", collection_id);
+                    warn!(
+                        "⚠️ Coordinator: Collection '{}' not found in metadata_info",
+                        collection_id
+                    );
                     None
                 }
                 Err(e) => {
@@ -251,15 +279,20 @@ impl WALFlushCoordinator {
                 }
             }
         } else {
-            warn!("⚠️ Coordinator: No collection service available, proceeding without metadata_info");
+            warn!(
+                "⚠️ Coordinator: No collection service available, proceeding without metadata_info"
+            );
             None
         };
-        
+
         // 🚀 OPTIMIZATION: Determine storage engine - use context directly when available
         let engine_type = if let Some(context) = flush_context {
             // Direct context optimization - no metadata parsing needed!
-            info!("✅ ENGINE_OPTIMIZED: Using pre-computed engine {} for collection {}", 
-                  context.engine_name(), collection_id);
+            info!(
+                "✅ ENGINE_OPTIMIZED: Using pre-computed engine {} for collection {}",
+                context.engine_name(),
+                collection_id
+            );
             context.engine_name()
         } else if let Some(ref metadata) = collection_metadata {
             // Legacy path: Parse from metadata
@@ -268,8 +301,8 @@ impl WALFlushCoordinator {
                 use crate::proto::proximadb::StorageEngine;
                 match StorageEngine::try_from(config.storage_engine) {
                     Ok(StorageEngine::Viper) => "viper",
-                    Ok(StorageEngine::Sst) => "sst", 
-                    _ => preferred_engine.unwrap_or("viper") // Default to viper or provided preference
+                    Ok(StorageEngine::Sst) => "sst",
+                    _ => preferred_engine.unwrap_or("viper"), // Default to viper or provided preference
                 }
             } else {
                 preferred_engine.unwrap_or("viper")
@@ -282,7 +315,7 @@ impl WALFlushCoordinator {
                 )
             })?
         };
-        
+
         info!(
             "🔍 Coordinator: Using {} storage engine for collection {}",
             engine_type, collection_id
@@ -306,7 +339,7 @@ impl WALFlushCoordinator {
         );
 
         // Step 3: Create flush parameters with actual vector data + BatchId coordination
-        let batch_ids = Vec::new();  // No cycle data needed in this simplified flow
+        let batch_ids = Vec::new(); // No cycle data needed in this simplified flow
 
         // Clone vector records for AXIS indexing before moving into flush params
         let vector_records_for_axis = vector_records.clone();
@@ -314,16 +347,16 @@ impl WALFlushCoordinator {
         // Check if optimized flush is enabled and use it
         let storage_result = if let Some(optimized) = &self.optimized_coordinator {
             info!("🚀 Coordinator: Using optimized flush path");
-            
+
             // Execute optimized flush
             let optimized_result = optimized
                 .execute_optimized_flush(collection_id, vector_records)
                 .await?;
-            
+
             // Convert to standard flush result
             let mut base_result = optimized_result.base.clone();
             base_result.flushed_batch_ids = batch_ids.clone();
-            
+
             // Store optimized vectors for later AXIS indexing
             // The optimized result uses Arc<VectorRecord> to avoid cloning
             base_result
@@ -360,9 +393,11 @@ impl WALFlushCoordinator {
 
             // WAL cleanup is handled by VectorOperationsService in the optimized architecture
             // The context-based approach ensures proper coordination between flush and cleanup
-            info!("📋 Coordinator: WAL cleanup handled by VectorOperationsService with context optimization");
+            info!(
+                "📋 Coordinator: WAL cleanup handled by VectorOperationsService with context optimization"
+            );
 
-            // Cleanup memtable using BatchIds  
+            // Cleanup memtable using BatchIds
             // TODO: Add memtable cleanup interface
             info!(
                 "🧹 Coordinator: Memtable cleanup for {} batches (TODO: implement)",
@@ -372,10 +407,10 @@ impl WALFlushCoordinator {
             info!("📋 Coordinator: Skipping cleanup (no entries flushed or storage failed)");
         }
 
-        // NOTE: AXIS indexing notification is handled by BackgroundManager 
+        // NOTE: AXIS indexing notification is handled by BackgroundManager
         // after the complete flush-compaction cycle to ensure proper sequential execution:
         // 1. FLUSH (materialized data)
-        // 2. COMPACTION (if needed) 
+        // 2. COMPACTION (if needed)
         // 3. INDEXING (final optimized layout)
         info!(
             "📋 Coordinator: Flush completed - indexing will be handled by BackgroundManager after compaction cycle"
@@ -385,7 +420,7 @@ impl WALFlushCoordinator {
             "🎯 Coordinator: ATOMIC coordinated flush COMPLETE for collection {}",
             collection_id
         );
-        
+
         // 📊 METRICS: Record flush operation metrics (non-blocking)
         if let Some(ref metrics) = self.metrics_updater {
             let engine_type_str = if let Some(context) = flush_context {
@@ -393,23 +428,28 @@ impl WALFlushCoordinator {
             } else {
                 engine_type.to_uppercase()
             };
-            
-            let _ = metrics.record_flush(
-                collection_id,
-                crate::metrics::FlushMetricsUpdate {
-                    vectors_flushed: storage_result.entries_flushed.unwrap_or(0) as i64,
-                    bytes_written: storage_result.bytes_written.unwrap_or(0) as i64,
-                    duration_ms: storage_result.duration_ms.unwrap_or(0) as i64,
-                    files_created: storage_result.files_created.unwrap_or(0) as i32,
-                    engine_type: engine_type_str,
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                },
-            ).await;
+
+            let _ = metrics
+                .record_flush(
+                    collection_id,
+                    crate::metrics::FlushMetricsUpdate {
+                        vectors_flushed: storage_result.entries_flushed.unwrap_or(0) as i64,
+                        bytes_written: storage_result.bytes_written.unwrap_or(0) as i64,
+                        duration_ms: storage_result.duration_ms.unwrap_or(0) as i64,
+                        files_created: storage_result.files_created.unwrap_or(0) as i32,
+                        engine_type: engine_type_str,
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                    },
+                )
+                .await;
             debug!("📊 Recorded flush metrics for collection {}", collection_id);
         }
-        
+
         // Return enhanced result with vector data for AXIS indexing
-        Ok(EnhancedFlushResult::new(storage_result, vector_records_for_axis))
+        Ok(EnhancedFlushResult::new(
+            storage_result,
+            vector_records_for_axis,
+        ))
     }
 
     pub async fn initialize_flush_state(&self, collection_id: &str) -> Result<()> {

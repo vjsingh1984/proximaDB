@@ -28,7 +28,7 @@ pub enum VectorDBError {
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
-    
+
     #[error("Filesystem error: {0}")]
     Filesystem(String),
 }
@@ -39,9 +39,10 @@ pub type ProximaDBError = VectorDBError;
 // Add conversion from FilesystemError to VectorDBError
 impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDBError {
     fn from(err: crate::storage::persistence::filesystem::FilesystemError) -> Self {
-        VectorDBError::Storage(StorageError::DiskIO(
-            std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
-        ))
+        VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            err.to_string(),
+        )))
     }
 }
 

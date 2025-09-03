@@ -14,11 +14,11 @@ use crate::storage::traits::FlushResult;
 pub struct EnhancedFlushResult {
     /// Base flush result with standard metrics
     pub base: FlushResult,
-    
+
     /// The actual vector records that were flushed
     /// This is what AXIS needs for indexing
     pub vector_records: Vec<VectorRecord>,
-    
+
     /// IDs of vectors that were deleted during flush (e.g., expired)
     pub deleted_vector_ids: Vec<String>,
 }
@@ -32,12 +32,12 @@ impl EnhancedFlushResult {
             deleted_vector_ids: Vec::new(),
         }
     }
-    
+
     /// Create with deletions
     pub fn with_deletions(
-        base: FlushResult, 
+        base: FlushResult,
         vector_records: Vec<VectorRecord>,
-        deleted_vector_ids: Vec<String>
+        deleted_vector_ids: Vec<String>,
     ) -> Self {
         Self {
             base,

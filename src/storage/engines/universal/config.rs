@@ -27,31 +27,31 @@ pub enum CacheEvictionPolicy {
 pub struct UniversalAdapterConfig {
     /// Enable progressive refinement pipeline
     pub enable_progressive_refinement: bool,
-    
+
     /// Enable hardware acceleration
     pub enable_hardware_acceleration: bool,
-    
+
     /// Enable distance table caching
     pub enable_distance_caching: bool,
-    
+
     /// Maximum cache size in MB
     pub max_cache_size_mb: usize,
-    
+
     /// SIMD threshold for activation
     pub simd_threshold: usize,
-    
+
     /// Refinement stages to use
     pub refinement_stages: Vec<RefinementStage>,
-    
+
     /// Hardware acceleration configuration
     pub hardware_acceleration: HardwareAccelerationConfig,
-    
+
     /// Progressive refinement configuration
     pub progressive_refinement: ProgressiveRefinementConfig,
-    
+
     /// Cache configuration
     pub cache_config: CacheConfig,
-    
+
     /// Storage engine configurations
     pub storage_engines: Vec<StorageEngineConfig>,
 }
@@ -60,22 +60,22 @@ pub struct UniversalAdapterConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveRefinementConfig {
     /// Refinement strategy
-    
+
     /// Number of candidates to keep at each stage
     pub candidates_per_stage: HashMap<RefinementStage, usize>,
-    
+
     /// Quality thresholds for each stage
     pub quality_thresholds: HashMap<RefinementStage, f32>,
-    
+
     /// Enable parallel processing within stages
     pub enable_parallel_processing: bool,
-    
+
     /// Maximum memory usage in MB
     pub max_memory_usage_mb: usize,
-    
+
     /// Enable stage skipping optimization
     pub enable_stage_skipping: bool,
-    
+
     /// Minimum improvement required to continue refinement
     pub min_improvement_threshold: f32,
 }
@@ -87,13 +87,13 @@ impl Default for ProgressiveRefinementConfig {
         candidates_per_stage.insert(RefinementStage::INT8, 500);
         candidates_per_stage.insert(RefinementStage::PQ, 200);
         candidates_per_stage.insert(RefinementStage::FP32, 100);
-        
+
         let mut quality_thresholds = HashMap::new();
         quality_thresholds.insert(RefinementStage::Binary, 0.6);
         quality_thresholds.insert(RefinementStage::INT8, 0.7);
         quality_thresholds.insert(RefinementStage::PQ, 0.8);
         quality_thresholds.insert(RefinementStage::FP32, 0.9);
-        
+
         Self {
             candidates_per_stage,
             quality_thresholds,
@@ -110,28 +110,28 @@ impl Default for ProgressiveRefinementConfig {
 pub struct HardwareAccelerationConfig {
     /// Enable SIMD instructions
     pub enable_simd: bool,
-    
+
     /// Enable AVX instructions
     pub enable_avx: bool,
-    
+
     /// Enable AVX2 instructions
     pub enable_avx2: bool,
-    
+
     /// Enable AVX-512 instructions
     pub enable_avx512: bool,
-    
+
     /// Enable ARM NEON instructions
     pub enable_neon: bool,
-    
+
     /// Minimum vector size for hardware acceleration
     pub min_vector_size_for_acceleration: usize,
-    
+
     /// Enable automatic fallback to scalar operations
     pub enable_scalar_fallback: bool,
-    
+
     /// Batch size for SIMD operations
     pub simd_batch_size: usize,
-    
+
     /// Enable prefetching optimizations
     pub enable_prefetching: bool,
 }
@@ -141,19 +141,19 @@ pub struct HardwareAccelerationConfig {
 pub struct CacheConfig {
     /// Maximum number of entries in cache
     pub max_entries: usize,
-    
+
     /// TTL for cache entries in seconds
     pub ttl_seconds: u64,
-    
+
     /// Eviction policy
     pub eviction_policy: CacheEvictionPolicy,
-    
+
     /// Enable cache compression
     pub compression: bool,
-    
+
     /// Cache warming on startup
     pub enable_cache_warming: bool,
-    
+
     /// Maximum memory usage for cache in MB
     pub max_memory_mb: usize,
 }
@@ -163,19 +163,19 @@ pub struct CacheConfig {
 pub struct StorageEngineConfig {
     /// Engine type
     pub engine_type: super::storage_integration::EngineType,
-    
+
     /// Engine-specific settings
     pub settings: HashMap<String, String>,
-    
+
     /// Supported quantization formats
     pub supported_formats: Vec<super::conversion::StorageFormat>,
-    
+
     /// Default quantization format
     pub default_format: super::conversion::StorageFormat,
-    
+
     /// Performance preferences
     pub performance_preferences: PerformancePreferences,
-    
+
     /// Memory limits
     pub memory_limits: MemoryLimits,
 }
@@ -185,16 +185,16 @@ pub struct StorageEngineConfig {
 pub struct PerformancePreferences {
     /// Prefer speed over accuracy
     pub prefer_speed: bool,
-    
+
     /// Target latency in microseconds
     pub target_latency_us: u64,
-    
+
     /// Target throughput in operations per second
     pub target_throughput_ops: u64,
-    
+
     /// Memory vs storage tradeoff (0.0 = prefer storage, 1.0 = prefer memory)
     pub memory_storage_tradeoff: f32,
-    
+
     /// Quality vs speed tradeoff (0.0 = prefer speed, 1.0 = prefer quality)
     pub quality_speed_tradeoff: f32,
 }
@@ -204,13 +204,13 @@ pub struct PerformancePreferences {
 pub struct MemoryLimits {
     /// Maximum memory usage per operation in MB
     pub max_memory_per_operation_mb: usize,
-    
+
     /// Maximum total memory usage in MB
     pub max_total_memory_mb: usize,
-    
+
     /// Memory pressure threshold (0.0-1.0)
     pub memory_pressure_threshold: f32,
-    
+
     /// Enable memory pressure handling
     pub enable_memory_pressure_handling: bool,
 }
@@ -273,16 +273,25 @@ impl StorageEngineConfig {
         let mut settings = HashMap::new();
         settings.insert("cache_size_mb".to_string(), "512".to_string());
         settings.insert("tree_fanout".to_string(), "64".to_string());
-        
+
         Self {
             engine_type: super::storage_integration::EngineType::PRISM,
             settings,
             supported_formats: vec![
                 super::conversion::StorageFormat::FP32,
-                super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
-                super::conversion::StorageFormat::QuantizedPQ { segments: 8, bits: 8 },
+                super::conversion::StorageFormat::QuantizedINT8 {
+                    scale: 1.0,
+                    zero_point: 0,
+                },
+                super::conversion::StorageFormat::QuantizedPQ {
+                    segments: 8,
+                    bits: 8,
+                },
             ],
-            default_format: super::conversion::StorageFormat::QuantizedPQ { segments: 8, bits: 8 },
+            default_format: super::conversion::StorageFormat::QuantizedPQ {
+                segments: 8,
+                bits: 8,
+            },
             performance_preferences: PerformancePreferences {
                 prefer_speed: true,
                 target_latency_us: 500,
@@ -296,23 +305,32 @@ impl StorageEngineConfig {
             },
         }
     }
-    
+
     /// Create default configuration for NOVA engine
     pub fn nova_default() -> Self {
         let mut settings = HashMap::new();
         settings.insert("column_batch_size".to_string(), "10000".to_string());
         settings.insert("compression_level".to_string(), "6".to_string());
-        
+
         Self {
             engine_type: super::storage_integration::EngineType::NOVA,
             settings,
             supported_formats: vec![
                 super::conversion::StorageFormat::FP32,
-                super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
-                super::conversion::StorageFormat::QuantizedPQ { segments: 8, bits: 8 },
+                super::conversion::StorageFormat::QuantizedINT8 {
+                    scale: 1.0,
+                    zero_point: 0,
+                },
+                super::conversion::StorageFormat::QuantizedPQ {
+                    segments: 8,
+                    bits: 8,
+                },
                 super::conversion::StorageFormat::Binary,
             ],
-            default_format: super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
+            default_format: super::conversion::StorageFormat::QuantizedINT8 {
+                scale: 1.0,
+                zero_point: 0,
+            },
             performance_preferences: PerformancePreferences {
                 prefer_speed: false,
                 target_latency_us: 2000,
@@ -326,20 +344,26 @@ impl StorageEngineConfig {
             },
         }
     }
-    
+
     /// Create default configuration for SWIFT engine
     pub fn swift_default() -> Self {
         let mut settings = HashMap::new();
         settings.insert("block_size".to_string(), "65536".to_string());
         settings.insert("enable_compression".to_string(), "true".to_string());
-        
+
         Self {
             engine_type: super::storage_integration::EngineType::SWIFT,
             settings,
             supported_formats: vec![
                 super::conversion::StorageFormat::FP32,
-                super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
-                super::conversion::StorageFormat::QuantizedPQ { segments: 8, bits: 8 },
+                super::conversion::StorageFormat::QuantizedINT8 {
+                    scale: 1.0,
+                    zero_point: 0,
+                },
+                super::conversion::StorageFormat::QuantizedPQ {
+                    segments: 8,
+                    bits: 8,
+                },
                 super::conversion::StorageFormat::Binary,
             ],
             default_format: super::conversion::StorageFormat::FP32,
@@ -356,22 +380,31 @@ impl StorageEngineConfig {
             },
         }
     }
-    
+
     /// Create default configuration for VIPER engine
     pub fn viper_default() -> Self {
         let mut settings = HashMap::new();
         settings.insert("parquet_row_group_size".to_string(), "100000".to_string());
         settings.insert("compression_codec".to_string(), "ZSTD".to_string());
-        
+
         Self {
             engine_type: super::storage_integration::EngineType::VIPER,
             settings,
             supported_formats: vec![
                 super::conversion::StorageFormat::FP32,
-                super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
-                super::conversion::StorageFormat::QuantizedPQ { segments: 8, bits: 8 },
+                super::conversion::StorageFormat::QuantizedINT8 {
+                    scale: 1.0,
+                    zero_point: 0,
+                },
+                super::conversion::StorageFormat::QuantizedPQ {
+                    segments: 8,
+                    bits: 8,
+                },
             ],
-            default_format: super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
+            default_format: super::conversion::StorageFormat::QuantizedINT8 {
+                scale: 1.0,
+                zero_point: 0,
+            },
             performance_preferences: PerformancePreferences {
                 prefer_speed: false,
                 target_latency_us: 5000,
@@ -385,20 +418,26 @@ impl StorageEngineConfig {
             },
         }
     }
-    
+
     /// Create default configuration for SST engine
     pub fn sst_default() -> Self {
         let mut settings = HashMap::new();
         settings.insert("block_size".to_string(), "32768".to_string());
         settings.insert("bloom_filter_fp_rate".to_string(), "0.01".to_string());
-        
+
         Self {
             engine_type: super::storage_integration::EngineType::SST,
             settings,
             supported_formats: vec![
                 super::conversion::StorageFormat::FP32,
-                super::conversion::StorageFormat::QuantizedINT8 { scale: 1.0, zero_point: 0 },
-                super::conversion::StorageFormat::QuantizedPQ { segments: 8, bits: 8 },
+                super::conversion::StorageFormat::QuantizedINT8 {
+                    scale: 1.0,
+                    zero_point: 0,
+                },
+                super::conversion::StorageFormat::QuantizedPQ {
+                    segments: 8,
+                    bits: 8,
+                },
                 super::conversion::StorageFormat::Binary,
             ],
             default_format: super::conversion::StorageFormat::FP32,

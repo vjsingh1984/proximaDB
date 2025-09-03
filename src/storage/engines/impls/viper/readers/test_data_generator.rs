@@ -4,16 +4,15 @@
 
 use anyhow::Result;
 use arrow_array::{
-    Array, RecordBatch, StringArray, Float32Array, Int64Array, FixedSizeListArray,
-    BooleanArray,
+    Array, BooleanArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch, StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use std::fs::File;
 use std::sync::Arc;
 use tempfile::TempDir;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
 
 /// Test data generator for Parquet files
 pub struct ParquetTestDataGenerator {
@@ -81,23 +80,20 @@ impl ParquetTestDataGenerator {
     pub fn new() -> Result<Self> {
         let temp_dir = TempDir::new()?;
         let rng = ChaCha8Rng::seed_from_u64(42); // Fixed seed for reproducible tests
-        
-        Ok(Self {
-            temp_dir,
-            rng,
-        })
+
+        Ok(Self { temp_dir, rng })
     }
-    
+
     /// Generate a basic vector dataset
     pub fn generate_basic_vectors(&mut self, config: TestDataConfig) -> Result<TestFileInfo> {
         let schema = self.create_basic_schema(&config)?;
         let record_batch = self.create_basic_record_batch(&schema, &config)?;
-        
+
         let file_path = self.temp_dir.path().join("basic_vectors.parquet");
         self.write_parquet_file(&file_path, &schema, vec![record_batch])?;
-        
+
         let (vector_ids, metadata_values) = self.extract_test_metadata(&config);
-        
+
         Ok(TestFileInfo {
             file_path: file_path.to_string_lossy().to_string(),
             schema,
@@ -107,20 +103,20 @@ impl ParquetTestDataGenerator {
             config,
         })
     }
-    
+
     /// Generate dataset with quantized columns
     pub fn generate_quantized_vectors(&mut self, config: TestDataConfig) -> Result<TestFileInfo> {
         let mut config = config;
         config.include_quantized = true;
-        
+
         let schema = self.create_quantized_schema(&config)?;
         let record_batch = self.create_quantized_record_batch(&schema, &config)?;
-        
+
         let file_path = self.temp_dir.path().join("quantized_vectors.parquet");
         self.write_parquet_file(&file_path, &schema, vec![record_batch])?;
-        
+
         let (vector_ids, metadata_values) = self.extract_test_metadata(&config);
-        
+
         Ok(TestFileInfo {
             file_path: file_path.to_string_lossy().to_string(),
             schema,
@@ -130,21 +126,21 @@ impl ParquetTestDataGenerator {
             config,
         })
     }
-    
+
     /// Generate dataset with rich metadata for filtering tests
     pub fn generate_filterable_vectors(&mut self, config: TestDataConfig) -> Result<TestFileInfo> {
         let mut config = config;
         config.include_metadata = true;
         config.metadata_cardinality = 20;
-        
+
         let schema = self.create_filterable_schema(&config)?;
         let record_batch = self.create_filterable_record_batch(&schema, &config)?;
-        
+
         let file_path = self.temp_dir.path().join("filterable_vectors.parquet");
         self.write_parquet_file(&file_path, &schema, vec![record_batch])?;
-        
+
         let (vector_ids, metadata_values) = self.extract_test_metadata(&config);
-        
+
         Ok(TestFileInfo {
             file_path: file_path.to_string_lossy().to_string(),
             schema,
@@ -154,33 +150,33 @@ impl ParquetTestDataGenerator {
             config,
         })
     }
-    
+
     /// Generate large multi-row-group dataset
     pub fn generate_large_dataset(&mut self, config: TestDataConfig) -> Result<TestFileInfo> {
         let mut config = config;
         config.num_rows = 10000; // Ensure multiple row groups
-        
+
         let schema = self.create_basic_schema(&config)?;
-        
+
         // Create multiple record batches for row groups
         let mut record_batches = Vec::new();
         let batch_size = 2000;
-        
+
         for _batch_idx in 0..(config.num_rows / batch_size) {
             let batch_config = TestDataConfig {
                 num_rows: batch_size,
                 ..config.clone()
             };
-            
+
             let record_batch = self.create_basic_record_batch(&schema, &batch_config)?;
             record_batches.push(record_batch);
         }
-        
+
         let file_path = self.temp_dir.path().join("large_vectors.parquet");
         self.write_parquet_file(&file_path, &schema, record_batches)?;
-        
+
         let (vector_ids, metadata_values) = self.extract_test_metadata(&config);
-        
+
         Ok(TestFileInfo {
             file_path: file_path.to_string_lossy().to_string(),
             schema,
@@ -190,20 +186,20 @@ impl ParquetTestDataGenerator {
             config,
         })
     }
-    
+
     /// Generate empty dataset for edge case testing
     pub fn generate_empty_dataset(&mut self) -> Result<TestFileInfo> {
         let config = TestDataConfig {
             num_rows: 0,
             ..Default::default()
         };
-        
+
         let schema = self.create_basic_schema(&config)?;
         let record_batch = self.create_empty_record_batch(&schema)?;
-        
+
         let file_path = self.temp_dir.path().join("empty_vectors.parquet");
         self.write_parquet_file(&file_path, &schema, vec![record_batch])?;
-        
+
         Ok(TestFileInfo {
             file_path: file_path.to_string_lossy().to_string(),
             schema,
@@ -213,7 +209,7 @@ impl ParquetTestDataGenerator {
             config,
         })
     }
-    
+
     /// Create basic schema with ID, vector, and optional metadata
     fn create_basic_schema(&self, config: &TestDataConfig) -> Result<Arc<Schema>> {
         let mut fields = vec![
@@ -227,20 +223,20 @@ impl ParquetTestDataGenerator {
                 false,
             ),
         ];
-        
+
         if config.include_metadata {
             fields.push(Field::new("metadata_info", DataType::Utf8, true));
         }
-        
+
         if config.include_timestamps {
             fields.push(Field::new("timestamp", DataType::Int64, false));
             fields.push(Field::new("created_at", DataType::Int64, false));
             fields.push(Field::new("updated_at", DataType::Int64, false));
         }
-        
+
         Ok(Arc::new(Schema::new(fields)))
     }
-    
+
     /// Create schema with quantized columns
     fn create_quantized_schema(&self, config: &TestDataConfig) -> Result<Arc<Schema>> {
         let mut fields = vec![
@@ -254,7 +250,7 @@ impl ParquetTestDataGenerator {
                 false,
             ),
         ];
-        
+
         // Add quantized columns
         for quant_type in &config.quantization_types {
             match quant_type {
@@ -290,14 +286,14 @@ impl ParquetTestDataGenerator {
                 }
             }
         }
-        
+
         if config.include_metadata {
             fields.push(Field::new("metadata_info", DataType::Utf8, true));
         }
-        
+
         Ok(Arc::new(Schema::new(fields)))
     }
-    
+
     /// Create schema optimized for metadata filtering
     fn create_filterable_schema(&self, config: &TestDataConfig) -> Result<Arc<Schema>> {
         let mut fields = vec![
@@ -321,28 +317,32 @@ impl ParquetTestDataGenerator {
                 true,
             ),
         ];
-        
+
         if config.include_metadata {
             fields.push(Field::new("metadata_info", DataType::Utf8, true));
         }
-        
+
         Ok(Arc::new(Schema::new(fields)))
     }
-    
+
     /// Create basic record batch
-    fn create_basic_record_batch(&mut self, schema: &Schema, config: &TestDataConfig) -> Result<RecordBatch> {
+    fn create_basic_record_batch(
+        &mut self,
+        schema: &Schema,
+        config: &TestDataConfig,
+    ) -> Result<RecordBatch> {
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-        
+
         // ID column
         let ids: Vec<String> = (0..config.num_rows)
             .map(|i| format!("vec_{:06}", i))
             .collect();
         arrays.push(Arc::new(StringArray::from(ids)));
-        
+
         // Vector column
         let vectors = self.generate_vectors(config.num_rows, config.vector_dim);
         arrays.push(Arc::new(vectors));
-        
+
         // Metadata column (if included)
         if config.include_metadata {
             let metadata_json: Vec<Option<String>> = (0..config.num_rows)
@@ -361,7 +361,7 @@ impl ParquetTestDataGenerator {
                 .collect();
             arrays.push(Arc::new(StringArray::from(metadata_json)));
         }
-        
+
         // Timestamp columns (if included)
         if config.include_timestamps {
             let now = chrono::Utc::now().timestamp_millis();
@@ -372,31 +372,35 @@ impl ParquetTestDataGenerator {
             arrays.push(Arc::new(Int64Array::from(timestamps.clone())));
             arrays.push(Arc::new(Int64Array::from(timestamps)));
         }
-        
+
         RecordBatch::try_new(Arc::new(schema.clone()), arrays)
             .map_err(|e| anyhow::anyhow!("Failed to create record batch: {}", e))
     }
-    
+
     /// Create record batch with quantized vectors
-    fn create_quantized_record_batch(&mut self, schema: &Schema, config: &TestDataConfig) -> Result<RecordBatch> {
+    fn create_quantized_record_batch(
+        &mut self,
+        schema: &Schema,
+        config: &TestDataConfig,
+    ) -> Result<RecordBatch> {
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-        
+
         // ID column
         let ids: Vec<String> = (0..config.num_rows)
             .map(|i| format!("vec_{:06}", i))
             .collect();
         arrays.push(Arc::new(StringArray::from(ids)));
-        
+
         // Original vector column
         let vectors = self.generate_vectors(config.num_rows, config.vector_dim);
         arrays.push(Arc::new(vectors));
-        
+
         // Quantized columns
         for _quant_type in &config.quantization_types {
             // Skip quantized vectors for now - needs separate implementation
             // TODO: Generate quantized vectors properly
         }
-        
+
         // Metadata column (if included)
         if config.include_metadata {
             let metadata_json: Vec<Option<String>> = (0..config.num_rows)
@@ -414,25 +418,29 @@ impl ParquetTestDataGenerator {
                 .collect();
             arrays.push(Arc::new(StringArray::from(metadata_json)));
         }
-        
+
         RecordBatch::try_new(Arc::new(schema.clone()), arrays)
             .map_err(|e| anyhow::anyhow!("Failed to create quantized record batch: {}", e))
     }
-    
+
     /// Create record batch optimized for filtering
-    fn create_filterable_record_batch(&mut self, schema: &Schema, config: &TestDataConfig) -> Result<RecordBatch> {
+    fn create_filterable_record_batch(
+        &mut self,
+        schema: &Schema,
+        config: &TestDataConfig,
+    ) -> Result<RecordBatch> {
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-        
+
         // ID column
         let ids: Vec<String> = (0..config.num_rows)
             .map(|i| format!("vec_{:06}", i))
             .collect();
         arrays.push(Arc::new(StringArray::from(ids)));
-        
+
         // Vector column
         let vectors = self.generate_vectors(config.num_rows, config.vector_dim);
         arrays.push(Arc::new(vectors));
-        
+
         // Filterable columns
         let categories = vec!["technology", "science", "art", "music", "sports"];
         let category_values: Vec<Option<String>> = (0..config.num_rows)
@@ -445,7 +453,7 @@ impl ParquetTestDataGenerator {
             })
             .collect();
         arrays.push(Arc::new(StringArray::from(category_values)));
-        
+
         let years: Vec<Option<i64>> = (0..config.num_rows)
             .map(|i| {
                 if self.rng.gen_range(0.0..1.0) < config.null_percentage {
@@ -456,7 +464,7 @@ impl ParquetTestDataGenerator {
             })
             .collect();
         arrays.push(Arc::new(Int64Array::from(years)));
-        
+
         let scores: Vec<Option<f32>> = (0..config.num_rows)
             .map(|_| {
                 if self.rng.gen_range(0.0..1.0) < config.null_percentage {
@@ -467,7 +475,7 @@ impl ParquetTestDataGenerator {
             })
             .collect();
         arrays.push(Arc::new(Float32Array::from(scores)));
-        
+
         let active_values: Vec<Option<bool>> = (0..config.num_rows)
             .map(|_| {
                 if self.rng.gen_range(0.0..1.0) < config.null_percentage {
@@ -478,13 +486,12 @@ impl ParquetTestDataGenerator {
             })
             .collect();
         arrays.push(Arc::new(BooleanArray::from(active_values)));
-        
+
         // Tags column (list of strings)
         let all_tags = vec!["AI", "ML", "NLP", "CV", "robotics", "data", "analysis"];
-        let mut tags_builder = arrow_array::builder::ListBuilder::new(
-            arrow_array::builder::StringBuilder::new()
-        );
-        
+        let mut tags_builder =
+            arrow_array::builder::ListBuilder::new(arrow_array::builder::StringBuilder::new());
+
         for _ in 0..config.num_rows {
             if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                 tags_builder.append_null();
@@ -498,7 +505,7 @@ impl ParquetTestDataGenerator {
             }
         }
         arrays.push(Arc::new(tags_builder.finish()));
-        
+
         // Metadata column (if included)
         if config.include_metadata {
             let metadata_json: Vec<Option<String>> = (0..config.num_rows)
@@ -512,54 +519,61 @@ impl ParquetTestDataGenerator {
                 .collect();
             arrays.push(Arc::new(StringArray::from(metadata_json)));
         }
-        
+
         RecordBatch::try_new(Arc::new(schema.clone()), arrays)
             .map_err(|e| anyhow::anyhow!("Failed to create filterable record batch: {}", e))
     }
-    
+
     /// Create empty record batch
     fn create_empty_record_batch(&self, schema: &Schema) -> Result<RecordBatch> {
         let mut arrays: Vec<Arc<dyn Array>> = Vec::new();
-        
+
         for field in schema.fields() {
             let array = arrow_array::new_empty_array(field.data_type());
             arrays.push(array);
         }
-        
+
         RecordBatch::try_new(Arc::new(schema.clone()), arrays)
             .map_err(|e| anyhow::anyhow!("Failed to create empty record batch: {}", e))
     }
-    
+
     /// Generate random vectors
     fn generate_vectors(&mut self, num_vectors: usize, dim: usize) -> FixedSizeListArray {
         let mut vector_builder = arrow_array::builder::FixedSizeListBuilder::new(
             arrow_array::builder::Float32Builder::new(),
             dim as i32,
         );
-        
+
         for _ in 0..num_vectors {
             for _ in 0..dim {
-                vector_builder.values().append_value(self.rng.gen_range(-1.0..1.0));
+                vector_builder
+                    .values()
+                    .append_value(self.rng.gen_range(-1.0..1.0));
             }
             vector_builder.append(true);
         }
-        
+
         vector_builder.finish()
     }
-    
+
     /// Generate quantized vectors array
-    fn generate_quantized_vectors_array(&mut self, num_vectors: usize, dim: usize, quant_type: &QuantizationType) -> FixedSizeListArray {
+    fn generate_quantized_vectors_array(
+        &mut self,
+        num_vectors: usize,
+        dim: usize,
+        quant_type: &QuantizationType,
+    ) -> FixedSizeListArray {
         let quantized_dim = match quant_type {
             QuantizationType::PQ4 => dim / 2,
             QuantizationType::PQ8 => dim,
             QuantizationType::Binary => dim / 8,
         };
-        
+
         let mut vector_builder = arrow_array::builder::FixedSizeListBuilder::new(
             arrow_array::builder::UInt8Builder::new(),
             quantized_dim as i32,
         );
-        
+
         for _ in 0..num_vectors {
             for _ in 0..quantized_dim {
                 let value = match quant_type {
@@ -571,10 +585,10 @@ impl ParquetTestDataGenerator {
             }
             vector_builder.append(true);
         }
-        
+
         vector_builder.finish()
     }
-    
+
     /// Write Parquet file
     fn write_parquet_file(
         &self,
@@ -584,21 +598,21 @@ impl ParquetTestDataGenerator {
     ) -> Result<()> {
         let file = File::create(file_path)?;
         let mut writer = ArrowWriter::try_new(file, Arc::new(schema.clone()), None)?;
-        
+
         for batch in record_batches {
             writer.write(&batch)?;
         }
-        
+
         writer.close()?;
         Ok(())
     }
-    
+
     /// Extract test metadata for verification
     fn extract_test_metadata(&self, config: &TestDataConfig) -> (Vec<String>, Vec<TestMetadata>) {
         let vector_ids: Vec<String> = (0..config.num_rows)
             .map(|i| format!("vec_{:06}", i))
             .collect();
-        
+
         let metadata_values: Vec<TestMetadata> = (0..config.num_rows)
             .map(|i| TestMetadata {
                 category: format!("cat_{}", i % config.metadata_cardinality),
@@ -608,10 +622,10 @@ impl ParquetTestDataGenerator {
                 active: i % 2 == 0,
             })
             .collect();
-        
+
         (vector_ids, metadata_values)
     }
-    
+
     /// Get temp directory path
     pub fn temp_dir_path(&self) -> &std::path::Path {
         self.temp_dir.path()

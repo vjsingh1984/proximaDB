@@ -1,5 +1,5 @@
 //! ARM64 Compatibility Patch
-//! 
+//!
 //! Provides x86 SIMD feature detection stubs for ARM64 platforms to ensure
 //! clean compilation across all architectures.
 

@@ -1,23 +1,22 @@
 //! Matrix Builder Module for RAPTOR Engine
-//! 
+//!
 //! Consolidates all matrix building logic for the Matrix Trinity architecture:
 //! - P² Matrix: Intra-rowgroup pairwise distances
 //! - K² Matrix: Inter-centroid distances  
 //! - P×K Matrix: Vector-to-centroid distances (adaptive coverage)
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMetric};
+use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 
 use super::common::{
-    P2Matrix, InterCentroidMatrix, VectorCentroidMatrix,
-    InterCentroidCompressionMetadata, VectorCentroidCompressionMetadata,
-    VectorCentroidStorageStrategy, CompressionType,
-    HierarchicalData, SparseData, DeltaEntry, SparseEntry,
+    CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,
+    InterCentroidMatrix, P2Matrix, SparseData, SparseEntry, VectorCentroidCompressionMetadata,
+    VectorCentroidMatrix, VectorCentroidStorageStrategy,
 };
 
 /// Matrix builder for RAPTOR's Matrix Trinity architecture
@@ -56,24 +55,22 @@ impl MatrixBuilder {
         }
 
         info!("Building P² matrix for {} vectors", num_vectors);
-        
+
         // Calculate all pairwise distances
         let mut distances = Vec::with_capacity(num_vectors * num_vectors);
         let mut min_dist = f32::MAX;
         let mut max_dist = f32::MIN;
-        
+
         for i in 0..num_vectors {
             for j in 0..num_vectors {
                 let dist = if i == j {
                     0.0
                 } else {
-                    self.distance_compute.calculate_distance(
-                        &vectors[i],
-                        &vectors[j],
-                        &self.distance_metric,
-                    ).raw_value
+                    self.distance_compute
+                        .calculate_distance(&vectors[i], &vectors[j], &self.distance_metric)
+                        .raw_value
                 };
-                
+
                 distances.push(dist);
                 if dist > 0.0 {
                     min_dist = min_dist.min(dist);
@@ -160,13 +157,11 @@ impl MatrixBuilder {
                 let dist = if i == j {
                     0.0
                 } else {
-                    self.distance_compute.calculate_distance(
-                        &centroids[i],
-                        &centroids[j],
-                        &self.distance_metric,
-                    ).raw_value
+                    self.distance_compute
+                        .calculate_distance(&centroids[i], &centroids[j], &self.distance_metric)
+                        .raw_value
                 };
-                
+
                 distances.push(dist);
                 if dist > 0.0 {
                     min_dist = min_dist.min(dist);
@@ -187,7 +182,7 @@ impl MatrixBuilder {
 
         for i in 0..num_centroids {
             let row_start = compressed_data.len();
-            
+
             for j in 0..num_centroids {
                 let dist = distances[i * num_centroids + j];
                 let quantized = if dist == 0.0 {
@@ -197,7 +192,7 @@ impl MatrixBuilder {
                 };
                 compressed_data.extend_from_slice(&quantized.to_le_bytes());
             }
-            
+
             row_compressed_sizes.push((compressed_data.len() - row_start) as u16);
         }
 
@@ -242,13 +237,13 @@ impl MatrixBuilder {
     ) -> Result<VectorCentroidMatrix> {
         let num_vectors = vectors.len();
         let num_centroids = centroids.len();
-        
+
         if num_vectors == 0 || num_centroids == 0 {
             return Ok(VectorCentroidMatrix {
                 rowgroup_id,
                 num_vectors: 0,
                 num_centroids: 0,
-                storage_strategy: VectorCentroidStorageStrategy::Sparse,  // Default to sparse for empty
+                storage_strategy: VectorCentroidStorageStrategy::Sparse, // Default to sparse for empty
                 compressed_data: Vec::new(),
                 compression_metadata: VectorCentroidCompressionMetadata {
                     centroid_stats: Vec::new(),
@@ -271,8 +266,13 @@ impl MatrixBuilder {
         let k = num_centroids as f32;
         let d = dimension as f32;
         let coverage = (0.1_f32).max(1.0_f32.min((-2.0 * (k / d + 1.0).ln()).exp()));
-        
-        debug!("Adaptive P×K coverage: {:.1}% for k={}, d={}", coverage * 100.0, k, d);
+
+        debug!(
+            "Adaptive P×K coverage: {:.1}% for k={}, d={}",
+            coverage * 100.0,
+            k,
+            d
+        );
 
         // Determine storage strategy based on coverage
         let storage_strategy = if coverage >= 0.8 {
@@ -289,25 +289,24 @@ impl MatrixBuilder {
         let mut global_max = f32::MIN;
         let mut global_sum = 0.0;
         let mut count = 0;
-        
+
         // Strategy-specific data
         let mut hierarchical_data: Option<HierarchicalData> = None;
         let mut sparse_data: Option<SparseData> = None;
-        
+
         match storage_strategy {
             VectorCentroidStorageStrategy::Full => {
                 // Store all P×K distances in compressed form
                 for i in 0..num_vectors {
                     for j in 0..num_centroids {
-                        let dist = self.distance_compute.calculate_distance(
-                            &vectors[i],
-                            &centroids[j],
-                            &self.distance_metric,
-                        ).raw_value;
-                        
+                        let dist = self
+                            .distance_compute
+                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .raw_value;
+
                         let quantized = ((dist * 65535.0).min(65535.0)) as u16;
                         compressed_data.extend_from_slice(&quantized.to_le_bytes());
-                        
+
                         global_min = global_min.min(dist);
                         global_max = global_max.max(dist);
                         global_sum += dist;
@@ -319,45 +318,44 @@ impl MatrixBuilder {
                 // Calculate mean distances per centroid
                 let mut mean_distances = vec![0.0; num_centroids];
                 let mut delta_entries = Vec::new();
-                
+
                 for j in 0..num_centroids {
                     let mut sum = 0.0;
                     for i in 0..num_vectors {
-                        let dist = self.distance_compute.calculate_distance(
-                            &vectors[i],
-                            &centroids[j],
-                            &self.distance_metric,
-                        ).raw_value;
+                        let dist = self
+                            .distance_compute
+                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .raw_value;
                         sum += dist;
                     }
                     mean_distances[j] = sum / num_vectors as f32;
                 }
-                
+
                 // Store significant deltas
                 for i in 0..num_vectors {
                     for j in 0..num_centroids {
-                        let dist = self.distance_compute.calculate_distance(
-                            &vectors[i],
-                            &centroids[j],
-                            &self.distance_metric,
-                        ).raw_value;
-                        
+                        let dist = self
+                            .distance_compute
+                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .raw_value;
+
                         let delta = dist - mean_distances[j];
-                        if delta.abs() > 0.1 {  // Significant delta threshold
+                        if delta.abs() > 0.1 {
+                            // Significant delta threshold
                             delta_entries.push(DeltaEntry {
                                 vector_index: i as u32,
                                 centroid_index: j as u16,
                                 delta_value: delta,
                             });
                         }
-                        
+
                         global_min = global_min.min(dist);
                         global_max = global_max.max(dist);
                         global_sum += dist;
                         count += 1;
                     }
                 }
-                
+
                 hierarchical_data = Some(HierarchicalData {
                     mean_distances,
                     sparse_deltas: delta_entries,
@@ -365,25 +363,26 @@ impl MatrixBuilder {
             }
             VectorCentroidStorageStrategy::Sparse => {
                 // Store only top-k closest centroids per vector
-                let k = ((coverage * num_centroids as f32) as usize).max(3).min(num_centroids);
+                let k = ((coverage * num_centroids as f32) as usize)
+                    .max(3)
+                    .min(num_centroids);
                 let mut sparse_entries = Vec::new();
-                
+
                 for i in 0..num_vectors {
                     let mut distances: Vec<(usize, f32)> = centroids
                         .iter()
                         .enumerate()
                         .map(|(j, centroid)| {
-                            let dist = self.distance_compute.calculate_distance(
-                                &vectors[i],
-                                centroid,
-                                &self.distance_metric,
-                            ).raw_value;
+                            let dist = self
+                                .distance_compute
+                                .calculate_distance(&vectors[i], centroid, &self.distance_metric)
+                                .raw_value;
                             (j, dist)
                         })
                         .collect();
-                    
+
                     distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                    
+
                     // For SparseEntry, we need to store individual entries per centroid
                     for &(centroid_idx, dist) in distances.iter().take(k) {
                         let quantized = ((dist * 255.0 / global_max.max(1.0)).min(255.0)) as u8;
@@ -392,24 +391,28 @@ impl MatrixBuilder {
                             centroid_idx: centroid_idx as u32,
                             quantized_distance: quantized,
                         });
-                        
+
                         global_min = global_min.min(dist);
                         global_max = global_max.max(dist);
                         global_sum += dist;
                         count += 1;
                     }
                 }
-                
+
                 sparse_data = Some(SparseData {
                     top_k: k as u32,
                     entries: sparse_entries,
-                    boundary_bloom_filter: None,  // Can be added later
+                    boundary_bloom_filter: None, // Can be added later
                     sparsity_ratio: (k as f32 / num_centroids as f32),
                 });
             }
         }
 
-        let global_mean = if count > 0 { global_sum / count as f32 } else { 0.5 };
+        let global_mean = if count > 0 {
+            global_sum / count as f32
+        } else {
+            0.5
+        };
 
         debug!(
             "P×K matrix built with {:?} strategy: {} bytes for {} entries",
@@ -443,12 +446,15 @@ impl MatrixBuilder {
         centroid_idx: usize,
     ) -> Result<Vec<f32>> {
         if centroid_idx >= matrix.num_centroids as usize {
-            return Err(anyhow::anyhow!("Centroid index {} out of bounds", centroid_idx));
+            return Err(anyhow::anyhow!(
+                "Centroid index {} out of bounds",
+                centroid_idx
+            ));
         }
 
         let row_size = matrix.compression_metadata.row_compressed_sizes[centroid_idx] as usize;
         let offset = matrix.lookup_table[centroid_idx] as usize;
-        
+
         let row_data = &matrix.compressed_data[offset..offset + row_size];
         let mut distances = Vec::with_capacity(matrix.num_centroids as usize);
 
@@ -456,17 +462,14 @@ impl MatrixBuilder {
         let scale_factor = matrix.compression_metadata.scale_factor;
 
         for i in 0..matrix.num_centroids as usize {
-            let quantized = u16::from_le_bytes([
-                row_data[i * 2],
-                row_data[i * 2 + 1],
-            ]);
-            
+            let quantized = u16::from_le_bytes([row_data[i * 2], row_data[i * 2 + 1]]);
+
             let dist = if quantized == 0 {
                 0.0
             } else {
                 quantized as f32 / scale_factor + min_dist
             };
-            
+
             distances.push(dist);
         }
 
@@ -481,15 +484,11 @@ mod tests {
     #[test]
     fn test_p2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let hardware = get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
-        
-        let builder = MatrixBuilder::new(
-            distance_compute,
-            hardware,
-            DistanceMetric::Cosine,
-        );
+
+        let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Cosine);
 
         let vectors = vec![
             vec![1.0, 0.0, 0.0],
@@ -506,21 +505,13 @@ mod tests {
     #[test]
     fn test_k2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let hardware = get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
-        
-        let builder = MatrixBuilder::new(
-            distance_compute,
-            hardware,
-            DistanceMetric::Euclidean,
-        );
 
-        let centroids = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-            vec![0.5, 0.5],
-        ];
+        let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Euclidean);
+
+        let centroids = vec![vec![1.0, 0.0], vec![0.0, 1.0], vec![0.5, 0.5]];
 
         let matrix = builder.build_k2_matrix(&centroids, 2).unwrap();
         assert_eq!(matrix.num_centroids, 3);
@@ -531,23 +522,25 @@ mod tests {
     #[test]
     fn test_adaptive_pxk_coverage() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         // Test coverage formula for different k and d values
         let test_cases = vec![
             (10, 100, 0.1),   // Low k/d ratio -> minimum coverage
-            (100, 100, 0.37), // k = d -> moderate coverage  
+            (100, 100, 0.37), // k = d -> moderate coverage
             (1000, 100, 0.9), // High k/d ratio -> high coverage
         ];
 
         for (k, d, expected_min) in test_cases {
-            let coverage = (0.1_f32).max(1.0_f32.min(
-                (-2.0 * ((k as f32) / (d as f32) + 1.0).ln()).exp()
-            ));
-            
+            let coverage =
+                (0.1_f32).max(1.0_f32.min((-2.0 * ((k as f32) / (d as f32) + 1.0).ln()).exp()));
+
             assert!(
                 coverage >= expected_min,
                 "Coverage {:.2} should be >= {:.2} for k={}, d={}",
-                coverage, expected_min, k, d
+                coverage,
+                expected_min,
+                k,
+                d
             );
         }
     }

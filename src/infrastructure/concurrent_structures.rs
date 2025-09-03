@@ -24,33 +24,33 @@
 //! - ConcurrentMapping: Bidirectional key mapping
 //! - TypedStorage: Type-safe storage with validation
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dashmap::DashMap;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 /// Generic concurrent storage with automatic metrics tracking
 /// Used by both cache systems and index implementations
-pub struct ConcurrentStorage<K, V> 
+pub struct ConcurrentStorage<K, V>
 where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
     /// Main storage using DashMap for lock-free operations
     storage: DashMap<K, StoredItem<V>>,
-    
+
     /// Automatic metrics tracking
     metrics: AtomicMetrics,
-    
+
     /// Optional capacity limit (0 = unlimited)
     max_capacity: usize,
-    
-    /// Optional memory limit in bytes (0 = unlimited) 
+
+    /// Optional memory limit in bytes (0 = unlimited)
     max_memory_bytes: usize,
-    
+
     /// Optional custom memory estimator (not debuggable)
     memory_estimator: Option<Box<dyn Fn(&K, &V) -> usize + Send + Sync>>,
 }
@@ -145,7 +145,7 @@ where
     }
 
     /// Set custom memory estimator
-    pub fn with_memory_estimator<F>(mut self, estimator: F) -> Self 
+    pub fn with_memory_estimator<F>(mut self, estimator: F) -> Self
     where
         F: Fn(&K, &V) -> usize + Send + Sync + 'static,
     {
@@ -201,17 +201,17 @@ where
     /// Get item with access tracking
     pub fn get(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         if let Some(mut entry) = self.storage.get_mut(key) {
             // Update access metadata
             entry.last_accessed = Instant::now();
             entry.access_count.fetch_add(1, Ordering::Relaxed);
-            
+
             let value = entry.value.clone();
-            
+
             self.metrics.record_hit();
             self.metrics.record_success(start.elapsed());
-            
+
             Some(value)
         } else {
             self.metrics.record_miss();
@@ -223,7 +223,7 @@ where
     /// Remove item
     pub fn remove(&self, key: &K) -> Option<V> {
         let start = Instant::now();
-        
+
         if let Some((_, item)) = self.storage.remove(key) {
             self.metrics.decrement_entries();
             self.metrics.add_memory_bytes(-(item.size_bytes as i64));
@@ -252,7 +252,10 @@ where
 
     /// Get all keys
     pub fn keys(&self) -> Vec<K> {
-        self.storage.iter().map(|entry| entry.key().clone()).collect()
+        self.storage
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Get metrics snapshot
@@ -264,7 +267,7 @@ where
     pub fn clear(&self) {
         let count = self.storage.len();
         let memory = self.metrics.memory_bytes();
-        
+
         self.storage.clear();
         self.metrics.add_entries(-(count as i64));
         self.metrics.add_memory_bytes(-(memory as i64));
@@ -353,9 +356,11 @@ impl AtomicMetrics {
 
     pub fn add_memory_bytes(&self, delta: i64) {
         if delta >= 0 {
-            self.memory_bytes.fetch_add(delta as usize, Ordering::Relaxed);
+            self.memory_bytes
+                .fetch_add(delta as usize, Ordering::Relaxed);
         } else {
-            self.memory_bytes.fetch_sub((-delta) as usize, Ordering::Relaxed);
+            self.memory_bytes
+                .fetch_sub((-delta) as usize, Ordering::Relaxed);
         }
     }
 
@@ -371,12 +376,14 @@ impl AtomicMetrics {
 
     pub fn record_success(&self, duration: Duration) {
         self.successful.fetch_add(1, Ordering::Relaxed);
-        self.total_time_ns.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.total_time_ns
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     pub fn record_failure(&self, duration: Duration) {
         self.failed.fetch_add(1, Ordering::Relaxed);
-        self.total_time_ns.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.total_time_ns
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     pub fn entries(&self) -> usize {
@@ -389,20 +396,26 @@ impl AtomicMetrics {
 
     pub fn hit_rate(&self) -> f64 {
         let total = self.operations.load(Ordering::Relaxed);
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         self.hits.load(Ordering::Relaxed) as f64 / total as f64
     }
 
     pub fn record_operation(&self, _op_name: &str, duration: Duration) {
         self.operations.fetch_add(1, Ordering::Relaxed);
         self.successful.fetch_add(1, Ordering::Relaxed);
-        self.total_time_ns.fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
+        self.total_time_ns
+            .fetch_add(duration.as_nanos() as u64, Ordering::Relaxed);
     }
 
     pub fn avg_operation_time(&self) -> Duration {
-        let total_ops = self.successful.load(Ordering::Relaxed) + self.failed.load(Ordering::Relaxed);
-        if total_ops == 0 { return Duration::ZERO; }
-        
+        let total_ops =
+            self.successful.load(Ordering::Relaxed) + self.failed.load(Ordering::Relaxed);
+        if total_ops == 0 {
+            return Duration::ZERO;
+        }
+
         let avg_ns = self.total_time_ns.load(Ordering::Relaxed) / total_ops;
         Duration::from_nanos(avg_ns)
     }
@@ -436,8 +449,7 @@ impl Default for AtomicMetrics {
 }
 
 /// Snapshot of metrics at a point in time
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MetricsSnapshot {
     pub entries: usize,
     pub memory_bytes: usize,
@@ -486,10 +498,10 @@ where
 
         self.forward.insert(key1.clone(), key2.clone());
         self.reverse.insert(key2, key1);
-        
+
         self.metrics.increment_entries();
         self.metrics.record_success(start.elapsed());
-        
+
         Ok(())
     }
 
@@ -633,21 +645,21 @@ mod tests {
     #[test]
     fn test_concurrent_storage() {
         let storage = ConcurrentStorage::new();
-        
+
         // Test insert
         assert!(storage.insert("key1", "value1").unwrap().is_none());
         assert_eq!(storage.len(), 1);
-        
+
         // Test get with metrics
         assert_eq!(storage.get(&key), Some("value1"));
         let metrics = storage.metrics();
         assert_eq!(metrics.hits, 1);
-        
+
         // Test miss
         assert_eq!(storage.get(&key), None);
         let metrics = storage.metrics();
         assert_eq!(metrics.misses, 1);
-        
+
         // Test remove
         assert_eq!(storage.remove(&"key1"), Some("value1"));
         assert_eq!(storage.len(), 0);
@@ -656,17 +668,17 @@ mod tests {
     #[test]
     fn test_concurrent_mapping() {
         let mapping = ConcurrentMapping::new();
-        
+
         // Test insert
         mapping.insert("external1", 1usize).unwrap();
         mapping.insert("external2", 2usize).unwrap();
-        
+
         // Test forward lookup
         assert_eq!(mapping.get_forward(&"external1"), Some(1));
-        
+
         // Test reverse lookup
         assert_eq!(mapping.get_reverse(&2), Some("external2"));
-        
+
         // Test remove
         assert_eq!(mapping.remove_forward(&"external1"), Some(1));
         assert_eq!(mapping.len(), 1);
@@ -675,11 +687,11 @@ mod tests {
     #[test]
     fn test_storage_with_limits() {
         let storage = ConcurrentStorage::with_capacity(2);
-        
+
         // Insert up to capacity
         assert!(storage.insert(1, "value1").is_ok());
         assert!(storage.insert(2, "value2").is_ok());
-        
+
         // Exceed capacity
         assert!(storage.insert(3, "value3").is_err());
     }

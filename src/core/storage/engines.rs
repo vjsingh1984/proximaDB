@@ -1,6 +1,5 @@
 //! Storage engines and distance metrics
 
-
 // Use the canonical DistanceMetric from compute distance module
 pub use crate::compute::distance_computation::DistanceMetric;
 
@@ -17,20 +16,17 @@ impl StorageEngine {
             StorageEngine::Hybrid,
         ]
     }
-    
+
     /// Check if engine supports compression
     pub fn supports_compression(&self) -> bool {
-        matches!(
-            self, 
-            StorageEngine::Viper | StorageEngine::Sst
-        )
+        matches!(self, StorageEngine::Viper | StorageEngine::Sst)
     }
-    
+
     /// Check if engine supports transactions
     pub fn supports_transactions(&self) -> bool {
         matches!(self, StorageEngine::Sst | StorageEngine::Hybrid)
     }
-    
+
     /// Check if engine is persistent
     pub fn is_persistent(&self) -> bool {
         // All current engines are persistent

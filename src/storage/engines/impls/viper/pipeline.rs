@@ -16,6 +16,7 @@
 //! - **ML-Guided Compaction**: Background optimization with learned patterns
 //! - **Performance Monitoring**: Comprehensive statistics and analytics
 
+use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema;
@@ -23,18 +24,17 @@ use chrono::{DateTime, Utc};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
-use std::collections::{HashMap, VecDeque};
 use std::cmp::Ordering;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio::time::{Duration, Instant};
-use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use tracing::{debug, info, warn};
 
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 // Quantization now handled by unified compute module
-use crate::core::{String, VectorRecord};
 use crate::core::proto_metadata_helper;
+use crate::core::{String, VectorRecord};
 use crate::proto::proximadb::metadata_item::Value as MetadataValue;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -209,9 +209,13 @@ pub enum CustomComparisonType {
 #[derive(Debug, Clone)]
 pub enum CompressionAlgorithm {
     Snappy,
-    Zstd { level: u8 },
+    Zstd {
+        level: u8,
+    },
     Lz4,
-    Brotli { level: u8 },
+    Brotli {
+        level: u8,
+    },
     /// Mixed compression strategy - optimal per-column compression
     /// Uses different algorithms based on column data type for maximum efficiency
     Mixed,
@@ -245,7 +249,8 @@ pub struct VectorRecordProcessor {
     // pub ml_clustering: Arc<Mutex<MLClusteringEngine>>, // Moved to AXIS
 
     /// Vector quantization engine for storage optimization
-    pub quantization: Arc<Mutex<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
+    pub quantization:
+        Arc<Mutex<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
 
     /// Processing statistics
     pub stats: Arc<RwLock<ProcessingStats>>,
@@ -602,7 +607,10 @@ impl ViperPipeline {
         );
 
         // Step 1: Process records using template method pattern
-        let processed_batch = self.processor.process_records(collection_id, records).await?;
+        let processed_batch = self
+            .processor
+            .process_records(collection_id, records)
+            .await?;
 
         // Step 2: Flush processed batch to storage
         let flush_result = self
@@ -680,30 +688,43 @@ impl VectorRecordProcessor {
             schema_adapter,
             // ml_clustering, // Moved to AXIS
             quantization: {
-                let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
-                let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
-                let unified_engine = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-                    distance_compute,
-                    codebook_store,
-                ));
+                let distance_compute = Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                );
+                let codebook_store =
+                    Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+                let unified_engine = Arc::new(
+                    crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                        distance_compute,
+                        codebook_store,
+                    ),
+                );
                 // Create distance compute engine
-                let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
-                ));
+                let distance_compute = Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                        crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    ),
+                );
                 // Create quantization config
                 let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
-                Arc::new(Mutex::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                    unified_engine,
-                    distance_compute,
-                    quant_config,
-                )))
+                Arc::new(Mutex::new(
+                    crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+                        unified_engine,
+                        distance_compute,
+                        quant_config,
+                    ),
+                ))
             },
             stats: Arc::new(RwLock::new(ProcessingStats::default())),
         })
     }
 
     /// Process records using template method pattern
-    pub async fn process_records(&self, collection_id: &str, mut records: Vec<VectorRecord>) -> Result<RecordBatch> {
+    pub async fn process_records(
+        &self,
+        collection_id: &str,
+        mut records: Vec<VectorRecord>,
+    ) -> Result<RecordBatch> {
         if records.is_empty() {
             return Err(anyhow::anyhow!("No records to process"));
         }
@@ -768,28 +789,32 @@ impl VectorRecordProcessor {
         fields: &[String],
     ) -> std::cmp::Ordering {
         for field in fields {
-            let a_val = a.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
-            let b_val = b.metadata.iter().find(|item| &item.key == field).map(|item| &item.value);
+            let a_val = a
+                .metadata
+                .iter()
+                .find(|item| &item.key == field)
+                .map(|item| &item.value);
+            let b_val = b
+                .metadata
+                .iter()
+                .find(|item| &item.key == field)
+                .map(|item| &item.value);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
                     // Convert metadata values to JSON for comparison
                     let a_json = match a_meta {
                         Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(MetadataValue::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
-                        },
+                        Some(MetadataValue::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
                         Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     };
                     let b_json = match b_meta {
                         Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(MetadataValue::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
-                        },
+                        Some(MetadataValue::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                            .map(serde_json::Value::Number)
+                            .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
                         Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     };
@@ -818,9 +843,7 @@ impl VectorRecordProcessor {
             // Numeric comparisons
             (Value::Number(a_num), Value::Number(b_num)) => {
                 match (a_num.as_f64(), b_num.as_f64()) {
-                    (Some(a_f), Some(b_f)) => {
-                        a_f.partial_cmp(&b_f).unwrap_or(Ordering::Equal)
-                    }
+                    (Some(a_f), Some(b_f)) => a_f.partial_cmp(&b_f).unwrap_or(Ordering::Equal),
                     _ => Ordering::Equal,
                 }
             }
@@ -894,7 +917,9 @@ impl VectorRecordProcessor {
         );
 
         // Stage 1: Simple k-means clustering based on vector magnitude and first dimensions
-        let clusters = self.simple_vector_clustering(records, cluster_count).await?;
+        let clusters = self
+            .simple_vector_clustering(records, cluster_count)
+            .await?;
 
         // Stage 2: Sort within each cluster using inner strategy
         for cluster_indices in clusters {
@@ -909,7 +934,8 @@ impl VectorRecordProcessor {
                 .collect();
 
             // Sort within cluster using inner strategy
-            self.apply_sorting_strategy(&mut cluster_records, inner_strategy).await?;
+            self.apply_sorting_strategy(&mut cluster_records, inner_strategy)
+                .await?;
 
             // Write back sorted cluster records
             for (i, &record_idx) in cluster_indices.iter().enumerate() {
@@ -1015,7 +1041,9 @@ impl VectorRecordProcessor {
         let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.to_vec()).collect();
 
         // Apply quantization to all vectors using the correct method
-        let quantization_result = quantization_engine.quantize_batch_with_level(&vectors, quantization_level).await;
+        let quantization_result = quantization_engine
+            .quantize_batch_with_level(&vectors, quantization_level)
+            .await;
         match quantization_result {
             Ok(storage_quantized_data) => {
                 debug!(
@@ -1024,8 +1052,9 @@ impl VectorRecordProcessor {
                 );
 
                 // Convert StorageQuantizedData to QuantizedVector
-                let quantized_vectors: Vec<crate::compute::quantization::unified::QuantizedVector> = 
-                    storage_quantized_data.into_iter()
+                let quantized_vectors: Vec<crate::compute::quantization::unified::QuantizedVector> =
+                    storage_quantized_data
+                        .into_iter()
                         .filter_map(|data| data.primary)
                         .collect();
 
@@ -1066,30 +1095,31 @@ impl VectorRecordProcessor {
         );
 
         // Stage 1: Apply quantization if configured
-        let quantized_vectors = if let Some(quantization_level) = self.config.quantization_level.clone() {
-            match self
-                .apply_vector_quantization(records, quantization_level)
-                .await
-            {
-                Ok(qvecs) if !qvecs.is_empty() => {
-                    info!("Quantized {} vectors for hybrid storage", qvecs.len());
-                    Some(qvecs)
+        let quantized_vectors =
+            if let Some(quantization_level) = self.config.quantization_level.clone() {
+                match self
+                    .apply_vector_quantization(records, quantization_level)
+                    .await
+                {
+                    Ok(qvecs) if !qvecs.is_empty() => {
+                        info!("Quantized {} vectors for hybrid storage", qvecs.len());
+                        Some(qvecs)
+                    }
+                    Ok(_) => {
+                        debug!("No vectors were quantized (model training may have failed)");
+                        None
+                    }
+                    Err(e) => {
+                        warn!(
+                            "⚠️ Quantization failed: {}, proceeding without quantization",
+                            e
+                        );
+                        None
+                    }
                 }
-                Ok(_) => {
-                    debug!("No vectors were quantized (model training may have failed)");
-                    None
-                }
-                Err(e) => {
-                    warn!(
-                        "⚠️ Quantization failed: {}, proceeding without quantization",
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         // Stage 2: Convert to RecordBatch (placeholder - would be actual implementation)
         let _schema = Arc::new(arrow_schema::Schema::new(vec![
@@ -1118,9 +1148,7 @@ impl VectorRecordProcessor {
         let id_array = arrow_array::StringArray::from(
             records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         );
-        let collection_array = arrow_array::StringArray::from(
-            vec![collection_id; records.len()]
-        );
+        let collection_array = arrow_array::StringArray::from(vec![collection_id; records.len()]);
 
         // Simplified vector column (would be properly implemented with List array)
         let vector_count_array = arrow_array::UInt32Array::from(
@@ -1207,9 +1235,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| {
                     let mag_a: f32 = a.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    mag_a
-                        .partial_cmp(&mag_b)
-                        .unwrap_or(Ordering::Equal)
+                    mag_a.partial_cmp(&mag_b).unwrap_or(Ordering::Equal)
                 });
             }
 
@@ -1227,9 +1253,7 @@ impl VectorRecordProcessor {
 
             CustomComparisonType::CollectionGrouped => {
                 // Since all records are from the same collection, just sort by timestamp
-                records.sort_by(|a, b| {
-                    a.timestamp.cmp(&b.timestamp)
-                });
+                records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
 
             CustomComparisonType::CompressionOptimal => {
@@ -1325,9 +1349,7 @@ impl VectorRecordProcessor {
                     // Primary: sort by vector magnitude
                     let mag_a: f32 = a.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    let mag_cmp = mag_a
-                        .partial_cmp(&mag_b)
-                        .unwrap_or(Ordering::Equal);
+                    let mag_cmp = mag_a.partial_cmp(&mag_b).unwrap_or(Ordering::Equal);
 
                     if mag_cmp != Ordering::Equal {
                         return mag_cmp;
@@ -1763,9 +1785,7 @@ impl VectorProcessor for VectorRecordProcessor {
                     // Primary: sort by vector magnitude
                     let mag_a: f32 = a.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                     let mag_b: f32 = b.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    let mag_cmp = mag_a
-                        .partial_cmp(&mag_b)
-                        .unwrap_or(Ordering::Equal);
+                    let mag_cmp = mag_a.partial_cmp(&mag_b).unwrap_or(Ordering::Equal);
 
                     if mag_cmp != Ordering::Equal {
                         return mag_cmp;
@@ -1832,8 +1852,13 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     Ordering::Equal
                 });
-                tracing::info!("🎯 Sorted {} records using CompositeOptimal strategy (ID: {}, fields: {:?}, timestamp: {})", 
-                              record_count, include_id, metadata_fields, include_timestamp);
+                tracing::info!(
+                    "🎯 Sorted {} records using CompositeOptimal strategy (ID: {}, fields: {:?}, timestamp: {})",
+                    record_count,
+                    include_id,
+                    metadata_fields,
+                    include_timestamp
+                );
             }
 
             SortingStrategy::ClusterThenSort {
@@ -1843,7 +1868,7 @@ impl VectorProcessor for VectorRecordProcessor {
                 // For ClusterThenSort, use simplified hash-based clustering instead of async ML clustering
                 // to avoid runtime issues in synchronous context
                 let simplified_clusters = self.fallback_hash_clustering(records, *cluster_count)?;
-                
+
                 // Sort within each cluster using inner strategy
                 for cluster_indices in simplified_clusters {
                     if cluster_indices.len() <= 1 {
@@ -1864,7 +1889,7 @@ impl VectorProcessor for VectorRecordProcessor {
                         records[record_idx] = cluster_records[i].clone();
                     }
                 }
-                
+
                 tracing::info!(
                     "Applied ClusterThenSort to {} records ({} clusters, inner: {:?})",
                     record_count,
@@ -2167,18 +2192,18 @@ impl ParquetFlusher {
                     // No quantization - skip
                     continue;
                 }
-                
+
                 Some(crate::compute::quantization::types::QuantizationLevel::None(_)) => {
                     // No quantization - skip
                     continue;
                 }
-                
+
                 Some(crate::compute::quantization::types::QuantizationLevel::Uniform(_)) => {
                     // Uniform quantization - handle similar to INT8
                     // TODO: Implement uniform quantization handling
                     continue;
                 }
-                
+
                 Some(crate::compute::quantization::types::QuantizationLevel::Binary(_)) => {
                     // Binary quantization - handle as binary data
                     // TODO: Implement binary quantization handling
@@ -2234,10 +2259,10 @@ impl ParquetFlusher {
                 None | Some(QuantizationLevel::None(_)) => (32, false), // Default to FP32
             };
             bits_per_value.push(bits);
-            
+
             // Default error value - reconstruction error not tracked in current structure
             errors.push(0.0);
-            
+
             is_pq.push(is_product_quant);
         }
 
@@ -2451,8 +2476,12 @@ impl CompactionEngine {
                         op.status = CompactionStatus::Completed;
                         op.progress = 1.0;
 
-                        tracing::info!("Compaction task {} completed for collection {}: {} entries processed", 
-                                      task.task_id, task.collection_id, compaction_result.entries_processed);
+                        tracing::info!(
+                            "Compaction task {} completed for collection {}: {} entries processed",
+                            task.task_id,
+                            task.collection_id,
+                            compaction_result.entries_processed
+                        );
 
                         // Update statistics with actual results
                         {
@@ -2506,9 +2535,9 @@ impl CompactionEngine {
                 Self::execute_file_merging(task, *target_file_size_mb, *max_files_per_merge).await?
             }
 
-            CompactionType::Reclustering {
-                new_cluster_count,
-            } => Self::execute_reclustering(task, *new_cluster_count).await?,
+            CompactionType::Reclustering { new_cluster_count } => {
+                Self::execute_reclustering(task, *new_cluster_count).await?
+            }
 
             CompactionType::FeatureReorganization {
                 important_features,
@@ -2522,11 +2551,8 @@ impl CompactionEngine {
                 .await?
             }
 
-            CompactionType::CompressionOptimization {
-                target_algorithm,
-            } => {
-                Self::execute_compression_optimization(task, target_algorithm)
-                    .await?
+            CompactionType::CompressionOptimization { target_algorithm } => {
+                Self::execute_compression_optimization(task, target_algorithm).await?
             }
 
             CompactionType::SortedRewrite {
@@ -2621,10 +2647,7 @@ impl CompactionEngine {
         new_cluster_count: usize,
         // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
-        tracing::debug!(
-            "Reclustering: {} clusters",
-            new_cluster_count
-        );
+        tracing::debug!("Reclustering: {} clusters", new_cluster_count);
 
         // Simulate ML-based reclustering
         let entries_processed = new_cluster_count * 500; // Estimate per cluster
@@ -2688,10 +2711,7 @@ impl CompactionEngine {
         target_algorithm: &CompressionAlgorithm,
         // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
-        tracing::debug!(
-            "Compression optimization: {:?}",
-            target_algorithm
-        );
+        tracing::debug!("Compression optimization: {:?}", target_algorithm);
 
         // Simulate compression optimization based on algorithm
         let compression_improvement = match target_algorithm {
@@ -3009,23 +3029,32 @@ impl CompactionEngine {
             schema_adapter,
             // ml_clustering: Arc::new(Mutex::new(MLClusteringEngine::new(KMeansConfig::default()))), // Moved to AXIS
             quantization: {
-                let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
-                let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
-                let unified_engine = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-                    distance_compute,
-                    codebook_store,
-                ));
+                let distance_compute = Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                );
+                let codebook_store =
+                    Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+                let unified_engine = Arc::new(
+                    crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                        distance_compute,
+                        codebook_store,
+                    ),
+                );
                 // Create distance compute engine
-                let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
-                ));
+                let distance_compute = Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                        crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                    ),
+                );
                 // Create quantization config
                 let quant_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
-                Arc::new(Mutex::new(crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                    unified_engine,
-                    distance_compute,
-                    quant_config,
-                )))
+                Arc::new(Mutex::new(
+                    crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+                        unified_engine,
+                        distance_compute,
+                        quant_config,
+                    ),
+                ))
             },
             stats: Arc::new(RwLock::new(ProcessingStats::default())),
         };
@@ -3482,7 +3511,9 @@ impl Default for ViperPipelineConfig {
                 batch_size: 1000,
                 compression: true,
                 sorting_strategy: SortingStrategy::ByTimestamp,
-                quantization_level: Some(crate::compute::quantization::types::UnifiedQuantizationLevel::Int8), // Default to 8-bit quantization
+                quantization_level: Some(
+                    crate::compute::quantization::types::UnifiedQuantizationLevel::Int8,
+                ), // Default to 8-bit quantization
             },
             flushing_config: FlushingConfig {
                 compression_algorithm: CompressionAlgorithm::Mixed, // Use Mixed as the recommended default

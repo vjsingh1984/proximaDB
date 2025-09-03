@@ -16,15 +16,15 @@
 
 //! Engine-specific configuration for compaction and storage operations
 
-use serde::{Deserialize, Serialize};
 use super::compaction_utils::StorageEngineType;
+use serde::{Deserialize, Serialize};
 
 /// Configuration for engine-specific compaction behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineCompactionConfig {
     /// Base compaction configuration
     pub base: crate::core::config::CompactionConfig,
-    
+
     /// Engine-specific settings
     pub engine_specific: EngineSpecificConfig,
 }
@@ -45,13 +45,13 @@ pub enum EngineSpecificConfig {
 pub struct SstCompactionConfig {
     /// Enable bloom filter merging during compaction
     pub merge_bloom_filters: bool,
-    
+
     /// Three-stage filter optimization
     pub use_three_stage_filter: bool,
-    
+
     /// Block size for SST files (in KB)
     pub block_size_kb: usize,
-    
+
     /// Maximum file size for L0 (in MB)
     pub max_l0_file_size_mb: usize,
 }
@@ -72,13 +72,13 @@ impl Default for SstCompactionConfig {
 pub struct ViperCompactionConfig {
     /// Use columnar optimization during compaction
     pub columnar_optimization: bool,
-    
+
     /// Row group size for Parquet files
     pub row_group_size: usize,
-    
+
     /// Enable dictionary encoding
     pub dictionary_encoding: bool,
-    
+
     /// Compression codec for Parquet
     pub compression_codec: String,
 }
@@ -99,13 +99,13 @@ impl Default for ViperCompactionConfig {
 pub struct NovaCompactionConfig {
     /// Enable hierarchical compaction
     pub hierarchical_compaction: bool,
-    
+
     /// Use zone maps for filtering
     pub use_zone_maps: bool,
-    
+
     /// Quantization level for compacted data
     pub quantization_level: String,
-    
+
     /// Streaming buffer size (in MB)
     pub streaming_buffer_mb: usize,
 }
@@ -126,13 +126,13 @@ impl Default for NovaCompactionConfig {
 pub struct SwiftCompactionConfig {
     /// Superblock size (in MB)
     pub superblock_size_mb: usize,
-    
+
     /// Enable hierarchical blocks
     pub use_hierarchical_blocks: bool,
-    
+
     /// ID index optimization
     pub optimize_id_index: bool,
-    
+
     /// Progressive search support
     pub enable_progressive_search: bool,
 }
@@ -153,13 +153,13 @@ impl Default for SwiftCompactionConfig {
 pub struct PrismCompactionConfig {
     /// Memory optimization level
     pub memory_optimization_level: String,
-    
+
     /// FastLanes encoding for vectors
     pub use_fastlanes_encoding: bool,
-    
+
     /// Tree rebalancing threshold
     pub tree_rebalance_threshold: f64,
-    
+
     /// Cache warmup after compaction
     pub cache_warmup: bool,
 }
@@ -180,16 +180,16 @@ impl Default for PrismCompactionConfig {
 pub struct RaptorCompactionConfig {
     /// Adaptive PxK configuration
     pub adaptive_pxk: bool,
-    
+
     /// Matrix builder optimization
     pub optimize_matrix_layout: bool,
-    
+
     /// Row group manager settings
     pub smart_rowgroup_sizing: bool,
-    
+
     /// Artus bloom filter integration
     pub use_artus_bloom: bool,
-    
+
     /// Maximum matrix dimension
     pub max_matrix_dimension: usize,
 }
@@ -211,19 +211,27 @@ impl EngineCompactionConfig {
     pub fn for_engine(engine_type: StorageEngineType) -> Self {
         let engine_specific = match engine_type {
             StorageEngineType::SST => EngineSpecificConfig::SST(SstCompactionConfig::default()),
-            StorageEngineType::VIPER => EngineSpecificConfig::VIPER(ViperCompactionConfig::default()),
+            StorageEngineType::VIPER => {
+                EngineSpecificConfig::VIPER(ViperCompactionConfig::default())
+            }
             StorageEngineType::NOVA => EngineSpecificConfig::NOVA(NovaCompactionConfig::default()),
-            StorageEngineType::SWIFT => EngineSpecificConfig::SWIFT(SwiftCompactionConfig::default()),
-            StorageEngineType::PRISM => EngineSpecificConfig::PRISM(PrismCompactionConfig::default()),
-            StorageEngineType::RAPTOR => EngineSpecificConfig::RAPTOR(RaptorCompactionConfig::default()),
+            StorageEngineType::SWIFT => {
+                EngineSpecificConfig::SWIFT(SwiftCompactionConfig::default())
+            }
+            StorageEngineType::PRISM => {
+                EngineSpecificConfig::PRISM(PrismCompactionConfig::default())
+            }
+            StorageEngineType::RAPTOR => {
+                EngineSpecificConfig::RAPTOR(RaptorCompactionConfig::default())
+            }
         };
-        
+
         Self {
             base: Default::default(),
             engine_specific,
         }
     }
-    
+
     /// Get compaction threshold based on engine type
     pub fn get_compaction_threshold(&self) -> usize {
         match &self.engine_specific {
@@ -235,11 +243,13 @@ impl EngineCompactionConfig {
             EngineSpecificConfig::RAPTOR(_) => self.base.l0_file_threshold,
         }
     }
-    
+
     /// Get size threshold based on engine type  
     pub fn get_size_threshold_mb(&self) -> usize {
         match &self.engine_specific {
-            EngineSpecificConfig::SST(config) => config.max_l0_file_size_mb * self.base.l0_file_threshold,
+            EngineSpecificConfig::SST(config) => {
+                config.max_l0_file_size_mb * self.base.l0_file_threshold
+            }
             EngineSpecificConfig::VIPER(_) => self.base.l0_size_threshold_mb,
             EngineSpecificConfig::NOVA(_) => self.base.l0_size_threshold_mb * 2, // Larger for streaming
             EngineSpecificConfig::SWIFT(config) => config.superblock_size_mb,

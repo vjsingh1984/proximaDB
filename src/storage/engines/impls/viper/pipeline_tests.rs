@@ -3,23 +3,32 @@ pub mod viper_pipeline_tests {
     use super::*;
     use crate::core::VectorRecord;
     use crate::proto::proximadb::MetadataItem;
-    use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::storage::engines::impls::viper::pipeline::*;
     use crate::storage::engines::impls::viper::QuantizationLevel;
+    use crate::storage::engines::impls::viper::pipeline::*;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
 
     // Helper function to create test vector records
-    fn create_test_vector_record(id: &str, vector: Vec<f32>, metadata: HashMap<String, String>) -> VectorRecord {
+    fn create_test_vector_record(
+        id: &str,
+        vector: Vec<f32>,
+        metadata: HashMap<String, String>,
+    ) -> VectorRecord {
         let now = Utc::now().timestamp_micros();
         VectorRecord {
             id: Some(id.to_string()),
             vector,
-            metadata: metadata.into_iter().map(|(k, v)| MetadataItem {
-                key: k,
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(v)),
-            }).collect(),
+            metadata: metadata
+                .into_iter()
+                .map(|(k, v)| MetadataItem {
+                    key: k,
+                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        v,
+                    )),
+                })
+                .collect(),
             timestamp: now as u32,
             updated_at: Some(now as u32),
             expires_at: None,
@@ -72,23 +81,29 @@ pub mod viper_pipeline_tests {
     #[test]
     fn test_viper_pipeline_config_creation() {
         let config = create_default_pipeline_config();
-        
+
         assert!(config.processing_config.enable_preprocessing);
         assert!(config.processing_config.enable_postprocessing);
         assert_eq!(config.processing_config.batch_size, 100);
         assert!(config.processing_config.enable_compression);
-        assert!(matches!(config.processing_config.sorting_strategy, SortingStrategy::ByTimestamp));
+        assert!(matches!(
+            config.processing_config.sorting_strategy,
+            SortingStrategy::ByTimestamp
+        ));
         assert!(config.processing_config.quantization_level.is_none());
-        
-        assert!(matches!(config.flushing_config.compression_algorithm, CompressionAlgorithm::Snappy));
+
+        assert!(matches!(
+            config.flushing_config.compression_algorithm,
+            CompressionAlgorithm::Snappy
+        ));
         assert_eq!(config.flushing_config.compression_level, 6);
         assert!(config.flushing_config.enable_dictionary_encoding);
         assert_eq!(config.flushing_config.row_group_size, 1000);
-        
+
         assert!(!config.compaction_config.enable_ml_compaction);
         assert_eq!(config.compaction_config.compaction_interval_secs, 300);
         assert_eq!(config.compaction_config.target_file_size_mb, 100);
-        
+
         assert!(config.enable_background_processing);
         assert_eq!(config.stats_interval_secs, 30);
     }
@@ -103,18 +118,21 @@ pub mod viper_pipeline_tests {
             sorting_strategy: SortingStrategy::ById,
             quantization_level: Some(QuantizationLevel::pq8(8)),
         };
-        
+
         assert!(!config.enable_preprocessing);
         assert!(!config.enable_postprocessing);
         assert_eq!(config.batch_size, 50);
         assert!(!config.enable_compression);
         assert!(matches!(config.sorting_strategy, SortingStrategy::ById));
         assert!(config.quantization_level.is_some());
-        
+
         // Test different sorting strategies
         config.sorting_strategy = SortingStrategy::ByTimestamp;
-        assert!(matches!(config.sorting_strategy, SortingStrategy::ByTimestamp));
-        
+        assert!(matches!(
+            config.sorting_strategy,
+            SortingStrategy::ByTimestamp
+        ));
+
         config.sorting_strategy = SortingStrategy::Custom {
             strategy_name: "custom_field".to_string(),
             comparison_type: CustomComparisonType::VectorMagnitude,
@@ -136,19 +154,31 @@ pub mod viper_pipeline_tests {
             write_batch_size: 500,
             enable_statistics: true,
         };
-        
-        assert!(matches!(config.compression_algorithm, CompressionAlgorithm::Zstd { level: 3 }));
+
+        assert!(matches!(
+            config.compression_algorithm,
+            CompressionAlgorithm::Zstd { level: 3 }
+        ));
         assert_eq!(config.compression_level, 9);
-        
+
         // Test all compression algorithms
         config.compression_algorithm = CompressionAlgorithm::Snappy;
-        assert!(matches!(config.compression_algorithm, CompressionAlgorithm::Snappy));
-        
+        assert!(matches!(
+            config.compression_algorithm,
+            CompressionAlgorithm::Snappy
+        ));
+
         config.compression_algorithm = CompressionAlgorithm::Lz4;
-        assert!(matches!(config.compression_algorithm, CompressionAlgorithm::Lz4));
-        
+        assert!(matches!(
+            config.compression_algorithm,
+            CompressionAlgorithm::Lz4
+        ));
+
         config.compression_algorithm = CompressionAlgorithm::Brotli { level: 6 };
-        assert!(matches!(config.compression_algorithm, CompressionAlgorithm::Brotli { level: 6 }));
+        assert!(matches!(
+            config.compression_algorithm,
+            CompressionAlgorithm::Brotli { level: 6 }
+        ));
     }
 
     #[test]
@@ -161,7 +191,7 @@ pub mod viper_pipeline_tests {
             max_files_per_merge: 20,
             reclustering_quality_threshold: 0.9,
         };
-        
+
         assert!(config.enable_ml_compaction);
         assert_eq!(config.compaction_interval_secs, 600);
         assert_eq!(config.target_file_size_mb, 200);
@@ -175,10 +205,10 @@ pub mod viper_pipeline_tests {
         let mut metadata = HashMap::new();
         metadata.insert("category".to_string(), "test".to_string());
         metadata.insert("priority".to_string(), "high".to_string());
-        
+
         let vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
         let record = create_test_vector_record("test_vector_1", vector.clone(), metadata);
-        
+
         assert_eq!(record.id, Some("test_vector_1".to_string()));
         assert_eq!(record.vector, vector);
         assert_eq!(record.metadata.len(), 2);
@@ -197,7 +227,7 @@ pub mod viper_pipeline_tests {
             QuantizationLevel::Uniform(32),
             QuantizationLevel::None,
         ];
-        
+
         for level in levels {
             match level {
                 QuantizationLevel::ProductQuantization { .. } => assert!(true),
@@ -212,9 +242,9 @@ pub mod viper_pipeline_tests {
     async fn test_viper_pipeline_creation() {
         let config = create_default_pipeline_config();
         let filesystem = create_test_filesystem().await;
-        
+
         let pipeline_result = ViperPipeline::new(config.clone(), filesystem.clone()).await;
-        
+
         // Pipeline creation should succeed or fail gracefully
         match pipeline_result {
             Ok(_pipeline) => {
@@ -222,7 +252,10 @@ pub mod viper_pipeline_tests {
             }
             Err(e) => {
                 // Expected to fail in test environment - verify error is reasonable
-                assert!(e.to_string().contains_hash("Failed") || e.to_string().contains_hash("not implemented"));
+                assert!(
+                    e.to_string().contains_hash("Failed")
+                        || e.to_string().contains_hash("not implemented")
+                );
             }
         }
     }
@@ -258,7 +291,7 @@ pub mod viper_pipeline_tests {
             enable_background_processing: false,
             stats_interval_secs: 1,
         };
-        
+
         assert_eq!(min_config.processing_config.batch_size, 1);
         assert_eq!(min_config.flushing_config.write_batch_size, 1);
         assert_eq!(min_config.compaction_config.worker_count, 1);

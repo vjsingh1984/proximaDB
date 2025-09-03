@@ -3,12 +3,12 @@
 
 use anyhow::Result;
 // Use core bloom filter implementation
-use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use crate::core::bloom::factory::BloomFilterFactory;
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Artus-style column statistics for intelligent bloom filter sizing
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +85,7 @@ impl ArtusBloomManager {
     pub fn should_create_bloom(&self, stats: &ArtusColumnStats) -> bool {
         // Google Artus-inspired heuristics
         let cardinality_ratio = stats.cardinality as f32 / stats.access_frequency as f32;
-        
+
         // Create bloom if:
         // 1. Cardinality is within reasonable bounds
         // 2. Column is frequently accessed
@@ -94,7 +94,7 @@ impl ArtusBloomManager {
             && stats.cardinality <= 1_000_000  // Not too high cardinality
             && cardinality_ratio < self.config.auto_bloom_threshold
             && stats.selectivity < 0.5  // Selective queries benefit most
-            && stats.access_frequency > 10  // Accessed frequently enough
+            && stats.access_frequency > 10 // Accessed frequently enough
     }
 
     /// Calculate optimal bloom filter size based on Artus principles
@@ -102,16 +102,16 @@ impl ArtusBloomManager {
         // Artus formula: balance memory vs false positive rate
         let items = stats.cardinality;
         let fp_rate = self.config.false_positive_rate;
-        
+
         // Optimal number of bits
         let bits = (-(items as f64) * fp_rate.ln() / (2.0_f64.ln().powi(2))).ceil() as usize;
-        
+
         // Cap at maximum memory
         let capped_bits = bits.min(self.config.max_memory_per_filter * 8);
-        
+
         // Optimal number of hash functions
         let hash_functions = ((capped_bits as f64 / items as f64) * 2.0_f64.ln()).round() as usize;
-        
+
         (capped_bits, hash_functions.max(1))
     }
 
@@ -120,16 +120,21 @@ impl ArtusBloomManager {
         if !self.should_create_bloom(&stats) {
             tracing::debug!(
                 "Skipping bloom filter for column {} (cardinality: {}, selectivity: {})",
-                stats.column_name, stats.cardinality, stats.selectivity
+                stats.column_name,
+                stats.cardinality,
+                stats.selectivity
             );
             return Ok(());
         }
 
         let (bits, hash_functions) = self.calculate_optimal_size(&stats);
-        
+
         tracing::info!(
             "Creating Artus bloom filter for column {} with {} bits, {} hash functions (cardinality: {})",
-            stats.column_name, bits, hash_functions, stats.cardinality
+            stats.column_name,
+            bits,
+            hash_functions,
+            stats.cardinality
         );
 
         // Create bloom filter with calculated parameters
@@ -142,10 +147,10 @@ impl ArtusBloomManager {
             hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
         };
         let bloom = BloomFilterFactory::create(&config);
-        
+
         self.column_blooms.insert(stats.column_name.clone(), bloom);
         self.column_stats.insert(stats.column_name.clone(), stats);
-        
+
         Ok(())
     }
 
@@ -153,7 +158,7 @@ impl ArtusBloomManager {
     pub fn add_to_bloom(&mut self, column: &str, value: &str) {
         if let Some(bloom) = self.column_blooms.get_mut(column) {
             bloom.insert(value.as_bytes());
-            
+
             // Update access statistics
             if let Some(stats) = self.column_stats.get_mut(column) {
                 stats.access_frequency += 1;
@@ -163,7 +168,9 @@ impl ArtusBloomManager {
 
     /// Check if value might exist in column
     pub fn check_bloom(&self, column: &str, value: &str) -> Option<bool> {
-        self.column_blooms.get(column).map(|bloom| bloom.might_contain(value.as_bytes()))
+        self.column_blooms
+            .get(column)
+            .map(|bloom| bloom.might_contain(value.as_bytes()))
     }
 
     /// Batch add values to bloom filter
@@ -172,7 +179,7 @@ impl ArtusBloomManager {
             for value in values {
                 bloom.insert(value.as_bytes());
             }
-            
+
             // Update statistics
             if let Some(stats) = self.column_stats.get_mut(column) {
                 stats.access_frequency += values.len() as u64;
@@ -183,13 +190,13 @@ impl ArtusBloomManager {
     /// Serialize bloom filters for persistence
     pub fn serialize_blooms(&mut self) -> Result<HashMap<String, Vec<u8>>> {
         let mut serialized = HashMap::new();
-        
+
         for (column, bloom) in &self.column_blooms {
             // Serialize bloom filter to bytes
             let bytes = self.serialize_bloom(bloom.as_ref())?;
             serialized.insert(column.clone(), bytes);
         }
-        
+
         self.serialized_blooms = serialized.clone();
         Ok(serialized)
     }
@@ -200,7 +207,7 @@ impl ArtusBloomManager {
             let bloom = self.deserialize_bloom(&bytes)?;
             self.column_blooms.insert(column, bloom);
         }
-        
+
         Ok(())
     }
 
@@ -226,12 +233,13 @@ impl ArtusBloomManager {
         }
 
         let mut columns_to_resize = Vec::new();
-        
+
         for (column, stats) in &self.column_stats {
             // Check if bloom needs resizing based on actual vs expected cardinality
             if let Some(bloom) = self.column_blooms.get(column) {
-                let current_fp_rate = self.estimate_false_positive_rate(bloom.as_ref(), stats.cardinality);
-                
+                let current_fp_rate =
+                    self.estimate_false_positive_rate(bloom.as_ref(), stats.cardinality);
+
                 // Resize if FP rate deviates significantly
                 if (current_fp_rate - self.config.false_positive_rate).abs() > 0.05 {
                     columns_to_resize.push((column.clone(), stats.clone()));
@@ -254,7 +262,7 @@ impl ArtusBloomManager {
         let m = bloom.bit_count() as f64;
         let k = bloom.hash_count() as f64;
         let n = items as f64;
-        
+
         (1.0_f64 - (-k * n / m).exp()).powf(k)
     }
 
@@ -262,15 +270,15 @@ impl ArtusBloomManager {
     fn serialize_bloom(&self, bloom: &dyn BloomFilterStrategy) -> Result<Vec<u8>> {
         // Simple serialization: store bitmap and parameters
         let mut bytes = Vec::new();
-        
+
         // Write parameters
         bytes.extend_from_slice(&(bloom.bit_count() as u64).to_le_bytes());
         bytes.extend_from_slice(&(bloom.hash_count() as u64).to_le_bytes());
-        
+
         // Write bitmap (simplified - actual implementation would use bloom's bitmap)
         // This is a placeholder - real implementation would access bloom's internal bitmap
         bytes.extend_from_slice(&vec![0u8; bloom.bit_count() / 8]);
-        
+
         Ok(bytes)
     }
 
@@ -279,11 +287,11 @@ impl ArtusBloomManager {
         if bytes.len() < 16 {
             return Err(anyhow::anyhow!("Invalid bloom filter data"));
         }
-        
+
         // Read parameters
         let bits = u64::from_le_bytes(bytes[0..8].try_into()?);
         let hash_functions = u64::from_le_bytes(bytes[8..16].try_into()?);
-        
+
         // Create bloom with parameters
         // Note: This is simplified - actual implementation would restore bitmap
         let config = BloomFilterConfig {
@@ -295,7 +303,7 @@ impl ArtusBloomManager {
             hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
         };
         let bloom = BloomFilterFactory::create(&config);
-        
+
         Ok(bloom)
     }
 }
@@ -329,7 +337,7 @@ impl CompoundBloomFilter {
             hash_algorithm: crate::core::bloom::HashAlgorithm::Murmur3,
         };
         let bloom = BloomFilterFactory::create(&config);
-        
+
         let stats = ArtusColumnStats {
             column_name: columns.join("+"),
             cardinality,
@@ -339,7 +347,7 @@ impl CompoundBloomFilter {
             data_type: ColumnData::String(String::new()),
             bloom_benefit_score: 0.0,
         };
-        
+
         Self {
             columns,
             bloom,
@@ -368,7 +376,7 @@ mod tests {
     #[test]
     fn test_artus_bloom_creation() {
         let mut manager = ArtusBloomManager::new(ArtusBloomConfig::default());
-        
+
         let stats = ArtusColumnStats {
             column_name: "user_id".to_string(),
             cardinality: 10000,
@@ -378,13 +386,13 @@ mod tests {
             data_type: ColumnData::String(String::new()),
             bloom_benefit_score: 0.8,
         };
-        
+
         manager.create_column_bloom(stats).unwrap();
-        
+
         // Add values
         manager.add_to_bloom("user_id", "user123");
         manager.add_to_bloom("user_id", "user456");
-        
+
         // Check values
         assert_eq!(manager.check_bloom("user_id", "user123"), Some(true));
         assert_eq!(manager.check_bloom("user_id", "user999"), Some(false));
@@ -392,14 +400,12 @@ mod tests {
 
     #[test]
     fn test_compound_bloom() {
-        let mut compound = CompoundBloomFilter::new(
-            vec!["city".to_string(), "category".to_string()],
-            1000
-        );
-        
+        let mut compound =
+            CompoundBloomFilter::new(vec!["city".to_string(), "category".to_string()], 1000);
+
         compound.add(&["New York".to_string(), "Electronics".to_string()]);
         compound.add(&["Los Angeles".to_string(), "Books".to_string()]);
-        
+
         assert!(compound.check(&["New York".to_string(), "Electronics".to_string()]));
         assert!(!compound.check(&["Chicago".to_string(), "Toys".to_string()]));
     }

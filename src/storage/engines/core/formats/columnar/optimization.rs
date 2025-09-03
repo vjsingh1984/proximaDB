@@ -1,42 +1,44 @@
 //! Unified Columnar Optimization Module
-//! 
+//!
 //! Provides shared optimizations for both VIPER and NOVA engines:
 //! - Parquet bloom filter optimization
 //! - Streaming row group access
 //! - Progressive search with quantization
 //! - Cost-based query optimization
 
-use anyhow::{anyhow, Context, Result};
+use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use crate::core::VectorRecord;
+use crate::core::search::FilterExpression;
+use crate::storage::engines::core::formats::columnar::{
+    ColumnarConfig, MetadataFilter, ParquetLocation, RowGroupStats, SearchCandidate,
+};
+use crate::storage::persistence::filesystem::zero_copy_filesystem::{
+    ZeroCopyFilesystem, ZeroCopyFilesystemBuilder,
+};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use anyhow::{Context, Result, anyhow};
 use arrow_array::{Array, ArrayRef, RecordBatch};
 use arrow_schema::Schema;
 use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
-use crate::storage::persistence::filesystem::zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
-use crate::core::VectorRecord;
-use crate::core::search::FilterExpression;
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::storage::engines::core::formats::columnar::{
-    ColumnarConfig, MetadataFilter, SearchCandidate, RowGroupStats, ParquetLocation
-};
 /// Unified columnar optimization engine
 pub struct ColumnarOptimizer {
     /// Distance computation engine
     distance_compute: Arc<UnifiedDistanceCompute>,
-    
+
     /// Configuration
     config: ColumnarConfig,
-    
+
     /// Filesystem factory (temporarily replacing zero_copy_fs)
     zero_copy_fs: Arc<FilesystemFactory>,
-    
+
     /// Filesystem factory for writes (selects based on URL scheme)
     filesystem_factory: Arc<FilesystemFactory>,
-    
+
     /// Cached bloom filters per file
     bloom_filter_cache: parking_lot::RwLock<HashMap<String, Arc<FileBloomFilters>>>,
     /// Row group statistics cache
@@ -134,7 +136,7 @@ impl ColumnarOptimizer {
         // and FilesystemFactory only provides &dyn FileSystem
         // This is a known limitation that needs refactoring
         let zero_copy_fs = filesystem_factory.clone();
-        
+
         Ok(Self {
             distance_compute,
             config,
@@ -164,30 +166,33 @@ impl ColumnarOptimizer {
         // Process each row group
         for (rg_idx, row_group) in metadata.row_groups().iter().enumerate() {
             let mut column_filters = HashMap::new();
-            
+
             // Check each column for bloom filters
             for (col_idx, column) in row_group.columns().iter().enumerate() {
                 if let Some(bloom_filter) = self.extract_bloom_filter(column)? {
                     let filter_info = BloomFilterInfo {
                         field: format!("col_{}", col_idx),
-                        size_bytes: 1024, // Default size estimate for bloom filter
+                        size_bytes: 1024,  // Default size estimate for bloom filter
                         hash_functions: 3, // Default value
-                        num_items: 1000, // Default value
+                        num_items: 1000,   // Default value
                     };
-                    
+
                     total_size += filter_info.size_bytes;
                     column_filters.insert(filter_info.field.clone(), filter_info);
                 }
             }
-            
+
             if !column_filters.is_empty() {
-                file_filters.insert(format!("rg_{}", rg_idx), RowGroupBloomFilters {
-                    row_group_id: rg_idx,
-                    column_filters,
-                });
+                file_filters.insert(
+                    format!("rg_{}", rg_idx),
+                    RowGroupBloomFilters {
+                        row_group_id: rg_idx,
+                        column_filters,
+                    },
+                );
             }
         }
-        
+
         let filters = Arc::new(FileBloomFilters {
             file_path: file_path.to_string(),
             filters: file_filters,
@@ -199,19 +204,25 @@ impl ColumnarOptimizer {
             let mut cache = self.bloom_filter_cache.write();
             cache.insert(file_path.to_string(), filters.clone());
         }
-        
-        debug!("Loaded {} bloom filters, total size: {} bytes", 
-               filters.filters.len(), total_size);
+
+        debug!(
+            "Loaded {} bloom filters, total size: {} bytes",
+            filters.filters.len(),
+            total_size
+        );
         Ok(filters)
     }
-    
+
     /// Extract bloom filter from column metadata
-    fn extract_bloom_filter(&self, _column: &parquet::file::metadata::ColumnChunkMetaData) -> Result<Option<BloomFilter>> {
+    fn extract_bloom_filter(
+        &self,
+        _column: &parquet::file::metadata::ColumnChunkMetaData,
+    ) -> Result<Option<BloomFilter>> {
         // In production, this would extract actual Parquet bloom filters
         // For now, return None as placeholder
         Ok(None)
     }
-    
+
     /// Create streaming iterator for row groups
     pub async fn create_streaming_iterator(
         &self,
@@ -220,7 +231,7 @@ impl ColumnarOptimizer {
         column_projection: Option<Vec<String>>,
     ) -> Result<StreamingRowGroupIterator> {
         info!("Creating streaming iterator for: {}", file_path);
-        
+
         // Use filesystem factory to read file
         let data = self.zero_copy_fs.read(file_path).await?;
         let bytes = bytes::Bytes::from(data);
@@ -228,8 +239,11 @@ impl ColumnarOptimizer {
         let metadata = reader_builder.metadata().clone();
         // Select relevant row groups
         let selected_row_groups = self.select_row_groups(&metadata, row_group_filter).await?;
-        debug!("Selected {} row groups out of {}", 
-               selected_row_groups.len(), metadata.num_row_groups());
+        debug!(
+            "Selected {} row groups out of {}",
+            selected_row_groups.len(),
+            metadata.num_row_groups()
+        );
         Ok(StreamingRowGroupIterator {
             file_path: file_path.to_string(),
             metadata,
@@ -239,7 +253,7 @@ impl ColumnarOptimizer {
             batch_size: self.config.optimization_thresholds.simd_threshold,
         })
     }
-    
+
     /// Select row groups based on filter
     async fn select_row_groups(
         &self,
@@ -263,18 +277,31 @@ impl ColumnarOptimizer {
         if filter.is_none() {
             return Ok(true);
         }
-        
+
         let filter = filter.unwrap();
         // Check each filter condition against row group statistics
         for condition in &filter.conditions {
             match condition {
-                crate::storage::engines::core::formats::columnar::FilterCondition::Equals(column, value) => {
-                    if !self.check_equals_condition(row_group, column, value).await? {
+                crate::storage::engines::core::formats::columnar::FilterCondition::Equals(
+                    column,
+                    value,
+                ) => {
+                    if !self
+                        .check_equals_condition(row_group, column, value)
+                        .await?
+                    {
                         return Ok(false);
                     }
                 }
-                crate::storage::engines::core::formats::columnar::FilterCondition::Range(column, min, max) => {
-                    if !self.check_range_condition(row_group, column, min, max).await? {
+                crate::storage::engines::core::formats::columnar::FilterCondition::Range(
+                    column,
+                    min,
+                    max,
+                ) => {
+                    if !self
+                        .check_range_condition(row_group, column, min, max)
+                        .await?
+                    {
                         return Ok(false);
                     }
                 }
@@ -286,7 +313,7 @@ impl ColumnarOptimizer {
         }
         Ok(true)
     }
-    
+
     /// Check equals condition against row group
     async fn check_equals_condition(
         &self,
@@ -297,7 +324,7 @@ impl ColumnarOptimizer {
         // In production, would check column statistics
         Ok(true)
     }
-    
+
     /// Check range condition against row group
     async fn check_range_condition(
         &self,
@@ -319,7 +346,11 @@ impl ColumnarOptimizer {
         filter: Option<&MetadataFilter>,
         config: &ProgressiveSearchConfig,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        info!("Progressive search across {} files, top_k={}", file_paths.len(), top_k);
+        info!(
+            "Progressive search across {} files, top_k={}",
+            file_paths.len(),
+            top_k
+        );
         let mut all_candidates = Vec::new();
         let mut stats = OptimizationStats {
             total_row_groups: 0,
@@ -333,22 +364,26 @@ impl ColumnarOptimizer {
         };
         let start_time = std::time::Instant::now();
         for file_path in file_paths {
-            let file_candidates = self.search_file_progressive(
-                file_path,
-                query_vector,
-                top_k,
-                distance_metric,
-                filter,
-                config,
-                &mut stats,
-            ).await?;
+            let file_candidates = self
+                .search_file_progressive(
+                    file_path,
+                    query_vector,
+                    top_k,
+                    distance_metric,
+                    filter,
+                    config,
+                    &mut stats,
+                )
+                .await?;
             all_candidates.extend(file_candidates);
         }
-        
+
         stats.search_time_ms = start_time.elapsed().as_millis() as u64;
         // Final ranking and selection
         all_candidates.sort_by(|a, b| {
-            a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal)
+            a.similarity
+                .partial_cmp(&b.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         all_candidates.truncate(top_k);
         info!("Progressive search complete: {:?}", stats);
@@ -357,7 +392,9 @@ impl ColumnarOptimizer {
         for candidate in all_candidates {
             if let Some(vector) = self.load_vector_at_location(&candidate).await? {
                 results.push(crate::core::search::InternalSearchResult {
-                    id: candidate.vector_id.unwrap_or_else(|| format!("rg{}_row{}", candidate.row_group_id, candidate.row_offset)),
+                    id: candidate.vector_id.unwrap_or_else(|| {
+                        format!("rg{}_row{}", candidate.row_group_id, candidate.row_offset)
+                    }),
                     similarity: Some(1.0 - candidate.similarity),
                     vector: Some(vector.vector),
                     metadata: HashMap::new(), // Simplified for now
@@ -380,41 +417,53 @@ impl ColumnarOptimizer {
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Progressive search in file: {}", file_path);
         // Create streaming iterator
-        let mut iterator = self.create_streaming_iterator(
-            file_path,
-            filter,
-            None, // Load all columns for now
-        ).await?;
+        let mut iterator = self
+            .create_streaming_iterator(
+                file_path, filter, None, // Load all columns for now
+            )
+            .await?;
         let mut candidates = Vec::new();
         // Stage 1: Binary filtering (if enabled)
         if config.use_binary_filter {
-            candidates = self.binary_filter_stage(&mut iterator, query_vector, config).await?;
+            candidates = self
+                .binary_filter_stage(&mut iterator, query_vector, config)
+                .await?;
             debug!("Binary filter stage: {} candidates", candidates.len());
         }
-        
+
         // Stage 2: INT8 quantized search (if enabled)
         if config.use_int8_search && !candidates.is_empty() {
-            candidates = self.int8_search_stage(&mut iterator, query_vector, &candidates, config).await?;
+            candidates = self
+                .int8_search_stage(&mut iterator, query_vector, &candidates, config)
+                .await?;
             debug!("INT8 search stage: {} candidates", candidates.len());
         }
-        
+
         // Stage 3: PQ search (if enabled)
         if config.use_pq_search && !candidates.is_empty() {
-            candidates = self.pq_search_stage(&mut iterator, query_vector, &candidates, config).await?;
+            candidates = self
+                .pq_search_stage(&mut iterator, query_vector, &candidates, config)
+                .await?;
             debug!("PQ search stage: {} candidates", candidates.len());
         }
-        
+
         // Stage 4: Final FP32 reranking (if enabled)
         if config.final_rerank && !candidates.is_empty() {
-            candidates = self.fp32_rerank_stage(&mut iterator, query_vector, &candidates, distance_metric).await?;
+            candidates = self
+                .fp32_rerank_stage(&mut iterator, query_vector, &candidates, distance_metric)
+                .await?;
             debug!("FP32 rerank stage: {} candidates", candidates.len());
         }
         // Sort and limit
-        candidates.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            a.similarity
+                .partial_cmp(&b.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(top_k);
         Ok(candidates)
     }
-    
+
     /// Binary filtering stage
     async fn binary_filter_stage(
         &self,
@@ -434,13 +483,13 @@ impl ColumnarOptimizer {
                     iterator.current_row_group(),
                     config.binary_threshold,
                 )?;
-                
+
                 candidates.extend(binary_candidates);
             }
         }
         Ok(candidates)
     }
-    
+
     /// Process binary batch
     fn process_binary_batch(
         &self,
@@ -466,7 +515,7 @@ impl ColumnarOptimizer {
         }
         Ok(candidates)
     }
-    
+
     /// INT8 quantized search stage
     async fn int8_search_stage(
         &self,
@@ -515,17 +564,26 @@ impl ColumnarOptimizer {
         Ok(reranked)
     }
     /// Load vector at specific candidate location
-    async fn load_vector_at_candidate(&self, candidate: &SearchCandidate) -> Result<Option<Vec<f32>>> {
+    async fn load_vector_at_candidate(
+        &self,
+        candidate: &SearchCandidate,
+    ) -> Result<Option<Vec<f32>>> {
         // This is a placeholder implementation
         // In production, would load the actual vector from the row group
         Ok(Some(vec![0.0; 768])) // Placeholder vector
     }
-    
+
     /// Load full VectorRecord at candidate location
-    async fn load_vector_at_location(&self, candidate: &SearchCandidate) -> Result<Option<VectorRecord>> {
+    async fn load_vector_at_location(
+        &self,
+        candidate: &SearchCandidate,
+    ) -> Result<Option<VectorRecord>> {
         // In production, would load the full record from Parquet
         Ok(Some(VectorRecord {
-            id: candidate.vector_id.clone().unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
+            id: candidate
+                .vector_id
+                .clone()
+                .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
             vector: vec![0.0; 768], // Placeholder
             metadata: vec![],
             timestamp: 0,
@@ -536,7 +594,7 @@ impl ColumnarOptimizer {
             source: None,
         }))
     }
-    
+
     /// Optimize row group layout for better performance
     pub async fn optimize_layout(&self, file_path: &str) -> Result<()> {
         info!("Optimizing row group layout for: {}", file_path);
@@ -544,19 +602,23 @@ impl ColumnarOptimizer {
         // For now, just return success
         Ok(())
     }
-    
+
     /// Get optimization statistics
     pub fn get_optimization_stats(&self) -> HashMap<String, serde_json::Value> {
         let mut stats = HashMap::new();
         let bloom_cache = self.bloom_filter_cache.read();
-        stats.insert("bloom_filter_cache_size".to_string(), 
-                     serde_json::Value::Number(bloom_cache.len().into()));
+        stats.insert(
+            "bloom_filter_cache_size".to_string(),
+            serde_json::Value::Number(bloom_cache.len().into()),
+        );
         let stats_cache = self.stats_cache.read();
-        stats.insert("stats_cache_size".to_string(),
-                     serde_json::Value::Number(stats_cache.len().into()));
+        stats.insert(
+            "stats_cache_size".to_string(),
+            serde_json::Value::Number(stats_cache.len().into()),
+        );
         stats
     }
-    
+
     /// Clear optimization caches
     pub fn clear_caches(&self) {
         let mut bloom_cache = self.bloom_filter_cache.write();
@@ -573,7 +635,7 @@ impl StreamingRowGroupIterator {
         if self.current_index >= self.selected_row_groups.len() {
             return Ok(None);
         }
-        
+
         let row_group_idx = self.selected_row_groups[self.current_index];
         self.current_index += 1;
         // TODO: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
@@ -584,26 +646,33 @@ impl StreamingRowGroupIterator {
         let mut reader = {
             let schema = reader_builder.schema();
             let parquet_schema = reader_builder.parquet_schema().clone();
-            
+
             // Determine if we need column projection
             let needs_projection = if let Some(ref columns) = self.column_projection {
                 let mut projection_indices = Vec::new();
                 for name in columns {
                     if let Ok(field) = schema.field_with_name(name) {
-                        if let Some(index) = schema.fields().iter().position(|f| f.name() == field.name()) {
+                        if let Some(index) = schema
+                            .fields()
+                            .iter()
+                            .position(|f| f.name() == field.name())
+                        {
                             projection_indices.push(index);
                         }
                     }
                 }
                 if !projection_indices.is_empty() {
-                    Some(parquet::arrow::ProjectionMask::leaves(&parquet_schema, projection_indices))
+                    Some(parquet::arrow::ProjectionMask::leaves(
+                        &parquet_schema,
+                        projection_indices,
+                    ))
                 } else {
                     None
                 }
             } else {
                 None
             };
-            
+
             // Apply projection and select specific row group
             if let Some(projection) = needs_projection {
                 reader_builder
@@ -623,7 +692,7 @@ impl StreamingRowGroupIterator {
             Ok(None)
         }
     }
-    
+
     /// Get current row group index
     pub fn current_row_group(&self) -> usize {
         if self.current_index > 0 {
@@ -632,12 +701,12 @@ impl StreamingRowGroupIterator {
             0
         }
     }
-    
+
     /// Check if iterator has more data
     pub fn has_next(&self) -> bool {
         self.current_index < self.selected_row_groups.len()
     }
-    
+
     /// Get total number of selected row groups
     pub fn total_row_groups(&self) -> usize {
         self.selected_row_groups.len()
@@ -656,15 +725,15 @@ impl BloomFilterProxy {
     pub fn size_bytes(&self) -> usize {
         self.size_bytes
     }
-    
+
     pub fn hash_functions(&self) -> u32 {
         self.hash_functions
     }
-    
+
     pub fn false_positive_rate(&self) -> f64 {
         self.false_positive_rate
     }
-    
+
     pub fn num_items(&self) -> u64 {
         self.num_items
     }
@@ -685,7 +754,7 @@ mod tests {
         assert!(stats.contains_key("bloom_filter_cache_size"));
         assert!(stats.contains_key("stats_cache_size"));
     }
-    
+
     #[test]
     fn test_progressive_search_config() {
         let config = ProgressiveSearchConfig::default();

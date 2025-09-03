@@ -1,14 +1,14 @@
 //! Fixed-length vector optimizations for known dimensions
-//! 
+//!
 //! Provides highly optimized serialization for vectors with known, fixed dimensions.
 //! Eliminates length prefixes and enables direct memory mapping for maximum performance.
 
 use anyhow::{Context, Result};
-use bytemuck::{cast_slice, try_cast_slice, Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, cast_slice, try_cast_slice};
 use std::marker::PhantomData;
 use std::mem::size_of;
 use tracing::{debug, trace};
-use zstd::{encode_all, decode_all};
+use zstd::{decode_all, encode_all};
 
 /// Marker trait for fixed-length vector dimensions
 pub trait FixedDimension: Send + Sync + 'static {
@@ -18,28 +18,44 @@ pub trait FixedDimension: Send + Sync + 'static {
 
 /// Common fixed dimensions
 pub struct Dim64;
-impl FixedDimension for Dim64 { const DIMENSION: usize = 64; }
+impl FixedDimension for Dim64 {
+    const DIMENSION: usize = 64;
+}
 
 pub struct Dim128;
-impl FixedDimension for Dim128 { const DIMENSION: usize = 128; }
+impl FixedDimension for Dim128 {
+    const DIMENSION: usize = 128;
+}
 
 pub struct Dim256;
-impl FixedDimension for Dim256 { const DIMENSION: usize = 256; }
+impl FixedDimension for Dim256 {
+    const DIMENSION: usize = 256;
+}
 
 pub struct Dim512;
-impl FixedDimension for Dim512 { const DIMENSION: usize = 512; }
+impl FixedDimension for Dim512 {
+    const DIMENSION: usize = 512;
+}
 
 pub struct Dim768;
-impl FixedDimension for Dim768 { const DIMENSION: usize = 768; }
+impl FixedDimension for Dim768 {
+    const DIMENSION: usize = 768;
+}
 
 pub struct Dim1024;
-impl FixedDimension for Dim1024 { const DIMENSION: usize = 1024; }
+impl FixedDimension for Dim1024 {
+    const DIMENSION: usize = 1024;
+}
 
 pub struct Dim1536;
-impl FixedDimension for Dim1536 { const DIMENSION: usize = 1536; }
+impl FixedDimension for Dim1536 {
+    const DIMENSION: usize = 1536;
+}
 
 pub struct Dim2048;
-impl FixedDimension for Dim2048 { const DIMENSION: usize = 2048; }
+impl FixedDimension for Dim2048 {
+    const DIMENSION: usize = 2048;
+}
 
 /// Fixed-length vector wrapper for zero-copy operations
 #[repr(C)]
@@ -55,10 +71,11 @@ impl<D: FixedDimension> FixedVector<D> {
         if data.len() != D::DIMENSION {
             return Err(anyhow::anyhow!(
                 "Vector dimension mismatch: expected {}, got {}",
-                D::DIMENSION, data.len()
+                D::DIMENSION,
+                data.len()
             ));
         }
-        
+
         Ok(Self {
             data,
             _dimension: PhantomData,
@@ -74,7 +91,7 @@ impl<D: FixedDimension> FixedVector<D> {
     pub fn data(&self) -> &[f32] {
         &self.data
     }
-    
+
     /// Get the dimension of this fixed vector
     pub fn dimension(&self) -> usize {
         D::DIMENSION
@@ -144,7 +161,7 @@ impl Default for FixedLengthConfig {
     fn default() -> Self {
         Self {
             compression_sparsity_threshold: 0.7, // Compress if >70% sparse
-            compression_level: 3, // Balanced speed/compression
+            compression_level: 3,                // Balanced speed/compression
             enable_checksum: true,
             alignment: 32, // 32-byte alignment for SIMD
         }
@@ -203,11 +220,11 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
     /// Serialize fixed vector with maximum performance
     pub fn serialize(&self, vector: &FixedVector<D>) -> Result<Vec<u8>> {
         let data = vector.data();
-        
+
         // Analyze vector characteristics
         let sparsity = self.calculate_sparsity(data);
         let should_compress = sparsity >= self.config.compression_sparsity_threshold;
-        
+
         // Convert to bytes using bytemuck (zero-copy)
         let raw_bytes = cast_slice(data);
         let checksum = if self.config.enable_checksum {
@@ -239,8 +256,13 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
         result.extend_from_slice(bytemuck::bytes_of(&header));
         result.extend_from_slice(&serialized_data);
 
-        trace!("📦 Fixed-length serialized: {}D vector, {} bytes, format={:?}, sparsity={:.3}",
-            D::DIMENSION, result.len(), format, sparsity);
+        trace!(
+            "📦 Fixed-length serialized: {}D vector, {} bytes, format={:?}, sparsity={:.3}",
+            D::DIMENSION,
+            result.len(),
+            format,
+            sparsity
+        );
 
         Ok(result)
     }
@@ -265,7 +287,12 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
             0x10 => FixedSerializationFormat::Raw,
             0x11 => FixedSerializationFormat::ZstdCompressed,
             0x12 => FixedSerializationFormat::Sparse,
-            _ => return Err(anyhow::anyhow!("Unknown fixed serialization format: {}", header.format)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown fixed serialization format: {}",
+                    header.format
+                ));
+            }
         };
 
         // Decompress if needed
@@ -291,7 +318,8 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
         if raw_bytes.len() != D::BYTE_SIZE {
             return Err(anyhow::anyhow!(
                 "Fixed vector size mismatch: expected {} bytes, got {}",
-                D::BYTE_SIZE, raw_bytes.len()
+                D::BYTE_SIZE,
+                raw_bytes.len()
             ));
         }
 
@@ -320,8 +348,11 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
             result.extend_from_slice(&serialized);
         }
 
-        debug!("📦 Fixed-length batch serialized: {} vectors, {} bytes",
-            vectors.len(), result.len());
+        debug!(
+            "📦 Fixed-length batch serialized: {} vectors, {} bytes",
+            vectors.len(),
+            result.len()
+        );
 
         Ok(result)
     }
@@ -337,8 +368,10 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
         // Read vector count
         let count_bytes = &data[cursor..cursor + 4];
         let count = u32::from_le_bytes([
-            count_bytes[0], count_bytes[1],
-            count_bytes[2], count_bytes[3]
+            count_bytes[0],
+            count_bytes[1],
+            count_bytes[2],
+            count_bytes[3],
         ]) as usize;
         cursor += 4;
 
@@ -351,10 +384,8 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
 
             // Read vector data length
             let len_bytes = &data[cursor..cursor + 4];
-            let len = u32::from_le_bytes([
-                len_bytes[0], len_bytes[1],
-                len_bytes[2], len_bytes[3]
-            ]) as usize;
+            let len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                as usize;
             cursor += 4;
 
             if cursor + len > data.len() {
@@ -368,17 +399,18 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
             cursor += len;
         }
 
-        debug!("📦 Fixed-length batch deserialized: {} vectors", vectors.len());
+        debug!(
+            "📦 Fixed-length batch deserialized: {} vectors",
+            vectors.len()
+        );
 
         Ok(vectors)
     }
 
     /// Calculate sparsity (ratio of zero/near-zero elements)
     fn calculate_sparsity(&self, data: &[f32]) -> f32 {
-        let zero_count = data.iter()
-            .filter(|&&x| x.abs() < 1e-6)
-            .count();
-        
+        let zero_count = data.iter().filter(|&&x| x.abs() < 1e-6).count();
+
         zero_count as f32 / data.len() as f32
     }
 
@@ -393,7 +425,7 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
     pub fn analyze_vector(&self, vector: &FixedVector<D>) -> FixedVectorAnalysis {
         let data = vector.data();
         let sparsity = self.calculate_sparsity(data);
-        
+
         let mut min_val = f32::INFINITY;
         let mut max_val = f32::NEG_INFINITY;
         let mut sum = 0.0;
@@ -485,16 +517,16 @@ mod tests {
     #[test]
     fn test_fixed_serialization_roundtrip() {
         let serializer = Serializer128::default();
-        
+
         let mut data = vec![0.0; 128];
         for i in 0..10 {
             data[i] = i as f32 * 0.1;
         }
-        
+
         let vector = Vector128::new(data.clone()).unwrap();
         let serialized = serializer.serialize(&vector).unwrap();
         let deserialized = serializer.deserialize(&serialized).unwrap();
-        
+
         assert_eq!(vector.data(), deserialized.data());
     }
 
@@ -503,19 +535,19 @@ mod tests {
         let mut config = FixedLengthConfig::default();
         config.compression_sparsity_threshold = 0.5;
         let serializer = Serializer512::new(config);
-        
+
         // Create sparse vector (90% zeros)
         let mut data = vec![0.0; 512];
         for i in (0..512).step_by(10) {
             data[i] = i as f32 * 0.001;
         }
-        
+
         let vector = Vector512::new(data).unwrap();
         let analysis = serializer.analyze_vector(&vector);
         analysis.print_summary();
-        
+
         assert!(analysis.sparsity > 0.8);
-        
+
         let ratio = serializer.compression_ratio(&vector).unwrap();
         assert!(ratio < 0.8, "Sparse vector should compress well");
     }
@@ -523,20 +555,22 @@ mod tests {
     #[test]
     fn test_batch_serialization() {
         let serializer = Serializer256::default();
-        
-        let vectors = (0..5).map(|i| {
-            let mut data = vec![0.0; 256];
-            for j in 0..10 {
-                data[j] = (i * 10 + j) as f32 * 0.01;
-            }
-            Vector256::new(data).unwrap()
-        }).collect::<Vec<_>>();
-        
+
+        let vectors = (0..5)
+            .map(|i| {
+                let mut data = vec![0.0; 256];
+                for j in 0..10 {
+                    data[j] = (i * 10 + j) as f32 * 0.01;
+                }
+                Vector256::new(data).unwrap()
+            })
+            .collect::<Vec<_>>();
+
         let serialized = serializer.serialize_batch(&vectors).unwrap();
         let deserialized = serializer.deserialize_batch(&serialized).unwrap();
-        
+
         assert_eq!(vectors.len(), deserialized.len());
-        
+
         for (original, recovered) in vectors.iter().zip(deserialized.iter()) {
             assert_eq!(original.data(), recovered.data());
         }
@@ -545,23 +579,26 @@ mod tests {
     #[test]
     fn test_performance_characteristics() {
         let serializer = Serializer768::default();
-        
+
         // Dense vector
         let dense_data: Vec<f32> = (0..768).map(|i| i as f32 * 0.001).collect();
         let dense_vector = Vector768::new(dense_data).unwrap();
-        
+
         // Sparse vector
         let mut sparse_data = vec![0.0; 768];
         for i in (0..768).step_by(20) {
             sparse_data[i] = i as f32 * 0.001;
         }
         let sparse_vector = Vector768::new(sparse_data).unwrap();
-        
+
         let dense_ratio = serializer.compression_ratio(&dense_vector).unwrap();
         let sparse_ratio = serializer.compression_ratio(&sparse_vector).unwrap();
-        
-        debug!("Dense ratio: {:.3}, Sparse ratio: {:.3}", dense_ratio, sparse_ratio);
-        
+
+        debug!(
+            "Dense ratio: {:.3}, Sparse ratio: {:.3}",
+            dense_ratio, sparse_ratio
+        );
+
         assert!(sparse_ratio < dense_ratio, "Sparse should compress better");
     }
 
@@ -570,15 +607,15 @@ mod tests {
         let mut config = FixedLengthConfig::default();
         config.enable_checksum = true;
         let serializer = Serializer128::new(config);
-        
+
         let vector = Vector128::new(vec![1.0; 128]).unwrap();
         let mut serialized = serializer.serialize(&vector).unwrap();
-        
+
         // Corrupt the data
         if serialized.len() > 20 {
             serialized[20] = !serialized[20];
         }
-        
+
         let result = serializer.deserialize(&serialized);
         assert!(result.is_err(), "Should fail checksum validation");
     }

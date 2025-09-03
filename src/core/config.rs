@@ -1,7 +1,7 @@
+use crate::network::NetworkConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
-use crate::network::NetworkConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,31 +29,31 @@ pub struct HardwareConfig {
     /// Enable automatic hardware detection (default: true)
     #[serde(default = "default_true")]
     pub enable_detection: bool,
-    
+
     /// Enable GPU acceleration if detected (default: true)
     #[serde(default = "default_true")]
     pub enable_gpu_acceleration: bool,
-    
+
     /// Enable SIMD acceleration if detected (default: true)
     #[serde(default = "default_true")]
     pub enable_simd: bool,
-    
+
     /// Enable AVX-512 if available (default: true)
     #[serde(default = "default_true")]
     pub enable_avx512: bool,
-    
+
     /// Enable GPU for SQL parsing (default: true)
     #[serde(default = "default_true")]
     pub enable_gpu_parsing: bool,
-    
+
     /// Enable GPU for distance calculations (default: true)
     #[serde(default = "default_true")]
     pub enable_gpu_similarity: bool,
-    
+
     /// Minimum vector size to use GPU (default: 64)
     #[serde(default = "default_gpu_min_vector_size")]
     pub gpu_min_vector_size: usize,
-    
+
     /// Minimum batch size to use GPU (default: 100)
     #[serde(default = "default_gpu_min_batch_size")]
     pub gpu_min_batch_size: usize,
@@ -144,7 +144,7 @@ pub struct ServerConfig {
 pub struct StorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
-    
+
     /// Single metadata URL for consistency (e.g., "file:///fast-ssd/proximadb/metadata_info")
     pub metadata_url: String,
 
@@ -163,7 +163,7 @@ pub struct StorageConfig {
     pub cache_size_mb: u64,
     // bloom_filter_bits removed - use bloom_filter_config instead
     pub bloom_filter_config: Option<BloomFilterConfig>,
-    
+
     /// Common compaction configuration (can be overridden per engine)
     #[serde(default)]
     pub compaction_config: CompactionConfig,
@@ -177,11 +177,11 @@ pub struct StorageConfig {
 pub struct StorageLocation {
     /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
     pub url: String,
-    
+
     /// Weight for weighted distribution (default: 1)
     #[serde(default = "default_weight")]
     pub weight: u32,
-    
+
     /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"])
     #[serde(default)]
     pub tags: Vec<String>,
@@ -363,26 +363,32 @@ impl Default for TransactionalOperationsConfig {
 impl StorageConfig {
     /// Get storage URLs from locations
     pub fn storage_urls(&self) -> Vec<String> {
-        self.storage_locations.iter().map(|loc| loc.url.clone()).collect()
+        self.storage_locations
+            .iter()
+            .map(|loc| loc.url.clone())
+            .collect()
     }
-    
+
     /// Get WAL URLs derived from storage URLs
     pub fn write_buffer_urls(&self) -> Vec<String> {
-        self.storage_locations.iter()
+        self.storage_locations
+            .iter()
             .map(|loc| format!("{}/wal", loc.url.trim_end_matches('/')))
             .collect()
     }
-    
+
     /// Get data URLs derived from storage URLs
     pub fn data_urls(&self) -> Vec<String> {
-        self.storage_locations.iter()
+        self.storage_locations
+            .iter()
             .map(|loc| format!("{}/data", loc.url.trim_end_matches('/')))
             .collect()
     }
-    
+
     /// Get index URLs derived from storage URLs
     pub fn index_urls(&self) -> Vec<String> {
-        self.storage_locations.iter()
+        self.storage_locations
+            .iter()
             .map(|loc| format!("{}/index", loc.url.trim_end_matches('/')))
             .collect()
     }
@@ -414,9 +420,9 @@ pub struct WriteBufferUserConfig {
 impl Default for WriteBufferUserConfig {
     fn default() -> Self {
         Self {
-            write_buffer_size_mb: 8192,  // 8GB total across all collections
-            memory_flush_size_bytes: 16 * 1024 * 1024,  // 16MB per collection (aggregate)
-            vector_count_threshold: 100_000,  // 100k vectors per collection
+            write_buffer_size_mb: 8192, // 8GB total across all collections
+            memory_flush_size_bytes: 16 * 1024 * 1024, // 16MB per collection (aggregate)
+            vector_count_threshold: 100_000, // 100k vectors per collection
             memtable_type: "BTree".to_string(),
             sync_mode: "PerBatch".to_string(),
             write_buffer_directory: "./data/write_buffer".to_string(),
@@ -429,10 +435,10 @@ impl WriteBufferUserConfig {
     /// Convert user configuration to internal engine configuration
     pub fn to_engine_config(&self) -> crate::storage::persistence::write_ahead_log::WALConfig {
         use crate::storage::persistence::write_ahead_log::{
-            WALConfig, WriteBufferStrategyType, 
-            config::{MemTableConfig, MultiDiskConfig, CompressionConfig, PerformanceConfig}
+            WALConfig, WriteBufferStrategyType,
+            config::{CompressionConfig, MemTableConfig, MultiDiskConfig, PerformanceConfig},
         };
-        
+
         WALConfig {
             strategy_type: WriteBufferStrategyType::default(),
             memtable: MemTableConfig::default(),
@@ -458,34 +464,46 @@ pub struct CompactionConfig {
     /// L0 file count threshold for compaction (default: 5)
     #[serde(default = "default_l0_file_threshold")]
     pub l0_file_threshold: usize,
-    
+
     /// L0 size threshold in MB for compaction (default: 256MB)
     #[serde(default = "default_l0_size_threshold_mb")]
     pub l0_size_threshold_mb: usize,
-    
+
     /// Multiplier for higher level thresholds (default: 2.0)
     #[serde(default = "default_level_multiplier")]
     pub level_multiplier: f64,
-    
+
     /// Maximum number of levels (default: 7)
     #[serde(default = "default_max_levels")]
     pub max_levels: u8,
-    
+
     /// Compaction strategy: "count", "size", or "hybrid" (default: "hybrid")
     #[serde(default = "default_compaction_strategy")]
     pub strategy: String,
-    
+
     /// Target output file size in MB for size-based compaction (default: 128MB)
     #[serde(default = "default_target_file_size_mb")]
     pub target_file_size_mb: usize,
 }
 
-fn default_l0_file_threshold() -> usize { 5 }
-fn default_l0_size_threshold_mb() -> usize { 256 }
-fn default_level_multiplier() -> f64 { 2.0 }
-fn default_max_levels() -> u8 { 7 }
-fn default_compaction_strategy() -> String { "hybrid".to_string() }
-fn default_target_file_size_mb() -> usize { 128 }
+fn default_l0_file_threshold() -> usize {
+    5
+}
+fn default_l0_size_threshold_mb() -> usize {
+    256
+}
+fn default_level_multiplier() -> f64 {
+    2.0
+}
+fn default_max_levels() -> u8 {
+    7
+}
+fn default_compaction_strategy() -> String {
+    "hybrid".to_string()
+}
+fn default_target_file_size_mb() -> usize {
+    128
+}
 
 impl Default for CompactionConfig {
     fn default() -> Self {
@@ -507,24 +525,24 @@ pub struct SstConfig {
     pub level_count: u8,
     /// Minimum files before compaction triggers (DEPRECATED - use compaction_config)
     pub compaction_threshold: u32,
-    
+
     /// Compaction configuration (overrides common config if specified)
     #[serde(default)]
     pub compaction_config: Option<CompactionConfig>,
     /// SSTable block size in KB. Configurable from TOML, defaults to 1MB.
-    /// 
+    ///
     /// **Performance Guidelines:**
     /// - **256-512KB**: Good for memory-constrained environments
     /// - **1MB**: Optimal for EC2 GP2/GP3 and modern SSDs (default)
     /// - **2-4MB**: Best for high-throughput workloads with ample memory
-    /// 
+    ///
     /// **Cloud-Optimized Block Size (MB):**
     /// - 3MB: Universal optimization for AWS EBS gp3/st1, Azure Premium SSD, GCS Standard
     /// - 2MB: Memory-constrained environments
     /// - 4MB: Very large sparse vector deployments
-    /// 
+    ///
     /// Block size in KB (256-16384 KB range, default 2048 KB = 2MB)
-    /// **Backward Compatibility:** 
+    /// **Backward Compatibility:**
     /// Changing this value during restarts is safe. Each SSTable block stores its own
     /// length prefix [block_len:4][block_data], so existing files continue to work.
     /// Mixed block sizes within the same system are fully supported.
@@ -557,9 +575,9 @@ pub struct SstConfig {
     /// Prefetch size in KB
     pub prefetch_size_kb: u32,
     /// Decompression cache configuration
-    pub decompression_cache_config: Option<crate::storage::engines::impls::sst::decompression_cache::CacheConfig>,
-
-    }
+    pub decompression_cache_config:
+        Option<crate::storage::engines::impls::sst::decompression_cache::CacheConfig>,
+}
 
 /// VIPER (columnar storage) engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -577,7 +595,7 @@ pub struct ViperConfig {
     pub data_directory: String,
     /// Cache size for columnar data in MB
     pub cache_size_mb: u64,
-    
+
     /// Compaction configuration (overrides common config if specified)
     #[serde(default)]
     pub compaction_config: Option<CompactionConfig>,
@@ -587,17 +605,17 @@ impl Default for ViperConfig {
     fn default() -> Self {
         Self {
             row_group_size: 100_000,
-            compression: "zstd".to_string(),  // ZSTD for better compression
-            compression_level: 3,  // Balanced speed/compression
+            compression: "zstd".to_string(), // ZSTD for better compression
+            compression_level: 3,            // Balanced speed/compression
             enable_statistics: true,
             data_directory: "./data/viper_data".to_string(),
             cache_size_mb: 512,
-            compaction_config: None,  // Use common config by default
+            compaction_config: None, // Use common config by default
         }
     }
 }
 fn default_compression_level() -> i32 {
-    3  // Balanced compression level
+    3 // Balanced compression level
 }
 
 // BloomFilterConfig moved to core::bloom module for polymorphic design
@@ -609,11 +627,11 @@ impl Default for SstConfig {
         Self {
             level_count: 7,
             compaction_threshold: 5,
-            compaction_config: None,  // Use common config by default
+            compaction_config: None, // Use common config by default
             block_size_kb: 2048, // 2MB default (2048 KB) - optimal balance for disk IOPS and cloud storage
             compaction_strategy: "leveled".to_string(),
-            compression: "none".to_string(),  // No compression for server default
-            compression_level: 0,  // No compression level
+            compression: "none".to_string(), // No compression for server default
+            compression_level: 0,            // No compression level
             bloom_filter_config: Some(BloomFilterConfig::default()),
             cache_size_mb: 128,
             max_files_per_level: 10,
@@ -624,15 +642,16 @@ impl Default for SstConfig {
             mmap_enabled: true,
             prefetch_enabled: true,
             prefetch_size_kb: 64,
-            decompression_cache_config: Some(crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default()),
-        
-    }
+            decompression_cache_config: Some(
+                crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
+            ),
+        }
     }
 }
 
 impl SstConfig {
     /// Validate SST configuration parameters for optimal performance and correctness
-    /// 
+    ///
     /// Note: block_size_kb changes are backward compatible since each SSTable block
     /// stores its own length prefix [block_len:4][block_data], allowing mixed block sizes.
     pub fn validate(&self) -> Result<(), String> {
@@ -642,54 +661,73 @@ impl SstConfig {
         if self.compaction_threshold == 0 {
             return Err("compaction_threshold must be greater than 0".to_string());
         }
-        
+
         // Validate block size for optimal performance and storage compatibility
         if self.block_size_kb < 256 {
-            return Err("block_size_kb must be at least 256KB for reasonable I/O performance".to_string());
+            return Err(
+                "block_size_kb must be at least 256KB for reasonable I/O performance".to_string(),
+            );
         }
         if self.block_size_kb > 16384 {
             return Err("block_size_kb should not exceed 16384KB (16MB) to avoid excessive memory usage per block".to_string());
         }
-        
+
         // Performance recommendations for common deployment scenarios
         match self.block_size_kb {
             256..=512 => {
                 // 256-512KB - Good for disk IOPS optimization and memory-constrained environments
-                info!("block_size_kb={}KB - Optimized for disk IOPS and memory-constrained deployments", self.block_size_kb);
+                info!(
+                    "block_size_kb={}KB - Optimized for disk IOPS and memory-constrained deployments",
+                    self.block_size_kb
+                );
             }
             1024 => {
                 // 1MB - Good for standard disk deployments
-                info!("block_size_kb=1024KB (1MB) - Good for standard disk deployments with moderate mem");
+                info!(
+                    "block_size_kb=1024KB (1MB) - Good for standard disk deployments with moderate mem"
+                );
             }
             2048 => {
                 // 2MB - Optimal balance for both disk and cloud
-                info!("block_size_kb=2048KB (2MB) - Optimal balance for disk IOPS and cloud storage patterns");
+                info!(
+                    "block_size_kb=2048KB (2MB) - Optimal balance for disk IOPS and cloud storage patterns"
+                );
             }
             3072 => {
                 // 3MB - Optimal for all cloud providers (AWS EBS gp3/st1, Azure Premium SSD, GCS Standard)
-                info!("block_size_kb=3072KB (3MB) - Optimal for cloud storage IOPS patterns (AWS/Azure/GCS)");
+                info!(
+                    "block_size_kb=3072KB (3MB) - Optimal for cloud storage IOPS patterns (AWS/Azure/GCS)"
+                );
             }
             4096..=8192 => {
                 // 4-8MB - Good for high-throughput cloud scenarios
-                info!("block_size_kb={}KB ({}MB) - Optimized for high-throughput cloud workloads", self.block_size_kb, self.block_size_kb / 1024);
+                info!(
+                    "block_size_kb={}KB ({}MB) - Optimized for high-throughput cloud workloads",
+                    self.block_size_kb,
+                    self.block_size_kb / 1024
+                );
             }
             8193..=16384 => {
                 // Large blocks for very high-throughput workloads
-                info!("block_size_kb={}KB ({}MB) - Large blocks for very high-throughput workloads", self.block_size_kb, self.block_size_kb / 1024);
+                info!(
+                    "block_size_kb={}KB ({}MB) - Large blocks for very high-throughput workloads",
+                    self.block_size_kb,
+                    self.block_size_kb / 1024
+                );
             }
             _ => {
                 // Any other size is fine
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get block size in bytes for internal use
     pub fn block_size_bytes(&self) -> usize {
         (self.block_size_kb as usize) * 1024
     }
-    
+
     /// Create test-specific SST configuration with smaller block sizes for quantization testing
     /// This helps demonstrate quantization clustering with smaller blocks while keeping
     /// server default at 2048KB for production performance
@@ -700,7 +738,7 @@ impl SstConfig {
         config.compression_level = 3; // Balanced compression level
         config
     }
-    
+
     /// Create test-specific SST configuration with 512KB blocks
     pub fn test_config_512kb() -> Self {
         let mut config = Self::default();
@@ -739,19 +777,19 @@ pub struct ApiConfig {
     pub max_request_size_mb: u64,
     pub timeout_seconds: u64,
     pub enable_tls: Option<bool>,
-    
+
     /// Enable REST API compression (default: false)
     #[serde(default = "default_false")]
     pub rest_compression: bool,
-    
+
     /// Enable gRPC compression (default: false)
     #[serde(default = "default_false")]
     pub grpc_compression: bool,
-    
+
     /// Compression algorithm: "gzip", "deflate", "br" (default: "gzip")
     #[serde(default = "default_compression_algorithm")]
     pub compression_algorithm: String,
-    
+
     /// Compression level 1-9 for gzip, 1-11 for brotli (default: 6)
     #[serde(default = "default_compression_level_api")]
     pub compression_level: i32,
@@ -860,15 +898,15 @@ impl Default for WalStorageConfig {
             write_buffer_urls: vec!["file://./data/wal".to_string()],
             distribution_strategy: WalDistributionStrategy::LoadBalanced,
             collection_affinity: true,
-            memory_flush_size_bytes: 10 * 1024 * 1024,  // 10MB - recommended for collection-level flush
+            memory_flush_size_bytes: 10 * 1024 * 1024, // 10MB - recommended for collection-level flush
             global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB - recommended for global memory threshold
-            strategy_type: None,                       // Use WAL defaults
-            memtable_type: None,                       // Use WAL defaults
-            sync_mode: None,                           // Use WAL defaults
-            batch_threshold: None,                     // Use WAL defaults
-            write_buffer_size_mb: None,                // Use WAL defaults
-            concurrent_flushes: None,                  // Use WAL defaults
-            global_shrink_factor: Some(0.4),           // 40% shrink factor - recommended
+            strategy_type: None,                            // Use WAL defaults
+            memtable_type: None,                            // Use WAL defaults
+            sync_mode: None,                                // Use WAL defaults
+            batch_threshold: None,                          // Use WAL defaults
+            write_buffer_size_mb: None,                     // Use WAL defaults
+            concurrent_flushes: None,                       // Use WAL defaults
+            global_shrink_factor: Some(0.4),                // 40% shrink factor - recommended
         }
     }
 }

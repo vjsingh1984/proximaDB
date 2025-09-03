@@ -23,14 +23,14 @@ pub enum UniversalSearchMode {
         distance_metric: DistanceMetric,
         search_params: SimilaritySearchParams,
     },
-    
+
     /// ID-based lookup
     IdLookup {
         ids: Vec<String>,
         include_vectors: bool,
         include_metadata: bool,
     },
-    
+
     /// Range-based search
     RangeSearch {
         query_vector: Vec<f32>,
@@ -38,7 +38,7 @@ pub enum UniversalSearchMode {
         max_results: Option<usize>,
         distance_metric: DistanceMetric,
     },
-    
+
     /// Filtered similarity search
     FilteredSimilarity {
         query_vector: Vec<f32>,
@@ -47,7 +47,7 @@ pub enum UniversalSearchMode {
         metadata_filter: MetadataFilter,
         search_params: SimilaritySearchParams,
     },
-    
+
     /// Hybrid search (vector + text/metadata)
     HybridSearch {
         vector_query: Option<Vec<f32>>,
@@ -56,7 +56,7 @@ pub enum UniversalSearchMode {
         fusion_params: HybridFusionParams,
         top_k: usize,
     },
-    
+
     /// Multi-vector search
     MultiVector {
         query_vectors: Vec<Vec<f32>>,
@@ -64,7 +64,7 @@ pub enum UniversalSearchMode {
         top_k: usize,
         distance_metric: DistanceMetric,
     },
-    
+
     /// Approximate nearest neighbors
     ApproximateNN {
         query_vector: Vec<f32>,
@@ -72,13 +72,13 @@ pub enum UniversalSearchMode {
         distance_metric: DistanceMetric,
         approximation_params: ApproximationParams,
     },
-    
+
     /// Batch search
     BatchSearch {
         queries: Vec<SearchQuery>,
         batch_params: BatchSearchParams,
     },
-    
+
     /// Progressive search with refinement
     ProgressiveSearch {
         query_vector: Vec<f32>,
@@ -86,7 +86,7 @@ pub enum UniversalSearchMode {
         distance_metric: DistanceMetric,
         progressive_params: ProgressiveSearchParams,
     },
-    
+
     /// Custom search mode
     Custom {
         mode_name: String,
@@ -99,19 +99,19 @@ pub enum UniversalSearchMode {
 pub struct SimilaritySearchParams {
     /// Search quality vs speed trade-off
     pub quality_speed_balance: f32, // 0.0 = speed, 1.0 = quality
-    
+
     /// Enable early termination
     pub enable_early_termination: bool,
-    
+
     /// Search timeout (ms)
     pub timeout_ms: Option<u64>,
-    
+
     /// Search hints
     pub search_hints: Vec<SearchHint>,
-    
+
     /// Result diversification
     pub diversification: Option<DiversificationParams>,
-    
+
     /// Search parallelization
     pub parallelization: ParallelizationParams,
 }
@@ -125,26 +125,26 @@ pub enum SearchHint {
         uniform: bool,
         sparse: bool,
     },
-    
+
     /// Query characteristics
     QueryCharacteristics {
         query_selectivity: f32,
         query_complexity: QueryComplexity,
     },
-    
+
     /// Data characteristics
     DataCharacteristics {
         data_distribution: DataDistribution,
         dimensionality: DimensionalityHint,
     },
-    
+
     /// Performance preferences
     PerformancePreference {
         prefer_accuracy: bool,
         prefer_speed: bool,
         prefer_memory_efficiency: bool,
     },
-    
+
     /// Resource constraints
     ResourceConstraints {
         max_memory_mb: Option<u64>,
@@ -187,12 +187,12 @@ pub enum DimensionalityHint {
 pub struct DiversificationParams {
     /// Enable diversification
     pub enabled: bool,
-    
+
     /// Diversification strategy
-    
+
     /// Diversity threshold
     pub diversity_threshold: f32,
-    
+
     /// Maximum diversity loss
     pub max_diversity_loss: f32,
 }
@@ -204,19 +204,19 @@ pub enum DiversificationStrategy {
     MaximalMarginalRelevance {
         lambda: f32, // Balance between relevance and diversity
     },
-    
+
     /// Clustering-based diversification
     ClusteringBased {
         num_clusters: usize,
         cluster_method: ClusteringMethod,
     },
-    
+
     /// Distance-based diversification
     DistanceBased {
         min_similarity: f32,
         distance_metric: DistanceMetric,
     },
-    
+
     /// Feature-based diversification
     FeatureBased {
         feature_weights: Vec<f32>,
@@ -238,13 +238,13 @@ pub enum ClusteringMethod {
 pub struct ParallelizationParams {
     /// Enable parallel search
     pub enabled: bool,
-    
+
     /// Number of parallel workers
     pub num_workers: Option<usize>,
-    
+
     /// Work distribution strategy
     pub distribution_strategy: WorkDistributionStrategy,
-    
+
     /// Result aggregation strategy
     pub aggregation_strategy: ResultAggregationStrategy,
 }
@@ -253,24 +253,16 @@ pub struct ParallelizationParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkDistributionStrategy {
     /// Static partitioning
-    Static {
-        partition_size: usize,
-    },
-    
+    Static { partition_size: usize },
+
     /// Dynamic work stealing
-    DynamicWorkStealing {
-        steal_threshold: usize,
-    },
-    
+    DynamicWorkStealing { steal_threshold: usize },
+
     /// Query decomposition
-    QueryDecomposition {
-        decomposition_strategy: String,
-    },
-    
+    QueryDecomposition { decomposition_strategy: String },
+
     /// Data partitioning
-    DataPartitioning {
-        partition_strategy: String,
-    },
+    DataPartitioning { partition_strategy: String },
 }
 
 /// Result aggregation strategies
@@ -278,13 +270,13 @@ pub enum WorkDistributionStrategy {
 pub enum ResultAggregationStrategy {
     /// Merge and sort
     MergeSort,
-    
+
     /// Priority queue based
     PriorityQueue,
-    
+
     /// Streaming aggregation
     Streaming,
-    
+
     /// Two-phase aggregation
     TwoPhase,
 }
@@ -293,13 +285,13 @@ pub enum ResultAggregationStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridFusionParams {
     /// Fusion strategy
-    
+
     /// Component weights
     pub weights: FusionWeights,
-    
+
     /// Normalization method
     pub normalization: ScoreNormalization,
-    
+
     /// Fusion post-processing
     pub post_processing: Option<PostProcessingParams>,
 }
@@ -309,20 +301,20 @@ pub struct HybridFusionParams {
 pub enum FusionStrategy {
     /// Linear combination
     LinearCombination,
-    
+
     /// Reciprocal rank fusion
     ReciprocalRankFusion {
         k: f32, // RRF parameter
     },
-    
+
     /// Borda count
     BordaCount,
-    
+
     /// Weighted combination
     WeightedCombination {
         combination_function: CombinationFunction,
     },
-    
+
     /// Machine learning based fusion
     MLFusion {
         model_type: String,
@@ -347,13 +339,13 @@ pub enum CombinationFunction {
 pub struct FusionWeights {
     /// Vector search weight
     pub vector_weight: f32,
-    
+
     /// Text search weight
     pub text_weight: f32,
-    
+
     /// Metadata filter weight
     pub metadata_weight: f32,
-    
+
     /// Dynamic weight adjustment
     pub dynamic_adjustment: bool,
 }
@@ -363,21 +355,18 @@ pub struct FusionWeights {
 pub enum ScoreNormalization {
     /// No normalization
     None,
-    
+
     /// Min-max normalization
     MinMax,
-    
+
     /// Z-score normalization
     ZScore,
-    
+
     /// Rank normalization
     Rank,
-    
+
     /// Sigmoid normalization
-    Sigmoid {
-        alpha: f32,
-        beta: f32,
-    },
+    Sigmoid { alpha: f32, beta: f32 },
 }
 
 /// Post-processing parameters
@@ -385,13 +374,13 @@ pub enum ScoreNormalization {
 pub struct PostProcessingParams {
     /// Re-ranking enabled
     pub reranking_enabled: bool,
-    
+
     /// Re-ranking strategy
     pub reranking_strategy: Option<RerankingStrategy>,
-    
+
     /// Result filtering
     pub result_filtering: Option<ResultFilteringParams>,
-    
+
     /// Score adjustment
     pub score_adjustment: Option<ScoreAdjustmentParams>,
 }
@@ -404,18 +393,16 @@ pub enum RerankingStrategy {
         model_type: String,
         features: Vec<String>,
     },
-    
+
     /// Rule-based re-ranking
-    RuleBased {
-        rules: Vec<RerankingRule>,
-    },
-    
+    RuleBased { rules: Vec<RerankingRule> },
+
     /// Distance-based re-ranking
     DistanceBased {
         distance_metric: DistanceMetric,
         reference_vector: Vec<f32>,
     },
-    
+
     /// Multi-criteria re-ranking
     MultiCriteria {
         criteria: Vec<RerankingCriterion>,
@@ -428,10 +415,10 @@ pub enum RerankingStrategy {
 pub struct RerankingRule {
     /// Rule condition
     pub condition: String,
-    
+
     /// Score adjustment
     pub score_adjustment: f32,
-    
+
     /// Rule priority
     pub priority: u32,
 }
@@ -441,10 +428,10 @@ pub struct RerankingRule {
 pub struct RerankingCriterion {
     /// Criterion name
     pub name: String,
-    
+
     /// Criterion weight
     pub weight: f32,
-    
+
     /// Criterion function
     pub function: String,
 }
@@ -463,13 +450,13 @@ pub enum CriteriaAggregation {
 pub struct ResultFilteringParams {
     /// Score threshold
     pub score_threshold: Option<f32>,
-    
+
     /// Distance threshold
     pub distance_threshold: Option<f32>,
-    
+
     /// Duplicate removal
     pub remove_duplicates: bool,
-    
+
     /// Custom filters
     pub custom_filters: Vec<CustomFilter>,
 }
@@ -479,10 +466,10 @@ pub struct ResultFilteringParams {
 pub struct CustomFilter {
     /// Filter name
     pub name: String,
-    
+
     /// Filter parameters
     pub parameters: HashMap<String, serde_json::Value>,
-    
+
     /// Filter priority
     pub priority: u32,
 }
@@ -492,10 +479,10 @@ pub struct CustomFilter {
 pub struct ScoreAdjustmentParams {
     /// Boost factors
     pub boost_factors: HashMap<String, f32>,
-    
+
     /// Penalty factors
     pub penalty_factors: HashMap<String, f32>,
-    
+
     /// Adjustment strategy
     pub strategy: ScoreAdjustmentStrategy,
 }
@@ -515,27 +502,21 @@ pub enum ScoreAdjustmentStrategy {
 pub enum MultiVectorStrategy {
     /// Average all query vectors
     Average,
-    
+
     /// Use maximum similarity
     Maximum,
-    
+
     /// Use minimum similarity
     Minimum,
-    
+
     /// Weighted combination
-    Weighted {
-        weights: Vec<f32>,
-    },
-    
+    Weighted { weights: Vec<f32> },
+
     /// Sequential refinement
-    Sequential {
-        refinement_strategy: String,
-    },
-    
+    Sequential { refinement_strategy: String },
+
     /// Ensemble combination
-    Ensemble {
-        combination_method: String,
-    },
+    Ensemble { combination_method: String },
 }
 
 /// Approximation parameters
@@ -543,13 +524,13 @@ pub enum MultiVectorStrategy {
 pub struct ApproximationParams {
     /// Approximation quality
     pub quality: ApproximationQuality,
-    
+
     /// Search algorithm preferences
     pub algorithm_preferences: Vec<ApproximationAlgorithm>,
-    
+
     /// Approximation constraints
     pub constraints: ApproximationConstraints,
-    
+
     /// Refinement settings
     pub refinement: Option<RefinementParams>,
 }
@@ -557,9 +538,9 @@ pub struct ApproximationParams {
 /// Approximation quality levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApproximationQuality {
-    Fast,      // Low accuracy, high speed
-    Balanced,  // Balanced accuracy and speed
-    Accurate,  // High accuracy, lower speed
+    Fast,     // Low accuracy, high speed
+    Balanced, // Balanced accuracy and speed
+    Accurate, // High accuracy, lower speed
     Custom {
         accuracy_threshold: f32,
         speed_requirement: f32,
@@ -569,14 +550,14 @@ pub enum ApproximationQuality {
 /// Approximation algorithms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ApproximationAlgorithm {
-    LSH,       // Locality Sensitive Hashing
+    LSH, // Locality Sensitive Hashing
     RandomProjection,
     ProductQuantization,
-    IVF,       // Inverted File
-    HNSW,      // Hierarchical Navigable Small World
-    NSG,       // Navigating Spreading-out Graph
-    FAISS,     // Facebook AI Similarity Search
-    Annoy,     // Approximate Nearest Neighbors Oh Yeah
+    IVF,   // Inverted File
+    HNSW,  // Hierarchical Navigable Small World
+    NSG,   // Navigating Spreading-out Graph
+    FAISS, // Facebook AI Similarity Search
+    Annoy, // Approximate Nearest Neighbors Oh Yeah
     Custom(String),
 }
 
@@ -585,13 +566,13 @@ pub enum ApproximationAlgorithm {
 pub struct ApproximationConstraints {
     /// Maximum search time (ms)
     pub max_search_time_ms: Option<u64>,
-    
+
     /// Maximum memory usage (MB)
     pub max_memory_mb: Option<u64>,
-    
+
     /// Minimum recall requirement
     pub min_recall: Option<f32>,
-    
+
     /// Maximum distance error
     pub max_distance_error: Option<f32>,
 }
@@ -601,9 +582,9 @@ pub struct ApproximationConstraints {
 pub struct RefinementParams {
     /// Enable refinement
     pub enabled: bool,
-    
+
     /// Refinement strategy
-    
+
     /// Refinement budget
     pub refinement_budget: RefinementBudget,
 }
@@ -612,20 +593,16 @@ pub struct RefinementParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RefinementStrategy {
     /// Re-ranking with exact distances
-    ExactReranking {
-        rerank_factor: f32,
-    },
-    
+    ExactReranking { rerank_factor: f32 },
+
     /// Iterative refinement
     Iterative {
         max_iterations: u32,
         convergence_threshold: f32,
     },
-    
+
     /// Multi-stage refinement
-    MultiStage {
-        stages: Vec<RefinementStage>,
-    },
+    MultiStage { stages: Vec<RefinementStage> },
 }
 
 /// Refinement stage
@@ -633,13 +610,13 @@ pub enum RefinementStrategy {
 pub struct RefinementStage {
     /// Stage name
     pub name: String,
-    
+
     /// Algorithm for this stage
     pub algorithm: String,
-    
+
     /// Stage parameters
     pub parameters: HashMap<String, serde_json::Value>,
-    
+
     /// Candidate reduction factor
     pub reduction_factor: f32,
 }
@@ -648,20 +625,14 @@ pub struct RefinementStage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RefinementBudget {
     /// Time-based budget
-    Time {
-        max_time_ms: u64,
-    },
-    
+    Time { max_time_ms: u64 },
+
     /// Computation-based budget
-    Computation {
-        max_distance_computations: u64,
-    },
-    
+    Computation { max_distance_computations: u64 },
+
     /// Memory-based budget
-    Memory {
-        max_memory_mb: u64,
-    },
-    
+    Memory { max_memory_mb: u64 },
+
     /// Adaptive budget
     Adaptive {
         initial_budget: u64,
@@ -674,13 +645,13 @@ pub enum RefinementBudget {
 pub struct SearchQuery {
     /// Query identifier
     pub query_id: String,
-    
+
     /// Search mode for this query
     pub search_mode: UniversalSearchMode,
-    
+
     /// Query-specific parameters
     pub parameters: HashMap<String, serde_json::Value>,
-    
+
     /// Query priority
     pub priority: QueryPriority,
 }
@@ -699,13 +670,13 @@ pub enum QueryPriority {
 pub struct BatchSearchParams {
     /// Batch processing strategy
     pub processing_strategy: BatchProcessingStrategy,
-    
+
     /// Result collection strategy
     pub result_collection: ResultCollectionStrategy,
-    
+
     /// Error handling strategy
     pub error_handling: BatchErrorHandling,
-    
+
     /// Resource management
     pub resource_management: BatchResourceManagement,
 }
@@ -715,21 +686,15 @@ pub struct BatchSearchParams {
 pub enum BatchProcessingStrategy {
     /// Sequential processing
     Sequential,
-    
+
     /// Parallel processing
-    Parallel {
-        max_parallelism: usize,
-    },
-    
+    Parallel { max_parallelism: usize },
+
     /// Priority-based processing
-    PriorityBased {
-        priority_queue_size: usize,
-    },
-    
+    PriorityBased { priority_queue_size: usize },
+
     /// Adaptive processing
-    Adaptive {
-        adaptation_strategy: String,
-    },
+    Adaptive { adaptation_strategy: String },
 }
 
 /// Result collection strategies
@@ -737,13 +702,13 @@ pub enum BatchProcessingStrategy {
 pub enum ResultCollectionStrategy {
     /// Collect all results at once
     Bulk,
-    
+
     /// Stream results as they complete
     Streaming,
-    
+
     /// Collect by priority
     Priority,
-    
+
     /// Collect by completion order
     CompletionOrder,
 }
@@ -753,20 +718,18 @@ pub enum ResultCollectionStrategy {
 pub enum BatchErrorHandling {
     /// Fail fast on first error
     FailFast,
-    
+
     /// Continue on errors
     ContinueOnError,
-    
+
     /// Retry on errors
     RetryOnError {
         max_retries: u32,
         retry_delay_ms: u64,
     },
-    
+
     /// Partial failure tolerance
-    PartialFailure {
-        max_failure_rate: f32,
-    },
+    PartialFailure { max_failure_rate: f32 },
 }
 
 /// Batch resource management
@@ -774,10 +737,10 @@ pub enum BatchErrorHandling {
 pub struct BatchResourceManagement {
     /// Memory management
     pub memory_management: BatchMemoryManagement,
-    
+
     /// CPU management
     pub cpu_management: BatchCPUManagement,
-    
+
     /// I/O management
     pub io_management: BatchIOManagement,
 }
@@ -787,10 +750,10 @@ pub struct BatchResourceManagement {
 pub struct BatchMemoryManagement {
     /// Maximum memory per batch
     pub max_memory_per_batch: Option<u64>,
-    
+
     /// Memory cleanup strategy
     pub cleanup_strategy: MemoryCleanupStrategy,
-    
+
     /// Memory monitoring
     pub monitoring_enabled: bool,
 }
@@ -809,10 +772,10 @@ pub enum MemoryCleanupStrategy {
 pub struct BatchCPUManagement {
     /// CPU quota per batch
     pub cpu_quota_percent: Option<f32>,
-    
+
     /// Thread pool management
     pub thread_pool_management: ThreadPoolManagement,
-    
+
     /// CPU monitoring
     pub monitoring_enabled: bool,
 }
@@ -830,10 +793,10 @@ pub enum ThreadPoolManagement {
 pub struct BatchIOManagement {
     /// I/O bandwidth limit
     pub bandwidth_limit_mbps: Option<f64>,
-    
+
     /// I/O scheduling
     pub scheduling_strategy: IOSchedulingStrategy,
-    
+
     /// I/O monitoring
     pub monitoring_enabled: bool,
 }
@@ -852,13 +815,13 @@ pub enum IOSchedulingStrategy {
 pub struct ProgressiveSearchParams {
     /// Progressive stages
     pub stages: Vec<ProgressiveStage>,
-    
+
     /// Stage transition criteria
     pub transition_criteria: StageTransitionCriteria,
-    
+
     /// Early termination conditions
     pub early_termination: EarlyTerminationConditions,
-    
+
     /// Result refinement
     pub result_refinement: ProgressiveRefinement,
 }
@@ -868,16 +831,16 @@ pub struct ProgressiveSearchParams {
 pub struct ProgressiveStage {
     /// Stage name
     pub name: String,
-    
+
     /// Stage search algorithm
     pub algorithm: ProgressiveAlgorithm,
-    
+
     /// Stage parameters
     pub parameters: HashMap<String, serde_json::Value>,
-    
+
     /// Candidate count for this stage
     pub candidate_count: usize,
-    
+
     /// Quality threshold for this stage
     pub quality_threshold: f32,
 }
@@ -897,10 +860,10 @@ pub enum ProgressiveAlgorithm {
 pub struct StageTransitionCriteria {
     /// Quality-based transition
     pub quality_based: Option<QualityTransition>,
-    
+
     /// Time-based transition
     pub time_based: Option<TimeTransition>,
-    
+
     /// Result-based transition
     pub result_based: Option<ResultTransition>,
 }
@@ -910,10 +873,10 @@ pub struct StageTransitionCriteria {
 pub struct QualityTransition {
     /// Quality improvement threshold
     pub improvement_threshold: f32,
-    
+
     /// Quality plateau detection
     pub plateau_detection: bool,
-    
+
     /// Quality target
     pub quality_target: Option<f32>,
 }
@@ -923,10 +886,10 @@ pub struct QualityTransition {
 pub struct TimeTransition {
     /// Maximum time per stage
     pub max_time_per_stage_ms: u64,
-    
+
     /// Total time budget
     pub total_time_budget_ms: u64,
-    
+
     /// Time allocation strategy
     pub allocation_strategy: TimeAllocationStrategy,
 }
@@ -945,10 +908,10 @@ pub enum TimeAllocationStrategy {
 pub struct ResultTransition {
     /// Minimum results per stage
     pub min_results_per_stage: usize,
-    
+
     /// Result quality threshold
     pub result_quality_threshold: f32,
-    
+
     /// Convergence detection
     pub convergence_detection: bool,
 }
@@ -958,13 +921,13 @@ pub struct ResultTransition {
 pub struct EarlyTerminationConditions {
     /// Quality satisfaction
     pub quality_satisfied: Option<f32>,
-    
+
     /// Time limit exceeded
     pub time_limit_ms: Option<u64>,
-    
+
     /// Result count sufficient
     pub sufficient_results: Option<usize>,
-    
+
     /// Custom termination conditions
     pub custom_conditions: Vec<CustomTerminationCondition>,
 }
@@ -974,10 +937,10 @@ pub struct EarlyTerminationConditions {
 pub struct CustomTerminationCondition {
     /// Condition name
     pub name: String,
-    
+
     /// Condition parameters
     pub parameters: HashMap<String, serde_json::Value>,
-    
+
     /// Condition priority
     pub priority: u32,
 }
@@ -987,9 +950,9 @@ pub struct CustomTerminationCondition {
 pub struct ProgressiveRefinement {
     /// Enable cross-stage refinement
     pub cross_stage_refinement: bool,
-    
+
     /// Refinement strategy
-    
+
     /// Refinement budget
     pub budget: RefinementBudget,
 }
@@ -1008,28 +971,28 @@ pub enum ProgressiveRefinementStrategy {
 pub struct SearchCapabilities {
     /// Supported search modes
     pub supported_modes: Vec<String>,
-    
+
     /// Distance metrics supported
     pub supported_distance_metrics: Vec<DistanceMetric>,
-    
+
     /// Maximum vector dimension
     pub max_dimension: usize,
-    
+
     /// Maximum result count
     pub max_results: usize,
-    
+
     /// Approximate search support
     pub approximate_search: bool,
-    
+
     /// Parallel search support
     pub parallel_search: bool,
-    
+
     /// Batch search support
     pub batch_search: bool,
-    
+
     /// Progressive search support
     pub progressive_search: bool,
-    
+
     /// Hybrid search support
     pub hybrid_search: bool,
 }
@@ -1039,13 +1002,13 @@ pub struct SearchCapabilities {
 pub struct SearchOptimizations {
     /// Hardware optimizations
     pub hardware_optimizations: Vec<HardwareOptimization>,
-    
+
     /// Algorithm optimizations
     pub algorithm_optimizations: Vec<AlgorithmOptimization>,
-    
+
     /// Index optimizations
     pub index_optimizations: Vec<IndexOptimization>,
-    
+
     /// Cache optimizations
     pub cache_optimizations: Vec<CacheOptimization>,
 }
@@ -1095,22 +1058,25 @@ pub enum CacheOptimization {
 pub struct CandidateRecord {
     /// Record identifier
     pub id: String,
-    
+
     /// Distance/similarity score
     pub similarity: f32,
-    
+
     /// Optional vector data
     pub vector: Option<Vec<f32>>,
-    
+
     /// Optional metadata
     pub metadata: Option<HashMap<String, serde_json::Value>>,
-    
+
     /// Search stage context information
     pub search_context: Option<SearchStageContext>,
 }
 
 /// Type alias for backward compatibility - DEPRECATED: Use SearchStageContext
-#[deprecated(since = "0.1.4", note = "Use SearchStageContext to avoid confusion with query context")]
+#[deprecated(
+    since = "0.1.4",
+    note = "Use SearchStageContext to avoid confusion with query context"
+)]
 pub type SearchContext = SearchStageContext;
 
 /// Search stage context information - tracks which stage found a candidate
@@ -1119,13 +1085,13 @@ pub type SearchContext = SearchStageContext;
 pub struct SearchStageContext {
     /// Search stage that found this candidate (e.g., "binary", "int8", "pq", "fp32")
     pub search_stage: Option<String>,
-    
+
     /// Approximation quality at this stage (0.0-1.0)
     pub approximation_quality: Option<f32>,
-    
+
     /// Computation cost for this stage
     pub computation_cost: Option<f32>,
-    
+
     /// Additional stage-specific context
     pub additional_context: HashMap<String, serde_json::Value>,
 }
@@ -1135,10 +1101,10 @@ pub struct SearchStageContext {
 pub struct SearchCandidate {
     /// Candidate record
     pub record: CandidateRecord,
-    
+
     /// Refinement history
     pub refinement_history: Vec<RefinementStep>,
-    
+
     /// Candidate state
     pub state: CandidateState,
 }
@@ -1148,16 +1114,16 @@ pub struct SearchCandidate {
 pub struct RefinementStep {
     /// Step name
     pub step_name: String,
-    
+
     /// Previous score
     pub previous_score: f32,
-    
+
     /// New score
     pub new_score: f32,
-    
+
     /// Step timestamp
     pub timestamp: std::time::Instant,
-    
+
     /// Step metadata
     pub metadata: HashMap<String, serde_json::Value>,
 }
@@ -1176,13 +1142,13 @@ pub enum CandidateState {
 pub struct ProgressiveSearchResult {
     /// Final candidates
     pub candidates: Vec<CandidateRecord>,
-    
+
     /// Search statistics
     pub statistics: ProgressiveSearchStatistics,
-    
+
     /// Stage results
     pub stage_results: Vec<StageResult>,
-    
+
     /// Overall quality metrics
     pub quality_metrics: QualityMetrics,
 }
@@ -1192,19 +1158,19 @@ pub struct ProgressiveSearchResult {
 pub struct ProgressiveSearchStatistics {
     /// Total search time
     pub total_time_ms: u64,
-    
+
     /// Time per stage
     pub stage_times_ms: Vec<u64>,
-    
+
     /// Total candidates examined
     pub total_candidates_examined: u64,
-    
+
     /// Candidates per stage
     pub candidates_per_stage: Vec<u64>,
-    
+
     /// Distance computations
     pub distance_computations: u64,
-    
+
     /// Early termination occurred
     pub early_termination: bool,
 }
@@ -1214,16 +1180,16 @@ pub struct ProgressiveSearchStatistics {
 pub struct StageResult {
     /// Stage name
     pub stage_name: String,
-    
+
     /// Stage candidates
     pub candidates: Vec<CandidateRecord>,
-    
+
     /// Stage time
     pub time_ms: u64,
-    
+
     /// Stage quality
     pub quality: f32,
-    
+
     /// Stage metadata
     pub metadata: HashMap<String, serde_json::Value>,
 }
@@ -1233,16 +1199,16 @@ pub struct StageResult {
 pub struct QualityMetrics {
     /// Overall quality score
     pub overall_quality: f32,
-    
+
     /// Precision estimate
     pub precision: Option<f32>,
-    
+
     /// Recall estimate
     pub recall: Option<f32>,
-    
+
     /// Distance accuracy
     pub distance_accuracy: Option<f32>,
-    
+
     /// Result diversity
     pub result_diversity: Option<f32>,
 }
@@ -1284,9 +1250,7 @@ impl Default for ApproximationParams {
             },
             refinement: Some(RefinementParams {
                 enabled: true,
-                refinement_budget: RefinementBudget::Time {
-                    max_time_ms: 50,
-                },
+                refinement_budget: RefinementBudget::Time { max_time_ms: 50 },
             }),
         }
     }
@@ -1295,9 +1259,7 @@ impl Default for ApproximationParams {
 impl Default for BatchSearchParams {
     fn default() -> Self {
         Self {
-            processing_strategy: BatchProcessingStrategy::Parallel {
-                max_parallelism: 4,
-            },
+            processing_strategy: BatchProcessingStrategy::Parallel { max_parallelism: 4 },
             result_collection: ResultCollectionStrategy::CompletionOrder,
             error_handling: BatchErrorHandling::ContinueOnError,
             resource_management: BatchResourceManagement {
@@ -1327,7 +1289,7 @@ impl Default for BatchSearchParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_universal_search_mode_creation() {
         let search_mode = UniversalSearchMode::VectorSimilarity {
@@ -1336,32 +1298,38 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
             search_params: SimilaritySearchParams::default(),
         };
-        
-        assert!(matches!(search_mode, UniversalSearchMode::VectorSimilarity { .. }));
+
+        assert!(matches!(
+            search_mode,
+            UniversalSearchMode::VectorSimilarity { .. }
+        ));
     }
-    
+
     #[test]
     fn test_search_parameters() {
         let params = SimilaritySearchParams::default();
-        
+
         assert_eq!(params.quality_speed_balance, 0.7);
         assert!(params.enable_early_termination);
         assert!(params.parallelization.enabled);
     }
-    
+
     #[test]
     fn test_approximation_parameters() {
         let approx_params = ApproximationParams::default();
-        
-        assert!(matches!(approx_params.quality, ApproximationQuality::Balanced));
+
+        assert!(matches!(
+            approx_params.quality,
+            ApproximationQuality::Balanced
+        ));
         assert_eq!(approx_params.algorithm_preferences.len(), 3);
         assert!(approx_params.refinement.is_some());
     }
-    
+
     #[test]
     fn test_batch_search_parameters() {
         let batch_params = BatchSearchParams::default();
-        
+
         assert!(matches!(
             batch_params.processing_strategy,
             BatchProcessingStrategy::Parallel { .. }
@@ -1370,9 +1338,14 @@ mod tests {
             batch_params.error_handling,
             BatchErrorHandling::ContinueOnError
         ));
-        assert!(batch_params.resource_management.memory_management.monitoring_enabled);
+        assert!(
+            batch_params
+                .resource_management
+                .memory_management
+                .monitoring_enabled
+        );
     }
-    
+
     #[test]
     fn test_search_capabilities() {
         let capabilities = SearchCapabilities {
@@ -1394,7 +1367,7 @@ mod tests {
             progressive_search: true,
             hybrid_search: true,
         };
-        
+
         assert_eq!(capabilities.supported_modes.len(), 3);
         assert_eq!(capabilities.supported_distance_metrics.len(), 3);
         assert!(capabilities.approximate_search);

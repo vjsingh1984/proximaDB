@@ -1,9 +1,9 @@
 //! PRISM Compaction - Compaction strategies for PRISM engine
 
+use crate::storage::engines::impls::prism::tree::PrismTree;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::storage::engines::impls::prism::tree::PrismTree;
 
 /// Compaction scheduler for PRISM
 pub struct CompactionScheduler {
@@ -21,19 +21,19 @@ impl CompactionScheduler {
             major_interval_sec,
         }
     }
-    
+
     /// Schedule micro compaction
     pub async fn schedule_micro_compaction(&self) -> Result<()> {
         // TODO: Implement micro compaction scheduling
         Ok(())
     }
-    
+
     /// Run minor compaction
     pub async fn run_minor_compaction(&self, _tree: &Arc<RwLock<PrismTree>>) -> Result<()> {
         // TODO: Implement minor compaction
         Ok(())
     }
-    
+
     /// Run major compaction (online)
     pub async fn run_major_compaction_online(&self, _tree: &Arc<RwLock<PrismTree>>) -> Result<()> {
         // TODO: Implement major compaction

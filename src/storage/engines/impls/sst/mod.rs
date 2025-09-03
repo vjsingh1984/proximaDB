@@ -59,15 +59,15 @@
 //! # Bloom filter configuration
 //! bloom_filter_bits_per_key = 10
 //! bloom_filter_type = "hierarchical"
-//! 
+//!
 //! # Three-stage filter thresholds
 //! quantized_filter_threshold = 0.8
 //! precision_filter_threshold = 0.95
-//! 
+//!
 //! # Decompression cache
 //! decompression_cache_size_mb = 512
 //! cache_prefetch_enabled = true
-//! 
+//!
 //! # Compaction settings
 //! compaction_strategy = "zero_copy"
 //! level0_file_num_trigger = 4
@@ -109,12 +109,12 @@
 //!
 //! ```rust
 //! use proximadb::storage::engines::sst::SstStorage;
-//! 
+//!
 //! let sst = SstStorage::new(config)?;
-//! 
+//!
 //! // Insert with automatic compression
 //! sst.insert_batch(vectors).await?;
-//! 
+//!
 //! // Query with three-stage filtering
 //! let results = sst.search(
 //!     query_vector,
@@ -132,19 +132,19 @@
 //! 4. Background threads handle compaction asynchronously
 
 // bloom_filter now in core module for unified implementation
-use crate::core::bloom::{self as bloom_filter, BloomFilterConfig, BloomFilterStrategy};
 use crate::core::bloom::factory::BloomFilterFactory;
+use crate::core::bloom::{self as bloom_filter, BloomFilterConfig, BloomFilterStrategy};
 pub mod compaction;
 pub mod decompression_cache;
 pub mod flush_eventlog_integration;
 // Quantization now handled by unified compute module
-pub mod readers;
-pub mod writer;
 pub mod compactor_impl;
 pub mod indexed_reader;
-pub mod row_filter;
 pub mod multi_stage_filter;
+pub mod readers;
+pub mod row_filter;
 pub mod streaming_compaction;
+pub mod writer;
 
 // Test modules
 #[cfg(test)]
@@ -152,12 +152,11 @@ pub mod tests;
 
 // Re-export main types
 pub use bloom_filter::{
-    SstableBloomFilter, SerializedSstableBloomFilter,
-    BloomFilterStats, HierarchicalBloomConfig,
+    BloomFilterStats, HierarchicalBloomConfig, SerializedSstableBloomFilter, SstableBloomFilter,
 };
 pub use compaction::{Compaction, CompactionPriority, CompactionStats, CompactionTask};
+pub use compactor_impl::{CompactionSortStrategy, SstCompactor, ZeroCopyCompactionStats};
 pub use readers::UnifiedSstableReader;
-pub use compactor_impl::{SstCompactor, ZeroCopyCompactionStats, CompactionSortStrategy};
 
 // Additional exports for unified reader (SstableHeader is already defined below)
 pub use writer::SstableWriter;
@@ -167,19 +166,20 @@ use crate::core::{SstConfig, VectorRecord};
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
 // use crate::core::serialization::VectorSerializationConfig;  // Not needed
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::unified::{
+    CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine,
+};
 use crate::core::compression::CompressionAlgorithm;
-use crate::storage::optimization::{SortingStats};
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::proto::proximadb::Collection;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use crate::storage::optimization::SortingStats;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-    UnifiedStorageEngine,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
 };
 use crate::storage::transaction_coordinator::TransactionCoordinator;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, CodebookStore, InMemoryCodebookStore};
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 // Unified search engine removed - using direct search methods
 // MetadataItem is part of VectorRecord proto
 use crate::query::unified_query_optimizer::UnifiedMetadataFilter;
@@ -189,15 +189,13 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use tracing::{debug, error, info, warn, trace};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, trace, warn};
 
 // Performance optimization - import what we need
 use crate::storage::engines::core::ops::{
-    UniversalPerformanceOptimizer,
-    UniversalOptimizationStrategy,
-    UniversallyOptimized,
+    UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
 
 // Import search optimization components
@@ -205,14 +203,8 @@ use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
 // Import FastLanes common structures (shared with SWIFT)
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-    FastLanesDataBlock,
-    FastLanesBlockMetadata,
-    BlockCompressionConfig,
-    SuperBlock,
-    ColumnStatistics,
-    QuantizationStatistics,
-    BlockStatistics,
-    BlockMetadataStats,
+    BlockCompressionConfig, BlockMetadataStats, BlockStatistics, ColumnStatistics,
+    FastLanesBlockMetadata, FastLanesDataBlock, QuantizationStatistics, SuperBlock,
 };
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
@@ -225,13 +217,13 @@ mod sst_filename_tests {
     fn test_generate_filename() {
         let collection_id = "test_collection";
         let level = 2;
-        
+
         let filename = FilenameCodec::new().generate(level as u32, "sst");
-        
+
         // Check unified format pattern: L{level}_{timestamp}_{uuid}.{extension}
         assert!(filename.starts_with("L2_"));
         assert!(filename.ends_with(".sstable"));
-        
+
         // Check that it's recognized as an SST file
         assert!(FilenameCodec::new().is_tiered_filename(&filename, "sst"));
     }
@@ -239,7 +231,7 @@ mod sst_filename_tests {
     #[test]
     fn test_generate_flush_filename() {
         let filename = FilenameCodec::new().generate(0, "sst");
-        
+
         // Flush files should always be level 0 with unified format
         assert!(filename.starts_with("L0_"));
         assert!(filename.ends_with(".sstable"));
@@ -249,9 +241,9 @@ mod sst_filename_tests {
     #[test]
     fn test_generate_compaction_filename() {
         let level = 5;
-        
+
         let filename = FilenameCodec::new().generate(level as u32, "sst");
-        
+
         assert!(filename.starts_with("L5_"));
         assert!(filename.ends_with(".sstable"));
         // Note: parse_level_from_filename expects old format, will need update
@@ -298,13 +290,11 @@ mod sst_filename_tests {
 
         for (filename, expected) in test_cases {
             let result = FilenameCodec::new().is_tiered_filename(filename);
-            debug!("Testing '{}': expected={}, got={}", filename, expected, result);
-            assert_eq!(
-                result,
-                expected,
-                "Failed for filename: {}",
-                filename
+            debug!(
+                "Testing '{}': expected={}, got={}",
+                filename, expected, result
             );
+            assert_eq!(result, expected, "Failed for filename: {}", filename);
         }
     }
 
@@ -314,7 +304,7 @@ mod sst_filename_tests {
     fn test_filename_uniqueness() {
         let collection_id = "test";
         let level = 1;
-        
+
         // Generate multiple filenames and ensure they're unique
         let mut filenames = std::collections::HashSet::new();
         for _ in 0..100 {
@@ -326,10 +316,10 @@ mod sst_filename_tests {
     #[test]
     fn test_filename_consistency() {
         let level = 3;
-        
+
         // Test that the generated filename can be properly parsed back
         let filename = FilenameCodec::new().generate(level as u32, "sst");
-        
+
         assert!(FilenameCodec::new().is_tiered_filename(&filename, "sst"));
         assert_eq!(FilenameCodec::new().parse_level(&filename), Some(level));
         // Collection ID validation removed - it's determined from base URL at search time
@@ -344,16 +334,16 @@ mod sst_filename_tests {
 /// SST-specific metadata that accompanies VectorRecord in storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstMetadata {
-    pub is_tombstone: bool,        // True if this is a deletion marker
-    pub sequence_number: u64,      // SST sequence for ordering
-    pub level: u8,                 // SSTable level this record belongs to
+    pub is_tombstone: bool,   // True if this is a deletion marker
+    pub sequence_number: u64, // SST sequence for ordering
+    pub level: u8,            // SSTable level this record belongs to
 }
 
 /// Combined storage format for SST files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstEntry {
-    pub record: VectorRecord,       // Direct storage of proto VectorRecord
-    pub sst_meta: SstMetadata,     // SST-specific metadata
+    pub record: VectorRecord,  // Direct storage of proto VectorRecord
+    pub sst_meta: SstMetadata, // SST-specific metadata
 }
 
 impl SstEntry {
@@ -368,20 +358,20 @@ impl SstEntry {
             },
         }
     }
-    
+
     /// Create tombstone entry for deletion
     pub fn tombstone(id: String, sequence_number: u64, level: u8) -> Self {
         Self {
             record: VectorRecord {
                 id: id,
-                vector: vec![],  // Empty vector for tombstone
+                vector: vec![], // Empty vector for tombstone
                 metadata: vec![],
                 timestamp: chrono::Utc::now().timestamp() as u32,
                 updated_at: None,
-                expires_at: Some(0),  // Expired immediately
+                expires_at: Some(0), // Expired immediately
                 version: None,
                 quantized_vector: None,
-                source: None,  // No source for tombstone
+                source: None, // No source for tombstone
             },
             sst_meta: SstMetadata {
                 is_tombstone: true,
@@ -390,21 +380,33 @@ impl SstEntry {
             },
         }
     }
-    
+
     /// Convert to SearchResult for search results
     pub fn to_search_result(&self, score: f32) -> crate::core::search::InternalSearchResult {
         crate::core::search::InternalSearchResult {
             id: self.record.id.clone().clone(),
             vector_id: Some(self.record.id.clone()),
             score,
-            similarity: Some(score),  // Can be different from score in some metrics
+            similarity: Some(score), // Can be different from score in some metrics
             vector: Some(self.record.vector.clone()),
-            metadata: self.record.metadata.iter()
+            metadata: self
+                .record
+                .metadata
+                .iter()
                 .map(|item| {
                     let value = match &item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))),
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                            serde_json::Value::String(s.clone())
+                        }
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                            serde_json::Value::Number(
+                                serde_json::Number::from_f64(*n)
+                                    .unwrap_or_else(|| serde_json::Number::from(0)),
+                            )
+                        }
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                            serde_json::Value::Bool(*b)
+                        }
                         None => serde_json::Value::Null,
                     };
                     (item.key.clone(), value)
@@ -429,42 +431,42 @@ impl SstEntry {
         // Use protobuf for VectorRecord + bincode for SST metadata
         // This gives us zero-copy deserialization for search
         use prost::Message;
-        
+
         // Serialize VectorRecord using protobuf
         let mut proto_buf = Vec::new();
         self.record.encode(&mut proto_buf)?;
-        
+
         // Serialize SST metadata using bincode
         let meta_data = bincode::serialize(&self.sst_meta)?;
-        
+
         // Combine with length prefixes
         let mut buffer = Vec::with_capacity(8 + proto_buf.len() + meta_data.len());
         buffer.extend_from_slice(&(proto_buf.len() as u32).to_le_bytes());
         buffer.extend_from_slice(&proto_buf);
         buffer.extend_from_slice(&(meta_data.len() as u32).to_le_bytes());
         buffer.extend_from_slice(&meta_data);
-        
+
         Ok(buffer)
     }
-    
+
     /// Deserialize SstEntry directly from stored bytes
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         use prost::Message;
-        
+
         if data.len() < 8 {
             return Err(anyhow::anyhow!("Invalid SstEntry data: too short"));
         }
-        
+
         // Read proto length
         let proto_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if data.len() < 4 + proto_len + 4 {
             return Err(anyhow::anyhow!("Invalid SstEntry data: truncated"));
         }
-        
+
         // Deserialize VectorRecord
         let proto_data = &data[4..4 + proto_len];
         let record = VectorRecord::decode(proto_data)?;
-        
+
         // Read metadata length
         let meta_offset = 4 + proto_len;
         let meta_len = u32::from_le_bytes([
@@ -473,11 +475,11 @@ impl SstEntry {
             data[meta_offset + 2],
             data[meta_offset + 3],
         ]) as usize;
-        
+
         // Deserialize SST metadata
         let meta_data = &data[meta_offset + 4..meta_offset + 4 + meta_len];
         let sst_meta = bincode::deserialize(meta_data)?;
-        
+
         Ok(Self { record, sst_meta })
     }
 }
@@ -494,23 +496,23 @@ pub struct SstableHeader {
     pub min_key: String,
     pub max_key: String,
     pub timestamp: i64,
-    
+
     // Compression configuration
     #[serde(default)]
     pub compression_algorithm: CompressionAlgorithm,
     #[serde(default)]
     pub compression_level: u8,
-    
+
     // Bloom filter configuration
     #[serde(default)]
     pub has_bloom_filter: bool,
     #[serde(default)]
-    pub has_global_bloom: bool,        // NEW: Global bloom filter across entire file
+    pub has_global_bloom: bool, // NEW: Global bloom filter across entire file
     #[serde(default)]
-    pub has_block_blooms: bool,        // NEW: Per-block bloom filters
+    pub has_block_blooms: bool, // NEW: Per-block bloom filters
     #[serde(default)]
-    pub metadata_column_count: u32,    // NEW: Number of metadata columns for bloom sizing
-    
+    pub metadata_column_count: u32, // NEW: Number of metadata columns for bloom sizing
+
     // Block organization
     #[serde(default = "default_block_size")]
     pub block_size: u32,
@@ -518,7 +520,7 @@ pub struct SstableHeader {
     pub batch_size: u32,
     #[serde(default)]
     pub block_count: u32,
-    
+
     // Component sizes (existing)
     #[serde(default)]
     pub header_size: u32,
@@ -526,26 +528,26 @@ pub struct SstableHeader {
     pub index_size: u32,
     #[serde(default)]
     pub data_size: u32,
-    
+
     // NEW: Direct access offsets for selective loading (hierarchical architecture)
     #[serde(default)]
-    pub global_bloom_offset: u64,      // Offset to global bloom filter
+    pub global_bloom_offset: u64, // Offset to global bloom filter
     #[serde(default)]
-    pub global_bloom_size: u32,        // Size of global bloom filter
+    pub global_bloom_size: u32, // Size of global bloom filter
     #[serde(default)]
-    pub block_index_offset: u64,       // Offset to block index (with per-block blooms)
+    pub block_index_offset: u64, // Offset to block index (with per-block blooms)
     #[serde(default)]
-    pub block_index_size: u32,         // Size of block index
+    pub block_index_size: u32, // Size of block index
     #[serde(default)]
-    pub data_blocks_offset: u64,       // Offset to first data block
-    
+    pub data_blocks_offset: u64, // Offset to first data block
+
     // NEW: Vector format analysis for bytemuck optimization
     #[serde(default)]
-    pub vector_format: VectorFormat,     // Fixed, Variable, or Mixed
+    pub vector_format: VectorFormat, // Fixed, Variable, or Mixed
     #[serde(default)]
-    pub fixed_dimension: Option<u32>,        // For fixed-dimension optimization
+    pub fixed_dimension: Option<u32>, // For fixed-dimension optimization
     #[serde(default)]
-    pub compression_ratio: f32,              // Achieved compression ratio
+    pub compression_ratio: f32, // Achieved compression ratio
 }
 
 // SST compression now uses unified_compression::CompressionAlgorithm directly
@@ -577,14 +579,14 @@ pub struct IndexEntry {
     pub block_id: u32,
     pub block_offset: u32,
     pub compressed: bool,
-    
+
     /// Minimum values for each metadata column in this block
     pub metadata_min_values: HashMap<String, serde_json::Value>,
     /// Maximum values for each metadata column in this block
     pub metadata_max_values: HashMap<String, serde_json::Value>,
     /// Count of null values for each metadata column in this block
     pub metadata_null_counts: HashMap<String, u32>,
-    
+
     // NEW: Hierarchical bloom filter support
     /// Block-level key bloom filter (optional, for large blocks)
     #[serde(default)]
@@ -592,7 +594,7 @@ pub struct IndexEntry {
     /// Block-level metadata bloom filter (optional, for metadata-heavy queries)
     #[serde(default)]
     pub block_metadata_bloom: Option<Vec<u8>>,
-    
+
     // NEW: Vector format optimization info
     #[serde(default)]
     pub vector_format: VectorFormat,
@@ -604,22 +606,22 @@ impl IndexEntry {
     pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
         use std::io::Write;
         let mut buffer = Vec::new();
-        
+
         // Write magic header
         buffer.write_all(b"IDX1")?;
-        
+
         // Write key
         let key_bytes = self.key.as_bytes();
         buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(key_bytes)?;
-        
+
         // Write primitive fields
         buffer.write_all(&self.offset.to_le_bytes())?;
         buffer.write_all(&self.size.to_le_bytes())?;
         buffer.write_all(&self.block_id.to_le_bytes())?;
         buffer.write_all(&self.block_offset.to_le_bytes())?;
         buffer.write_all(&[if self.compressed { 1u8 } else { 0u8 }])?;
-        
+
         // Write metadata_min_values
         buffer.write_all(&(self.metadata_min_values.len() as u32).to_le_bytes())?;
         for (key, value) in &self.metadata_min_values {
@@ -628,7 +630,7 @@ impl IndexEntry {
             buffer.write_all(key_bytes)?;
             json_value_serde::serialize_json_value(value, &mut buffer)?;
         }
-        
+
         // Write metadata_max_values
         buffer.write_all(&(self.metadata_max_values.len() as u32).to_le_bytes())?;
         for (key, value) in &self.metadata_max_values {
@@ -637,7 +639,7 @@ impl IndexEntry {
             buffer.write_all(key_bytes)?;
             json_value_serde::serialize_json_value(value, &mut buffer)?;
         }
-        
+
         // Write metadata_null_counts
         buffer.write_all(&(self.metadata_null_counts.len() as u32).to_le_bytes())?;
         for (key, value) in &self.metadata_null_counts {
@@ -646,30 +648,30 @@ impl IndexEntry {
             buffer.write_all(key_bytes)?;
             buffer.write_all(&value.to_le_bytes())?;
         }
-        
+
         // NEW: Write hierarchical bloom filter data
         match &self.block_key_bloom {
             Some(bloom_data) => {
                 buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
                 buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
                 buffer.write_all(bloom_data)?;
-            },
+            }
             None => {
                 buffer.write_all(&0u8.to_le_bytes())?; // No bloom
             }
         }
-        
+
         match &self.block_metadata_bloom {
             Some(bloom_data) => {
                 buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
                 buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
                 buffer.write_all(bloom_data)?;
-            },
+            }
             None => {
                 buffer.write_all(&0u8.to_le_bytes())?; // No bloom
             }
         }
-        
+
         // NEW: Write vector format info (removed compression_ratio)
         let format_byte = match self.vector_format {
             VectorFormat::Variable => 0u8,
@@ -677,7 +679,7 @@ impl IndexEntry {
                 buffer.write_all(&1u8.to_le_bytes())?; // Fixed format
                 buffer.write_all(&(dimension as u32).to_le_bytes())?;
                 1u8
-            },
+            }
             VectorFormat::Mixed { dominant_dimension } => {
                 buffer.write_all(&2u8.to_le_bytes())?; // Mixed format
                 buffer.write_all(&(dominant_dimension as u32).to_le_bytes())?;
@@ -687,7 +689,7 @@ impl IndexEntry {
         if format_byte == 0 {
             buffer.write_all(&format_byte.to_le_bytes())?;
         }
-        
+
         Ok(buffer)
     }
 
@@ -695,14 +697,14 @@ impl IndexEntry {
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
-        
+
         // Read and validate magic header
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
         if &magic != b"IDX1" {
             return Err(anyhow::anyhow!("Invalid IndexEntry format"));
         }
-        
+
         // Read key
         let mut len_buf = [0u8; 4];
         cursor.read_exact(&mut len_buf)?;
@@ -710,26 +712,26 @@ impl IndexEntry {
         let mut key_bytes = vec![0u8; key_len];
         cursor.read_exact(&mut key_bytes)?;
         let key = String::from_utf8(key_bytes)?;
-        
+
         // Read primitive fields
         let mut u64_buf = [0u8; 8];
         cursor.read_exact(&mut u64_buf)?;
         let offset = u64::from_le_bytes(u64_buf);
-        
+
         let mut u32_buf = [0u8; 4];
         cursor.read_exact(&mut u32_buf)?;
         let size = u32::from_le_bytes(u32_buf);
-        
+
         cursor.read_exact(&mut u32_buf)?;
         let block_id = u32::from_le_bytes(u32_buf);
-        
+
         cursor.read_exact(&mut u32_buf)?;
         let block_offset = u32::from_le_bytes(u32_buf);
-        
+
         let mut bool_buf = [0u8; 1];
         cursor.read_exact(&mut bool_buf)?;
         let compressed = bool_buf[0] != 0;
-        
+
         // Read metadata_min_values
         cursor.read_exact(&mut len_buf)?;
         let min_values_len = u32::from_le_bytes(len_buf) as usize;
@@ -743,7 +745,7 @@ impl IndexEntry {
             let value = json_value_serde::deserialize_json_value(&mut cursor)?;
             metadata_min_values.insert(key, value);
         }
-        
+
         // Read metadata_max_values
         cursor.read_exact(&mut len_buf)?;
         let max_values_len = u32::from_le_bytes(len_buf) as usize;
@@ -757,7 +759,7 @@ impl IndexEntry {
             let value = json_value_serde::deserialize_json_value(&mut cursor)?;
             metadata_max_values.insert(key, value);
         }
-        
+
         // Read metadata_null_counts
         cursor.read_exact(&mut len_buf)?;
         let null_counts_len = u32::from_le_bytes(len_buf) as usize;
@@ -772,7 +774,7 @@ impl IndexEntry {
             let value = u32::from_le_bytes(u32_buf);
             metadata_null_counts.insert(key, value);
         }
-        
+
         // NEW: Read hierarchical bloom filter data
         cursor.read_exact(&mut bool_buf)?;
         let has_key_bloom = bool_buf[0] != 0;
@@ -785,7 +787,7 @@ impl IndexEntry {
         } else {
             None
         };
-        
+
         cursor.read_exact(&mut bool_buf)?;
         let has_metadata_bloom = bool_buf[0] != 0;
         let block_metadata_bloom = if has_metadata_bloom {
@@ -797,7 +799,7 @@ impl IndexEntry {
         } else {
             None
         };
-        
+
         // NEW: Read vector format and compression info
         cursor.read_exact(&mut bool_buf)?;
         let format_type = bool_buf[0];
@@ -807,17 +809,17 @@ impl IndexEntry {
                 cursor.read_exact(&mut u32_buf)?;
                 let dimension = u32::from_le_bytes(u32_buf) as usize;
                 VectorFormat::Fixed { dimension }
-            },
+            }
             2 => {
                 cursor.read_exact(&mut u32_buf)?;
                 let dominant_dimension = u32::from_le_bytes(u32_buf) as usize;
                 VectorFormat::Mixed { dominant_dimension }
-            },
+            }
             _ => VectorFormat::Variable,
         };
-        
+
         // REMOVED: No longer reading compression_ratio
-        
+
         Ok(Self {
             key,
             offset,
@@ -874,42 +876,57 @@ mod compression_helpers {
             "lz4hc" => CompressionAlgorithm::Lz4hc,
             "lzma" => CompressionAlgorithm::Lzma,
             unknown => {
-                debug!("Unknown compression algorithm '{}', defaulting to None", unknown);
+                debug!(
+                    "Unknown compression algorithm '{}', defaulting to None",
+                    unknown
+                );
                 CompressionAlgorithm::None
             }
         };
-        
+
         // Create proto compression config to match the SST config (supports all algorithms)
-        let collection_compression = if config.compression.to_lowercase() != "none" && !config.compression.is_empty() {
+        let collection_compression = if config.compression.to_lowercase() != "none"
+            && !config.compression.is_empty()
+        {
             Some(crate::proto::proximadb::CompressionConfig {
                 algorithm: match config.compression.to_lowercase().as_str() {
                     "zstd" => crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
                     "lz4" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32,
-                    "snappy" => crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32,
+                    "snappy" => {
+                        crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32
+                    }
                     "gzip" => crate::proto::proximadb::CompressionAlgorithm::CompressionGzip as i32,
-                    "brotli" => crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32,
-                    "bzip2" => crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32,
-                    "deflate" => crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32,
+                    "brotli" => {
+                        crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32
+                    }
+                    "bzip2" => {
+                        crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32
+                    }
+                    "deflate" => {
+                        crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32
+                    }
                     "xz" => crate::proto::proximadb::CompressionAlgorithm::CompressionXz as i32,
                     "zlib" => crate::proto::proximadb::CompressionAlgorithm::CompressionZlib as i32,
-                    "lz4hc" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32,
+                    "lz4hc" => {
+                        crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32
+                    }
                     "lzma" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzma as i32,
                     "lzo" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32,
                     _ => crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
                 },
                 level: Some(config.compression_level),
                 adaptive: false,
-                min_ratio: Some(0.5),        // Optional field: Default minimum compression ratio
-                enable_quantization: false,  // Not used for SST compression
+                min_ratio: Some(0.5), // Optional field: Default minimum compression ratio
+                enable_quantization: false, // Not used for SST compression
                 quantization_type: None,
-                normalization_method: None,  // Optional field: No normalization by default
+                normalization_method: None, // Optional field: No normalization by default
                 block_size_kb: Some(config.block_size_kb as i32),
                 dynamic_block_sizing: Some(false),
             })
         } else {
             None
         };
-        
+
         BlockCompressionConfig {
             algorithm: compression_algorithm.clone(),
             compression_level: config.compression_level as u8,
@@ -919,41 +936,84 @@ mod compression_helpers {
             dictionary_compression: false,
         }
     }
-    
+
     /// Create BlockCompressionConfig from proto CompressionConfig
-    pub fn block_compression_from_proto(config: Option<&crate::proto::proximadb::CompressionConfig>, vector_dim: usize) -> BlockCompressionConfig {
+    pub fn block_compression_from_proto(
+        config: Option<&crate::proto::proximadb::CompressionConfig>,
+        vector_dim: usize,
+    ) -> BlockCompressionConfig {
         if let Some(config) = config {
             let block_size = if config.dynamic_block_sizing.unwrap_or(false) {
                 optimal_block_size(vector_dim)
             } else {
                 config.block_size_kb.unwrap_or(1024) as usize * 1024
             };
-            
+
             // Map proto compression algorithm to unified compression module algorithm
             let compression_algorithm = match config.algorithm {
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32 => CompressionAlgorithm::None,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32 => CompressionAlgorithm::Zstd,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32 => CompressionAlgorithm::Lz4,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32 => CompressionAlgorithm::Snappy,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionGzip as i32 => CompressionAlgorithm::Gzip,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32 => CompressionAlgorithm::Brotli,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32 => CompressionAlgorithm::Bzip2,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32 => CompressionAlgorithm::Deflate,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionXz as i32 => CompressionAlgorithm::Xz,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZlib as i32 => CompressionAlgorithm::Zlib,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32 => CompressionAlgorithm::Lzo,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32 => CompressionAlgorithm::Lz4hc,
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLzma as i32 => CompressionAlgorithm::Lzma,
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32 => {
+                    CompressionAlgorithm::None
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32 => {
+                    CompressionAlgorithm::Zstd
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32 => {
+                    CompressionAlgorithm::Lz4
+                }
+                x if x
+                    == crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32 =>
+                {
+                    CompressionAlgorithm::Snappy
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionGzip as i32 => {
+                    CompressionAlgorithm::Gzip
+                }
+                x if x
+                    == crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32 =>
+                {
+                    CompressionAlgorithm::Brotli
+                }
+                x if x
+                    == crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32 =>
+                {
+                    CompressionAlgorithm::Bzip2
+                }
+                x if x
+                    == crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32 =>
+                {
+                    CompressionAlgorithm::Deflate
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionXz as i32 => {
+                    CompressionAlgorithm::Xz
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZlib as i32 => {
+                    CompressionAlgorithm::Zlib
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32 => {
+                    CompressionAlgorithm::Lzo
+                }
+                x if x
+                    == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32 =>
+                {
+                    CompressionAlgorithm::Lz4hc
+                }
+                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLzma as i32 => {
+                    CompressionAlgorithm::Lzma
+                }
                 _ => {
-                    debug!("Unknown compression algorithm value: {}, defaulting to None", config.algorithm);
+                    debug!(
+                        "Unknown compression algorithm value: {}, defaulting to None",
+                        config.algorithm
+                    );
                     CompressionAlgorithm::None
                 }
             };
-            
+
             BlockCompressionConfig {
                 algorithm: compression_algorithm.clone(),
                 compression_level: config.level.unwrap_or(3) as u8,
-                enable_vector_compression: config.algorithm != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
+                enable_vector_compression: config.algorithm
+                    != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
                 enable_metadata_compression: true,
                 compression_threshold_bytes: block_size / 1000, // Use 0.1% of block size as threshold
                 dictionary_compression: false,
@@ -962,31 +1022,30 @@ mod compression_helpers {
             BlockCompressionConfig::default()
         }
     }
-    
 } // End of compression_helpers module
 
 /// Calculate optimal block size based on vector dimensions
 /// Target: 2000-2500 vectors per block
 pub fn optimal_block_size(vector_dim: usize) -> usize {
-        let vector_size = vector_dim * 4 + 200; // FP32 + metadata overhead (more realistic estimate)
-        
-        // Target 3MB as optimal default, varying slightly by dimension
-        let target_block_size = match vector_dim {
-            0..=384 => 3 * 1024 * 1024,      // 3MB for small vectors
-            385..=768 => 3 * 1024 * 1024,    // 3MB for medium vectors  
-            769..=1536 => 3 * 1024 * 1024,   // 3MB for large vectors
-            _ => (2.5 * 1024.0 * 1024.0) as usize, // 2.5MB for XL vectors (network optimization)
-        };
-        
-        // Clamp between 2MB and 4MB (optimal range for cloud IOPS and compression)
-        target_block_size.max(2 * 1024 * 1024).min(4 * 1024 * 1024)
-    }
+    let vector_size = vector_dim * 4 + 200; // FP32 + metadata overhead (more realistic estimate)
+
+    // Target 3MB as optimal default, varying slightly by dimension
+    let target_block_size = match vector_dim {
+        0..=384 => 3 * 1024 * 1024,            // 3MB for small vectors
+        385..=768 => 3 * 1024 * 1024,          // 3MB for medium vectors
+        769..=1536 => 3 * 1024 * 1024,         // 3MB for large vectors
+        _ => (2.5 * 1024.0 * 1024.0) as usize, // 2.5MB for XL vectors (network optimization)
+    };
+
+    // Clamp between 2MB and 4MB (optimal range for cloud IOPS and compression)
+    target_block_size.max(2 * 1024 * 1024).min(4 * 1024 * 1024)
+}
 
 // Import centralized compression markers and helper functions
 use crate::core::compression::markers::{
     MARKER_UNCOMPRESSED,
-    compression_marker as get_compression_marker, 
-    compression_algorithm_from_marker as get_compression_algorithm_from_marker
+    compression_algorithm_from_marker as get_compression_algorithm_from_marker,
+    compression_marker as get_compression_marker,
 };
 
 // SST uses FastLanesDataBlock directly from the shared module
@@ -995,11 +1054,11 @@ use crate::core::compression::markers::{
 // SST-specific utility functions for FastLanesDataBlock
 mod block_utils {
     use super::*;
-    
+
     /// Create a new FastLanesDataBlock for SST usage
     pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> FastLanesDataBlock {
         FastLanesDataBlock {
-            encoding_marker: 0x00,  // Will be set based on encoding
+            encoding_marker: 0x00, // Will be set based on encoding
             encoding_metadata: None,
             block_id,
             records,
@@ -1019,17 +1078,17 @@ mod block_utils {
             has_deletes: false,
         }
     }
-    
+
     /// Encode vectors using FastLanes SIMD-optimized encoding
     pub fn encode_with_fastlanes(block: &FastLanesDataBlock) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{
+            FastLanesEncoder, FastLanesScheme,
+        };
         use std::io::Write;
-        
+
         // Get dimension from the first record since metadata doesn't have it directly
-        let dimension = block.records.first()
-            .map(|r| r.vector.len())
-            .unwrap_or(0);
-        
+        let dimension = block.records.first().map(|r| r.vector.len()).unwrap_or(0);
+
         // Transpose vectors from row-major to column-major for SIMD
         let mut columns: Vec<Vec<f32>> = vec![vec![]; dimension];
         for record in &block.records {
@@ -1039,76 +1098,81 @@ mod block_utils {
                 }
             }
         }
-        
+
         // Encode each dimension column using a default scheme
         let scheme = FastLanesScheme::BitPacked { bits: 16 };
         let encoder = FastLanesEncoder::new(scheme);
         let mut encoded_data = Vec::new();
-        
+
         // Write metadata first
         encoded_data.write_all(&(dimension as u32).to_le_bytes())?;
         encoded_data.write_all(&(block.records.len() as u32).to_le_bytes())?;
-        
+
         // Encode each column
         for column in columns {
             let encoded_column = encoder.encode_f32(&column)?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }
-        
+
         // Also encode metadata and IDs
         for record in &block.records {
             // Encode ID
             let id = &record.id;
             encoded_data.write_all(&(id.len() as u32).to_le_bytes())?;
             encoded_data.write_all(id.as_bytes())?;
-            
+
             // Encode timestamp
             encoded_data.write_all(&record.timestamp.to_le_bytes())?;
         }
-        
+
         Ok(encoded_data)
     }
-    
+
     /// Decode vectors from FastLanes format
     pub fn decode_with_fastlanes(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{
+            FastLanesDecoder, FastLanesScheme,
+        };
         use std::io::Read;
-        
+
         let mut cursor = std::io::Cursor::new(data);
-        
+
         // Read metadata
         let mut buf = [0u8; 4];
         cursor.read_exact(&mut buf)?;
         let dimension = u32::from_le_bytes(buf) as usize;
-        
+
         cursor.read_exact(&mut buf)?;
         let vector_count = u32::from_le_bytes(buf) as usize;
-        
+
         // Determine scheme from marker
         let scheme = match marker & 0xF0 {
             0x10 => FastLanesScheme::BitPacked { bits: 16 },
             0x20 => FastLanesScheme::Delta { base: 0 },
-            0x30 => FastLanesScheme::FrameOfReference { reference: 0, bits: 16 },
+            0x30 => FastLanesScheme::FrameOfReference {
+                reference: 0,
+                bits: 16,
+            },
             0x60 => FastLanesScheme::RunLength,
             _ => FastLanesScheme::BitPacked { bits: 32 },
         };
-        
+
         let decoder = FastLanesDecoder::new(scheme);
-        
+
         // Decode each dimension column
         let mut columns = Vec::with_capacity(dimension);
         for _ in 0..dimension {
             cursor.read_exact(&mut buf)?;
             let column_len = u32::from_le_bytes(buf) as usize;
-            
+
             let mut column_data = vec![0u8; column_len];
             cursor.read_exact(&mut column_data)?;
-            
+
             let decoded_column = decoder.decode_f32(&column_data, column_len)?;
             columns.push(decoded_column);
         }
-        
+
         // Transpose back from column-major to row-major
         let mut records = Vec::with_capacity(vector_count);
         for i in 0..vector_count {
@@ -1116,7 +1180,7 @@ mod block_utils {
             for col in &columns {
                 vector.push(col[i]);
             }
-            
+
             // Read ID
             cursor.read_exact(&mut buf)?;
             let id_len = u32::from_le_bytes(buf) as usize;
@@ -1125,13 +1189,13 @@ mod block_utils {
                 cursor.read_exact(&mut id_bytes)?;
                 String::from_utf8(id_bytes)?
             } else {
-                String::new()  // Empty string for missing ID
+                String::new() // Empty string for missing ID
             };
-            
+
             // Read timestamp
             cursor.read_exact(&mut buf)?;
             let timestamp = u32::from_le_bytes(buf);
-            
+
             records.push(VectorRecord {
                 id,
                 vector,
@@ -1144,34 +1208,34 @@ mod block_utils {
                 source: None, // No source information available from legacy format
             });
         }
-        
+
         Ok(records)
     }
-    
+
     /// Calculate metadata statistics for intelligent block filtering
     pub fn calculate_metadata_stats(records: &[VectorRecord]) -> FastLanesBlockMetadata {
         let mut stats = FastLanesBlockMetadata::default();
-        
+
         if records.is_empty() {
             return stats;
         }
-        
+
         // Initialize key and timestamp ranges
         let mut min_key = String::new();
         let mut max_key = String::new();
         let mut min_timestamp = u32::MAX;
         let mut max_timestamp = u32::MIN;
-        
+
         if let Some(first) = records.first() {
             min_key = first.id.clone();
             max_key = first.id.clone();
             min_timestamp = first.timestamp as u32;
             max_timestamp = first.timestamp as u32;
         }
-        
+
         // Process all records for statistics
         let mut metadata_columns = HashMap::new();
-        
+
         for record in records {
             let record_id = &record.id;
             // Update key range
@@ -1181,18 +1245,20 @@ mod block_utils {
             if record_id > &max_key {
                 max_key = record_id.clone();
             }
-            
+
             // Update timestamp range
             min_timestamp = min_timestamp.min(record.timestamp as u32);
             max_timestamp = max_timestamp.max(record.timestamp as u32);
-            
+
             // Process metadata
             for item in &record.metadata {
                 let col_name = item.key.clone();
                 metadata_columns.insert(col_name.clone(), ());
-                
+
                 // Get or create column stats
-                let col_stats = stats.column_stats.entry(col_name.clone())
+                let col_stats = stats
+                    .column_stats
+                    .entry(col_name.clone())
                     .or_insert_with(|| ColumnStatistics {
                         name: col_name.clone(),
                         null_count: 0,
@@ -1202,23 +1268,26 @@ mod block_utils {
                         avg_size_bytes: 0,
                         bloom_filter_enabled: false,
                     });
-                
+
                 // Convert to JSON value for min/max tracking
                 let value = match &item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => 
-                        serde_json::Value::String(s.clone()),
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
+                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null),
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
-                        serde_json::Value::Bool(*b),
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
                     None => {
                         col_stats.null_count += 1;
                         continue;
                     }
                 };
-                
+
                 // Update min/max values for this column
                 if col_stats.min_value.is_none() {
                     col_stats.min_value = Some(value.clone());
@@ -1227,7 +1296,7 @@ mod block_utils {
                         *min_val = value.clone();
                     }
                 }
-                
+
                 if col_stats.max_value.is_none() {
                     col_stats.max_value = Some(value.clone());
                 } else if let Some(ref mut max_val) = col_stats.max_value {
@@ -1237,35 +1306,45 @@ mod block_utils {
                 }
             }
         }
-        
+
         // Store key range and timestamp range in column stats
-        stats.column_stats.insert("__id".to_string(), ColumnStatistics {
-            name: "__id".to_string(),
-            null_count: 0,
-            distinct_count: records.len() as u32,
-            min_value: Some(serde_json::Value::String(min_key)),
-            max_value: Some(serde_json::Value::String(max_key)),
-            avg_size_bytes: 0,
-            bloom_filter_enabled: false,
-        });
-        
-        stats.column_stats.insert("__timestamp".to_string(), ColumnStatistics {
-            name: "__timestamp".to_string(),
-            null_count: 0,
-            distinct_count: 0,
-            min_value: Some(serde_json::Value::Number(serde_json::Number::from(min_timestamp))),
-            max_value: Some(serde_json::Value::Number(serde_json::Number::from(max_timestamp))),
-            avg_size_bytes: 8,
-            bloom_filter_enabled: false,
-        });
-        
+        stats.column_stats.insert(
+            "__id".to_string(),
+            ColumnStatistics {
+                name: "__id".to_string(),
+                null_count: 0,
+                distinct_count: records.len() as u32,
+                min_value: Some(serde_json::Value::String(min_key)),
+                max_value: Some(serde_json::Value::String(max_key)),
+                avg_size_bytes: 0,
+                bloom_filter_enabled: false,
+            },
+        );
+
+        stats.column_stats.insert(
+            "__timestamp".to_string(),
+            ColumnStatistics {
+                name: "__timestamp".to_string(),
+                null_count: 0,
+                distinct_count: 0,
+                min_value: Some(serde_json::Value::Number(serde_json::Number::from(
+                    min_timestamp,
+                ))),
+                max_value: Some(serde_json::Value::Number(serde_json::Number::from(
+                    max_timestamp,
+                ))),
+                avg_size_bytes: 8,
+                bloom_filter_enabled: false,
+            },
+        );
+
         stats.record_count = records.len() as u32;
         stats.timestamp = max_timestamp as i64;
         stats.version_range = (min_timestamp as i64, max_timestamp as i64);
-        
+
         stats
     }
-    
+
     /// Compare JSON values for ordering
     fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp::Ordering {
         use serde_json::Value;
@@ -1273,7 +1352,9 @@ mod block_utils {
             (Value::Number(a), Value::Number(b)) => {
                 let a_f64 = a.as_f64();
                 let b_f64 = b.as_f64();
-                a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
+                a_f64
+                    .partial_cmp(&b_f64)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             }
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
@@ -1285,7 +1366,7 @@ mod block_utils {
 // Local marker functions removed - now using centralized functions from unified_compression::markers
 
 // Remove unnecessary wrapper functions - callers should use FastLanesDataBlock methods directly
-// FastLanesDataBlock::serialize() 
+// FastLanesDataBlock::serialize()
 // FastLanesDataBlock::serialize_with_config()
 // FastLanesDataBlock::deserialize()
 
@@ -1302,7 +1383,7 @@ fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<FastLanesDataBl
 // Utility functions for FastLanesDataBlock operations in SST
 mod block_operations {
     use super::*;
-    
+
     /// Get compression statistics
     /// Returns (is_compressed, uncompressed_size)
     pub fn compression_stats(block: &FastLanesDataBlock) -> (bool, usize) {
@@ -1311,7 +1392,7 @@ mod block_operations {
             block.uncompressed_size as usize,
         )
     }
-    
+
     /// Generate or update quantized section for this block
     pub fn update_quantization(
         block: &mut FastLanesDataBlock,
@@ -1319,28 +1400,30 @@ mod block_operations {
         enable_int8: bool,
     ) -> Result<()> {
         // Extract vectors from records
-        let vectors: Vec<Vec<f32>> = block.records
-            .iter()
-            .map(|r| r.vector.clone())
-            .collect();
-        
+        let vectors: Vec<Vec<f32>> = block.records.iter().map(|r| r.vector.clone()).collect();
+
         if vectors.is_empty() {
             // Keep empty quantized section for consistency
             return Ok(());
         }
-        
+
         // Quantization will be handled by unified engine when needed
-        
-        debug!("Updated quantization for block {}: {} vectors, PQ={}, INT8={}", 
-            block.block_id, vectors.len(), codebook.is_some(), enable_int8);
-        
+
+        debug!(
+            "Updated quantization for block {}: {} vectors, PQ={}, INT8={}",
+            block.block_id,
+            vectors.len(),
+            codebook.is_some(),
+            enable_int8
+        );
+
         Ok(())
     }
-    
+
     /// Filter candidates using binary sketches (Stage 1: 95% reduction)
     pub fn filter_by_sketch(
         block: &FastLanesDataBlock,
-        query_sketch: &[u8],  // Binary sketch is just a byte array
+        query_sketch: &[u8], // Binary sketch is just a byte array
         threshold: f32,
     ) -> Vec<usize> {
         // Check if quantized vectors exist
@@ -1351,7 +1434,7 @@ mod block_operations {
             vec![]
         }
     }
-    
+
     /// Rank candidates using PQ codes (Stage 2: Further refinement)
     pub fn rank_by_pq(
         block: &FastLanesDataBlock,
@@ -1367,35 +1450,43 @@ mod block_operations {
             vec![]
         }
     }
-    
+
     /// Get full vectors for final reranking (Stage 3: 100% accuracy)
-    pub fn vectors_by_indices(block: &FastLanesDataBlock, indices: &[usize]) -> Vec<(usize, Vec<f32>)> {
-        indices.iter()
-            .filter_map(|&idx| {
-                block.records.get(idx)
-                    .map(|r| (idx, r.vector.clone()))
-            })
+    pub fn vectors_by_indices(
+        block: &FastLanesDataBlock,
+        indices: &[usize],
+    ) -> Vec<(usize, Vec<f32>)> {
+        indices
+            .iter()
+            .filter_map(|&idx| block.records.get(idx).map(|r| (idx, r.vector.clone())))
             .collect()
     }
-    
+
     /// Check if block has valid quantization data
     pub fn has_quantization(block: &FastLanesDataBlock) -> bool {
         // Check if quantized vectors exist and are not empty
-        block.quantized_vectors.as_ref().map_or(false, |v| !v.is_empty())
+        block
+            .quantized_vectors
+            .as_ref()
+            .map_or(false, |v| !v.is_empty())
     }
-    
+
     /// Get memory savings from quantization
     pub fn quantization_memory_savings(block: &FastLanesDataBlock) -> f32 {
         // Calculate original memory usage
-        let original_size = block.records.iter()
+        let original_size = block
+            .records
+            .iter()
             .map(|r| r.vector.len() * 4) // f32 = 4 bytes
             .sum::<usize>();
-        
+
         // Calculate quantized memory usage if present
-        let quantized_size = block.quantized_vectors.as_ref()
+        let quantized_size = block
+            .quantized_vectors
+            .as_ref()
             .map(|vecs| vecs.iter().map(|v| v.len()).sum::<usize>())
             .unwrap_or(0);
-        
+
         if original_size > 0 && quantized_size > 0 {
             1.0 - (quantized_size as f32 / original_size as f32)
         } else {
@@ -1403,8 +1494,6 @@ mod block_operations {
         }
     }
 } // End of block_operations module
-
-
 
 /// Batch extraction statistics for performance monitoring
 #[derive(Debug, Default)]
@@ -1432,7 +1521,9 @@ pub struct SstStorage {
     filesystem: Arc<FilesystemFactory>,
     // Intelligent filesystem for caching and optimized I/O
     // Caches SSTable metadata, bloom filters, and frequently accessed blocks
-    intelligent_fs: Option<Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>>,
+    intelligent_fs: Option<
+        Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>,
+    >,
     // Atomic coordinator for safe flush and compaction operations
     atomic_coordinator: Arc<TransactionCoordinator>,
     // Shared reader across all collections
@@ -1443,7 +1534,7 @@ pub struct SstStorage {
     decompression_cache: Arc<decompression_cache::DecompressionCache>,
     // Shared quantization engine
     quantization_engine: Arc<UnifiedQuantizationEngine>,
-    
+
     // Universal performance optimization (replaces SST-specific optimization)
     /// Universal performance optimizer eliminating code duplication
     universal_optimizer: UniversalPerformanceOptimizer,
@@ -1456,58 +1547,60 @@ impl SstStorage {
         distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     ) -> Result<Self> {
         info!("🌲 Creating SST storage engine (collection-agnostic singleton)");
-        
+
         // SST is now a singleton - no collection-specific initialization
         // Collection-specific paths will be determined at operation time
-        
+
         // Always create atomic coordinator for safe operations
         let atomic_coordinator = Arc::new(
             TransactionCoordinator::new(filesystem.clone(), None)
                 .await
-                .context("Failed to create atomic coordinator")?
+                .context("Failed to create atomic coordinator")?,
         );
 
         // Create Zero-copy IO system for the reader
-        let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
-        let zero_copy_system = Arc::new(ZeroCopyIOSystem::new(
-            zero_copy_config,
-            filesystem.clone(),
-            vec![], // No custom serializers
-        ).await?);
-        
+        let zero_copy_config =
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
+        let zero_copy_system = Arc::new(
+            ZeroCopyIOSystem::new(
+                zero_copy_config,
+                filesystem.clone(),
+                vec![], // No custom serializers
+            )
+            .await?,
+        );
+
         // SST will create IntelligentFilesystem instances per collection for optimal caching
         // This dramatically reduces I/O for frequently accessed SSTable blocks
-        
+
         // Create SSTable reader - using empty collection_id as SST is now singleton
         let sstable_reader = Arc::new(UnifiedSstableReader::new(
             filesystem.clone(),
             zero_copy_system,
             String::new(), // Empty collection_id for singleton
         ));
-        
+
         // Create quantization engine (optional for SST)
         // For now, use in-memory codebook store since SST doesn't require quantization
-        let codebook_store: Arc<dyn CodebookStore> = 
-            Arc::new(InMemoryCodebookStore::new());
+        let codebook_store: Arc<dyn CodebookStore> = Arc::new(InMemoryCodebookStore::new());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
             codebook_store,
         ));
-        
+
         // Initialize decompression cache with default size (64MB)
         let decompression_cache = Arc::new(decompression_cache::DecompressionCache::new(
-            64 * 1024 * 1024,  // Default to 64MB cache
+            64 * 1024 * 1024, // Default to 64MB cache
         ));
-        
+
         // Initialize compaction manager (always enabled)
-        let compaction_manager = Some(Arc::new(Compaction::new(
-            config.clone(),
-        ).await?));
+        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await?));
 
         // Initialize universal performance optimization
-        let universal_optimizer = UniversalPerformanceOptimizer::with_strategy(
-            UniversalOptimizationStrategy::Balanced,
-        ).await.context("Failed to create universal performance optimizer")?;
+        let universal_optimizer =
+            UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
+                .await
+                .context("Failed to create universal performance optimizer")?;
 
         Ok(Self {
             config,
@@ -1522,92 +1615,122 @@ impl SstStorage {
             universal_optimizer,
         })
     }
-    
+
     /// Get the collection storage URL from parameters
     fn get_collection_storage_url_from_params(params: &FlushParameters) -> Result<String> {
         debug!("🔍 SST FLUSH: Determining storage URL");
-        info!("   - Has collection_config: {}", params.collection_config.is_some());
-        
+        info!(
+            "   - Has collection_config: {}",
+            params.collection_config.is_some()
+        );
+
         // Extract storage location from collection config in parameters
         if let Some(ref collection) = params.collection_config {
-            info!("   - Has storage_assignment: {}", collection.storage_assignment.is_some());
+            info!(
+                "   - Has storage_assignment: {}",
+                collection.storage_assignment.is_some()
+            );
             if let Some(ref assignment) = collection.storage_assignment {
                 info!("   - Base location: {}", assignment.base_location);
                 info!("   - Collection ID: {:?}", params.collection_id);
-                let storage_url = format!("{}/{}/data", 
+                let storage_url = format!(
+                    "{}/{}/data",
                     assignment.base_location,
-                    params.collection_id.as_ref().unwrap_or(&"unknown".to_string()));
-                debug!("🔍 SST FLUSH: Using storage URL from params: {}", storage_url);
+                    params
+                        .collection_id
+                        .as_ref()
+                        .unwrap_or(&"unknown".to_string())
+                );
+                debug!(
+                    "🔍 SST FLUSH: Using storage URL from params: {}",
+                    storage_url
+                );
                 return Ok(storage_url);
             }
         }
-        
+
         // Fallback to default if not provided
-        let collection_id = params.collection_id.as_ref()
+        let collection_id = params
+            .collection_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST operations"))?;
-        
+
         // For tests, use temp directory; for production, use /var/lib/proximadb
         let base_path = if cfg!(test) {
             format!("/tmp/proximadb_integration_tests/{}", collection_id)
         } else {
             format!("/var/lib/proximadb/{}", collection_id)
         };
-        
+
         let storage_url = format!("file://{}/data", base_path);
         debug!("🔍 SST: Using default storage URL: {}", storage_url);
         Ok(storage_url)
     }
-    
-    
+
     /// Enable compaction with the SST tree's atomic coordinator
     pub async fn enable_compaction(&mut self, worker_count: usize) -> Result<()> {
         if self.compaction_manager.is_none() {
             let mut compaction_manager = Compaction::with_atomic_coordinator(
                 self.config.clone(),
                 Some(self.atomic_coordinator.clone()),
-            ).await?;
-            
+            )
+            .await?;
+
             // Start background workers
             compaction_manager.start_workers(worker_count).await?;
-            
+
             self.compaction_manager = Some(Arc::new(compaction_manager));
-            
-            info!("✅ SST: Compaction enabled with {} workers and atomic operations", worker_count);
+
+            info!(
+                "✅ SST: Compaction enabled with {} workers and atomic operations",
+                worker_count
+            );
         }
         Ok(())
     }
-    
+
     // ============================================================================
     // UNIVERSAL PERFORMANCE OPTIMIZATION INTEGRATION
     // ============================================================================
-    
+
     /// Fast read optimization using universal optimizer memory-mapped files
     async fn mmap_sstable_file(&self, file_path: &str) -> Result<Vec<u8>> {
         // Use universal optimizer for memory-mapped file access
-        if let Some(mmap) = self.universal_optimizer.get_memory_mapped_file(file_path).await? {
+        if let Some(mmap) = self
+            .universal_optimizer
+            .get_memory_mapped_file(file_path)
+            .await?
+        {
             Ok(mmap.to_vec())
         } else {
             // Fallback to regular file reading through universal optimizer
-            self.universal_optimizer.read_data_optimized(file_path).await
+            self.universal_optimizer
+                .read_data_optimized(file_path)
+                .await
         }
     }
-    
+
     /// Block-level I/O optimization with universal parallel reads
-    async fn parallel_block_read(&self, file_paths: &[String], block_indices: &[usize]) -> Result<Vec<Vec<u8>>> {
+    async fn parallel_block_read(
+        &self,
+        file_paths: &[String],
+        block_indices: &[usize],
+    ) -> Result<Vec<Vec<u8>>> {
         // Use universal optimizer for parallel operations
-        let read_operations: Vec<_> = file_paths.iter().zip(block_indices.iter())
+        let read_operations: Vec<_> = file_paths
+            .iter()
+            .zip(block_indices.iter())
             .map(|(file_path, &block_idx)| {
                 let file_path = file_path.clone();
-                async move {
-                    Self::read_block_optimized(&file_path, block_idx).await
-                }
-            }).collect();
-        
-        let results = self.universal_optimizer.parallel_operations(
-            read_operations,
-            |operation| operation
-        ).await?;
-        
+                async move { Self::read_block_optimized(&file_path, block_idx).await }
+            })
+            .collect();
+
+        let results = self
+            .universal_optimizer
+            .parallel_operations(read_operations, |operation| operation)
+            .await?;
+
         // Extract successful results - results is Vec<Result<Vec<u8>>>
         let mut final_results = Vec::new();
         for result in results {
@@ -1618,33 +1741,44 @@ impl SstStorage {
                         Ok(bytes) => final_results.push(bytes),
                         Err(e) => return Err(anyhow::anyhow!("Block read failed: {}", e)),
                     }
-                },
+                }
                 Err(e) => return Err(anyhow::anyhow!("Task failed: {}", e)),
             }
         }
         Ok(final_results)
     }
-    
+
     /// Optimized block reading with universal memory management
     async fn read_block_optimized(file_path: &str, block_idx: usize) -> Result<Vec<u8>> {
         // TODO: Implement actual block reading logic with universal memory pool
         // For now, return placeholder data - this should read specific block from SSTable file
         Ok(vec![0u8; 64 * 1024]) // 64KB placeholder block
     }
-    
+
     /// Storage tier optimization
-    async fn optimize_sstable_storage_tier(&self, file_path: &str, file_size_bytes: u64) -> Result<String> {
+    async fn optimize_sstable_storage_tier(
+        &self,
+        file_path: &str,
+        file_size_bytes: u64,
+    ) -> Result<String> {
         // Use universal optimizer for storage tier optimization
         // Storage tier optimization handled internally
         Ok("hot".to_string())
     }
-    
+
     /// Distance computation using universal hardware-accelerated computation
-    async fn compute_distances_sstable_optimized(&self, query: &[f32], candidates: &[Vec<f32>], metric: crate::compute::distance_computation::DistanceMetric) -> Result<Vec<f32>> {
+    async fn compute_distances_sstable_optimized(
+        &self,
+        query: &[f32],
+        candidates: &[Vec<f32>],
+        metric: crate::compute::distance_computation::DistanceMetric,
+    ) -> Result<Vec<f32>> {
         // Use universal optimizer for hardware-accelerated distance computation
-        self.universal_optimizer.compute_distances_accelerated(query, candidates, metric).await
+        self.universal_optimizer
+            .compute_distances_accelerated(query, candidates, metric)
+            .await
     }
-    
+
     /// Memory pool optimization using universal optimizer
     async fn sstable_buffer(&self, size: usize) -> Result<Vec<f32>> {
         self.universal_optimizer.get_memory_buffer(size).await
@@ -1652,7 +1786,7 @@ impl SstStorage {
 }
 
 // ============================================================================
-// UNIVERSAL PERFORMANCE OPTIMIZATION TRAIT IMPLEMENTATION  
+// UNIVERSAL PERFORMANCE OPTIMIZATION TRAIT IMPLEMENTATION
 // ============================================================================
 
 #[async_trait]
@@ -1660,39 +1794,55 @@ impl UniversallyOptimized for SstStorage {
     fn universal_optimizer(&self) -> &UniversalPerformanceOptimizer {
         &self.universal_optimizer
     }
-    
+
     async fn setup_engine_optimizations(&self) -> Result<()> {
         // SST-specific optimizations: Setup SSTable-specific caching and prefetching
         info!("🔧 SST: Setting up engine-specific optimizations");
-        
+
         // Enable prefetching for SSTable files based on access patterns
         let sstable_files = vec!["example_sstable.sst".to_string()]; // TODO: Get actual SSTable files
-        self.universal_optimizer.prefetch_data(&sstable_files).await?;
-        
+        self.universal_optimizer
+            .prefetch_data(&sstable_files)
+            .await?;
+
         // Setup SSTable-specific cache eviction if needed
         self.universal_optimizer.evict_cache_if_needed().await?;
-        
+
         info!("✅ SST: Engine-specific optimizations setup complete");
         Ok(())
     }
-    
+
     async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
-        
+
         // SST-specific metrics
-        metrics.insert("engine_type".to_string(), serde_json::Value::String("SST".to_string()));
-        metrics.insert("optimization_strategy".to_string(), 
-            serde_json::Value::String(format!("{:?}", self.universal_optimizer.get_strategy())));
-        
+        metrics.insert(
+            "engine_type".to_string(),
+            serde_json::Value::String("SST".to_string()),
+        );
+        metrics.insert(
+            "optimization_strategy".to_string(),
+            serde_json::Value::String(format!("{:?}", self.universal_optimizer.get_strategy())),
+        );
+
         // Universal optimizer configuration
         let config = self.universal_optimizer.get_config();
-        metrics.insert("cache_size_mb".to_string(), serde_json::Value::Number(serde_json::Number::from(config.cache_size_mb)));
-        metrics.insert("parallel_operations".to_string(), serde_json::Value::Number(serde_json::Number::from(config.parallel_operations)));
-        metrics.insert("enable_prefetching".to_string(), serde_json::Value::Bool(config.enable_prefetching));
-        
+        metrics.insert(
+            "cache_size_mb".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(config.cache_size_mb)),
+        );
+        metrics.insert(
+            "parallel_operations".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(config.parallel_operations)),
+        );
+        metrics.insert(
+            "enable_prefetching".to_string(),
+            serde_json::Value::Bool(config.enable_prefetching),
+        );
+
         Ok(metrics)
     }
-    
+
     // ===== Methods from second impl block (consolidated) =====
     // All writes go through WAL → Flush → SSTable directly
     // No intermediate memtable needed
@@ -1747,7 +1897,7 @@ impl UniversallyOptimized for SstStorage {
                     completed_at: Utc::now(),
                     engine_metrics: {
                         let mut metrics = HashMap::new();
-                        metrics.insert("error".to_string(), 
+                        metrics.insert("error".to_string(),
                             serde_json::Value::String("Missing storage assignment".to_string()));
                         metrics
                     },
@@ -1756,137 +1906,137 @@ impl UniversallyOptimized for SstStorage {
                 });
             }
         };
-        
+
         // Generate SSTable filename using centralized utility
         let codec = FilenameCodec::new();
         let sst_filename = codec.generate(0, "sst"); // Level 0 for flush
         debug!("🔧 SST: Creating SSTable file: {} for collection: {}", sst_filename, collection_id);
-        
+
         // MULTI-BATCH OPTIMIZED SORTING FOR GLOBAL PARTITIONED MEMTABLE
         // vector_records contains individual vectors from MULTIPLE batches (params.batch_ids)
         // Each batch may have been written at different times, so vectors are NOT pre-sorted
-        // 
+        //
         // Optimal strategy for multi-batch flush:
         // - Group vectors by batch_id (if available in metadata)
         // - Sort each batch's vectors separately (smaller sorts are faster)
         // - Use k-way merge to combine sorted batches efficiently
         // - Fallback to single Vec + sort for simplicity when batch grouping isn't beneficial
-        
+
         let record_count = vector_records.len();
         let batch_count = params.batch_ids.len();
-        
+
         debug!("🔍 SST FLUSH: Processing {} vectors from {} batches", record_count, batch_count);
-        
+
         // Scope the sorting to ensure immediate deallocation
         let sorted_records_iter = {
             // For small datasets or single batch, use simple Vec + sort
             if record_count < 10000 || batch_count <= 1 {
                 debug!("🔍 SST FLUSH: Using single-sort search_strategy (small dataset or single batch)");
-                
+
                 let mut unsorted_records = Vec::with_capacity(record_count);
-                
+
                 // Collect all records into Vec (O(1) per insertion)
                 for (sequence_number, vector) in vector_records.iter().enumerate() {
                     let vector_id = vector.id.as_ref().map(|s| s.as_str()).unwrap_or("").to_string();
-                    
+
                     // Handle append-only vectors (empty/null IDs) specially
                     let key = if vector_id.is_none() {
                         format!("__append_only_seq_{}", sequence_number)
                     } else {
                         vector_id
                     };
-                    
+
                     // OPTIMIZED: Use VectorRecord directly (no SstRecord conversion)
                     let mut vector_record = vector.clone();
                     // Store sequence_number in version field (optional u32)
                     vector_record.version = Some(sequence_number as u32);
-                    
+
                     unsorted_records.push((key, vector_record));
                 }
-                
+
                 // Single efficient sort: O(n log n)
                 unsorted_records.sort_by(|a, b| a.0.cmp(&b.0));
                 unsorted_records.into_iter()
-                
+
             } else {
                 // For larger multi-batch datasets, use batch-aware sorting
                 debug!("🔍 SST FLUSH: Using multi-batch sort search_strategy ({} batches)", batch_count);
-                
+
                 // Group vectors by their order (simulating batch grouping)
                 // Since we don't have direct batch_id in VectorRecord, group by chunks
                 let batch_size = (record_count / batch_count).max(1);
                 let mut sorted_batches = Vec::with_capacity(batch_count);
-                
+
                 for (batch_idx, batch_chunk) in vector_records.chunks(batch_size).enumerate() {
                     let mut batch_records = Vec::with_capacity(batch_chunk.len());
-                    
+
                     for (local_idx, vector) in batch_chunk.iter().enumerate() {
                         let sequence_number = batch_idx * batch_size + local_idx;
                         let vector_id = vector.id.as_ref().map(|s| s.as_str()).unwrap_or("").to_string();
-                        
+
                         let key = if vector_id.is_none() {
                             format!("__append_only_seq_{}", sequence_number)
                         } else {
                             vector_id
                         };
-                        
+
                         // OPTIMIZED: Use VectorRecord directly (no SstRecord conversion)
                         let mut vector_record = vector.clone();
                         // Store sequence_number in version field (optional u32)
                         vector_record.version = Some(sequence_number as u32);
-                        
+
                         batch_records.push((key, vector_record));
                     }
-                    
+
                     // Sort this batch: O(m log m) where m = batch_size
                     batch_records.sort_by(|a, b| a.0.cmp(&b.0));
                     sorted_batches.push(batch_records.into_iter());
                 }
-                
+
                 // K-way merge of sorted batches: O(n log k) where k = number of batches
                 // This is more efficient than single O(n log n) when k << n
                 use std::cmp::Reverse;
                 use std::collections::BinaryHeap;
-                
+
                 #[derive(Eq, PartialEq)]
                 struct HeapItem {
                     key: String,
                     record: VectorRecord,  // OPTIMIZED: Direct VectorRecord usage
                     batch_idx: usize,
                 }
-                
+
                 impl Ord for HeapItem {
                     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
                         // Reverse for min-heap behavior
                         other.key.cmp(&self.key)
                     }
                 }
-                
+
                 impl PartialOrd for HeapItem {
                     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
                         Some(self.cmp(other))
                     }
                 }
-                
+
                 let mut heap = BinaryHeap::new();
                 let mut iterators = sorted_batches;
-                
+
                 // Initialize heap with first item from each batch
                 for (batch_idx, iter) in iterators.iter_mut().enumerate() {
                     if let Some((key, record)) = iter.next() {
                         heap.push(HeapItem { key, record, batch_idx });
                     }
                 }
-                
+
                 // Create iterator that performs k-way merge
                 let merged_iter = std::iter::from_fn(move || {
                     if let Some(HeapItem { key, record, batch_idx }) = heap.pop() {
                         // Add next item from same batch to heap
                         if let Some((next_key, next_record)) = iterators[batch_idx].next() {
-                            heap.push(HeapItem { 
-                                key: next_key, 
-                                record: next_record, 
-                                batch_idx 
+                            heap.push(HeapItem {
+                                key: next_key,
+                                record: next_record,
+                                batch_idx
                             });
                         }
                         Some((key, record))
@@ -1894,7 +2044,7 @@ impl UniversallyOptimized for SstStorage {
                         None
                     }
                 });
-                
+
                 // Collect iterator to avoid lifetime issues
                 merged_iter.collect::<Vec<_>>().into_iter()
             }
@@ -1902,10 +2052,10 @@ impl UniversallyOptimized for SstStorage {
 
         // Write SSTable using atomic operations (always available now)
         let atomic_coordinator = &self.atomic_coordinator;
-        
+
         // Use atomic flush pattern
         info!("🔄 SST: Using atomic flush for {}", sst_filename);
-        
+
         // Begin atomic operation
         let staging_config = StagingConfig {
             base_url: collection_storage_url.clone(),
@@ -1917,12 +2067,12 @@ impl UniversallyOptimized for SstStorage {
             skip_uuid_subdir: true,  // Avoid creating subdirectories that get left behind
             ..Default::default()
         };
-        
+
         let atomic_op = atomic_coordinator
             .begin_atomic_operation(&staging_config)
             .await
             .context("Failed to begin atomic flush operation")?;
-        
+
         // Write to staging using SSTable writer (legacy path - no compression config available)
         let staging_url = format!("{}/{}", atomic_op.staging_url, sst_filename);
         let block_size = (self.config.block_size_kb * 1024) as usize;
@@ -1935,20 +2085,20 @@ impl UniversallyOptimized for SstStorage {
         };
         writer.write_sorted_vector_records(sorted_records_iter, record_count).await
             .map_err(|e| anyhow::anyhow!("Failed to write SSTable to staging: {}", e))?;
-        
+
         // Get file size from staging
         let fs = self.filesystem.get_filesystem(&staging_url)?;
         let metadata = fs.metadata(&staging_url)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get staging file size: {}", e))?;
         let file_size = metadata.size;
-        
+
         // Finalize atomic operation
         atomic_coordinator
             .finalize_atomic_operation(&atomic_op.operation_id)
             .await
             .context("Failed to finalize atomic flush")?;
-        
+
         let final_url = format!("{}/{}", collection_storage_url.trim_end_matches('/'), sst_filename);
         let (sst_url, data_len) = (final_url, file_size);
         debug!("🔍 SST FLUSH: SSTable written");
@@ -1962,7 +2112,7 @@ impl UniversallyOptimized for SstStorage {
             entries.len(),
             sst_url
         );
-        
+
         // SSTable file is now discoverable via directory listing
         // No manifest registration needed - files are self-describing
 
@@ -1973,7 +2123,7 @@ impl UniversallyOptimized for SstStorage {
                 .and_then(|c| c.config.as_ref())
                 .and_then(|cfg| cfg.sst_config.as_ref())
                 .and_then(|sst| sst.block_size_kb);
-            
+
             let _task = CompactionTask {
                 level: 0, // Start at level 0
                 input_files: vec![std::path::PathBuf::from(sst_url.clone())],
@@ -2036,8 +2186,10 @@ impl UnifiedStorageEngine for SstStorage {
         &self.filesystem
     }
 
-    fn get_collection_service(&self) -> Option<&crate::services::collection::manager::CollectionService> {
-            None
+    fn get_collection_service(
+        &self,
+    ) -> Option<&crate::services::collection::manager::CollectionService> {
+        None
     }
 
     /// SST-specific flush implementation - Extract records from WAL vector record batches
@@ -2045,19 +2197,31 @@ impl UnifiedStorageEngine for SstStorage {
         info!("🚀 SST FLUSH START");
         info!("   - Collection ID: {:?}", params.collection_id);
         info!("   - Vector count: {}", params.vector_records.len());
-        info!("   - Has collection_config: {}", params.collection_config.is_some());
-        
+        info!(
+            "   - Has collection_config: {}",
+            params.collection_config.is_some()
+        );
+
         debug!("🔍 SST DO_FLUSH: Checking compression configuration");
         if let Some(config) = &params.collection_config {
-            info!("   - Has storage_assignment: {}", config.storage_assignment.is_some());
+            info!(
+                "   - Has storage_assignment: {}",
+                config.storage_assignment.is_some()
+            );
             if let Some(assignment) = &config.storage_assignment {
                 info!("   - Storage base_location: {}", assignment.base_location);
             }
             // Check compression config
             if let Some(ref collection_config) = config.config {
-                if let Some(ref compression) = collection_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) {
-                    debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level);
+                if let Some(ref compression) = collection_config
+                    .storage_config
+                    .as_ref()
+                    .and_then(|s| s.compression.as_ref())
+                {
+                    debug!(
+                        "   ✅ Found compression in collection_config: algorithm={}, level={:?}",
+                        compression.algorithm, compression.level
+                    );
                 } else {
                     debug!("   ⚠️ No compression config in collection_config");
                 }
@@ -2108,11 +2272,16 @@ impl UnifiedStorageEngine for SstStorage {
             "💾 SST: Processing {} vector records from WAL vector record batches",
             vector_records.len()
         );
-        
+
         // DEBUG: Log first few vector records
         for (i, vr) in vector_records.iter().take(3).enumerate() {
-            info!("🔍 DEBUG SST: Vector record {}: id={:?}, vector_len={}, metadata_count={}", 
-                i, vr.id, vr.vector.len(), vr.metadata.len());
+            info!(
+                "🔍 DEBUG SST: Vector record {}: id={:?}, vector_len={}, metadata_count={}",
+                i,
+                vr.id,
+                vr.vector.len(),
+                vr.metadata.len()
+            );
         }
 
         // Step 1: Extract individual records from deserialized WAL vector record batches
@@ -2127,32 +2296,61 @@ impl UnifiedStorageEngine for SstStorage {
             filtered_records.len(),
             vector_records.len()
         );
-        
+
         // DEBUG: Log first few records
         for (i, record) in filtered_records.iter().take(3).enumerate() {
-            info!("🔍 DEBUG SST: Record {}: id={:?}, version={:?}", 
-                i, record.id, record.version);
+            info!(
+                "🔍 DEBUG SST: Record {}: id={:?}, version={:?}",
+                i, record.id, record.version
+            );
         }
 
         // Extract compression configuration from collection metadata (SDK-driven)
-        let compression_config = params.collection_config.as_ref()
+        let compression_config = params
+            .collection_config
+            .as_ref()
             .and_then(|collection| collection.config.as_ref())
-            .and_then(|config| config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).clone());
-            
+            .and_then(|config| {
+                config
+                    .storage_config
+                    .as_ref()
+                    .and_then(|s| s.compression.as_ref())
+                    .clone()
+            });
+
         if let Some(ref _compression) = compression_config {
-            info!("🗜️ SST: Using SDK-driven compression for collection {}", collection_id);
+            info!(
+                "🗜️ SST: Using SDK-driven compression for collection {}",
+                collection_id
+            );
         } else {
-            info!("🗜️ SST: No compression configuration from SDK for collection {}", collection_id);
+            info!(
+                "🗜️ SST: No compression configuration from SDK for collection {}",
+                collection_id
+            );
         }
 
         // Step 2: Process extracted records using row-by-row storage approach
-        info!("🔍 DEBUG SST: About to flush {} records to SSTable", filtered_records.len());
+        info!(
+            "🔍 DEBUG SST: About to flush {} records to SSTable",
+            filtered_records.len()
+        );
         let flush_result = self
-            .flush_sst_records_to_sstable(filtered_records, collection_id, params.collection_config.as_ref(), params.force, compression_config.map(|c| c.as_ref()).flatten())
+            .flush_sst_records_to_sstable(
+                filtered_records,
+                collection_id,
+                params.collection_config.as_ref(),
+                params.force,
+                compression_config.map(|c| c.as_ref()).flatten(),
+            )
             .await
             .context("Failed to flush records to SSTable with row-by-row storage")?;
-        info!("🔍 DEBUG SST: Flush completed - success={}, entries_flushed={}, bytes_written={}", 
-            flush_result.success, flush_result.entries_flushed.unwrap_or(0), flush_result.bytes_written.unwrap_or(0));
+        info!(
+            "🔍 DEBUG SST: Flush completed - success={}, entries_flushed={}, bytes_written={}",
+            flush_result.success,
+            flush_result.entries_flushed.unwrap_or(0),
+            flush_result.bytes_written.unwrap_or(0)
+        );
 
         info!(
             "✅ SST: Successfully flushed {} records to {} SSTable files ({} bytes)",
@@ -2162,19 +2360,24 @@ impl UnifiedStorageEngine for SstStorage {
         );
 
         // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
-        let flush_handler = crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler::new();
+        let flush_handler =
+            crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler::new();
         // Extract the SST file path from engine_metrics
-        let file_paths: Vec<String> = if let Some(path_value) = flush_result.engine_metrics.get("sstable_path") {
-            if let Some(path_str) = path_value.as_str() {
-                vec![path_str.to_string()]
+        let file_paths: Vec<String> =
+            if let Some(path_value) = flush_result.engine_metrics.get("sstable_path") {
+                if let Some(path_str) = path_value.as_str() {
+                    vec![path_str.to_string()]
+                } else {
+                    vec![]
+                }
             } else {
                 vec![]
-            }
-        } else {
-            vec![]
-        };
-        
-        if let Err(e) = flush_handler.notify_flush_complete(params, file_paths, vector_records).await {
+            };
+
+        if let Err(e) = flush_handler
+            .notify_flush_complete(params, file_paths, vector_records)
+            .await
+        {
             // Log but don't fail the flush - EventLog notification is best-effort
             warn!("⚠️ SST: Failed to notify EventLog for AXIS indexing: {}", e);
         } else {
@@ -2209,7 +2412,9 @@ impl UnifiedStorageEngine for SstStorage {
                 );
                 metrics.insert(
                     "extracted_records_count".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(flush_result.entries_flushed.unwrap_or(0))),
+                    serde_json::Value::Number(serde_json::Number::from(
+                        flush_result.entries_flushed.unwrap_or(0),
+                    )),
                 );
                 metrics
             },
@@ -2221,22 +2426,28 @@ impl UnifiedStorageEngine for SstStorage {
     /// SST-specific compaction using level-based merge strategy with vector tracking
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
-        let collection_id = params.collection_id.as_ref()
+        let collection_id = params
+            .collection_id
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST compaction_info"))?;
 
         info!(
             "🗜️ SST COMPACTION START: Collection {} (force: {}, priority: {:?})",
-            collection_id,
-            params.force,
-            params.priority
+            collection_id, params.force, params.priority
         );
-        
+
         debug!("🔍 SST DO_COMPACT: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
-                if let Some(ref compression) = config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) {
-                    debug!("   ✅ Found compression in collection_config: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level);
+                if let Some(ref compression) = config
+                    .storage_config
+                    .as_ref()
+                    .and_then(|s| s.compression.as_ref())
+                {
+                    debug!(
+                        "   ✅ Found compression in collection_config: algorithm={}, level={:?}",
+                        compression.algorithm, compression.level
+                    );
                 } else {
                     debug!("   ⚠️ No compression config in collection_config");
                 }
@@ -2265,30 +2476,47 @@ impl UnifiedStorageEngine for SstStorage {
         if let Some(compaction_manager) = &self.compaction_manager {
             // Get storage location from collection config - skip if not provided
             debug!("🔍 SST COMPACTION: Checking collection_config for storage assignment");
-            debug!("   - Has collection_config: {}", params.collection_config.is_some());
+            debug!(
+                "   - Has collection_config: {}",
+                params.collection_config.is_some()
+            );
             if let Some(config) = params.collection_config.as_ref() {
-                debug!("   - Has storage_assignment: {}", config.storage_assignment.is_some());
+                debug!(
+                    "   - Has storage_assignment: {}",
+                    config.storage_assignment.is_some()
+                );
                 if let Some(assignment) = &config.storage_assignment {
                     debug!("   - Storage base_location: {}", assignment.base_location);
                 }
             }
-            
-            let storage_location = match params.collection_config.as_ref()
-                .and_then(|c| c.storage_assignment.as_ref()) {
+
+            let storage_location = match params
+                .collection_config
+                .as_ref()
+                .and_then(|c| c.storage_assignment.as_ref())
+            {
                 Some(assignment) => assignment.base_location.clone(),
                 None => {
-                    error!("❌ SST: No storage assignment found for collection {}. Skipping compaction!", collection_id);
-                    error!("   - collection_config present: {}", params.collection_config.is_some());
+                    error!(
+                        "❌ SST: No storage assignment found for collection {}. Skipping compaction!",
+                        collection_id
+                    );
+                    error!(
+                        "   - collection_config present: {}",
+                        params.collection_config.is_some()
+                    );
                     // Return early with failure result
                     result.success = false;
                     result.collections_affected = vec![collection_id.to_string()];
                     result.duration_ms = Some(compact_start.elapsed().as_millis() as u64);
-                    result.engine_metrics.insert("error".to_string(), 
-                        serde_json::Value::String("Missing storage assignment".to_string()));
+                    result.engine_metrics.insert(
+                        "error".to_string(),
+                        serde_json::Value::String("Missing storage assignment".to_string()),
+                    );
                     return Ok(result);
                 }
             };
-                
+
             let collection_storage_url = format!("{}/{}/data", storage_location, collection_id);
             info!(
                 "🔄 SST COMPACTION: Checking for compaction needs in {}",
@@ -2296,20 +2524,27 @@ impl UnifiedStorageEngine for SstStorage {
             );
 
             let collection_dir = std::path::PathBuf::from(
-                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+                collection_storage_url
+                    .strip_prefix("file://")
+                    .unwrap_or(&collection_storage_url),
             );
-            
-            debug!("🔍 SST COMPACTION: Collection directory path: {}", collection_dir.display());
+
+            debug!(
+                "🔍 SST COMPACTION: Collection directory path: {}",
+                collection_dir.display()
+            );
             info!("   - Directory exists: {}", collection_dir.exists());
 
             // Check if compaction is needed
             let check_result = compaction_manager
                 .check_compaction_needed(collection_id, &collection_dir)
                 .await?;
-            
+
             // Log what we found
             if check_result.is_none() && params.force {
-                info!("⚠️ SST COMPACTION: No compaction task found but force=true. Checking threshold...");
+                info!(
+                    "⚠️ SST COMPACTION: No compaction task found but force=true. Checking threshold..."
+                );
                 // List files to understand why no compaction
                 if let Ok(entries) = tokio::fs::read_dir(&collection_dir).await {
                     let mut files = Vec::new();
@@ -2321,57 +2556,81 @@ impl UnifiedStorageEngine for SstStorage {
                             }
                         }
                     }
-                    info!("   - Found {} SST files in directory (threshold: {})", 
-                        files.len(), self.config.compaction_threshold);
+                    info!(
+                        "   - Found {} SST files in directory (threshold: {})",
+                        files.len(),
+                        self.config.compaction_threshold
+                    );
                     for file in &files {
                         debug!("     - {}", file);
                     }
                 }
             }
-            
+
             if let Some(task) = check_result {
                 info!(
                     "🔄 SST COMPACTION: Executing synchronous compaction for collection {} level {}",
                     collection_id, task.level
                 );
-                info!("   - Input files: {} (already filtered for AXIS-ready files)", task.input_files.len());
+                info!(
+                    "   - Input files: {} (already filtered for AXIS-ready files)",
+                    task.input_files.len()
+                );
                 for (idx, file) in task.input_files.iter().enumerate() {
                     debug!("     - Compacting file {}: {}", idx + 1, file.display());
                 }
-                
+
                 // Note: Files have already been filtered in check_compaction_needed
                 // Only AXIS-ready files are included in the task
                 let flush_handler = crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler::new();
-                let input_file_paths: Vec<String> = task.input_files.iter()
+                let input_file_paths: Vec<String> = task
+                    .input_files
+                    .iter()
                     .map(|p| p.to_string_lossy().to_string())
                     .collect();
-                
+
                 debug!(
                     "🔍 SST COMPACTION: Processing {} pre-filtered compactable files for collection {}",
-                    task.input_files.len(), collection_id
+                    task.input_files.len(),
+                    collection_id
                 );
 
                 // Execute compaction synchronously to capture vector tracking
                 let compaction_manager = compaction::Compaction::with_atomic_coordinator(
                     self.config.clone(),
                     Some(self.atomic_coordinator.clone()),
-                ).await?;
-                
+                )
+                .await?;
+
                 // Extract compression configuration from collection metadata (SDK-driven)
-                let compression_config = params.collection_config.as_ref()
+                let compression_config = params
+                    .collection_config
+                    .as_ref()
                     .and_then(|collection| collection.config.as_ref())
-                    .and_then(|config| config.storage_config.as_ref().and_then(|s| s.compression.as_ref()).clone());
-                    
-                debug!("🔍 SST DO_COMPACT: Passing compression to perform_compaction_enhanced: {:?}",
-                    compression_config.as_ref().map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level)));
-                
-                let enhanced_stats = compaction_manager.perform_compaction_enhanced(
-                    &task,
-                    &self.config,
-                    Some(self.atomic_coordinator.clone()),
-                    compression_config,
-                ).await?;
-                
+                    .and_then(|config| {
+                        config
+                            .storage_config
+                            .as_ref()
+                            .and_then(|s| s.compression.as_ref())
+                            .clone()
+                    });
+
+                debug!(
+                    "🔍 SST DO_COMPACT: Passing compression to perform_compaction_enhanced: {:?}",
+                    compression_config
+                        .as_ref()
+                        .map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level))
+                );
+
+                let enhanced_stats = compaction_manager
+                    .perform_compaction_enhanced(
+                        &task,
+                        &self.config,
+                        Some(self.atomic_coordinator.clone()),
+                        compression_config,
+                    )
+                    .await?;
+
                 result.collections_affected.push(collection_id.clone());
                 result.entries_processed = Some(enhanced_stats.merged_vectors.len() as u64);
                 result.entries_removed = Some(enhanced_stats.deleted_vector_ids.len() as u64);
@@ -2380,61 +2639,74 @@ impl UnifiedStorageEngine for SstStorage {
                 result.input_files = Some(enhanced_stats.base_stats.files_merged);
                 result.output_files = Some(1); // One output file per compaction
                 result.success = true;
-                
+
                 // Store vector tracking data in engine_metrics
                 result.engine_metrics.insert(
                     "deleted_vector_ids".to_string(),
                     serde_json::Value::Array(
-                        enhanced_stats.deleted_vector_ids.into_iter()
+                        enhanced_stats
+                            .deleted_vector_ids
+                            .into_iter()
                             .map(serde_json::Value::String)
-                            .collect()
-                    )
+                            .collect(),
+                    ),
                 );
                 result.engine_metrics.insert(
                     "merged_vectors_count".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(enhanced_stats.merged_vectors.len()))
+                    serde_json::Value::Number(serde_json::Number::from(
+                        enhanced_stats.merged_vectors.len(),
+                    )),
                 );
-                
+
                 // Note: We don't store the actual merged vectors in metrics to avoid memory bloat
                 // The compaction process has already updated the storage with the merged data
 
                 info!(
                     "✅ SST COMPACTION: Completed for collection {} (deleted: {}, merged: {}, bytes written: {})",
-                    collection_id, 
-                    result.entries_removed.unwrap_or(0), 
-                    result.entries_processed.unwrap_or(0), 
+                    collection_id,
+                    result.entries_removed.unwrap_or(0),
+                    result.entries_processed.unwrap_or(0),
                     enhanced_stats.base_stats.bytes_written
                 );
-                
+
                 // Notify EventLog about successful compaction
                 let output_file = task.output_file.to_string_lossy().to_string();
                 debug!(
                     "📨 SST COMPACTION: Notifying EventLog about completed compaction:\n  Collection: {}\n  Output file: {}\n  Input files: {:?}\n  Merged vectors: {}",
-                    collection_id, output_file, input_file_paths, enhanced_stats.merged_vectors.len()
+                    collection_id,
+                    output_file,
+                    input_file_paths,
+                    enhanced_stats.merged_vectors.len()
                 );
-                
+
                 flush_handler.notify_compaction_complete(
                     collection_id,
                     vec![output_file.clone()],
                     enhanced_stats.merged_vectors.len(),
                 );
-                
+
                 // Clean up old files from EventLog tracking
                 debug!(
                     "🧹 SST COMPACTION: Cleaning up {} compacted files from EventLog for collection {}",
-                    input_file_paths.len(), collection_id
+                    input_file_paths.len(),
+                    collection_id
                 );
-                
-                if let Err(e) = flush_handler.cleanup_compacted_files(
-                    collection_id,
-                    input_file_paths.clone(),
-                ).await {
+
+                if let Err(e) = flush_handler
+                    .cleanup_compacted_files(collection_id, input_file_paths.clone())
+                    .await
+                {
                     warn!("Failed to cleanup compacted files from EventLog: {}", e);
                 } else {
-                    debug!("✅ SST COMPACTION: Successfully cleaned up EventLog tracking for compacted files");
+                    debug!(
+                        "✅ SST COMPACTION: Successfully cleaned up EventLog tracking for compacted files"
+                    );
                 }
             } else {
-                debug!("🔍 SST COMPACTION: No compaction needed for collection {}", collection_id);
+                debug!(
+                    "🔍 SST COMPACTION: No compaction needed for collection {}",
+                    collection_id
+                );
                 info!("   - Files below threshold or no files found");
                 result.success = true; // No compaction needed is still successful
                 result.collections_affected.push(collection_id.to_string());
@@ -2449,72 +2721,107 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     /// Retrieve vector by ID from SST storage (Pure SSTable lookup with bloom filter optimization)
-    async fn vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>> {
-        debug!("🔍 SST: Looking up vector {} in collection {} using manifest", vector_id, collection_id);
+    async fn vector_by_id(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+    ) -> Result<Option<crate::core::VectorRecord>> {
+        debug!(
+            "🔍 SST: Looking up vector {} in collection {} using manifest",
+            vector_id, collection_id
+        );
 
         // Note: In a real implementation, we'd get the storage location from a metadata service
         // For now, we'll just log and return None if we can't determine the location
-        warn!("⚠️ SST: vector_by_id needs collection metadata service integration for collection {}", collection_id);
-        
+        warn!(
+            "⚠️ SST: vector_by_id needs collection metadata service integration for collection {}",
+            collection_id
+        );
+
         // Get SSTable files that might contain this key
         // Direct directory scan for overlapping files (simplified for now)
         let overlapping_files: Vec<String> = vec![];
-        
+
         if overlapping_files.is_empty() {
             debug!("📂 SST: No SSTable files overlap with key {}", vector_id);
             return Ok(None);
         }
-        
+
         let mut sstables_checked = 0;
         let mut bloom_filter_hits = 0;
-        
+
         // Search through files in key range order
         for file_path in overlapping_files {
             sstables_checked += 1;
-            
+
             let filename = std::path::Path::new(&file_path)
                 .file_name()
-                .and_then(|n| n.to_str())
-                ;
-            
+                .and_then(|n| n.to_str());
+
             // Create a zero-copy system for the reader
-            use crate::storage::engines::core::io::zero_copy::{ZeroCopyIOConfig, ZeroCopyIOSystem};
+            use crate::storage::engines::core::io::zero_copy::{
+                ZeroCopyIOConfig, ZeroCopyIOSystem,
+            };
             let zero_copy_config = ZeroCopyIOConfig::default();
             let zero_copy_system = match ZeroCopyIOSystem::new(
                 zero_copy_config,
                 self.filesystem.clone(),
                 vec![],
-            ).await {
+            )
+            .await
+            {
                 Ok(system) => Arc::new(system),
                 Err(e) => {
-                    warn!("Failed to create zero-copy system, skipping bloom filter optimization: {}", e);
+                    warn!(
+                        "Failed to create zero-copy system, skipping bloom filter optimization: {}",
+                        e
+                    );
                     continue;
                 }
             };
-            
+
             // Use unified SSTable reader with bloom filter
-            let reader = UnifiedSstableReader::new(self.filesystem.clone(), zero_copy_system, "sst_lookup".to_string());
-            
+            let reader = UnifiedSstableReader::new(
+                self.filesystem.clone(),
+                zero_copy_system,
+                "sst_lookup".to_string(),
+            );
+
             // Load metadata (includes bloom filter)
             if reader.load_metadata(&file_path).await.is_ok() {
                 // Check bloom filter first
                 if reader.might_contain_key(&file_path, vector_id).await {
                     bloom_filter_hits += 1;
-                    trace!("🌸 SST: Bloom filter hit for {} in {}", vector_id, filename.unwrap_or("unknown"));
-                    
+                    trace!(
+                        "🌸 SST: Bloom filter hit for {} in {}",
+                        vector_id,
+                        filename.unwrap_or("unknown")
+                    );
+
                     // Actually search the SSTable
                     if let Ok(Some(record)) = reader.vector(&file_path, vector_id).await {
                         debug!(
                             "✅ SST: Found vector {} in SSTable {} (checked {}/{} SSTables, {} bloom hits)",
-                            vector_id, filename.unwrap_or("unknown"), bloom_filter_hits, sstables_checked, bloom_filter_hits
+                            vector_id,
+                            filename.unwrap_or("unknown"),
+                            bloom_filter_hits,
+                            sstables_checked,
+                            bloom_filter_hits
                         );
                         return Ok(Some(record));
                     }
                 } else {
-                    trace!("🌸 SST: Bloom filter miss for {} in {} - skipping", vector_id, filename.unwrap_or("unknown"));
+                    trace!(
+                        "🌸 SST: Bloom filter miss for {} in {} - skipping",
+                        vector_id,
+                        filename.unwrap_or("unknown")
+                    );
                 }
             } else {
-                warn!("⚠️ Failed to load metadata for SSTable {}", filename.unwrap_or("unknown"));
+                warn!(
+                    "⚠️ Failed to load metadata for SSTable {}",
+                    filename.unwrap_or("unknown")
+                );
             }
         }
 
@@ -2531,135 +2838,196 @@ impl UnifiedStorageEngine for SstStorage {
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let search_start = std::time::Instant::now();
-        
+
         // Extract parameters from context
         let collection_id = ctx.collection_id();
-        let storage_url = ctx.collection_storage_path()
+        let storage_url = ctx
+            .collection_storage_path()
             .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
-        let query_vector = ctx.query_vector()
+        let query_vector = ctx
+            .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
         // TODO: These should be passed in StorageQueryContext or as separate parameters
-        let include_vectors = true;  // Default to including vectors
+        let include_vectors = true; // Default to including vectors
         let include_metadata = true; // Default to including metadata
-        
-        info!("🚀 SST: Enhanced unified search with orchestration for collection {}", collection_id);
-        
+
+        info!(
+            "🚀 SST: Enhanced unified search with orchestration for collection {}",
+            collection_id
+        );
+
         // ========================================================================
         // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
         // ========================================================================
-        
+
         // ========================================================================
         // INTELLIGENT SEARCH ORCHESTRATION
         // ========================================================================
-        
+
         // Check if orchestration should be used based on context metadata
         let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
-        
+
         if use_orchestration {
             info!("🎯 SST: Using intelligent search orchestration");
-            
+
             // Create mock services for orchestration (in real implementation, these would come from context)
             // For now, we'll create minimal implementations to enable orchestration functionality
             let axis_manager = match self.mock_axis_manager() {
                 Ok(manager) => manager,
                 Err(e) => {
-                    warn!("⚠️ Failed to get AXIS manager: {}, falling back to direct search", e);
-                    return self.fallback_to_direct_search(ctx, collection_id, &storage_url, query_vector, k, distance_metric, filter_expression, include_vectors, include_metadata).await;
+                    warn!(
+                        "⚠️ Failed to get AXIS manager: {}, falling back to direct search",
+                        e
+                    );
+                    return self
+                        .fallback_to_direct_search(
+                            ctx,
+                            collection_id,
+                            &storage_url,
+                            query_vector,
+                            k,
+                            distance_metric,
+                            filter_expression,
+                            include_vectors,
+                            include_metadata,
+                        )
+                        .await;
                 }
             };
-            
+
             let collection_service = self.mock_collection_service();
             let distance_engine = self.mock_distance_engine();
             let quantization_engine = self.mock_quantization_engine();
             let storage_engine = self.mock_storage_engine();
-            
+
             // Create search orchestrator for intelligent routing
             // For now, use a simple strategy selection since the complex orchestrator needs more setup
             let strategy = ExecutionStrategy::DirectFP32 {
                 reason: "SST engine default".to_string(),
                 expected_latency_ms: 10,
             };
-            
+
             match Ok::<ExecutionStrategy, anyhow::Error>(strategy) {
                 Ok(strategy) => {
                     debug!("📋 Using default SST search strategy");
-                    
+
                     match Ok(&strategy) {
                         Ok(strategy) => {
                             info!(
                                 "🎯 Strategy Selected: {} (estimated cost: {:.2}ms)",
                                 match &strategy {
-                                    ExecutionStrategy::IndexFirst { expected_latency_ms, .. } => {
-                                        format!("IndexFirst (cost: {:.2}ms)", *expected_latency_ms as f32)
-                                    },
-                                    ExecutionStrategy::Progressive { expected_latency_ms, .. } => {
-                                        format!("Progressive (cost: {:.2}ms)", *expected_latency_ms as f32)
-                                    },
-                                    ExecutionStrategy::DirectFP32 { expected_latency_ms, .. } => {
-                                        format!("DirectFP32 (cost: {:.2}ms)", *expected_latency_ms as f32)
-                                    },
+                                    ExecutionStrategy::IndexFirst {
+                                        expected_latency_ms,
+                                        ..
+                                    } => {
+                                        format!(
+                                            "IndexFirst (cost: {:.2}ms)",
+                                            *expected_latency_ms as f32
+                                        )
+                                    }
+                                    ExecutionStrategy::Progressive {
+                                        expected_latency_ms,
+                                        ..
+                                    } => {
+                                        format!(
+                                            "Progressive (cost: {:.2}ms)",
+                                            *expected_latency_ms as f32
+                                        )
+                                    }
+                                    ExecutionStrategy::DirectFP32 {
+                                        expected_latency_ms,
+                                        ..
+                                    } => {
+                                        format!(
+                                            "DirectFP32 (cost: {:.2}ms)",
+                                            *expected_latency_ms as f32
+                                        )
+                                    }
                                     _ => {
                                         format!("Other (cost: 10ms)")
                                     }
                                 },
                                 match &strategy {
-                                    ExecutionStrategy::IndexFirst { expected_latency_ms, .. } => *expected_latency_ms as f32,
-                                    ExecutionStrategy::Progressive { expected_latency_ms, .. } => *expected_latency_ms as f32,
-                                    ExecutionStrategy::DirectFP32 { expected_latency_ms, .. } => *expected_latency_ms as f32,
+                                    ExecutionStrategy::IndexFirst {
+                                        expected_latency_ms,
+                                        ..
+                                    } => *expected_latency_ms as f32,
+                                    ExecutionStrategy::Progressive {
+                                        expected_latency_ms,
+                                        ..
+                                    } => *expected_latency_ms as f32,
+                                    ExecutionStrategy::DirectFP32 {
+                                        expected_latency_ms,
+                                        ..
+                                    } => *expected_latency_ms as f32,
                                     _ => 10.0,
                                 }
                             );
-                            
-                            info!("🔍 SST: Using {} strategy for search", 
+
+                            info!(
+                                "🔍 SST: Using {} strategy for search",
                                 match &strategy {
                                     ExecutionStrategy::DirectFP32 { .. } => "DirectFP32",
-                                    ExecutionStrategy::IndexFirst { .. } => "IndexFirst", 
+                                    ExecutionStrategy::IndexFirst { .. } => "IndexFirst",
                                     ExecutionStrategy::Progressive { .. } => "Progressive",
                                     _ => "Unknown",
-                                });
+                                }
+                            );
                             // For now, continue with the existing search implementation below
-                        },
+                        }
                         Err(e) => {
-                            warn!("⚠️ Strategy selection failed: {}, falling back to direct search", e);
+                            warn!(
+                                "⚠️ Strategy selection failed: {}, falling back to direct search",
+                                e
+                            );
                             // Fall through to existing implementation
                         }
                     }
-                },
+                }
                 Err(e) => {
-                    warn!("⚠️ Failed to create search orchestrator: {}, falling back to direct search", e);
+                    warn!(
+                        "⚠️ Failed to create search orchestrator: {}, falling back to direct search",
+                        e
+                    );
                     // Fall through to existing implementation
                 }
             }
         }
-        
+
         // ========================================================================
         // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
         // ========================================================================
-        
+
         info!("🔍 SST: Using current unified search implementation (orchestration disabled)");
-        
+
         // Use search params from context (already available as Arc)
         let search_params = ctx.search_params.clone();
-        
+
         // Use the storage URL from context
-        debug!("🔍 SST: Using storage_url = {} for collection {}", storage_url, collection_id);
-        
+        debug!(
+            "🔍 SST: Using storage_url = {} for collection {}",
+            storage_url, collection_id
+        );
+
         // ========================================================================
         // PHASE 3: ENHANCED COLLECTION CONFIGURATION ANALYSIS
         // ========================================================================
-        
+
         debug!("📊 Collection Configuration Analysis:");
         debug!("  🎯 Query vector dimension: {}", query_vector.len());
         debug!("  📏 Top-k requested: {}", k);
         debug!("  📐 Distance metric: {:?}", distance_metric);
-        debug!("  🔍 Has filter expression: {}", filter_expression.is_some());
+        debug!(
+            "  🔍 Has filter expression: {}",
+            filter_expression.is_some()
+        );
         if let Some(filter) = filter_expression {
             debug!("  🔎 Filter details: {:?}", filter);
         }
-        
+
         // Analyze collection quantization capabilities
         let collection_config = &ctx.collection.config;
         if let Some(config) = collection_config {
@@ -2667,15 +3035,21 @@ impl UnifiedStorageEngine for SstStorage {
                 debug!("  🔧 Quantization Analysis:");
                 debug!("    ✅ Enabled: {}", quant_config.enabled);
                 debug!("    🎛️  Strategy: {:?}", quant_config.strategy);
-                debug!("    🔄 Progressive search: {}", quant_config.enable_progressive_search);
-                debug!("    📋 Custom levels: {} defined", quant_config.custom_levels.len());
+                debug!(
+                    "    🔄 Progressive search: {}",
+                    quant_config.enable_progressive_search
+                );
+                debug!(
+                    "    📋 Custom levels: {} defined",
+                    quant_config.custom_levels.len()
+                );
             } else {
                 debug!("  🔧 Quantization: Not configured (FP32 only)");
             }
         } else {
             debug!("  🔧 Collection config: Not available");
         }
-        
+
         // Pre-discover SSTable files to avoid redundant filesystem queries
         let sstable_files = {
             let mut files = Vec::new();
@@ -2688,8 +3062,11 @@ impl UnifiedStorageEngine for SstStorage {
             }
             files
         };
-        debug!("🔍 SST: Pre-discovered {} SSTable files", sstable_files.len());
-        
+        debug!(
+            "🔍 SST: Pre-discovered {} SSTable files",
+            sstable_files.len()
+        );
+
         let context = crate::core::search::SearchPlan {
             collection_id: collection_id.to_string(),
             collection_config: Some(crate::core::search::CollectionConfig {
@@ -2710,7 +3087,7 @@ impl UnifiedStorageEngine for SstStorage {
                 file_paths: Some(sstable_files), // Pass pre-discovered files
             },
         };
-        
+
         // TODO: Use IntegratedSearchOptimizer instead of deleted SstUnifiedSearchEngine
         // For now, create a basic result set
         let result_set = crate::core::search::SearchResultSet {
@@ -2721,7 +3098,7 @@ impl UnifiedStorageEngine for SstStorage {
             algorithm: "SST".to_string(),
             metadata: HashMap::new(),
         };
-        
+
         // Old code commented out - needs integration with IntegratedSearchOptimizer
         // let search_engine = unified_search_engine::SstUnifiedSearchEngine::new(
         //     self.sstable_reader.clone(),
@@ -2731,9 +3108,10 @@ impl UnifiedStorageEngine for SstStorage {
         //     self.filesystem.clone(),
         // );
         // let result_set = search_engine.search_unified(...).await?;
-        
+
         // Filter results based on include_vectors and include_metadata
-        let mut results: Vec<crate::core::search::InternalSearchResult> = result_set.results.iter().cloned().collect();
+        let mut results: Vec<crate::core::search::InternalSearchResult> =
+            result_set.results.iter().cloned().collect();
         if !include_vectors {
             for result in &mut results {
                 result.vector = None;
@@ -2744,13 +3122,13 @@ impl UnifiedStorageEngine for SstStorage {
                 result.metadata.clear();
             }
         }
-        
+
         // ========================================================================
         // PHASE 4: PERFORMANCE TRACKING AND FINAL LOGGING
         // ========================================================================
-        
+
         let total_search_time = search_start.elapsed();
-        
+
         info!(
             "🏁 SST Unified Search Completed - Collection: {}, Results: {}/{}, Time: {:.2}ms",
             collection_id,
@@ -2758,15 +3136,24 @@ impl UnifiedStorageEngine for SstStorage {
             k,
             total_search_time.as_secs_f32() * 1000.0
         );
-        
+
         // Enhanced result analysis
         debug!("📈 Search Results Analysis:");
         debug!("  📊 Total results found: {}", results.len());
         debug!("  🎯 Requested top-k: {}", k);
-        debug!("  ✅ Results coverage: {:.1}%", 
-               if k > 0 { (results.len() as f32 / k as f32 * 100.0).min(100.0) } else { 0.0 });
-        debug!("  ⏱️  Total search time: {:.2}ms", total_search_time.as_secs_f32() * 1000.0);
-        
+        debug!(
+            "  ✅ Results coverage: {:.1}%",
+            if k > 0 {
+                (results.len() as f32 / k as f32 * 100.0).min(100.0)
+            } else {
+                0.0
+            }
+        );
+        debug!(
+            "  ⏱️  Total search time: {:.2}ms",
+            total_search_time.as_secs_f32() * 1000.0
+        );
+
         // Log sample results with enhanced details
         if !results.is_empty() {
             debug!("🔍 Sample Results (top 3):");
@@ -2780,21 +3167,25 @@ impl UnifiedStorageEngine for SstStorage {
                     result.vector.is_some(),
                     result.metadata.len()
                 );
-                
+
                 // Log metadata details for first result
                 if i == 0 && !result.metadata.is_empty() {
-                    debug!("    📋 Metadata sample: {:?}", 
-                           result.metadata.iter()
-                               .take(3)
-                               .map(|(k, v)| format!("{}={:?}", k, v))
-                               .collect::<Vec<_>>()
-                               .join(", "));
+                    debug!(
+                        "    📋 Metadata sample: {:?}",
+                        result
+                            .metadata
+                            .iter()
+                            .take(3)
+                            .map(|(k, v)| format!("{}={:?}", k, v))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
                 }
             }
         } else {
             debug!("🔍 No results found for query");
         }
-        
+
         // Log performance characteristics
         if total_search_time.as_millis() > 100 {
             warn!(
@@ -2811,7 +3202,7 @@ impl UnifiedStorageEngine for SstStorage {
                 results.len()
             );
         }
-        
+
         Ok(results)
     }
 
@@ -2855,14 +3246,13 @@ impl UnifiedStorageEngine for SstStorage {
 
         Ok(metrics)
     }
-    
 }
 
 impl SstStorage {
     // =============================================================================
     // SST IMPLEMENTATION HELPER METHODS (Private)
     // =============================================================================
-    
+
     // ===== Methods from third impl block (consolidated) =====
     /// Extract individual records from deserialized WAL vector record batches
     /// These batches come from the global partitioned memtable with WAL behavior
@@ -2871,7 +3261,8 @@ impl SstStorage {
         &self,
         vector_records: &[VectorRecord],
         collection_id: &str,
-    ) -> Result<Vec<VectorRecord>> {  // OPTIMIZED: Return VectorRecord directly
+    ) -> Result<Vec<VectorRecord>> {
+        // OPTIMIZED: Return VectorRecord directly
         let extraction_start = std::time::Instant::now();
         let sequence_start = chrono::Utc::now().timestamp_millis() as u64;
 
@@ -2883,7 +3274,7 @@ impl SstStorage {
 
         // Pre-allocate with estimated capacity for better memory efficiency
         let estimated_matches = vector_records.len() / 4; // Conservative estimate
-        let mut filtered_records = Vec::with_capacity(estimated_matches);  // OPTIMIZED: Direct VectorRecord storage
+        let mut filtered_records = Vec::with_capacity(estimated_matches); // OPTIMIZED: Direct VectorRecord storage
 
         // Batch optimization: Use vectorized processing for better performance
         let mut batch_stats = BatchExtractionStats::new();
@@ -2897,30 +3288,36 @@ impl SstStorage {
             for (index, vector_record) in chunk.iter().enumerate() {
                 // All records should already be filtered for this collection
                 let global_index = chunk_idx * CHUNK_SIZE + index;
-                
+
                 // Debug: log metadata before conversion
                 if global_index < 5 {
-                    debug!("🔍 Pre-conversion record {}: id={:?}, metadata={:?}", 
-                             global_index,
-                             vector_record.id,
-                             vector_record.metadata.iter().map(|m| format!("{}={:?}", m.key, m.value)).collect::<Vec<_>>());
+                    debug!(
+                        "🔍 Pre-conversion record {}: id={:?}, metadata={:?}",
+                        global_index,
+                        vector_record.id,
+                        vector_record
+                            .metadata
+                            .iter()
+                            .map(|m| format!("{}={:?}", m.key, m.value))
+                            .collect::<Vec<_>>()
+                    );
                 }
-                
+
                 // OPTIMIZED: Use VectorRecord directly (no SstRecord conversion)
                 let mut vector_record = vector_record.clone();
-                
+
                 // Store sequence number in version field for SST ordering
                 vector_record.version = Some((sequence_start + global_index as u64) as u32);
-                
+
                 filtered_records.push(vector_record);
                 chunk_matches += 1;
-                
+
                 batch_stats.total_extracted += 1;
             }
 
             let chunk_time = chunk_start.elapsed().as_micros() as u64;
             batch_stats.chunk_times.push(chunk_time);
-            
+
             debug!(
                 "📦 SST CHUNK {}: Processed {} records, {} matches in {}μs",
                 chunk_idx,
@@ -2957,11 +3354,10 @@ impl SstStorage {
         Ok(filtered_records)
     }
 
-
     /// Flush memtable data to SSTable files using SST's row-based architecture
     async fn flush_sst_records_to_sstable(
         &self,
-        vector_records: Vec<VectorRecord>,  // OPTIMIZED: Accept VectorRecord directly
+        vector_records: Vec<VectorRecord>, // OPTIMIZED: Accept VectorRecord directly
         collection_id: &str,
         collection_config: Option<&Collection>,
         _force_flush: bool,
@@ -2973,21 +3369,18 @@ impl SstStorage {
             "🗂️ SST SSTABLE FLUSH: Processing {} records",
             vector_records.len()
         );
-        
+
         // DEBUG: Log record details
         if vector_records.is_empty() {
             warn!("🔍 DEBUG SST: No records to flush - returning early!");
         } else {
-            info!("🔍 DEBUG SST: First record: id={:?}", 
-                vector_records[0].id);
+            info!("🔍 DEBUG SST: First record: id={:?}", vector_records[0].id);
         }
 
         // Stage 1: Sort records by ID for SSTable ordering
         let sorting_start = std::time::Instant::now();
         let mut sorted_records = vector_records;
-        sorted_records.sort_by(|a, b| {
-            a.id.as_str().cmp(&b.id.as_str())
-        });
+        sorted_records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
         let sorting_time = sorting_start.elapsed().as_millis() as u64;
         debug!(
             "📊 SST STAGE 1: Sorted {} records in {}ms",
@@ -3002,8 +3395,7 @@ impl SstStorage {
         let num_levels = level_partitions.len();
         debug!(
             "🏗️ SST STAGE 2: Partitioned into {} levels in {}ms",
-            num_levels,
-            partitioning_time
+            num_levels, partitioning_time
         );
 
         // Stage 3: Create SSTable files for each level
@@ -3020,14 +3412,21 @@ impl SstStorage {
             // Get the collection storage URL from assignment service
             // Get storage URL from collection config - skip if not provided
             let collection_storage_url = match collection_config
-                .and_then(|c| c.storage_assignment.as_ref()) {
+                .and_then(|c| c.storage_assignment.as_ref())
+            {
                 Some(assignment) => {
                     let url = format!("{}/{}/data", assignment.base_location, collection_id);
-                    debug!("🔍 SST: Using storage URL: {} for collection: {}", url, collection_id);
+                    debug!(
+                        "🔍 SST: Using storage URL: {} for collection: {}",
+                        url, collection_id
+                    );
                     url
                 }
                 None => {
-                    error!("❌ SST: No storage assignment found for collection {}. Skipping flush operation!", collection_id);
+                    error!(
+                        "❌ SST: No storage assignment found for collection {}. Skipping flush operation!",
+                        collection_id
+                    );
                     // Return early with failure result
                     return Ok(FlushResult {
                         success: false,
@@ -3039,8 +3438,10 @@ impl SstStorage {
                         completed_at: Utc::now(),
                         engine_metrics: {
                             let mut metrics = HashMap::new();
-                            metrics.insert("error".to_string(), 
-                                serde_json::Value::String("Missing storage assignment".to_string()));
+                            metrics.insert(
+                                "error".to_string(),
+                                serde_json::Value::String("Missing storage assignment".to_string()),
+                            );
                             metrics
                         },
                         compaction_triggered: false,
@@ -3049,15 +3450,21 @@ impl SstStorage {
                 }
             };
             let data_dir = PathBuf::from(
-                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
+                collection_storage_url
+                    .strip_prefix("file://")
+                    .unwrap_or(&collection_storage_url),
             );
 
             // Generate SSTable filename using centralized utility
             let codec = FilenameCodec::new();
             let sst_filename = codec.generate(level as u32, "sst");
             let sst_path = data_dir.join(&sst_filename);
-            debug!("🔧 SST: Creating compacted SSTable file: {} at path: {} for collection: {}", 
-                   sst_filename, sst_path.display(), collection_id);
+            debug!(
+                "🔧 SST: Creating compacted SSTable file: {} at path: {} for collection: {}",
+                sst_filename,
+                sst_path.display(),
+                collection_id
+            );
 
             // Ensure directory exists
             if let Some(parent) = sst_path.parent() {
@@ -3070,13 +3477,16 @@ impl SstStorage {
             // Handle append-only vectors with unique keys
             let mut entries = BTreeMap::new();
             let mut append_only_counter = 0u64;
-            
+
             for record in &level_records {
                 let key = if record.id.is_empty() {
                     // For append-only vectors (empty IDs), use a unique key
                     let unique_key = format!("__append_only_seq_{}", append_only_counter);
                     append_only_counter += 1;
-                    debug!("🔍 SST FLUSH: Append-only vector detected in level {}, using key='{}'", level, unique_key);
+                    debug!(
+                        "🔍 SST FLUSH: Append-only vector detected in level {}, using key='{}'",
+                        level, unique_key
+                    );
                     unique_key
                 } else {
                     // Skip records with empty IDs - upsert logic depends on this
@@ -3090,26 +3500,43 @@ impl SstStorage {
 
             // Use SstableWriter with collection config for quantization and compression
             let block_size = (self.config.block_size_kb * 1024) as usize;
-            let writer = writer::SstableWriter::new_with_config(&sst_path, block_size, Arc::clone(&self.filesystem), collection_config);
-            
+            let writer = writer::SstableWriter::new_with_config(
+                &sst_path,
+                block_size,
+                Arc::clone(&self.filesystem),
+                collection_config,
+            );
+
             // Use bloom filter config from SST config if available
             let writer = if let Some(ref bloom_config) = self.config.bloom_filter_config {
                 writer.with_bloom_config(bloom_config.clone())
             } else {
                 writer
             };
-            
+
             // Quantization is ALWAYS enabled in SstableWriter - no need to call with_quantization()
             // It's part of the SST file layout and provides PQ sorting for better compression and selectivity
-            debug!("🎯 SST: Writing level {} with integrated quantization and PQ sorting", level);
-            
+            debug!(
+                "🎯 SST: Writing level {} with integrated quantization and PQ sorting",
+                level
+            );
+
             // Write records using SstableWriter (streaming approach for production consistency)
-            debug!("🔍 SST: About to write {} entries to file using streaming approach: {}", entries.len(), sst_path.display());
+            debug!(
+                "🔍 SST: About to write {} entries to file using streaming approach: {}",
+                entries.len(),
+                sst_path.display()
+            );
             let record_count = entries.len();
             let sorted_records_iter = entries.into_iter(); // BTreeMap already sorted by key
-            writer.write_sorted_vector_records(sorted_records_iter, record_count).await
+            writer
+                .write_sorted_vector_records(sorted_records_iter, record_count)
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to write SSTable: {}", e))?;
-            debug!("🔍 SST: Successfully wrote SSTable file: {}", sst_path.display());
+            debug!(
+                "🔍 SST: Successfully wrote SSTable file: {}",
+                sst_path.display()
+            );
 
             // Get file size
             let metadata = tokio::fs::metadata(&sst_path).await?;
@@ -3117,12 +3544,19 @@ impl SstStorage {
             total_bytes_written += file_size;
             files_created += 1;
             sstable_paths.push(sst_path.clone());
-            
+
             // Verify file exists
             if metadata.len() > 0 {
-                debug!("✅ SST: Compacted SSTable verified - {} bytes at {}", file_size, sst_path.display());
+                debug!(
+                    "✅ SST: Compacted SSTable verified - {} bytes at {}",
+                    file_size,
+                    sst_path.display()
+                );
             } else {
-                warn!("⚠️ SST: Compacted SSTable file is empty: {}", sst_path.display());
+                warn!(
+                    "⚠️ SST: Compacted SSTable file is empty: {}",
+                    sst_path.display()
+                );
             }
 
             debug!(
@@ -3146,7 +3580,7 @@ impl SstStorage {
         // This ensures cached blocks are refreshed after new data is flushed
         // Note: Decompression cache invalidation removed as SST is now collection-agnostic
         // Cache invalidation should be handled at a higher level if needed
-        
+
         // Stage 6: Trigger compaction if threshold exceeded
         let compaction_check_start = std::time::Instant::now();
         let compaction_triggered = self.check_compaction_threshold().await?;
@@ -3218,8 +3652,9 @@ impl SstStorage {
     /// Partition records into SST tree levels based on key ranges and record age
     async fn partition_records_by_level(
         &self,
-        sorted_records: &[VectorRecord],  // OPTIMIZED: Accept VectorRecord directly
-    ) -> Result<HashMap<u8, Vec<VectorRecord>>> {  // OPTIMIZED: Return VectorRecord directly
+        sorted_records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
+    ) -> Result<HashMap<u8, Vec<VectorRecord>>> {
+        // OPTIMIZED: Return VectorRecord directly
         let mut level_partitions: HashMap<u8, Vec<VectorRecord>> = HashMap::new();
 
         // SST Level 0: Recent entries (direct from memtable)
@@ -3248,11 +3683,11 @@ impl SstStorage {
     /// Includes compression, bloom filters, and block-based organization
     async fn serialize_sst_records_to_sstable(
         &self,
-        records: &[VectorRecord],  // OPTIMIZED: Accept VectorRecord directly
+        records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
         level: u8,
     ) -> Result<Vec<u8>> {
         let serialization_start = std::time::Instant::now();
-        
+
         // Engine optimization: Pre-allocate based on estimated size
         let estimated_size = records.len() * 512; // Conservative estimate per record
         let mut sstable_data = Vec::with_capacity(estimated_size);
@@ -3265,34 +3700,34 @@ impl SstStorage {
             min_key: records.first().map(|r| r.id.clone()).unwrap_or_default(),
             max_key: records.last().map(|r| r.id.clone()).unwrap_or_default(),
             timestamp: Utc::now().timestamp(),
-            
+
             // Compression configuration
             compression_algorithm: CompressionAlgorithm::None,
             compression_level: 0,
-            
+
             // Bloom filter configuration
             has_bloom_filter: true,
             has_global_bloom: true,
             has_block_blooms: false, // Will be updated based on actual blocks
             metadata_column_count: 0, // Will be calculated
-            
+
             // Block organization
             block_size: (self.config.block_size_kb * 1024) as u32,
             batch_size: records.len() as u32,
             block_count: 0, // Will be updated
-            
+
             // Component sizes
             header_size: 0,
             index_size: 0,
             data_size: 0,
-            
+
             // NEW: Direct access offsets (placeholder values)
             global_bloom_offset: 0,
             global_bloom_size: 0,
             block_index_offset: 0,
             block_index_size: 0,
             data_blocks_offset: 0,
-            
+
             // NEW: Vector format optimization (default to variable)
             vector_format: VectorFormat::Variable,
             fixed_dimension: None,
@@ -3301,14 +3736,19 @@ impl SstStorage {
 
         // Step 2: Build bloom filter for fast key existence checks
         let bloom_filter = self.build_bloom_filter(records).await?;
-        let bloom_data = bloom_filter.serialize()
+        let bloom_data = bloom_filter
+            .serialize()
             .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))?;
 
         // Step 3: Organize records into blocks for better cache performance
-        let data_blocks = self.organize_records_into_blocks(records, header.block_size as usize).await?;
-        
+        let data_blocks = self
+            .organize_records_into_blocks(records, header.block_size as usize)
+            .await?;
+
         // Step 4: Engine-optimized index with block pointers
-        let (index_entries, compressed_blocks) = self.build_optimized_index_and_compress_blocks(&data_blocks).await?;
+        let (index_entries, compressed_blocks) = self
+            .build_optimized_index_and_compress_blocks(&data_blocks)
+            .await?;
 
         // Step 5: Serialize header
         let header_data = bincode::serialize(&header)
@@ -3323,7 +3763,8 @@ impl SstStorage {
         // Step 7: Serialize enhanced index using custom serialization
         let mut index_data = Vec::new();
         for entry in &index_entries {
-            let entry_data = entry.serialize()
+            let entry_data = entry
+                .serialize()
                 .map_err(|e| anyhow::anyhow!("Failed to serialize index entry: {}", e))?;
             index_data.extend_from_slice(&(entry_data.len() as u32).to_le_bytes());
             index_data.extend_from_slice(&entry_data);
@@ -3344,7 +3785,11 @@ impl SstStorage {
 
         info!(
             "🚀 SST ENGINE-OPTIMIZED SSTABLE: Level {} serialized - {} records, {} bytes, {:.2}x compression, {}ms",
-            level, records.len(), sstable_data.len(), compression_ratio, serialization_time
+            level,
+            records.len(),
+            sstable_data.len(),
+            compression_ratio,
+            serialization_time
         );
 
         Ok(sstable_data)
@@ -3354,7 +3799,7 @@ impl SstStorage {
     async fn update_lsm_metadata_after_flush(
         &self,
         sstable_paths: &[std::path::PathBuf],
-        flushed_records: &[VectorRecord],  // OPTIMIZED: Accept VectorRecord directly
+        flushed_records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
     ) -> Result<()> {
         info!(
             "📊 SST METADATA: Updating manifest for {} SSTables, {} records",
@@ -3365,45 +3810,54 @@ impl SstStorage {
         // Register each SSTable file with the manifest
         for path in sstable_paths {
             // Extract filename from path
-            let filename = path.file_name()
+            let filename = path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .ok_or_else(|| anyhow::anyhow!("Invalid SSTable filename"))?;
-            
+
             // Parse level from filename using centralized utility
             let level = Some(FilenameCodec::new().parse_level(filename) as u8);
-            
+
             // Get file size
             let metadata = tokio::fs::metadata(path).await?;
             let _file_size = metadata.len();
-            
+
             // Calculate min/max keys and sequences from records in this SSTable
             // OPTIMIZED: Process all VectorRecords (level filtering removed since VectorRecord doesn't have level)
             if flushed_records.is_empty() {
                 continue;
             }
-            
-            let _min_key = flushed_records.iter()
+
+            let _min_key = flushed_records
+                .iter()
                 .map(|r| r.id.as_str())
                 .min()
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            let _max_key = flushed_records.iter()
+            let _max_key = flushed_records
+                .iter()
                 .map(|r| r.id.as_str())
                 .max()
                 .map(|s| s.to_string())
                 .unwrap_or_default();
-            let _min_sequence = flushed_records.iter()
+            let _min_sequence = flushed_records
+                .iter()
                 .filter_map(|r| r.version)
                 .min()
                 .unwrap_or(0) as u64;
-            let _max_sequence = flushed_records.iter()
+            let _max_sequence = flushed_records
+                .iter()
                 .filter_map(|r| r.version)
                 .max()
                 .unwrap_or(0) as u64;
-            
-            
+
             // SSTable file is now discoverable via directory listing
-            info!("Created SSTable file: {} with {} records at level {}", filename, flushed_records.len(), level.unwrap_or(0));
+            info!(
+                "Created SSTable file: {} with {} records at level {}",
+                filename,
+                flushed_records.len(),
+                level.unwrap_or(0)
+            );
         }
 
         Ok(())
@@ -3418,8 +3872,7 @@ impl SstStorage {
         if compaction_needed {
             debug!(
                 "🗜️ SST COMPACTION: Threshold exceeded - {} Level 0 files (threshold: {})",
-                level0_files,
-                self.config.compaction_threshold
+                level0_files, self.config.compaction_threshold
             );
         }
 
@@ -3441,8 +3894,9 @@ impl SstStorage {
 
         while let Ok(Some(entry)) = dir_entries.next_entry().await {
             if let Some(filename) = entry.file_name().to_str() {
-                if FilenameCodec::new().is_tiered_filename(filename, "sst") && 
-                   Some(FilenameCodec::new().parse_level(filename) as u8) == Some(level) {
+                if FilenameCodec::new().is_tiered_filename(filename, "sst")
+                    && Some(FilenameCodec::new().parse_level(filename) as u8) == Some(level)
+                {
                     count += 1;
                 }
             }
@@ -3467,7 +3921,10 @@ impl SstStorage {
 
         for (index, record) in vector_records.iter().enumerate() {
             // DEBUG: Log the vector ID being processed
-            debug!("🔍 SST FLUSH: Processing vector {} with id={:?}", index, record.id);
+            debug!(
+                "🔍 SST FLUSH: Processing vector {} with id={:?}",
+                index, record.id
+            );
             let mut vector_record = record.clone();
             vector_record.version = Some((sequence_start + index as u64) as u32);
             sorted_records.push(vector_record);
@@ -3479,17 +3936,16 @@ impl SstStorage {
         );
 
         // Sort records by ID for SSTable format
-        sorted_records.sort_by(|a, b| {
-            a.id.as_str().cmp(&b.id.as_str())
-        });
+        sorted_records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
 
         // Serialize to row-based SSTable format (Level 0 by default for new data)
-        self.serialize_sst_records_to_sstable(&sorted_records, 0).await
+        self.serialize_sst_records_to_sstable(&sorted_records, 0)
+            .await
     }
 
-
     /// Build bloom filter for fast key existence checks
-    async fn build_bloom_filter(&self, records: &[VectorRecord]) -> Result<SstableBloomFilter> {  // OPTIMIZED: Accept VectorRecord directly
+    async fn build_bloom_filter(&self, records: &[VectorRecord]) -> Result<SstableBloomFilter> {
+        // OPTIMIZED: Accept VectorRecord directly
         // Create key bloom filter
         let key_config = BloomFilterConfig {
             // strategy removed -  BloomStrategy::ByteAligned,
@@ -3497,7 +3953,7 @@ impl SstStorage {
             ..Default::default()
         };
         let mut key_filter = BloomFilterFactory::create(&key_config);
-        
+
         // Create metadata bloom filter
         let metadata_config = BloomFilterConfig {
             // strategy removed -  BloomStrategy::Composite,
@@ -3505,21 +3961,22 @@ impl SstStorage {
             ..Default::default()
         };
         let mut metadata_builder = crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::strategies::composite::CompositeBloomFilterBuilder::new(metadata_config);
-        
+
         // Add all keys and metadata to filters
         for record in records {
             if !record.id.is_empty() {
                 key_filter.insert(record.id.as_bytes());
             }
-            
+
             // Add metadata values - already have MetadataItem
             for metadata_item in &record.metadata {
-                metadata_builder.add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                metadata_builder
+                    .add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
             }
         }
-        
+
         let metadata_filter = metadata_builder.build();
-        
+
         // Create the SstableBloomFilter manually
         let stats = bloom_filter::BloomFilterStats {
             key_count: key_filter.num_elements() as u64,
@@ -3528,7 +3985,7 @@ impl SstStorage {
             key_lookups_saved: 0,
             metadata_queries_saved: 0,
         };
-        
+
         let key_filter_config = BloomFilterConfig {
             // strategy removed -  BloomStrategy::ByteAligned,
             expected_items: key_filter.num_elements(),
@@ -3536,20 +3993,20 @@ impl SstStorage {
             enabled: true,
             ..Default::default()
         };
-        
+
         let sstable_filter = SstableBloomFilter::new(
             key_filter_config,
             key_filter.serialize()?,
             BloomFilterStrategy::serialize(&metadata_filter)?,
             stats,
         );
-        
+
         debug!(
             "📊 SST: Built SSTable bloom filter for {} keys (FPR: {:.2}%)",
             records.len(),
             key_filter.false_positive_rate() * 100.0
         );
-        
+
         Ok(sstable_filter)
     }
 
@@ -3559,37 +4016,38 @@ impl SstStorage {
         vectors: Vec<VectorRecord>,
     ) -> Result<(Vec<VectorRecord>, SortingStats)> {
         // For SST, we don't have direct access to collection config here
-        // So we implement a simple but effective sorting // strategy removed - 
+        // So we implement a simple but effective sorting // strategy removed -
         // 1. Sort by first metadata key alphabetically
         // 2. Then by vector ID for stable ordering
-        
+
         let mut sorted_vectors = vectors;
-        
+
         // Find the most common metadata key for primary sorting
-        let mut key_frequency: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut key_frequency: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
         for vector in &sorted_vectors {
             for metadata_item in &vector.metadata {
                 *key_frequency.entry(metadata_item.key.clone()).or_insert(0) += 1;
             }
         }
-        
+
         let primary_sort_key = key_frequency
             .iter()
             .max_by_key(|(_, &count)| count)
             .map(|(key, _)| key.clone());
-        
+
         let sort_start = std::time::Instant::now();
-        
+
         sorted_vectors.sort_by(|a, b| {
             // Primary sort: most common metadata key
             if let Some(ref sort_key) = primary_sort_key {
                 // Convert metadata to comparable format
                 let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a.metadata);
                 let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b.metadata);
-                
+
                 let a_value = a_map.get(sort_key).and_then(|v| v.as_str());
                 let b_value = b_map.get(sort_key).and_then(|v| v.as_str());
-                
+
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
                         // Secondary sort: vector ID for stable ordering
@@ -3602,25 +4060,29 @@ impl SstStorage {
                 a.id.cmp(&b.id)
             }
         });
-        
+
         let sort_time_us = sort_start.elapsed().as_micros() as u64;
-        
+
         // Calculate compression estimate based on metadata distribution
         let compression_estimate = if let Some(ref sort_key) = primary_sort_key {
             let distinct_values: std::collections::HashSet<String> = sorted_vectors
                 .iter()
                 .filter_map(|v| {
-                    let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&v.metadata);
-                    metadata_map.get(sort_key).and_then(|val| val.as_str()).map(|s| s.to_string())
+                    let metadata_map =
+                        crate::core::proto_metadata_helper::proto_metadata_to_json(&v.metadata);
+                    metadata_map
+                        .get(sort_key)
+                        .and_then(|val| val.as_str())
+                        .map(|s| s.to_string())
                 })
                 .collect();
-            
+
             // Lower cardinality = better compression
             1.0 - (distinct_values.len() as f64 / sorted_vectors.len() as f64)
         } else {
             0.05 // Small improvement from ID sorting
         };
-        
+
         let stats = SortingStats {
             records_sorted: sorted_vectors.len(),
             sort_keys_used: if let Some(key) = primary_sort_key {
@@ -3632,12 +4094,12 @@ impl SstStorage {
             sort_time_us,
             ..Default::default()
         };
-        
+
         debug!(
             "🎯 SST: Sorted {} vectors by metadata key for SSTable optimization",
             stats.records_sorted
         );
-        
+
         Ok((sorted_vectors, stats))
     }
 
@@ -3654,7 +4116,7 @@ impl SstStorage {
     /// Organize records into blocks for better cache locality
     async fn organize_records_into_blocks(
         &self,
-        records: &[VectorRecord],  // OPTIMIZED: Accept VectorRecord directly
+        records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
         block_size: usize,
     ) -> Result<Vec<FastLanesDataBlock>> {
         let mut blocks = Vec::new();
@@ -3731,7 +4193,11 @@ impl SstStorage {
             "📦 SST BLOCK ORGANIZATION: {} records organized into {} blocks (avg block size: {}KB)",
             records.len(),
             blocks.len(),
-            if !blocks.is_empty() { current_block_size / blocks.len() / 1024 } else { 0 }
+            if !blocks.is_empty() {
+                current_block_size / blocks.len() / 1024
+            } else {
+                0
+            }
         );
 
         Ok(blocks)
@@ -3744,17 +4210,18 @@ impl SstStorage {
     ) -> Result<(Vec<IndexEntry>, Vec<Vec<u8>>)> {
         let mut index_entries = Vec::new();
         let mut compressed_blocks = Vec::new();
-        
+
         // Create compression config from SST config
         let compression_config = BlockCompressionConfig::default();
 
         for block in data_blocks {
             // Use the new DataBlock serialization with compression
-            let serialized_block = block.serialize_with_config(&compression_config)
+            let serialized_block = block
+                .serialize_with_config(&compression_config)
                 .map_err(|e| anyhow::anyhow!("Failed to serialize data block: {}", e))?;
-            
+
             let final_data = serialized_block;
-            
+
             // Determine if block was compressed
             let is_compressed = block.compression_algorithm != CompressionAlgorithm::None;
 
@@ -3800,7 +4267,7 @@ impl SstStorage {
         // Simple run-length encoding for demonstration
         // In production, would use proper compression like zstd or lz4
         let mut compressed = Vec::new();
-        
+
         if data.is_empty() {
             return Ok(compressed);
         }
@@ -3809,13 +4276,13 @@ impl SstStorage {
         while i < data.len() {
             let current_byte = data[i];
             let mut count = 1u8;
-            
+
             // Count consecutive identical bytes
             while i + 1 < data.len() && data[i + 1] == current_byte && count < 255 {
                 count += 1;
                 i += 1;
             }
-            
+
             // Store count and byte
             compressed.push(count);
             compressed.push(current_byte);
@@ -3824,19 +4291,29 @@ impl SstStorage {
 
         Ok(compressed)
     }
-    
+
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
     /// Compact a specific collection - returns standard CompactionResult
-    async fn compact_collection(&self, collection_id: &str, collection_config: Option<&Collection>) -> Result<CompactionResult> {
-        info!("🗜️ SST Engine: Starting collection compaction for {}", collection_id);
-        
+    async fn compact_collection(
+        &self,
+        collection_id: &str,
+        collection_config: Option<&Collection>,
+    ) -> Result<CompactionResult> {
+        info!(
+            "🗜️ SST Engine: Starting collection compaction for {}",
+            collection_id
+        );
+
         // Get storage location from collection config - skip if not provided
-        let _storage_location = match collection_config
-            .and_then(|c| c.storage_assignment.as_ref()) {
+        let _storage_location = match collection_config.and_then(|c| c.storage_assignment.as_ref())
+        {
             Some(assignment) => assignment.base_location.clone(),
             None => {
-                error!("❌ SST: No storage assignment found for collection {}. Skipping compaction!", collection_id);
+                error!(
+                    "❌ SST: No storage assignment found for collection {}. Skipping compaction!",
+                    collection_id
+                );
                 // Return early with failure result
                 return Ok(CompactionResult {
                     success: false,
@@ -3851,14 +4328,16 @@ impl SstStorage {
                     completed_at: Utc::now(),
                     engine_metrics: {
                         let mut metrics = HashMap::new();
-                        metrics.insert("error".to_string(), 
-                            serde_json::Value::String("Missing storage assignment".to_string()));
+                        metrics.insert(
+                            "error".to_string(),
+                            serde_json::Value::String("Missing storage assignment".to_string()),
+                        );
                         metrics
                     },
                 });
             }
         };
-        
+
         // Create compaction parameters with collection info
         let params = crate::storage::traits::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
@@ -3870,23 +4349,27 @@ impl SstStorage {
             priority: crate::storage::traits::OperationPriority::Medium,
             collection_config: collection_config.cloned(),
         };
-        
+
         // Use the consolidated do_compact implementation
         let mut result = self.do_compact(&params).await?;
-        
+
         // Extract vector tracking data from engine_metrics
-        let deleted_vector_ids = result.engine_metrics.get("deleted_vector_ids")
+        let deleted_vector_ids = result
+            .engine_metrics
+            .get("deleted_vector_ids")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect::<Vec<_>>()
-            )
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect::<Vec<_>>()
+            })
             .clone();
-            
-        let _merged_vectors = result.engine_metrics.get("merged_vectors")
-            .and_then(|v| v.as_u64())
-            ;
-            
+
+        let _merged_vectors = result
+            .engine_metrics
+            .get("merged_vectors")
+            .and_then(|v| v.as_u64());
+
         // Store vector tracking info in engine_metrics if needed
         if let Some(ids_vec) = deleted_vector_ids {
             result.engine_metrics.insert(
@@ -3895,22 +4378,31 @@ impl SstStorage {
                     ids_vec
                         .into_iter()
                         .map(|id| serde_json::Value::String(id))
-                        .collect()
+                        .collect(),
                 ),
             );
         }
-        
+
         Ok(result)
     }
 
     // TODO: Missing methods needed by VectorOperationsService - implement properly
-    async fn set_scan_filter(&self, _collection_id: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
+    async fn set_scan_filter(
+        &self,
+        _collection_id: &str,
+        _filter: &UnifiedMetadataFilter,
+    ) -> Result<()> {
         // TODO: Implement scan filter configuration
         Ok(())
     }
 
-    async fn set_index_filter(&self, _collection_id: &str, _index: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
-        // TODO: Implement index filter configuration  
+    async fn set_index_filter(
+        &self,
+        _collection_id: &str,
+        _index: &str,
+        _filter: &UnifiedMetadataFilter,
+    ) -> Result<()> {
+        // TODO: Implement index filter configuration
         Ok(())
     }
 
@@ -3937,38 +4429,48 @@ impl SstStorage {
         // TODO: Implement metadata retrieval
         Ok(serde_json::json!({}))
     }
-    
+
     /// Helper methods for search orchestration
     /// These create mock services for orchestration functionality
     /// In a real implementation, these would come from the service context
-    
-    fn mock_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
+
+    fn mock_axis_manager(
+        &self,
+    ) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
         // Create a mock AXIS manager
         // In real implementation, this would come from the service container
-        Err(anyhow::anyhow!("AXIS manager not available in mock implementation"))
+        Err(anyhow::anyhow!(
+            "AXIS manager not available in mock implementation"
+        ))
     }
-    
-    fn mock_collection_service(&self) -> Arc<crate::services::collection::manager::CollectionService> {
+
+    fn mock_collection_service(
+        &self,
+    ) -> Arc<crate::services::collection::manager::CollectionService> {
         // Create a mock collection service - not available in this context
         // This function should not be called in production
         panic!("Mock collection service not available - use actual service");
     }
-    
-    fn mock_distance_engine(&self) -> Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
+
+    fn mock_distance_engine(
+        &self,
+    ) -> Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
         // Use the existing distance compute from the struct
         self.distance_compute.clone()
     }
-    
-    fn mock_quantization_engine(&self) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+
+    fn mock_quantization_engine(
+        &self,
+    ) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
         // Use the existing quantization engine from the struct
         self.quantization_engine.clone()
     }
-    
+
     fn mock_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
         // Cannot create new instance without async context
         panic!("Mock storage engine not available - use actual instance");
     }
-    
+
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(
         &self,
@@ -3983,7 +4485,7 @@ impl SstStorage {
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         warn!("🔄 SST: Falling back to direct search implementation");
-        
+
         // Use the unified search implementation with context
         self.search_vectors_unified(ctx).await
     }

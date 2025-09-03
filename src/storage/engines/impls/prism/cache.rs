@@ -23,7 +23,7 @@ impl CachedNode {
             pinned,
         }
     }
-    
+
     /// Access this node (update statistics)
     pub fn access(&mut self) {
         self.last_accessed = Instant::now();

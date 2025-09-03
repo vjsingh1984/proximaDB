@@ -77,7 +77,7 @@
 //!                      ↓
 //!                   Storage
 //!                   (on flush)
-//! 
+//!
 //! Search Flow:
 //! API → Search → Query Optimizer
 //!         ↓            ↓
@@ -95,18 +95,18 @@
 //! [services.collection]
 //! max_collections = 1000
 //! metadata_cache_size = 100
-//! 
+//!
 //! # Operations service
 //! [services.operations]
 //! batch_size = 1000
 //! flush_interval_ms = 5000
-//! 
+//!
 //! # Search service
 //! [services.search]
 //! max_concurrent_searches = 100
 //! result_cache_size = 1000
 //! stream_buffer_size = 100
-//! 
+//!
 //! # Event log service
 //! [services.events]
 //! retention_hours = 168  # 7 days
@@ -126,25 +126,25 @@
 //!
 //! ```rust
 //! use proximadb::services::{Collections, VectorOps, StreamingSearch};
-//! 
+//!
 //! // Initialize services
 //! let collections = Collections::new(storage.clone());
 //! let operations = VectorOps::new(storage.clone());
 //! let search = StreamingSearch::new(storage.clone());
-//! 
+//!
 //! // Create collection
 //! collections.create_collection("products", config).await?;
-//! 
+//!
 //! // Insert vectors
 //! operations.insert_batch("products", vectors).await?;
-//! 
+//!
 //! // Search with streaming
 //! let stream = search.search_stream(
 //!     "products",
 //!     query_vector,
 //!     SearchConfig::default()
 //! ).await?;
-//! 
+//!
 //! // Process results
 //! while let Some(result) = stream.next().await {
 //!     println!("Found: {:?}", result?);
@@ -168,9 +168,9 @@
 //! - Cache hit rates
 
 pub mod collection;
-pub mod operations;  
-pub mod search;
 pub mod events;
+pub mod operations;
+pub mod search;
 
 // Legacy test module (to be reorganized)
 #[cfg(test)]
@@ -178,20 +178,23 @@ pub mod tests;
 
 // Re-export main service types with cleaner names
 pub use collection::Collections;
+pub use events::EventLog;
 pub use operations::VectorOps;
 pub use search::StreamingSearch;
-pub use events::EventLog;
 
 // Legacy compatibility exports (will be removed)
 pub use collection::manager as collection_service;
-pub use operations::vectors as vector_operations_service;
-pub use search::streaming as streaming_search;
 pub use events::log as event_log_service;
 pub use events::persistence as event_log_persistence;
+pub use operations::vectors as vector_operations_service;
+pub use search::streaming as streaming_search;
 
 // Legacy type aliases for compatibility
 pub use collection::Collections as CollectionService;
-pub use operations::VectorOps as VectorOperationsService;
 pub use events::EventLog as EventLogService;
 pub use events::Stats as EventLogStats;
-pub use search::{StreamingSearch as StreamingSearchService, StreamConfig as StreamingSearchConfig, ResultStream as SearchResultStream};
+pub use operations::VectorOps as VectorOperationsService;
+pub use search::{
+    ResultStream as SearchResultStream, StreamConfig as StreamingSearchConfig,
+    StreamingSearch as StreamingSearchService,
+};

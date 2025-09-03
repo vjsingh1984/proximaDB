@@ -14,18 +14,18 @@ use tracing::{debug, error};
 
 use crate::storage::traits::CollectionMetadataProvider;
 
-use crate::index::axis::{
-    management::adaptive_engine::AdaptiveIndexEngine,
-    clustering::AxisClusteringEngine,
-    types::{AxisConfig, IndexSelectionStrategy, Data},
-    clustering::ClusteringConfig,
-    zero_overhead_vector::QuantizationMethod,
-};
+use crate::core::{String, VectorId, VectorRecord};
 use crate::index::axis::management::{
     migration_engine::{IndexMigrationEngine, MigrationDecision},
     monitor::PerformanceMonitor,
 };
-use crate::core::{VectorRecord, String, VectorId};
+use crate::index::axis::{
+    clustering::AxisClusteringEngine,
+    clustering::ClusteringConfig,
+    management::adaptive_engine::AdaptiveIndexEngine,
+    types::{AxisConfig, Data, IndexSelectionStrategy},
+    zero_overhead_vector::QuantizationMethod,
+};
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
 // use crate::storage::engines::impls::viper::QuantizationMethod;
@@ -57,10 +57,11 @@ pub struct AxisManager {
 
     /// Collection service for IndexConfig retrieval
     collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
-    
+
     /// Shared collection cache from VectorOperationsService (read-only access)
     /// This avoids duplicating collection metadata in memory
-    shared_collection_cache: Option<Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>>,
+    shared_collection_cache:
+        Option<Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>>,
 }
 
 /// Status of ongoing migrations
@@ -100,7 +101,7 @@ impl AxisManager {
         let adaptive_engine = Arc::new(AdaptiveIndexEngine::new(config.clone()).await?);
         let migration_engine = Arc::new(IndexMigrationEngine::new(config.clone()).await?);
         let performance_monitor = Arc::new(PerformanceMonitor::new(config.clone()).await?);
-        
+
         // Initialize clustering engine with default config
         let clustering_config = ClusteringConfig::default();
         let clustering_engine = Arc::new(AxisClusteringEngine::new(clustering_config));
@@ -132,7 +133,7 @@ impl AxisManager {
         self.collection_service = Some(collection_service);
         tracing::info!("🔗 AXIS: Collection service set for IndexConfig retrieval");
     }
-    
+
     /// Set shared collection cache from VectorOperationsService
     pub fn set_shared_collection_cache(
         &mut self,
@@ -143,21 +144,34 @@ impl AxisManager {
     }
 
     /// Get collection's IndexConfig from collection service for index build decisions
-    pub async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+    pub async fn get_native_index_config(
+        &self,
+        collection_id: &str,
+    ) -> Result<crate::index::config::IndexConfig> {
         if let Some(collection_service) = &self.collection_service {
             match collection_service.native_index_config(collection_id).await {
                 Ok(Some(config)) => {
-                    tracing::debug!("📋 AXIS: Retrieved IndexConfig for collection: {}", collection_id);
+                    tracing::debug!(
+                        "📋 AXIS: Retrieved IndexConfig for collection: {}",
+                        collection_id
+                    );
                     Ok(config)
                 }
                 Ok(None) => {
-                    tracing::warn!("⚠️ AXIS: Collection not found for IndexConfig: {}", collection_id);
+                    tracing::warn!(
+                        "⚠️ AXIS: Collection not found for IndexConfig: {}",
+                        collection_id
+                    );
                     // Return default IndexConfig as fallback
                     Ok(crate::index::config::IndexConfig::default())
                 }
                 Err(e) => {
-                    tracing::error!("❌ AXIS: Failed to retrieve IndexConfig for collection {}: {}", collection_id, e);
-                    // Return default IndexConfig as fallback  
+                    tracing::error!(
+                        "❌ AXIS: Failed to retrieve IndexConfig for collection {}: {}",
+                        collection_id,
+                        e
+                    );
+                    // Return default IndexConfig as fallback
                     Ok(crate::index::config::IndexConfig::default())
                 }
             }
@@ -170,7 +184,6 @@ impl AxisManager {
 
     /// Insert a vector with adaptive indexing and quantization support
     pub async fn insert(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
-
         // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
@@ -187,12 +200,16 @@ impl AxisManager {
         let collection = if let Some(cache) = &self.shared_collection_cache {
             cache.get(collection_id).map(|r| r.clone())
         } else if let Some(collection_service) = &self.collection_service {
-            collection_service.collection(collection_id).await.ok().flatten()
+            collection_service
+                .collection(collection_id)
+                .await
+                .ok()
+                .flatten()
                 .map(|c| Arc::new(c))
         } else {
             None
         };
-        
+
         // Prepare vector for insertion (with potential quantization)
         let processed_vector = if let Some(collection) = &collection {
             // Check if quantization is enabled for this collection
@@ -201,7 +218,8 @@ impl AxisManager {
                     if quant_config.enabled {
                         // Quantize vector for in-memory index using collection settings
                         // This reuses our existing quantization infrastructure
-                        self.quantize_for_index(vector, quant_config, config).await?
+                        self.quantize_for_index(vector, quant_config, config)
+                            .await?
                     } else {
                         vector.clone()
                     }
@@ -221,7 +239,11 @@ impl AxisManager {
         // Insert into global ID index if ID is present
         if !processed_vector.id.is_empty() {
             self.global_id_index
-                .insert(processed_vector.id.clone(), collection_id, &processed_vector)
+                .insert(
+                    processed_vector.id.clone(),
+                    collection_id,
+                    &processed_vector,
+                )
                 .await?;
         }
 
@@ -357,8 +379,13 @@ impl AxisManager {
                 estimated_improvement,
                 ..
             } => {
-                debug!("AXIS: Initiating migration for collection {} from {} to {} indexes (estimated improvement: {:.2}%)",
-                    collection_id, from.indexes.len(), to.indexes.len(), estimated_improvement * 100.0);
+                debug!(
+                    "AXIS: Initiating migration for collection {} from {} to {} indexes (estimated improvement: {:.2}%)",
+                    collection_id,
+                    from.indexes.len(),
+                    to.indexes.len(),
+                    estimated_improvement * 100.0
+                );
 
                 // Start migration
                 self.start_migration(collection_id, from, to).await?;
@@ -478,24 +505,27 @@ impl AxisManager {
         Ok(())
     }
 
-
     /// Get current search_strategy for collection
-    pub async fn get_collection_strategy(&self, collection_id: &str) -> Result<IndexSelectionStrategy> {
+    pub async fn get_collection_strategy(
+        &self,
+        collection_id: &str,
+    ) -> Result<IndexSelectionStrategy> {
         let strategies = self.collection_strategies.read().await;
-        strategies
-            .get(collection_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No search_strategy found for collection {}", collection_id))
+        strategies.get(collection_id).cloned().ok_or_else(|| {
+            anyhow::anyhow!("No search_strategy found for collection {}", collection_id)
+        })
     }
 
     /// Update collection search_strategy
-    pub async fn update_collection_strategy(&self, collection_id: &str, search_strategy: IndexSelectionStrategy) -> Result<()> {
+    pub async fn update_collection_strategy(
+        &self,
+        collection_id: &str,
+        search_strategy: IndexSelectionStrategy,
+    ) -> Result<()> {
         let mut strategies = self.collection_strategies.write().await;
         strategies.insert(collection_id.to_string(), search_strategy);
         Ok(())
     }
-
-
 
     /// Maybe evaluate if search_strategy should change
     async fn maybe_evaluate_strategy(&self, _collection_id: &str) -> Result<()> {
@@ -505,10 +535,7 @@ impl AxisManager {
     }
 
     /// Get migration status for a collection
-    pub async fn get_migration_status(
-        &self,
-        collection_id: &str,
-    ) -> Option<MigrationStatus> {
+    pub async fn get_migration_status(&self, collection_id: &str) -> Option<MigrationStatus> {
         let migrations = self.active_migrations.read().await;
         migrations.get(collection_id).cloned()
     }
@@ -556,15 +583,14 @@ impl AxisManager {
     }
 
     /// Get collection statistics
-    pub async fn get_collection_stats(
-        &self,
-        collection_id: &str,
-    ) -> Result<CollectionStats> {
+    pub async fn get_collection_stats(&self, collection_id: &str) -> Result<CollectionStats> {
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
         Ok(CollectionStats {
             collection_id: collection_id.to_string(),
-            strategy_type: search_strategy.indexes.first()
+            strategy_type: search_strategy
+                .indexes
+                .first()
                 .map(|idx| idx.data_type)
                 .unwrap_or(Data::DenseVector { dimension: 128 }), // Default to dense vector
             total_vectors: 0,    // TODO: Implement actual counting
@@ -685,7 +711,10 @@ impl AxisManager {
     }
 
     /// Get native index config for a collection
-    pub async fn native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+    pub async fn native_index_config(
+        &self,
+        collection_id: &str,
+    ) -> Result<crate::index::config::IndexConfig> {
         // Return default config for now
         // In production, this would look up collection-specific configuration
         Ok(crate::index::config::IndexConfig::default())
@@ -700,7 +729,10 @@ impl AxisManager {
         files_created: Vec<String>,
     ) -> Result<()> {
         if flushed_vectors.is_empty() {
-            tracing::debug!("🔄 AXIS: No vectors to index for collection {}", collection_id);
+            tracing::debug!(
+                "🔄 AXIS: No vectors to index for collection {}",
+                collection_id
+            );
             return Ok(());
         }
 
@@ -717,7 +749,8 @@ impl AxisManager {
             Err(e) => {
                 tracing::warn!(
                     "⚠️ AXIS: Failed to get IndexConfig for collection {}: {}. Using default sync mode.",
-                    collection_id, e
+                    collection_id,
+                    e
                 );
                 // Use default synchronous indexing if config retrieval fails
                 crate::index::config::IndexConfig::default()
@@ -733,13 +766,21 @@ impl AxisManager {
         // Handle indexing based on update mode
         match index_config.update_mode {
             crate::index::config::IndexUpdateMode::Synchronous => {
-                self.index_vectors_synchronously(collection_id, flushed_vectors, &files_created).await?;
+                self.index_vectors_synchronously(collection_id, flushed_vectors, &files_created)
+                    .await?;
             }
             crate::index::config::IndexUpdateMode::Asynchronous => {
-                self.index_vectors_asynchronously(collection_id, flushed_vectors, files_created).await?;
+                self.index_vectors_asynchronously(collection_id, flushed_vectors, files_created)
+                    .await?;
             }
             crate::index::config::IndexUpdateMode::Hybrid => {
-                self.index_vectors_hybrid(collection_id, flushed_vectors, files_created, &index_config).await?;
+                self.index_vectors_hybrid(
+                    collection_id,
+                    flushed_vectors,
+                    files_created,
+                    &index_config,
+                )
+                .await?;
             }
         }
 
@@ -758,20 +799,24 @@ impl AxisManager {
         vectors: Vec<VectorRecord>,
         _files_created: &[String],
     ) -> Result<()> {
-        tracing::info!("🔄 AXIS: Synchronous indexing of {} vectors for collection {}", vectors.len(), collection_id);
-        
+        tracing::info!(
+            "🔄 AXIS: Synchronous indexing of {} vectors for collection {}",
+            vectors.len(),
+            collection_id
+        );
+
         let start_time = std::time::Instant::now();
         for vector in vectors {
             self.insert(collection_id, &vector).await?;
         }
         let duration = start_time.elapsed();
-        
+
         tracing::info!(
             "✅ AXIS: Synchronous indexing completed in {}ms for collection {}",
             duration.as_millis(),
             collection_id
         );
-        
+
         Ok(())
     }
 
@@ -782,22 +827,30 @@ impl AxisManager {
         vectors: Vec<VectorRecord>,
         files_created: Vec<String>,
     ) -> Result<()> {
-        tracing::info!("🚀 AXIS: Spawning asynchronous indexing task for {} vectors in collection {}", vectors.len(), collection_id);
-        
+        tracing::info!(
+            "🚀 AXIS: Spawning asynchronous indexing task for {} vectors in collection {}",
+            vectors.len(),
+            collection_id
+        );
+
         // For async indexing, we'll process immediately but in a non-blocking way
         // In a production system, this would use a proper task queue
         let start_time = std::time::Instant::now();
         let mut indexed_count = 0;
-        
+
         for vector in vectors {
             match self.insert(collection_id, &vector).await {
                 Ok(()) => indexed_count += 1,
                 Err(e) => {
-                    tracing::error!("❌ AXIS: Failed to index vector in collection {}: {}", collection_id, e);
+                    tracing::error!(
+                        "❌ AXIS: Failed to index vector in collection {}: {}",
+                        collection_id,
+                        e
+                    );
                 }
             }
         }
-        
+
         let duration = start_time.elapsed();
         tracing::info!(
             "✅ AXIS: Asynchronous indexing completed - {}/{} vectors indexed in {}ms for collection {} (files: {:?})",
@@ -807,8 +860,11 @@ impl AxisManager {
             collection_id,
             files_created
         );
-        
-        tracing::debug!("🚀 AXIS: Asynchronous indexing completed for collection {}", collection_id);
+
+        tracing::debug!(
+            "🚀 AXIS: Asynchronous indexing completed for collection {}",
+            collection_id
+        );
         Ok(())
     }
 
@@ -821,47 +877,63 @@ impl AxisManager {
         index_config: &crate::index::config::IndexConfig,
     ) -> Result<()> {
         let batch_size_threshold = index_config.async_update_batch_size.unwrap_or(1000);
-        
+
         tracing::info!(
             "🎯 AXIS: Hybrid indexing for {} vectors (threshold: {}) in collection {}",
             vectors.len(),
             batch_size_threshold,
             collection_id
         );
-        
+
         if vectors.len() <= batch_size_threshold {
-            tracing::debug!("🔄 AXIS: Small batch - using synchronous indexing for collection {}", collection_id);
-            self.index_vectors_synchronously(collection_id, vectors, &files_created).await
+            tracing::debug!(
+                "🔄 AXIS: Small batch - using synchronous indexing for collection {}",
+                collection_id
+            );
+            self.index_vectors_synchronously(collection_id, vectors, &files_created)
+                .await
         } else {
-            tracing::debug!("🚀 AXIS: Large batch - using asynchronous indexing for collection {}", collection_id);
-            self.index_vectors_asynchronously(collection_id, vectors, files_created).await
+            tracing::debug!(
+                "🚀 AXIS: Large batch - using asynchronous indexing for collection {}",
+                collection_id
+            );
+            self.index_vectors_asynchronously(collection_id, vectors, files_created)
+                .await
         }
     }
 
     /// Get all indexes for a collection (required for compaction integration)
-    pub async fn get_collection_indexes(&self, collection_id: &str) -> Result<Vec<(String, Arc<dyn crate::index::axis::AxisVectorIndex>)>> {
+    pub async fn get_collection_indexes(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<(String, Arc<dyn crate::index::axis::AxisVectorIndex>)>> {
         tracing::debug!("🔍 AXIS: Getting indexes for collection {}", collection_id);
-        
+
         // For now, return empty list - this will be properly implemented when compaction integration is complete
         // In the full implementation, this would:
         // 1. Check collection_strategies for active indexes
         // 2. Return references to global_id_index, metadata_index, dense_vector_index, sparse_vector_index
         // 3. Include any dynamic indexes created by the adaptive engine
-        
+
         Ok(Vec::new())
     }
 
     /// Rebuild a specific index by name (required for compaction integration)
     pub async fn rebuild_index(&self, collection_id: &str, index_name: &str) -> Result<()> {
-        tracing::info!("🔄 AXIS: Rebuilding index '{}' for collection {}", index_name, collection_id);
-        
+        tracing::info!(
+            "🔄 AXIS: Rebuilding index '{}' for collection {}",
+            index_name,
+            collection_id
+        );
+
         // For now, delegate to the full rebuild method
         // In the full implementation, this would:
         // 1. Identify the specific index component by name
         // 2. Rebuild only that index while keeping others intact
         // 3. Update internal tracking structures
-        
-        self.rebuild_indexes_after_compaction(collection_id, &[], &[]).await
+
+        self.rebuild_indexes_after_compaction(collection_id, &[], &[])
+            .await
     }
 
     /// Quantize vector for in-memory index using collection's quantization settings
@@ -872,27 +944,35 @@ impl AxisManager {
         quant_config: &crate::proto::proximadb::QuantizationConfig,
         collection_config: &crate::proto::proximadb::CollectionConfig,
     ) -> Result<VectorRecord> {
-        use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
         use crate::compute::distance_computation::conversion::proto_distance_to_internal;
-        
+        use crate::compute::quantization::storage_engine::{
+            StorageQuantizationConfig, StorageQuantizationEngine,
+        };
+
         // Extract the vector data
         let vector_data = &vector.vector;
         if vector_data.is_empty() {
             return Ok(vector.clone());
         }
-        
+
         // Use helper function for distance metric conversion
         let distance_metric = proto_distance_to_internal(collection_config.distance_metric);
-        
+
         // Create quantization config using collection settings with proper field mapping
         let storage_config = StorageQuantizationConfig {
             // Map to the actual fields available in storage engine config
-            primary_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
-                // Default to dimension/4 with min 8 and max 64 subvectors
-                ((collection_config.dimension / 4).max(8).min(64) as usize).min(255) as u8
-            )),
-            filter_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::binary()),
-            fast_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8()),
+            primary_level: Some(
+                crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
+                    // Default to dimension/4 with min 8 and max 64 subvectors
+                    ((collection_config.dimension / 4).max(8).min(64) as usize).min(255) as u8,
+                ),
+            ),
+            filter_level: Some(
+                crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
+            ),
+            fast_level: Some(
+                crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+            ),
             distance_metric,
             enable_progressive: true,
             filter_threshold: 0.8,
@@ -902,23 +982,31 @@ impl AxisManager {
             memory_budget_mb: 512,
             enable_hardware_acceleration: true,
         };
-        
+
         // Create required components for quantization engine
-        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric));
-        let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
-        let unified_engine = Arc::new(crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-            distance_compute.clone(),
-            codebook_store,
-        ));
-        
+        let distance_compute = Arc::new(
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                distance_metric,
+            ),
+        );
+        let codebook_store =
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let unified_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_compute.clone(),
+                codebook_store,
+            ),
+        );
+
         // Create quantization engine
-        let engine = StorageQuantizationEngine::new(unified_engine, distance_compute, storage_config);
-        
+        let engine =
+            StorageQuantizationEngine::new(unified_engine, distance_compute, storage_config);
+
         // For indexes, we don't actually quantize the vector data in the VectorRecord
         // Instead, indexes maintain their own quantized representation internally
         // This is just a placeholder that marks the vector as quantized for the index
         // The actual quantization happens inside the index implementations
-        
+
         // Return the original vector marked for quantization
         // The index will handle the actual quantization internally
         Ok(vector.clone())

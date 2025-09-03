@@ -1,28 +1,28 @@
 //! Cache performance optimization and tuning
 
+use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use std::collections::HashMap;
 use tokio::sync::RwLock;
-use anyhow::Result;
 
+use crate::metrics::CacheMetricsSnapshot;
 use crate::storage::cache::{
-    CrossCacheOrchestrator, CacheType,
+    CacheType, CrossCacheOrchestrator,
     config::{CacheConfig, EvictionPolicy},
 };
-use crate::metrics::CacheMetricsSnapshot;
 
 /// Cache performance optimizer
 pub struct CacheOptimizer {
     /// Cache orchestrator
     orchestrator: Arc<CrossCacheOrchestrator>,
-    
+
     /// Current configuration
     config: Arc<RwLock<CacheConfig>>,
-    
+
     /// Optimization history
     history: Arc<RwLock<OptimizationHistory>>,
-    
+
     /// Auto-tuning engine
     auto_tuner: Arc<AutoTuner>,
 }
@@ -32,7 +32,7 @@ pub struct CacheOptimizer {
 struct OptimizationHistory {
     /// Past optimization decisions
     decisions: Vec<OptimizationDecision>,
-    
+
     /// Performance impact of each decision
     impacts: HashMap<String, PerformanceImpact>,
 }
@@ -48,11 +48,22 @@ struct OptimizationDecision {
 
 #[derive(Debug, Clone)]
 pub enum OptimizationAction {
-    AdjustMemory { cache_type: CacheType, new_size_mb: usize },
-    ChangeEvictionPolicy { policy: EvictionPolicy },
-    EnableTier { tier: String },
-    AdjustPrefetchRadius { new_radius: f32 },
-    TunePatternThreshold { new_threshold: f32 },
+    AdjustMemory {
+        cache_type: CacheType,
+        new_size_mb: usize,
+    },
+    ChangeEvictionPolicy {
+        policy: EvictionPolicy,
+    },
+    EnableTier {
+        tier: String,
+    },
+    AdjustPrefetchRadius {
+        new_radius: f32,
+    },
+    TunePatternThreshold {
+        new_threshold: f32,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +77,7 @@ struct PerformanceImpact {
 struct AutoTuner {
     /// Tuning parameters
     parameters: Arc<RwLock<TuningParameters>>,
-    
+
     /// Machine learning model (simplified)
     model: Arc<RwLock<PerformanceModel>>,
 }
@@ -75,13 +86,13 @@ struct AutoTuner {
 struct TuningParameters {
     /// Enable auto-tuning
     enabled: bool,
-    
+
     /// Minimum time between adjustments
     adjustment_interval: Duration,
-    
+
     /// Performance improvement threshold
     improvement_threshold: f64,
-    
+
     /// Stability period before changes
     stability_period: Duration,
 }
@@ -90,7 +101,7 @@ struct TuningParameters {
 struct PerformanceModel {
     /// Historical data points
     data_points: Vec<DataPoint>,
-    
+
     /// Model coefficients
     coefficients: ModelCoefficients,
 }
@@ -128,40 +139,54 @@ impl CacheOptimizer {
             auto_tuner: Arc::new(AutoTuner::new()),
         }
     }
-    
+
     /// Run optimization analysis
     pub async fn analyze(&self) -> OptimizationReport {
         // Convert from CacheMetrics to CacheMetricsSnapshot for analysis
         let cache_metrics = self.orchestrator.metrics();
-        use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
+        use crate::metrics::cache::{
+            CoordinationMetrics, EvictionMetrics, MemoryMetrics, TierMetrics,
+        };
         let metrics = CacheMetricsSnapshot {
             overall_hit_rate: cache_metrics.hit_rate() * 100.0,
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L1),
-                hit_rate: cache_metrics.tier_hit_rate(crate::storage::cache::backend::CacheTier::L1),
-                avg_latency_ms: cache_metrics.avg_latency_ms(crate::storage::cache::backend::CacheTier::L1),
-                p99_latency_ms: cache_metrics.p99_latency_ms(crate::storage::cache::backend::CacheTier::L1),
+                hit_rate: cache_metrics
+                    .tier_hit_rate(crate::storage::cache::backend::CacheTier::L1),
+                avg_latency_ms: cache_metrics
+                    .avg_latency_ms(crate::storage::cache::backend::CacheTier::L1),
+                p99_latency_ms: cache_metrics
+                    .p99_latency_ms(crate::storage::cache::backend::CacheTier::L1),
                 entries: cache_metrics.tier_entries(crate::storage::cache::backend::CacheTier::L1),
-                size_bytes: cache_metrics.tier_size_bytes(crate::storage::cache::backend::CacheTier::L1),
+                size_bytes: cache_metrics
+                    .tier_size_bytes(crate::storage::cache::backend::CacheTier::L1),
             },
             l2_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L2),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L2),
-                hit_rate: cache_metrics.tier_hit_rate(crate::storage::cache::backend::CacheTier::L2),
-                avg_latency_ms: cache_metrics.avg_latency_ms(crate::storage::cache::backend::CacheTier::L2),
-                p99_latency_ms: cache_metrics.p99_latency_ms(crate::storage::cache::backend::CacheTier::L2),
+                hit_rate: cache_metrics
+                    .tier_hit_rate(crate::storage::cache::backend::CacheTier::L2),
+                avg_latency_ms: cache_metrics
+                    .avg_latency_ms(crate::storage::cache::backend::CacheTier::L2),
+                p99_latency_ms: cache_metrics
+                    .p99_latency_ms(crate::storage::cache::backend::CacheTier::L2),
                 entries: cache_metrics.tier_entries(crate::storage::cache::backend::CacheTier::L2),
-                size_bytes: cache_metrics.tier_size_bytes(crate::storage::cache::backend::CacheTier::L2),
+                size_bytes: cache_metrics
+                    .tier_size_bytes(crate::storage::cache::backend::CacheTier::L2),
             },
             l3_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L3),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L3),
-                hit_rate: cache_metrics.tier_hit_rate(crate::storage::cache::backend::CacheTier::L3),
-                avg_latency_ms: cache_metrics.avg_latency_ms(crate::storage::cache::backend::CacheTier::L3),
-                p99_latency_ms: cache_metrics.p99_latency_ms(crate::storage::cache::backend::CacheTier::L3),
+                hit_rate: cache_metrics
+                    .tier_hit_rate(crate::storage::cache::backend::CacheTier::L3),
+                avg_latency_ms: cache_metrics
+                    .avg_latency_ms(crate::storage::cache::backend::CacheTier::L3),
+                p99_latency_ms: cache_metrics
+                    .p99_latency_ms(crate::storage::cache::backend::CacheTier::L3),
                 entries: cache_metrics.tier_entries(crate::storage::cache::backend::CacheTier::L3),
-                size_bytes: cache_metrics.tier_size_bytes(crate::storage::cache::backend::CacheTier::L3),
+                size_bytes: cache_metrics
+                    .tier_size_bytes(crate::storage::cache::backend::CacheTier::L3),
             },
             memory_usage: MemoryMetrics {
                 total_allocated_bytes: cache_metrics.total_allocated_bytes(),
@@ -187,7 +212,7 @@ impl CacheOptimizer {
         };
         let config = self.config.read().await;
         let hints = self.generate_hints(&metrics, &config).await;
-        
+
         OptimizationReport {
             current_performance: PerformanceSnapshot::from_metrics(&metrics),
             optimization_hints: hints,
@@ -195,7 +220,7 @@ impl CacheOptimizer {
             predicted_improvement: self.predict_improvement(&metrics).await,
         }
     }
-    
+
     /// Generate optimization hints
     async fn generate_hints(
         &self,
@@ -203,7 +228,7 @@ impl CacheOptimizer {
         config: &CacheConfig,
     ) -> Vec<OptimizationHint> {
         let mut hints = Vec::new();
-        
+
         // Memory allocation hints
         if metrics.overall_hit_rate < 0.6 {
             hints.push(OptimizationHint {
@@ -213,44 +238,50 @@ impl CacheOptimizer {
                 action: Some("Increase total_memory_mb in configuration".to_string()),
             });
         }
-        
+
         // Tier optimization hints
         if config.global.enable_tiered_storage {
             if metrics.l1_metrics.hit_rate < 0.8 && metrics.l2_metrics.hit_rate > 0.5 {
                 hints.push(OptimizationHint {
                     category: "tiering".to_string(),
                     severity: HintSeverity::Medium,
-                    message: "L1 underperforming, consider adjusting promotion thresholds".to_string(),
+                    message: "L1 underperforming, consider adjusting promotion thresholds"
+                        .to_string(),
                     action: Some("Reduce promotion threshold for L2 to L1".to_string()),
                 });
             }
         }
-        
+
         // Eviction policy hints
-        if metrics.eviction_metrics.memory_pressure_evictions > 
-           metrics.eviction_metrics.total_evictions * 3 / 4 {
+        if metrics.eviction_metrics.memory_pressure_evictions
+            > metrics.eviction_metrics.total_evictions * 3 / 4
+        {
             hints.push(OptimizationHint {
                 category: "eviction".to_string(),
                 severity: HintSeverity::High,
-                message: "High memory pressure evictions indicate poor eviction strategy".to_string(),
+                message: "High memory pressure evictions indicate poor eviction strategy"
+                    .to_string(),
                 action: Some("Consider switching to ARC or Adaptive eviction policy".to_string()),
             });
         }
-        
+
         // Prefetching hints
-        if config.coordination.enable_pattern_analysis &&
-           metrics.coordination_metrics.prefetch_success_rate < 0.4 {
+        if config.coordination.enable_pattern_analysis
+            && metrics.coordination_metrics.prefetch_success_rate < 0.4
+        {
             hints.push(OptimizationHint {
                 category: "prefetch".to_string(),
                 severity: HintSeverity::Low,
                 message: "Low prefetch success rate".to_string(),
-                action: Some("Adjust correlation_threshold or increase pattern_history_size".to_string()),
+                action: Some(
+                    "Adjust correlation_threshold or increase pattern_history_size".to_string(),
+                ),
             });
         }
-        
+
         hints
     }
-    
+
     /// Recommend specific optimization actions
     async fn recommend_actions(
         &self,
@@ -258,7 +289,7 @@ impl CacheOptimizer {
         config: &CacheConfig,
     ) -> Vec<RecommendedAction> {
         let mut actions = Vec::new();
-        
+
         // Memory rebalancing recommendation
         let memory_efficiency = self.calculate_memory_efficiency(metrics);
         if memory_efficiency < 0.7 {
@@ -272,7 +303,7 @@ impl CacheOptimizer {
                 risk: RiskLevel::Low,
             });
         }
-        
+
         // Eviction policy recommendation
         if should_change_eviction_policy(metrics) {
             actions.push(RecommendedAction {
@@ -284,78 +315,93 @@ impl CacheOptimizer {
                 risk: RiskLevel::Medium,
             });
         }
-        
+
         actions
     }
-    
+
     /// Calculate memory efficiency score
     fn calculate_memory_efficiency(&self, metrics: &CacheMetricsSnapshot) -> f64 {
-        let usage_ratio = metrics.memory_usage.used_bytes as f64 / 
-                         metrics.memory_usage.total_allocated_bytes.max(1) as f64;
+        let usage_ratio = metrics.memory_usage.used_bytes as f64
+            / metrics.memory_usage.total_allocated_bytes.max(1) as f64;
         let hit_rate = metrics.overall_hit_rate;
         let fragmentation = 1.0 - metrics.memory_usage.fragmentation_ratio;
-        
+
         // Weighted efficiency score
         (hit_rate * 0.5 + usage_ratio * 0.3 + fragmentation * 0.2).min(1.0)
     }
-    
+
     /// Predict performance improvement
     async fn predict_improvement(&self, metrics: &CacheMetricsSnapshot) -> PredictedImprovement {
         let _model = self.auto_tuner.model.read().await;
-        
+
         // Simplified prediction
         let current_hit_rate = metrics.overall_hit_rate;
-        let memory_headroom = 1.0 - (metrics.memory_usage.used_bytes as f64 / 
-                                     metrics.memory_usage.total_allocated_bytes.max(1) as f64);
-        
+        let memory_headroom = 1.0
+            - (metrics.memory_usage.used_bytes as f64
+                / metrics.memory_usage.total_allocated_bytes.max(1) as f64);
+
         let predicted_hit_rate = (current_hit_rate + memory_headroom * 0.2).min(0.99);
         let predicted_latency_reduction = if predicted_hit_rate > current_hit_rate {
             (predicted_hit_rate - current_hit_rate) * 0.5
         } else {
             0.0
         };
-        
+
         PredictedImprovement {
             hit_rate_improvement: predicted_hit_rate - current_hit_rate,
             latency_reduction_percent: predicted_latency_reduction * 100.0,
             memory_savings_mb: 0, // Would calculate based on efficiency improvements
-            // confidence removed -  0.75, // Simplified confidence score
+                                  // confidence removed -  0.75, // Simplified confidence score
         }
     }
-    
+
     /// Apply optimization decision
     pub async fn apply_optimization(&self, action: OptimizationAction) -> Result<()> {
         // Get metrics before optimization
         let cache_metrics = self.orchestrator.metrics();
-        use crate::metrics::cache::{TierMetrics, MemoryMetrics, EvictionMetrics, CoordinationMetrics};
+        use crate::metrics::cache::{
+            CoordinationMetrics, EvictionMetrics, MemoryMetrics, TierMetrics,
+        };
         let metrics_before = CacheMetricsSnapshot {
             overall_hit_rate: cache_metrics.hit_rate() * 100.0,
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L1),
-                hit_rate: cache_metrics.tier_hit_rate(crate::storage::cache::backend::CacheTier::L1),
-                avg_latency_ms: cache_metrics.avg_latency_ms(crate::storage::cache::backend::CacheTier::L1),
-                p99_latency_ms: cache_metrics.p99_latency_ms(crate::storage::cache::backend::CacheTier::L1),
+                hit_rate: cache_metrics
+                    .tier_hit_rate(crate::storage::cache::backend::CacheTier::L1),
+                avg_latency_ms: cache_metrics
+                    .avg_latency_ms(crate::storage::cache::backend::CacheTier::L1),
+                p99_latency_ms: cache_metrics
+                    .p99_latency_ms(crate::storage::cache::backend::CacheTier::L1),
                 entries: cache_metrics.tier_entries(crate::storage::cache::backend::CacheTier::L1),
-                size_bytes: cache_metrics.tier_size_bytes(crate::storage::cache::backend::CacheTier::L1),
+                size_bytes: cache_metrics
+                    .tier_size_bytes(crate::storage::cache::backend::CacheTier::L1),
             },
             l2_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L2),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L2),
-                hit_rate: cache_metrics.tier_hit_rate(crate::storage::cache::backend::CacheTier::L2),
-                avg_latency_ms: cache_metrics.avg_latency_ms(crate::storage::cache::backend::CacheTier::L2),
-                p99_latency_ms: cache_metrics.p99_latency_ms(crate::storage::cache::backend::CacheTier::L2),
+                hit_rate: cache_metrics
+                    .tier_hit_rate(crate::storage::cache::backend::CacheTier::L2),
+                avg_latency_ms: cache_metrics
+                    .avg_latency_ms(crate::storage::cache::backend::CacheTier::L2),
+                p99_latency_ms: cache_metrics
+                    .p99_latency_ms(crate::storage::cache::backend::CacheTier::L2),
                 entries: cache_metrics.tier_entries(crate::storage::cache::backend::CacheTier::L2),
-                size_bytes: cache_metrics.tier_size_bytes(crate::storage::cache::backend::CacheTier::L2),
+                size_bytes: cache_metrics
+                    .tier_size_bytes(crate::storage::cache::backend::CacheTier::L2),
             },
             l3_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L3),
                 misses: cache_metrics.tier_misses(crate::storage::cache::backend::CacheTier::L3),
-                hit_rate: cache_metrics.tier_hit_rate(crate::storage::cache::backend::CacheTier::L3),
-                avg_latency_ms: cache_metrics.avg_latency_ms(crate::storage::cache::backend::CacheTier::L3),
-                p99_latency_ms: cache_metrics.p99_latency_ms(crate::storage::cache::backend::CacheTier::L3),
+                hit_rate: cache_metrics
+                    .tier_hit_rate(crate::storage::cache::backend::CacheTier::L3),
+                avg_latency_ms: cache_metrics
+                    .avg_latency_ms(crate::storage::cache::backend::CacheTier::L3),
+                p99_latency_ms: cache_metrics
+                    .p99_latency_ms(crate::storage::cache::backend::CacheTier::L3),
                 entries: cache_metrics.tier_entries(crate::storage::cache::backend::CacheTier::L3),
-                size_bytes: cache_metrics.tier_size_bytes(crate::storage::cache::backend::CacheTier::L3),
+                size_bytes: cache_metrics
+                    .tier_size_bytes(crate::storage::cache::backend::CacheTier::L3),
             },
             memory_usage: MemoryMetrics {
                 total_allocated_bytes: cache_metrics.total_allocated_bytes(),
@@ -379,9 +425,12 @@ impl CacheOptimizer {
             },
             last_updated: SystemTime::now(),
         };
-        
+
         match &action {
-            OptimizationAction::AdjustMemory { cache_type, new_size_mb } => {
+            OptimizationAction::AdjustMemory {
+                cache_type,
+                new_size_mb,
+            } => {
                 // Would adjust memory allocation
                 tracing::info!("Adjusting {:?} memory to {} MB", cache_type, new_size_mb);
             }
@@ -391,7 +440,7 @@ impl CacheOptimizer {
             }
             _ => {}
         }
-        
+
         // Record decision
         let mut history = self.history.write().await;
         history.decisions.push(OptimizationDecision {
@@ -401,7 +450,7 @@ impl CacheOptimizer {
             metrics_before,
             metrics_after: None,
         });
-        
+
         Ok(())
     }
 }
@@ -421,12 +470,12 @@ impl AutoTuner {
             })),
         }
     }
-    
+
     /// Train the model with new data point
     pub async fn train(&self, data_point: DataPoint) {
         let mut model = self.model.write().await;
         model.data_points.push(data_point);
-        
+
         // Simplified coefficient update
         if model.data_points.len() >= 10 {
             model.update_coefficients();
@@ -468,8 +517,8 @@ impl PerformanceSnapshot {
         Self {
             hit_rate: metrics.overall_hit_rate,
             avg_latency_ms: metrics.l1_metrics.avg_latency_ms,
-            memory_efficiency: metrics.memory_usage.used_bytes as f64 / 
-                             metrics.memory_usage.total_allocated_bytes.max(1) as f64,
+            memory_efficiency: metrics.memory_usage.used_bytes as f64
+                / metrics.memory_usage.total_allocated_bytes.max(1) as f64,
             eviction_rate: metrics.eviction_metrics.total_evictions as f64,
         }
     }
@@ -521,6 +570,6 @@ pub struct PredictedImprovement {
 
 /// Helper function to determine if eviction policy should change
 fn should_change_eviction_policy(metrics: &CacheMetricsSnapshot) -> bool {
-    metrics.eviction_metrics.memory_pressure_evictions > 
-    metrics.eviction_metrics.total_evictions / 2
+    metrics.eviction_metrics.memory_pressure_evictions
+        > metrics.eviction_metrics.total_evictions / 2
 }

@@ -29,39 +29,39 @@ impl AvroCharacteristics {
     pub fn binary_encoding() -> FormatAnalysis {
         FormatAnalysis {
             name: "Avro Binary",
-            
+
             // Space efficiency
             overhead_bytes: 16, // File header with schema fingerprint
             field_encoding: "Variable-length with zigzag for integers",
             null_handling: "Single byte for null in unions",
             array_encoding: "Length prefix + packed elements",
             string_encoding: "Length prefix + UTF-8 bytes",
-            
+
             // Not compressed by default!
             native_compression: false,
-            
+
             // But supports codec parameter
             compression_codecs: vec![
-                "null",     // No compression (default)
-                "deflate",  // zlib compression (good ratio)
-                "snappy",   // Fast compression (good speed)
-                "bzip2",    // High compression (slow)
-                "xz",       // Very high compression (very slow)
+                "null",      // No compression (default)
+                "deflate",   // zlib compression (good ratio)
+                "snappy",    // Fast compression (good speed)
+                "bzip2",     // High compression (slow)
+                "xz",        // Very high compression (very slow)
                 "zstandard", // Modern, balanced (recommended)
             ],
-            
+
             // Performance characteristics
-            encode_speed_mb_s: 150.0,  // Without compression
-            decode_speed_mb_s: 200.0,  // Without compression
-            
+            encode_speed_mb_s: 150.0, // Without compression
+            decode_speed_mb_s: 200.0, // Without compression
+
             // Size characteristics (relative to raw data)
-            size_ratio_uncompressed: 1.1,  // 10% overhead from schema
-            size_ratio_snappy: 0.45,       // 55% reduction with Snappy
-            size_ratio_deflate: 0.35,      // 65% reduction with Deflate
-            size_ratio_zstandard: 0.30,    // 70% reduction with zstd
+            size_ratio_uncompressed: 1.1, // 10% overhead from schema
+            size_ratio_snappy: 0.45,      // 55% reduction with Snappy
+            size_ratio_deflate: 0.35,     // 65% reduction with Deflate
+            size_ratio_zstandard: 0.30,   // 70% reduction with zstd
         }
     }
-    
+
     /// Compare with other formats for cold storage
     pub fn cold_tier_comparison() -> Vec<FormatComparison> {
         vec![
@@ -74,7 +74,6 @@ impl AvroCharacteristics {
                 compression_built_in: false,
                 cold_tier_score: 60, // Fast but no schema evolution
             },
-            
             FormatComparison {
                 format: "Bincode + zstd",
                 size_ratio: 0.35,
@@ -84,7 +83,6 @@ impl AvroCharacteristics {
                 compression_built_in: true,
                 cold_tier_score: 75, // Good compression but no schema
             },
-            
             FormatComparison {
                 format: "Avro (uncompressed)",
                 size_ratio: 1.1,
@@ -94,7 +92,6 @@ impl AvroCharacteristics {
                 compression_built_in: false,
                 cold_tier_score: 70, // Schema but larger size
             },
-            
             FormatComparison {
                 format: "Avro + Snappy",
                 size_ratio: 0.45,
@@ -104,7 +101,6 @@ impl AvroCharacteristics {
                 compression_built_in: true,
                 cold_tier_score: 85, // Good balance
             },
-            
             FormatComparison {
                 format: "Avro + zstd",
                 size_ratio: 0.30,
@@ -114,7 +110,6 @@ impl AvroCharacteristics {
                 compression_built_in: true,
                 cold_tier_score: 95, // Best for cold tier!
             },
-            
             FormatComparison {
                 format: "Parquet",
                 size_ratio: 0.25,
@@ -126,7 +121,7 @@ impl AvroCharacteristics {
             },
         ]
     }
-    
+
     /// Recommended format by tier
     pub fn tier_recommendations() -> TierRecommendations {
         TierRecommendations {
@@ -134,9 +129,9 @@ impl AvroCharacteristics {
             nvme_hot: "Bincode (uncompressed)",
             ssd_warm: "Bincode + zstd",
             hdd_cool: "Bincode + zstd", // Changed from Avro
-            cloud_cold: "Avro + zstd",   // Avro WITH compression
+            cloud_cold: "Avro + zstd",  // Avro WITH compression
             cloud_archive: "Avro + zstd (max compression)",
-            
+
             rationale: vec![
                 "Memory/NVMe: Speed is critical, use fastest format",
                 "SSD/HDD: Balance speed and space, compressed Bincode is simpler",
@@ -192,33 +187,30 @@ pub mod avro_container {
     /// Avro container file structure
     pub struct ContainerFormat {
         // Header
-        pub magic: [u8; 4],        // "Obj" + 0x01
+        pub magic: [u8; 4], // "Obj" + 0x01
         pub metadata: Metadata,
         pub sync_marker: [u8; 16], // Random 16-byte sync
-        
+
         // Data blocks
         pub blocks: Vec<DataBlock>,
     }
-    
+
     pub struct Metadata {
-        pub avro_codec: String,     // "null", "deflate", "snappy", "zstandard"
-        pub avro_schema: String,     // JSON schema
+        pub avro_codec: String,  // "null", "deflate", "snappy", "zstandard"
+        pub avro_schema: String, // JSON schema
     }
-    
+
     pub struct DataBlock {
-        pub count: i64,              // Number of records
-        pub size: i64,               // Size of data in bytes
-        pub data: Vec<u8>,           // Serialized + optionally compressed
-        pub sync: [u8; 16],          // Sync marker
+        pub count: i64,     // Number of records
+        pub size: i64,      // Size of data in bytes
+        pub data: Vec<u8>,  // Serialized + optionally compressed
+        pub sync: [u8; 16], // Sync marker
     }
-    
+
     /// Size calculation for compressed Avro
-    pub fn estimate_compressed_size(
-        uncompressed_size: usize,
-        codec: &str,
-    ) -> usize {
+    pub fn estimate_compressed_size(uncompressed_size: usize, codec: &str) -> usize {
         let base_size = uncompressed_size as f64;
-        
+
         match codec {
             "null" => uncompressed_size,
             "snappy" => (base_size * 0.45) as usize,
@@ -274,36 +266,37 @@ impl ProximaDBRecommendations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_compression_ratios() {
         let original_size = 1_000_000; // 1MB
-        
+
         // Plain Avro is LARGER than original
         let avro_plain = (original_size as f64 * 1.1) as usize;
         assert_eq!(avro_plain, 1_100_000); // 10% overhead!
-        
+
         // Avro + compression is SMALLER
         let avro_zstd = avro_container::estimate_compressed_size(original_size, "zstandard");
         assert_eq!(avro_zstd, 300_000); // 70% reduction!
-        
+
         // Bincode + zstd for comparison
         let bincode_zstd = (original_size as f64 * 0.35) as usize;
         assert_eq!(bincode_zstd, 350_000); // 65% reduction
-        
+
         // Avro + zstd wins for cold storage!
         assert!(avro_zstd < bincode_zstd);
     }
-    
+
     #[test]
     fn test_format_selection() {
         let comparisons = AvroCharacteristics::cold_tier_comparison();
-        
+
         // Find best cold tier format
-        let best = comparisons.iter()
+        let best = comparisons
+            .iter()
             .max_by_key(|f| f.cold_tier_score)
             .unwrap();
-        
+
         assert_eq!(best.format, "Avro + zstd");
         assert_eq!(best.cold_tier_score, 95);
     }

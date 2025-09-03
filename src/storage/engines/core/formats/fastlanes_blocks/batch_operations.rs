@@ -7,30 +7,29 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
-use crate::core::memory::pool::VectorMemoryPool;
-use super::block_structures::{FastLanesDataBlock, BlockLocation, SuperBlock};
+use super::block_structures::{BlockLocation, FastLanesDataBlock, SuperBlock};
 use super::index_structures::RowBasedIdIndex;
+use crate::core::memory::pool::VectorMemoryPool;
+use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 // Quantization now handled by unified compute module
 
 /// Row-based batch operations handler
 pub struct RowBasedBatchOperations {
     /// Hardware capabilities
     hardware: Arc<HardwareCapabilities>,
-    
+
     /// Memory pool for efficient buffer reuse
     memory_pool: Arc<VectorMemoryPool>,
-    
-    
+
     /// Configuration
     config: BatchConfig,
-    
+
     /// Concurrency control
     semaphore: Arc<Semaphore>,
-    
+
     /// Operation cache
     operation_cache: Arc<tokio::sync::RwLock<HashMap<String, CachedBatchResult>>>,
-    
+
     /// Statistics
     statistics: BatchOperationStats,
 }
@@ -42,22 +41,22 @@ pub struct BatchConfig {
     pub default_batch_size: usize,
     pub max_batch_size: usize,
     pub adaptive_batch_sizing: bool,
-    
+
     /// Concurrency control
     pub max_concurrent_batches: usize,
     pub parallel_processing: bool,
     pub worker_threads: usize,
-    
+
     /// Memory management
     pub memory_limit_per_batch: usize,
     pub enable_memory_pooling: bool,
     pub buffer_reuse_threshold: f32,
-    
+
     /// Caching
     pub enable_result_caching: bool,
     pub cache_ttl_seconds: u64,
     pub max_cache_entries: usize,
-    
+
     /// Performance optimization
     pub enable_prefetching: bool,
     pub prefetch_similarity: usize,
@@ -100,17 +99,17 @@ pub struct BatchResult {
     pub operation_id: String,
     pub batch_size: usize,
     pub processing_time_ms: u64,
-    
+
     /// Results
     pub successful_operations: usize,
     pub failed_operations: usize,
     pub partial_results: Vec<PartialResult>,
-    
+
     /// Performance metrics
     pub throughput_ops_per_second: f64,
     pub memory_usage_peak: usize,
     pub cache_hit_rate: f64,
-    
+
     /// Resource utilization
     pub cpu_usage_percent: f32,
     pub memory_efficiency: f32,
@@ -158,7 +157,7 @@ impl RowBasedBatchOperations {
     ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_batches));
         let operation_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
-        
+
         Self {
             hardware,
             memory_pool,
@@ -168,7 +167,7 @@ impl RowBasedBatchOperations {
             statistics: BatchOperationStats::default(),
         }
     }
-    
+
     /// Batch read operations by IDs
     pub async fn batch_read_by_ids(
         &self,
@@ -178,21 +177,24 @@ impl RowBasedBatchOperations {
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_read_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
-        
+
         // Check cache first
         if let Some(cached) = self.check_cache(&operation_id).await {
             return Ok(cached.result);
         }
-        
+
         // Acquire semaphore for concurrency control
-        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
-        
+        let _permit = self
+            .semaphore
+            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await?;
+
         // Split into batches
         let batches = self.split_into_batches(&ids);
         let mut all_results = Vec::new();
         let mut successful_operations = 0;
         let mut failed_operations = 0;
-        
+
         // Process batches based on strategy
         match self.config.parallel_processing {
             true => {
@@ -203,7 +205,7 @@ impl RowBasedBatchOperations {
                     let result = self.process_read_batch(batch, blocks, index).await?;
                     batch_results.push(result);
                 }
-                
+
                 for batch_result in batch_results {
                     successful_operations += batch_result.successful_operations;
                     failed_operations += batch_result.failed_operations;
@@ -220,10 +222,10 @@ impl RowBasedBatchOperations {
                 }
             }
         }
-        
+
         let processing_time = start_time.elapsed().as_millis() as u64;
         let throughput = (successful_operations as f64 / processing_time as f64) * 1000.0;
-        
+
         let result = BatchResult {
             operation_id: operation_id.clone(),
             batch_size: ids.len(),
@@ -234,19 +236,23 @@ impl RowBasedBatchOperations {
             throughput_ops_per_second: throughput,
             memory_usage_peak: {
                 let stats = self.memory_pool.comprehensive_stats();
-                (stats.serialization.peak_size + stats.vector.peak_size + 
-                stats.compression.peak_size + stats.metadata.peak_size) as usize
+                (stats.serialization.peak_size
+                    + stats.vector.peak_size
+                    + stats.compression.peak_size
+                    + stats.metadata.peak_size) as usize
             },
-            cache_hit_rate: 0.0, // Would be calculated from actual cache usage
+            cache_hit_rate: 0.0,    // Would be calculated from actual cache usage
             cpu_usage_percent: 0.0, // Would be measured
             memory_efficiency: {
                 let stats = self.memory_pool.comprehensive_stats();
-                let total_hits = stats.serialization.cache_hits + stats.vector.cache_hits +
-                                stats.compression.cache_hits + stats.metadata.cache_hits;
-                let total_acquisitions = stats.serialization.total_acquisitions + 
-                                       stats.vector.total_acquisitions +
-                                       stats.compression.total_acquisitions +
-                                       stats.metadata.total_acquisitions;
+                let total_hits = stats.serialization.cache_hits
+                    + stats.vector.cache_hits
+                    + stats.compression.cache_hits
+                    + stats.metadata.cache_hits;
+                let total_acquisitions = stats.serialization.total_acquisitions
+                    + stats.vector.total_acquisitions
+                    + stats.compression.total_acquisitions
+                    + stats.metadata.total_acquisitions;
                 if total_acquisitions > 0 {
                     (total_hits as f64 / total_acquisitions as f64) as f32
                 } else {
@@ -255,15 +261,15 @@ impl RowBasedBatchOperations {
             },
             io_efficiency: 1.0, // Would be calculated from actual I/O
         };
-        
+
         // Cache result if enabled
         if self.config.enable_result_caching {
             self.cache_result(operation_id, result.clone()).await;
         }
-        
+
         Ok(result)
     }
-    
+
     /// Batch write operations
     pub async fn batch_write_records(
         &self,
@@ -273,16 +279,19 @@ impl RowBasedBatchOperations {
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_write_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
-        
+
         // Acquire semaphore for concurrency control
-        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
-        
+        let _permit = self
+            .semaphore
+            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await?;
+
         // Split records into batches
         let batches = self.split_records_into_batches(records);
         let mut all_results = Vec::new();
         let mut successful_operations = 0;
         let mut failed_operations = 0;
-        
+
         // Process write batches
         for batch in batches {
             match self.process_write_batch(batch, blocks, index).await {
@@ -303,10 +312,10 @@ impl RowBasedBatchOperations {
                 }
             }
         }
-        
+
         let processing_time = start_time.elapsed().as_millis() as u64;
         let throughput = (successful_operations as f64 / processing_time as f64) * 1000.0;
-        
+
         Ok(BatchResult {
             operation_id,
             batch_size: successful_operations + failed_operations,
@@ -322,7 +331,7 @@ impl RowBasedBatchOperations {
             io_efficiency: 1.0,
         })
     }
-    
+
     /// Batch update operations
     pub async fn batch_update_records(
         &self,
@@ -332,21 +341,27 @@ impl RowBasedBatchOperations {
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_update_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
-        
-        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
-        
+
+        let _permit = self
+            .semaphore
+            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await?;
+
         let mut all_results = Vec::new();
         let mut successful_operations = 0;
         let mut failed_operations = 0;
-        
+
         // Process updates in batches
         let batches = self.split_updates_into_batches(updates);
-        
+
         for batch in batches {
             for (id, updated_record) in batch {
                 let update_start = std::time::Instant::now();
-                
-                match self.update_single_record(&id, updated_record, blocks, index).await {
+
+                match self
+                    .update_single_record(&id, updated_record, blocks, index)
+                    .await
+                {
                     Ok(Some(old_record)) => {
                         successful_operations += 1;
                         all_results.push(PartialResult {
@@ -380,10 +395,10 @@ impl RowBasedBatchOperations {
                 }
             }
         }
-        
+
         let processing_time = start_time.elapsed().as_millis() as u64;
         let throughput = (successful_operations as f64 / processing_time as f64) * 1000.0;
-        
+
         Ok(BatchResult {
             operation_id,
             batch_size: successful_operations + failed_operations,
@@ -399,7 +414,7 @@ impl RowBasedBatchOperations {
             io_efficiency: 1.0,
         })
     }
-    
+
     /// Batch delete operations
     pub async fn batch_delete_records(
         &self,
@@ -409,17 +424,20 @@ impl RowBasedBatchOperations {
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_delete_{}", uuid::Uuid::new_v4());
         let start_time = std::time::Instant::now();
-        
-        let _permit = self.semaphore.acquire()/* TODO: Fix VectorMemoryPool::acquire() method */.await?;
-        
+
+        let _permit = self
+            .semaphore
+            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await?;
+
         let mut successful_operations = 0;
         let mut failed_operations = 0;
         let mut all_results = Vec::new();
-        
+
         // Process deletions
         for (idx, id) in ids.iter().enumerate() {
             let delete_start = std::time::Instant::now();
-            
+
             match self.delete_single_record(id, blocks, index).await {
                 Ok(true) => {
                     successful_operations += 1;
@@ -453,10 +471,10 @@ impl RowBasedBatchOperations {
                 }
             }
         }
-        
+
         let processing_time = start_time.elapsed().as_millis() as u64;
         let throughput = (successful_operations as f64 / processing_time as f64) * 1000.0;
-        
+
         Ok(BatchResult {
             operation_id,
             batch_size: ids.len(),
@@ -472,7 +490,7 @@ impl RowBasedBatchOperations {
             io_efficiency: 1.0,
         })
     }
-    
+
     /// Split IDs into optimally-sized batches
     fn split_into_batches(&self, ids: &[String]) -> Vec<Vec<String>> {
         let batch_size = if self.config.adaptive_batch_sizing {
@@ -480,56 +498,56 @@ impl RowBasedBatchOperations {
         } else {
             self.config.default_batch_size
         };
-        
-        ids.chunks(batch_size)
-            .map(|chunk| chunk.to_vec())
-            .collect()
+
+        ids.chunks(batch_size).map(|chunk| chunk.to_vec()).collect()
     }
-    
+
     /// Split records into batches
     fn split_records_into_batches(&self, records: Vec<VectorRecord>) -> Vec<Vec<VectorRecord>> {
         let batch_size = self.calculate_optimal_batch_size(records.len());
-        
-        records.chunks(batch_size)
+
+        records
+            .chunks(batch_size)
             .map(|chunk| chunk.to_vec())
             .collect()
     }
-    
+
     /// Split updates into batches
     fn split_updates_into_batches(
         &self,
         updates: Vec<(String, VectorRecord)>,
     ) -> Vec<Vec<(String, VectorRecord)>> {
         let batch_size = self.calculate_optimal_batch_size(updates.len());
-        
-        updates.chunks(batch_size)
+
+        updates
+            .chunks(batch_size)
             .map(|chunk| chunk.to_vec())
             .collect()
     }
-    
+
     /// Calculate optimal batch size based on current conditions
     fn calculate_optimal_batch_size(&self, total_items: usize) -> usize {
         if !self.config.adaptive_batch_sizing {
             return self.config.default_batch_size;
         }
-        
+
         // Consider memory availability
         let available_memory = self.memory_pool.available_bytes();
         let memory_per_item = 8192; // Estimated bytes per record
         let memory_based_batch_size = available_memory / memory_per_item;
-        
+
         // Consider parallelism
         let parallel_batch_size = total_items / self.config.worker_threads;
-        
+
         // Use the minimum of constraints
         let optimal_size = memory_based_batch_size
             .min(parallel_batch_size)
             .min(self.config.max_batch_size)
             .max(1); // At least 1
-        
+
         optimal_size
     }
-    
+
     /// Process batches in parallel (using concurrent futures, not spawned tasks)
     async fn process_batches_parallel<F, Fut>(
         &self,
@@ -543,23 +561,23 @@ impl RowBasedBatchOperations {
         Fut: std::future::Future<Output = Result<BatchResult>>,
     {
         use futures::future::join_all;
-        
+
         let futures: Vec<_> = batches
             .into_iter()
             .map(|batch| processor(batch, blocks, index))
             .collect();
-        
+
         let results = join_all(futures).await;
-        
+
         // Collect results, propagating errors
         let mut batch_results = Vec::new();
         for result in results {
             batch_results.push(result?);
         }
-        
+
         Ok(batch_results)
     }
-    
+
     /// Process a single read batch
     async fn process_read_batch(
         &self,
@@ -571,10 +589,10 @@ impl RowBasedBatchOperations {
         let mut partial_results = Vec::new();
         let mut successful_operations = 0;
         let mut failed_operations = 0;
-        
+
         for (idx, id) in ids.iter().enumerate() {
             let lookup_start = std::time::Instant::now();
-            
+
             match index.lookup(id).await {
                 Some(location) => {
                     if let Some(block) = blocks.get(location.block_id as usize) {
@@ -620,10 +638,10 @@ impl RowBasedBatchOperations {
                 }
             }
         }
-        
+
         let processing_time = start_time.elapsed().as_millis() as u64;
         let throughput = (successful_operations as f64 / processing_time as f64) * 1000.0;
-        
+
         Ok(BatchResult {
             operation_id: format!("read_batch_{}", uuid::Uuid::new_v4()),
             batch_size: ids.len(),
@@ -639,7 +657,7 @@ impl RowBasedBatchOperations {
             io_efficiency: 1.0,
         })
     }
-    
+
     /// Process a single write batch
     async fn process_write_batch(
         &self,
@@ -664,7 +682,7 @@ impl RowBasedBatchOperations {
             io_efficiency: 1.0,
         })
     }
-    
+
     /// Update a single record
     async fn update_single_record(
         &self,
@@ -684,7 +702,7 @@ impl RowBasedBatchOperations {
         }
         Ok(None)
     }
-    
+
     /// Delete a single record
     async fn delete_single_record(
         &self,
@@ -696,32 +714,35 @@ impl RowBasedBatchOperations {
         // For brevity, returning success
         Ok(true)
     }
-    
+
     /// Check operation cache
     async fn check_cache(&self, operation_id: &str) -> Option<CachedBatchResult> {
         let cache = self.operation_cache.read().await;
         let key = operation_id;
         cache.get(key).cloned()
     }
-    
+
     /// Cache operation result
     async fn cache_result(&self, operation_id: String, result: BatchResult) {
         let mut cache = self.operation_cache.write().await;
-        
+
         // Remove expired entries
         let now = std::time::Instant::now();
         cache.retain(|_, cached| {
             now.duration_since(cached.timestamp).as_secs() < self.config.cache_ttl_seconds
         });
-        
+
         // Add new entry if under limit
         if cache.len() < self.config.max_cache_entries {
-            cache.insert(operation_id.clone(), CachedBatchResult {
-                result,
-                timestamp: now,
-                access_count: 0,
-                key: operation_id,
-            });
+            cache.insert(
+                operation_id.clone(),
+                CachedBatchResult {
+                    result,
+                    timestamp: now,
+                    access_count: 0,
+                    key: operation_id,
+                },
+            );
         }
     }
 }
@@ -767,7 +788,7 @@ impl Default for BatchOperationStats {
 mod tests {
     use super::*;
     use crate::storage::engines::core::formats::row_based::index_structures::IndexConfiguration;
-    
+
     #[tokio::test]
     async fn test_batch_operations_creation() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
@@ -776,7 +797,7 @@ mod tests {
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                 hardware.clone(),
                 memory_pool.clone(),
-            )
+            ),
         );
         let quantization_adapter = Arc::new(
             crate::storage::engines::core::formats::row_based::quantization_adapter::RowBasedQuantizationAdapter::new(
@@ -786,19 +807,15 @@ mod tests {
                 QuantizationBlockConfig::default(),
             )
         );
-        
+
         let config = BatchConfig::default();
-        let batch_ops = RowBasedBatchOperations::new(
-            hardware,
-            memory_pool,
-            quantization_adapter,
-            config,
-        );
-        
+        let batch_ops =
+            RowBasedBatchOperations::new(hardware, memory_pool, quantization_adapter, config);
+
         assert_eq!(batch_ops.config.default_batch_size, 1000);
         assert!(batch_ops.config.parallel_processing);
     }
-    
+
     #[test]
     fn test_batch_size_calculation() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
@@ -807,7 +824,7 @@ mod tests {
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                 hardware.clone(),
                 memory_pool.clone(),
-            )
+            ),
         );
         let quantization_adapter = Arc::new(
             crate::storage::engines::core::formats::row_based::quantization_adapter::RowBasedQuantizationAdapter::new(
@@ -817,20 +834,16 @@ mod tests {
                 QuantizationBlockConfig::default(),
             )
         );
-        
+
         let config = BatchConfig::default();
-        let batch_ops = RowBasedBatchOperations::new(
-            hardware,
-            memory_pool,
-            quantization_adapter,
-            config,
-        );
-        
+        let batch_ops =
+            RowBasedBatchOperations::new(hardware, memory_pool, quantization_adapter, config);
+
         let batch_size = batch_ops.calculate_optimal_batch_size(10000);
         assert!(batch_size > 0);
         assert!(batch_size <= batch_ops.config.max_batch_size);
     }
-    
+
     #[test]
     fn test_batch_splitting() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
@@ -839,7 +852,7 @@ mod tests {
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                 hardware.clone(),
                 memory_pool.clone(),
-            )
+            ),
         );
         let quantization_adapter = Arc::new(
             crate::storage::engines::core::formats::row_based::quantization_adapter::RowBasedQuantizationAdapter::new(
@@ -849,22 +862,18 @@ mod tests {
                 QuantizationBlockConfig::default(),
             )
         );
-        
+
         let config = BatchConfig {
             default_batch_size: 100,
             adaptive_batch_sizing: false,
             ..Default::default()
         };
-        let batch_ops = RowBasedBatchOperations::new(
-            hardware,
-            memory_pool,
-            quantization_adapter,
-            config,
-        );
-        
+        let batch_ops =
+            RowBasedBatchOperations::new(hardware, memory_pool, quantization_adapter, config);
+
         let ids: Vec<String> = (0..250).map(|i| format!("id_{}", i)).collect();
         let batches = batch_ops.split_into_batches(&ids);
-        
+
         assert_eq!(batches.len(), 3); // 100, 100, 50
         assert_eq!(batches[0].len(), 100);
         assert_eq!(batches[1].len(), 100);

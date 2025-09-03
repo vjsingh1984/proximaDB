@@ -8,14 +8,14 @@
 //! This module provides comprehensive validation for storage configurations
 //! to catch errors early and provide helpful error messages.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 use url::Url;
 
 use super::builder::{DataStorageConfig, StorageLayoutStrategy, StorageSystemConfig};
 use super::persistence::filesystem::FilesystemConfig;
 use super::persistence::write_ahead_log::WALConfig;
-use tracing::{warn};
+use tracing::warn;
 //use super::wal::WalSystemConfig;
 
 /// Comprehensive configuration validator
@@ -324,8 +324,10 @@ impl ConfigValidator {
         // Check CPU count for thread configuration recommendations
         let cpu_count = num_cpus::get();
         if cpu_count < 2 {
-            warn!("⚠️  Warning: System has only {} CPU core, performance may be limited",
-                cpu_count);
+            warn!(
+                "⚠️  Warning: System has only {} CPU core, performance may be limited",
+                cpu_count
+            );
         }
 
         Ok(())

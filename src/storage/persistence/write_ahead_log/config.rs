@@ -77,13 +77,13 @@ pub struct PerformanceConfig {
 
     /// Cloud backup configuration
     pub cloud_backup: Option<CloudBackupConfig>,
-    
+
     /// Enable optimized WAL writer for high-performance writes
     pub enable_optimized_write_buffer_writer: Option<bool>,
-    
+
     /// Number of background writer threads for optimized WAL writer
     pub background_writer_threads: Option<usize>,
-    
+
     /// Batch size for optimized WAL writer
     pub write_buffer_batch_size: Option<usize>,
 }
@@ -103,10 +103,10 @@ impl Default for PerformanceConfig {
             sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
             sync_interval_seconds: 60, // Default to 60 seconds for periodic sync
             global_shrink_factor: 0.4, // 40% shrink factor - recommended for global threshold management
-            cloud_backup: None, // Cloud backup disabled by default
+            cloud_backup: None,        // Cloud backup disabled by default
             enable_optimized_write_buffer_writer: Some(false), // Disabled by default for gradual rollout
             background_writer_threads: None, // Will use 2 by default in optimized writer
-            write_buffer_batch_size: None, // Will use 100 by default in optimized writer
+            write_buffer_batch_size: None,   // Will use 100 by default in optimized writer
         }
     }
 }
@@ -131,22 +131,22 @@ pub enum SyncMode {
 pub enum DurabilityLevel {
     /// No sync - fastest, but risk of data loss (development only)
     NoSync,
-    
+
     /// Sync metadata only (fdatasync) - good balance
     /// Data is written but file metadata (like timestamps) may not be
     SyncData,
-    
+
     /// Full sync (fsync) - safest but slowest
     /// Both data and metadata are synced to disk
     SyncFull,
-    
+
     /// Batch sync - sync every N writes or T seconds
     /// Provides configurable balance between durability and performance
-    BatchSync { 
+    BatchSync {
         /// Number of writes before sync
-        batch_size: usize, 
+        batch_size: usize,
         /// Time interval between syncs (seconds)
-        interval_secs: u64 
+        interval_secs: u64,
     },
 }
 
@@ -263,8 +263,8 @@ impl Default for MemTableConfig {
         Self {
             memtable_type: MemTableType::default(),
             global_memory_limit: 4 * 1024 * 1024 * 1024, // 4GB for write-triggered flush
-            mvcc_versions_retained: 3,              // Keep last 3 versions for MVCC
-            enable_concurrency: true,               // Enable concurrent operations
+            mvcc_versions_retained: 3,                   // Keep last 3 versions for MVCC
+            enable_concurrency: true,                    // Enable concurrent operations
         }
     }
 }
@@ -298,19 +298,19 @@ pub struct WALConfig {
 
     /// Collection-specific overrides
     pub collection_overrides: std::collections::HashMap<String, CollectionWalConfig>,
-    
+
     /// Enable optimized WAL writer (feature flag)
     pub enable_optimized_writer: bool,
-    
+
     /// Optimized writer batch size
     pub optimized_writer_batch_size: Option<usize>,
-    
+
     /// Optimized writer batch timeout in milliseconds
     pub optimized_writer_batch_timeout_ms: Option<u64>,
-    
+
     /// Number of writer threads for optimized writer
     pub optimized_writer_threads: Option<usize>,
-    
+
     /// Enable write combining for same collection
     pub optimized_writer_enable_combining: Option<bool>,
 }
@@ -319,8 +319,8 @@ impl Default for WALConfig {
     fn default() -> Self {
         Self {
             strategy_type: WriteBufferStrategyType::default(), // Bincode for maximum vector ingestion performance
-            memtable: MemTableConfig::default(),       // ART for metadata filtering efficiency
-            multi_disk: MultiDiskConfig::default(),    // LoadBalanced for bulk insert optimization
+            memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
+            multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
             performance: PerformanceConfig::default(), // Optimized for large vectors and bulk processing
             enable_mvcc: true, // Enable for consistency and document versioning
@@ -588,7 +588,7 @@ impl Default for BackupFrequency {
     fn default() -> Self {
         Self {
             operations_threshold: Some(1000),
-            time_threshold_secs: Some(300), // 5 minutes
+            time_threshold_secs: Some(300),                // 5 minutes
             size_threshold_bytes: Some(100 * 1024 * 1024), // 100MB
         }
     }

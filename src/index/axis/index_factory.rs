@@ -19,7 +19,7 @@
 //! This module provides a clean, adapter-free factory for creating AXIS indexes.
 //! All index types are first-class citizens in the AXIS ecosystem with deep integration.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 // Removed unused imports
 // use std::collections::HashMap;
@@ -39,7 +39,7 @@ use crate::index::axis::types::IndexAlgorithm;
 pub trait AxisVectorIndex: Send + Sync {
     /// Add a vector to the index - just ID and raw data
     async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()>;
-    
+
     /// Search for nearest neighbors with optional metadata filter
     async fn search(
         &self,
@@ -47,13 +47,13 @@ pub trait AxisVectorIndex: Send + Sync {
         top_k: usize,
         filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>>;
-    
+
     /// Remove a vector from the index
     async fn remove(&self, id: &str) -> Result<()>;
-    
+
     /// Get the algorithm type
     fn algorithm(&self) -> &IndexAlgorithm;
-    
+
     /// Get index statistics
     fn stats(&self) -> IndexStats;
 }
@@ -91,15 +91,24 @@ impl IndexFactory {
         distance_metric: DistanceMetric,
     ) -> Result<AxisIndexCreationResult> {
         match algorithm {
-            IndexAlgorithm::HNSW { m: _m, ef_construction: _ef_construction, ef_search: _ef_search, max_elements: _max_elements } => {
+            IndexAlgorithm::HNSW {
+                m: _m,
+                ef_construction: _ef_construction,
+                ef_search: _ef_search,
+                max_elements: _max_elements,
+            } => {
                 // HNSW requires more complex setup with existing implementation
                 // For now, we'll return an error and implement a proper async wrapper later
                 Err(anyhow!(
                     "HNSW index creation requires async initialization. Use AxisHnswManager for HNSW indexes."
                 ))
             }
-            
-            IndexAlgorithm::IVF { nlist, nprobe, quantizer: _ } => {
+
+            IndexAlgorithm::IVF {
+                nlist,
+                nprobe,
+                quantizer: _,
+            } => {
                 let config = UnifiedIvfConfig {
                     n_clusters: *nlist as usize,
                     n_probe: *nprobe as usize,
@@ -107,13 +116,17 @@ impl IndexFactory {
                     distance_metric,
                     ..UnifiedIvfConfig::default()
                 };
-                
+
                 // For factory, use a default collection ID (will be updated when attached to collection)
                 let index = UnifiedIvfIndex::new("default".to_string(), config)?;
                 Ok(AxisIndexCreationResult::Ivf(Box::new(index)))
             }
-            
-            IndexAlgorithm::LSH { n_projections, n_hash_tables, hash_width } => {
+
+            IndexAlgorithm::LSH {
+                n_projections,
+                n_hash_tables,
+                hash_width,
+            } => {
                 let config = AxisLshConfig {
                     n_tables: *n_hash_tables as usize,
                     n_hashes: *n_projections as usize,
@@ -122,12 +135,16 @@ impl IndexFactory {
                     distance_metric,
                     binary_mode: distance_metric == DistanceMetric::Hamming,
                 };
-                
+
                 let index = AxisLshIndex::new(config, dimension);
                 Ok(AxisIndexCreationResult::Lsh(Box::new(index)))
             }
-            
-            IndexAlgorithm::Annoy { n_trees, search_k, max_leaf_size } => {
+
+            IndexAlgorithm::Annoy {
+                n_trees,
+                search_k,
+                max_leaf_size,
+            } => {
                 let config = AxisAnnoyConfig {
                     n_trees: *n_trees as usize,
                     search_k: *search_k,
@@ -135,19 +152,22 @@ impl IndexFactory {
                     seed: 42,
                     distance_metric,
                 };
-                
+
                 let index = AxisAnnoyIndex::new(config, dimension)?;
                 Ok(AxisIndexCreationResult::Annoy(Box::new(index)))
             }
-            
-            IndexAlgorithm::PQ { .. } => {
-                Err(anyhow!("Product Quantization will be integrated in next phase"))
-            }
-            
-            _ => Err(anyhow!("Index algorithm {:?} not supported for vector search", algorithm)),
+
+            IndexAlgorithm::PQ { .. } => Err(anyhow!(
+                "Product Quantization will be integrated in next phase"
+            )),
+
+            _ => Err(anyhow!(
+                "Index algorithm {:?} not supported for vector search",
+                algorithm
+            )),
         }
     }
-    
+
     /// Create a pre-trained index that's ready to use
     /// This is a convenience method that handles training for algorithms that require it
     pub async fn create_trained_index(
@@ -168,8 +188,7 @@ impl IndexFactory {
                 // Annoy needs to be built after adding vectors
                 // For now, return it as-is; the user must call build() separately
                 Ok(index as Box<dyn AxisVectorIndex>)
-            }
-            // AxisIndexCreationResult::Hnsw(index) => Ok(index as Box<dyn AxisVectorIndex>),
+            } // AxisIndexCreationResult::Hnsw(index) => Ok(index as Box<dyn AxisVectorIndex>),
         }
     }
 }
@@ -185,7 +204,7 @@ impl IndexFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_create_ivf_index() {
         let algorithm = IndexAlgorithm::IVF {
@@ -193,13 +212,9 @@ mod tests {
             nprobe: 10,
             quantizer: None,
         };
-        
-        let result = IndexFactory::create_index(
-            &algorithm,
-            128,
-            DistanceMetric::Cosine,
-        );
-        
+
+        let result = IndexFactory::create_index(&algorithm, 128, DistanceMetric::Cosine);
+
         assert!(result.is_ok());
         match result.unwrap() {
             AxisIndexCreationResult::Ivf(index) => {
@@ -208,7 +223,7 @@ mod tests {
             _ => panic!("Expected IVF index"),
         }
     }
-    
+
     #[test]
     fn test_create_lsh_index() {
         let algorithm = IndexAlgorithm::LSH {
@@ -216,13 +231,9 @@ mod tests {
             n_hash_tables: 10,
             hash_width: 1.0,
         };
-        
-        let result = IndexFactory::create_index(
-            &algorithm,
-            128,
-            DistanceMetric::Cosine,
-        );
-        
+
+        let result = IndexFactory::create_index(&algorithm, 128, DistanceMetric::Cosine);
+
         assert!(result.is_ok());
         match result.unwrap() {
             AxisIndexCreationResult::Lsh(index) => {
@@ -231,7 +242,7 @@ mod tests {
             _ => panic!("Expected LSH index"),
         }
     }
-    
+
     #[test]
     fn test_create_annoy_index() {
         let algorithm = IndexAlgorithm::Annoy {
@@ -239,13 +250,9 @@ mod tests {
             search_k: -1,
             max_leaf_size: 10,
         };
-        
-        let result = IndexFactory::create_index(
-            &algorithm,
-            128,
-            DistanceMetric::Cosine,
-        );
-        
+
+        let result = IndexFactory::create_index(&algorithm, 128, DistanceMetric::Cosine);
+
         assert!(result.is_ok());
         match result.unwrap() {
             AxisIndexCreationResult::Annoy(index) => {
@@ -259,7 +266,7 @@ mod tests {
             _ => panic!("Expected Annoy index"),
         }
     }
-    
+
     #[tokio::test]
     async fn test_create_trained_index() {
         let algorithm = IndexAlgorithm::IVF {
@@ -267,21 +274,22 @@ mod tests {
             nprobe: 2,
             quantizer: None,
         };
-        
+
         let training_data = vec![
             vec![1.0, 0.0, 0.0, 0.0],
             vec![0.0, 1.0, 0.0, 0.0],
             vec![0.0, 0.0, 1.0, 0.0],
             vec![0.0, 0.0, 0.0, 1.0],
         ];
-        
+
         let index = IndexFactory::create_trained_index(
             &algorithm,
             4,
             DistanceMetric::Euclidean,
             Some(&training_data),
-        ).await;
-        
+        )
+        .await;
+
         assert!(index.is_ok());
         let index = index.unwrap();
         assert_eq!(index.stats().index_type, "IVF");

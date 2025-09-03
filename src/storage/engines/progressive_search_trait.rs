@@ -7,10 +7,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::core::VectorRecord;
-use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::core::VectorRecord;
+use crate::core::search::FilterExpression;
 
 /// Trait for storage engines to implement progressive search capabilities
 #[async_trait]
@@ -24,7 +24,7 @@ pub trait ProgressiveSearchEngine: Send + Sync {
         filter: Option<&FilterExpression>,
         distance_metric: &DistanceMetric,
     ) -> Result<Vec<CandidateResult>>;
-    
+
     /// Search using INT8 quantized vectors
     async fn search_int8(
         &self,
@@ -34,7 +34,7 @@ pub trait ProgressiveSearchEngine: Send + Sync {
         filter: Option<&FilterExpression>,
         distance_metric: &DistanceMetric,
     ) -> Result<Vec<CandidateResult>>;
-    
+
     /// Search using Product Quantized vectors
     async fn search_pq(
         &self,
@@ -46,7 +46,7 @@ pub trait ProgressiveSearchEngine: Send + Sync {
         subvectors: usize,
         bits: usize,
     ) -> Result<Vec<CandidateResult>>;
-    
+
     /// Get quantized vectors for refinement
     async fn get_quantized_vectors(
         &self,
@@ -54,14 +54,14 @@ pub trait ProgressiveSearchEngine: Send + Sync {
         vector_ids: &[String],
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<QuantizedVector>>;
-    
+
     /// Get full precision vectors for final ranking
     async fn fp32_vectors(
         &self,
         collection_id: &str,
         vector_ids: &[String],
     ) -> Result<Vec<(String, Vec<f32>)>>;
-    
+
     /// Check if collection has quantization enabled
     async fn has_quantization(
         &self,
@@ -90,7 +90,10 @@ pub struct QuantizedVector {
 pub enum QuantizedVectorData {
     Binary(Vec<u8>),
     Int8(Vec<i8>),
-    ProductQuantized { codes: Vec<u8>, codebook: Arc<Vec<f32>> },
+    ProductQuantized {
+        codes: Vec<u8>,
+        codebook: Arc<Vec<f32>>,
+    },
 }
 
 /// Implementation for SST storage engine
@@ -106,22 +109,24 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage
     ) -> Result<Vec<CandidateResult>> {
         // Search in SST files with binary quantization
         let mut candidates = Vec::new();
-        
+
         // Get all SST files for the collection
         // TODO: Implement actual SST file retrieval
         let _sst_files: Vec<String> = Vec::new(); // Placeholder
-        
+
         // Placeholder implementation - would read from SST files with quantized data
         // For now, return empty results to make it compile
         // Full implementation requires SST hierarchical blocks to be completed
-        
+
         // Sort by distance and take top k
-        candidates.sort_by(|a: &CandidateResult, b: &CandidateResult| a.similarity.partial_cmp(&b.similarity).unwrap());
+        candidates.sort_by(|a: &CandidateResult, b: &CandidateResult| {
+            a.similarity.partial_cmp(&b.similarity).unwrap()
+        });
         candidates.truncate(k);
-        
+
         Ok(candidates)
     }
-    
+
     async fn search_int8(
         &self,
         collection_id: &str,
@@ -131,16 +136,18 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage
         distance_metric: &DistanceMetric,
     ) -> Result<Vec<CandidateResult>> {
         let mut candidates = Vec::new();
-        
+
         // Placeholder implementation - would read from SST files with INT8 quantized data
         // Full implementation requires SST hierarchical blocks to be completed
-        
-        candidates.sort_by(|a: &CandidateResult, b: &CandidateResult| a.similarity.partial_cmp(&b.similarity).unwrap());
+
+        candidates.sort_by(|a: &CandidateResult, b: &CandidateResult| {
+            a.similarity.partial_cmp(&b.similarity).unwrap()
+        });
         candidates.truncate(k);
-        
+
         Ok(candidates)
     }
-    
+
     async fn search_pq(
         &self,
         collection_id: &str,
@@ -152,16 +159,18 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage
         bits: usize,
     ) -> Result<Vec<CandidateResult>> {
         let mut candidates = Vec::new();
-        
+
         // Placeholder implementation - would read from SST files with PQ quantized data
         // Full implementation requires SST hierarchical blocks to be completed
-        
-        candidates.sort_by(|a: &CandidateResult, b: &CandidateResult| a.similarity.partial_cmp(&b.similarity).unwrap());
+
+        candidates.sort_by(|a: &CandidateResult, b: &CandidateResult| {
+            a.similarity.partial_cmp(&b.similarity).unwrap()
+        });
         candidates.truncate(k);
-        
+
         Ok(candidates)
     }
-    
+
     async fn get_quantized_vectors(
         &self,
         collection_id: &str,
@@ -172,7 +181,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage
         // This is a placeholder
         Ok(vec![])
     }
-    
+
     async fn fp32_vectors(
         &self,
         collection_id: &str,
@@ -181,7 +190,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage
         // Placeholder - would fetch full precision vectors from SST storage
         Ok(vec![])
     }
-    
+
     async fn has_quantization(
         &self,
         collection_id: &str,
@@ -207,7 +216,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::viper::ViperEng
         // Placeholder implementation - would read from Parquet files
         Ok(vec![])
     }
-    
+
     async fn search_int8(
         &self,
         collection_id: &str,
@@ -219,7 +228,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::viper::ViperEng
         // Placeholder implementation - would read INT8 column from Parquet
         Ok(vec![])
     }
-    
+
     async fn search_pq(
         &self,
         collection_id: &str,
@@ -233,7 +242,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::viper::ViperEng
         // Placeholder implementation - would read PQ column from Parquet
         Ok(vec![])
     }
-    
+
     async fn get_quantized_vectors(
         &self,
         collection_id: &str,
@@ -243,7 +252,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::viper::ViperEng
         // VIPER implementation would read from columnar storage
         Ok(vec![])
     }
-    
+
     async fn fp32_vectors(
         &self,
         collection_id: &str,
@@ -252,7 +261,7 @@ impl ProgressiveSearchEngine for crate::storage::engines::impls::viper::ViperEng
         // VIPER implementation would read from FP32 column
         Ok(vec![])
     }
-    
+
     async fn has_quantization(
         &self,
         collection_id: &str,

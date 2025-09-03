@@ -15,17 +15,17 @@
  */
 
 //! Tier data movement with proper format handling
-//! 
+//!
 //! Key principle: Each tier uses its native storage format
 //! - Memory: bincode for fast serialization
 //! - Disk (NVMe/HDD): SST or VIPER native formats
 //! - Cloud (S3): SST or VIPER native formats
-//! 
+//!
 //! Data movement between tiers respects format boundaries
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use crate::infrastructure::tier_policy_engine::StorageTier;
 use crate::proto::proximadb::VectorRecord;
@@ -70,18 +70,16 @@ impl TierDataMovement {
     pub fn get_tier_format(&self, tier: &StorageTier) -> TierDataFormat {
         match tier {
             StorageTier::Memory => TierDataFormat::Bincode,
-            StorageTier::NvmeSsd { .. } | 
-            StorageTier::HardDisk { .. } |
-            StorageTier::CloudExpressOneZone { .. } |
-            StorageTier::CloudStandard { .. } |
-            StorageTier::CloudInfrequentAccess { .. } |
-            StorageTier::CloudArchive { .. } |
-            StorageTier::CloudDeepArchive { .. } => {
-                match self.storage_engine {
-                    StorageEngineType::SST => TierDataFormat::SST,
-                    StorageEngineType::VIPER => TierDataFormat::VIPER,
-                }
-            }
+            StorageTier::NvmeSsd { .. }
+            | StorageTier::HardDisk { .. }
+            | StorageTier::CloudExpressOneZone { .. }
+            | StorageTier::CloudStandard { .. }
+            | StorageTier::CloudInfrequentAccess { .. }
+            | StorageTier::CloudArchive { .. }
+            | StorageTier::CloudDeepArchive { .. } => match self.storage_engine {
+                StorageEngineType::SST => TierDataFormat::SST,
+                StorageEngineType::VIPER => TierDataFormat::VIPER,
+            },
         }
     }
 
@@ -97,12 +95,16 @@ impl TierDataMovement {
 
         info!(
             "Promoting {} items from {:?} ({:?}) to {:?} ({:?})",
-            items.len(), from_tier, from_format, to_tier, to_format
+            items.len(),
+            from_tier,
+            from_format,
+            to_tier,
+            to_format
         );
 
         // Read data from source tier
         let vectors = self.read_from_tier(&items, from_tier, &from_format).await?;
-        
+
         // Write data to destination tier
         let bytes_written = self.write_to_tier(vectors, to_tier, &to_format).await?;
 
@@ -127,12 +129,16 @@ impl TierDataMovement {
 
         info!(
             "Demoting {} items from {:?} ({:?}) to {:?} ({:?})",
-            items.len(), from_tier, from_format, to_tier, to_format
+            items.len(),
+            from_tier,
+            from_format,
+            to_tier,
+            to_format
         );
 
         // Read data from source tier
         let vectors = self.read_from_tier(&items, from_tier, &from_format).await?;
-        
+
         // Write data to destination tier
         let bytes_written = self.write_to_tier(vectors, to_tier, &to_format).await?;
 
@@ -198,8 +204,11 @@ impl TierDataMovement {
         ids: &[String],
         _tier: &StorageTier,
     ) -> Result<Vec<VectorRecord>> {
-        debug!("Reading {} vectors from memory tier using bincode", ids.len());
-        
+        debug!(
+            "Reading {} vectors from memory tier using bincode",
+            ids.len()
+        );
+
         // In production, this would:
         // 1. Look up vectors in memory cache
         // 2. Deserialize using bincode
@@ -213,8 +222,11 @@ impl TierDataMovement {
         vectors: Vec<VectorRecord>,
         _tier: &StorageTier,
     ) -> Result<usize> {
-        debug!("Writing {} vectors to memory tier using bincode", vectors.len());
-        
+        debug!(
+            "Writing {} vectors to memory tier using bincode",
+            vectors.len()
+        );
+
         // Serialize vectors using bincode
         let mut total_bytes = 0;
         for vector in &vectors {
@@ -222,7 +234,7 @@ impl TierDataMovement {
             total_bytes += serialized.len();
             // In production, store in memory cache
         }
-        
+
         Ok(total_bytes)
     }
 
@@ -234,27 +246,31 @@ impl TierDataMovement {
     ) -> Result<Vec<VectorRecord>> {
         let path = self.get_tier_path(tier)?;
         debug!("Reading {} vectors from SST at {}", ids.len(), path);
-        
+
         // Use SSTable reader to load vectors
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::new(config)
                 .await
-                .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
+                .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
         // Create zero-copy system for the reader
-        let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
+        let zero_copy_config =
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
         let zero_copy_system = Arc::new(
             crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
                 zero_copy_config,
                 filesystem.clone(),
                 vec![],
-            ).await.map_err(|e| anyhow!("Failed to create zero-copy system: {}", e))?
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to create zero-copy system: {}", e))?,
         );
-        let reader = UnifiedSstableReader::new(filesystem, zero_copy_system, self.collection_id.clone());
+        let reader =
+            UnifiedSstableReader::new(filesystem, zero_copy_system, self.collection_id.clone());
         let mut vectors = Vec::new();
-        
+
         // SSTable reader reads individual vectors
         // Note: We're using a dummy SST file path for each vector since SSTable reader
         // expects file paths, not directory paths
@@ -264,7 +280,7 @@ impl TierDataMovement {
                 vectors.push(vector);
             }
         }
-        
+
         Ok(vectors)
     }
 
@@ -276,29 +292,34 @@ impl TierDataMovement {
     ) -> Result<usize> {
         let path = self.get_tier_path(tier)?;
         debug!("Writing {} vectors to SST at {}", vectors.len(), path);
-        
+
         // Use SSTable writer to store vectors
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::new(config)
                 .await
-                .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
+                .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
         let writer = SstableWriter::new(&path, 4096, filesystem);
-        
+
         // Pass vectors directly without any ID manipulation or deduplication
         // Collection service handles ID validation when needed
         let mut total_bytes = 0;
-        let records: Vec<VectorRecord> = vectors.iter().map(|vector| {
-            total_bytes += vector.vector.len() * 4; // f32 is 4 bytes
-            vector.clone()
-        }).collect();
-        
+        let records: Vec<VectorRecord> = vectors
+            .iter()
+            .map(|vector| {
+                total_bytes += vector.vector.len() * 4; // f32 is 4 bytes
+                vector.clone()
+            })
+            .collect();
+
         // Write records using streaming approach for production consistency
         let record_count = records.len();
         let sorted_records_iter = records.into_iter();
-        writer.write_sorted_records(sorted_records_iter, record_count).await?;
+        writer
+            .write_sorted_records(sorted_records_iter, record_count)
+            .await?;
         Ok(total_bytes)
     }
 
@@ -310,19 +331,19 @@ impl TierDataMovement {
     ) -> Result<Vec<VectorRecord>> {
         let path = self.get_tier_path(tier)?;
         debug!("Reading {} vectors from VIPER at {}", ids.len(), path);
-        
+
         // Use Parquet reader to load vectors
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::new(config)
                 .await
-                .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?
+                .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
         // TODO: Re-enable when UnifiedParquetReader is available
         // let reader = UnifiedParquetReader::new(filesystem);
         let mut vectors = Vec::new();
-        
+
         // TODO: Implement VIPER reading when UnifiedParquetReader is restored
         // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata_info"]).await?;
         // for vector in all_vectors {
@@ -332,7 +353,7 @@ impl TierDataMovement {
         //         }
         //     }
         // }
-        
+
         Ok(vectors)
     }
 
@@ -344,54 +365,49 @@ impl TierDataMovement {
     ) -> Result<usize> {
         let path = self.get_tier_path(tier)?;
         debug!("Writing {} vectors to VIPER at {}", vectors.len(), path);
-        
+
         // TODO: Use VIPER flush operation to write Parquet
         // In production, this would use the VIPER writer
         // For now, estimate bytes written
         let bytes_per_vector = 1024; // Rough estimate
         let total_bytes = vectors.len() * bytes_per_vector;
-        
+
         Ok(total_bytes)
     }
 
     /// Remove vectors from a tier
-    async fn remove_from_tier(
-        &self,
-        ids: &[String],
-        tier: &StorageTier,
-    ) -> Result<()> {
+    async fn remove_from_tier(&self, ids: &[String], tier: &StorageTier) -> Result<()> {
         debug!("Removing {} vectors from {:?}", ids.len(), tier);
-        
+
         // In production, this would:
         // 1. Mark vectors as deleted in the tier
         // 2. Schedule compaction to reclaim space
-        
+
         Ok(())
     }
 
     /// Get the storage path for a tier
     fn get_tier_path(&self, tier: &StorageTier) -> Result<String> {
         match tier {
-            StorageTier::Memory => {
-                Err(anyhow!("Memory tier has no file path"))
-            }
+            StorageTier::Memory => Err(anyhow!("Memory tier has no file path")),
             StorageTier::NvmeSsd { mount_path } => {
                 Ok(format!("{}/{}", mount_path, self.collection_id))
             }
             StorageTier::HardDisk { mount_path } => {
                 Ok(format!("{}/{}", mount_path, self.collection_id))
             }
-            StorageTier::CloudExpressOneZone { provider, .. } |
-            StorageTier::CloudStandard { provider, .. } |
-            StorageTier::CloudInfrequentAccess { provider, .. } |
-            StorageTier::CloudArchive { provider, .. } |
-            StorageTier::CloudDeepArchive { provider, .. } => {
+            StorageTier::CloudExpressOneZone { provider, .. }
+            | StorageTier::CloudStandard { provider, .. }
+            | StorageTier::CloudInfrequentAccess { provider, .. }
+            | StorageTier::CloudArchive { provider, .. }
+            | StorageTier::CloudDeepArchive { provider, .. } => {
                 // Extract bucket/container from provider
                 match provider {
-                    crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 { bucket, .. } => {
-                        Ok(format!("s3://{}/{}", bucket, self.collection_id))
-                    }
-                    _ => Ok(format!("cloud://{}", self.collection_id))
+                    crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
+                        bucket,
+                        ..
+                    } => Ok(format!("s3://{}/{}", bucket, self.collection_id)),
+                    _ => Ok(format!("cloud://{}", self.collection_id)),
                 }
             }
         }
@@ -423,10 +439,7 @@ mod tests {
 
     #[test]
     fn test_tier_format_selection() {
-        let movement = TierDataMovement::new(
-            "test_collection".to_string(),
-            StorageEngineType::SST,
-        );
+        let movement = TierDataMovement::new("test_collection".to_string(), StorageEngineType::SST);
 
         // Memory always uses bincode
         assert!(matches!(
@@ -436,20 +449,18 @@ mod tests {
 
         // Disk tiers use engine format
         assert!(matches!(
-            movement.get_tier_format(&StorageTier::NvmeSsd { 
-                mount_path: "/mnt/nvme".to_string() 
+            movement.get_tier_format(&StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string()
             }),
             TierDataFormat::SST
         ));
 
         // VIPER engine uses VIPER format for disk
-        let viper_movement = TierDataMovement::new(
-            "test_collection".to_string(),
-            StorageEngineType::VIPER,
-        );
+        let viper_movement =
+            TierDataMovement::new("test_collection".to_string(), StorageEngineType::VIPER);
         assert!(matches!(
-            viper_movement.get_tier_format(&StorageTier::HardDisk { 
-                mount_path: "/mnt/disk".to_string() 
+            viper_movement.get_tier_format(&StorageTier::HardDisk {
+                mount_path: "/mnt/disk".to_string()
             }),
             TierDataFormat::VIPER
         ));

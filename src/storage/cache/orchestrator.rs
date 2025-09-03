@@ -1,18 +1,17 @@
 //! Cross-cache orchestrator for managing multi-cache operations and synergies
 
+use anyhow::Result;
+use dashmap::DashMap;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, mpsc};
-use anyhow::Result;
-use dashmap::DashMap;
 
-use crate::storage::cache::{
-    VectorStore, QueryCache, BitmapFilterCache,
-    IndexNodeCache, MetadataStore,
-};
-use crate::storage::cache::metrics::CacheMetrics;
 use crate::metrics::collectors::AccessPatternMetricsCollector;
+use crate::storage::cache::metrics::CacheMetrics;
+use crate::storage::cache::{
+    BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorStore,
+};
 
 /// Event for async cache access tracking
 #[derive(Clone, Debug)]
@@ -65,24 +64,24 @@ pub enum CacheType {
 impl AccessPatternTracker {
     pub fn new(max_history: usize) -> Self {
         let (event_sender, mut event_receiver) = mpsc::channel::<CacheAccessEvent>(10000);
-        
+
         let access_history = Arc::new(Mutex::new(VecDeque::with_capacity(max_history)));
         let correlation_matrix = Arc::new(DashMap::new());
-        
+
         // Create metrics collector for unified framework integration
         let metrics_collector = Some(Arc::new(AccessPatternMetricsCollector::new()));
-        
+
         // Clone for the background task
         let history_clone = access_history.clone();
         let matrix_clone = correlation_matrix.clone();
         let max_history_clone = max_history;
         let metrics_clone = metrics_collector.clone();
-        
+
         // Start background processor
         let processor_handle = tokio::spawn(async move {
             let mut batch = Vec::new();
             let mut interval = tokio::time::interval(Duration::from_millis(100));
-            
+
             loop {
                 tokio::select! {
                     Some(event) = event_receiver.recv() => {
@@ -113,7 +112,7 @@ impl AccessPatternTracker {
                 }
             }
         });
-        
+
         Self {
             access_history,
             correlation_matrix,
@@ -131,7 +130,7 @@ impl AccessPatternTracker {
             cache_type,
             timestamp: SystemTime::now(),
         };
-        
+
         // Try to send, don't block if queue is full (best-effort)
         let _ = self.event_sender.try_send(event);
     }
@@ -140,11 +139,11 @@ impl AccessPatternTracker {
     pub async fn track_access_sync(&self, key: String, cache_type: CacheType) {
         // For backward compatibility and tests, process immediately
         let mut history = self.access_history.lock().await;
-        
+
         // Update followed_by for the last few accesses
         let history_len = history.len();
         let update_count = history_len.min(3);
-        
+
         for i in 0..update_count {
             let idx = history_len - 1 - i;
             if let Some(record) = history.get_mut(idx) {
@@ -153,7 +152,7 @@ impl AccessPatternTracker {
                 }
             }
         }
-        
+
         // Add new record
         let record = AccessRecord {
             key: key.clone(),
@@ -161,19 +160,20 @@ impl AccessPatternTracker {
             timestamp: SystemTime::now(),
             followed_by: Vec::new(),
         };
-        
+
         history.push_back(record);
-        
+
         // Maintain history size
         while history.len() > self.max_history {
             history.pop_front();
         }
-        
+
         let history_snapshot = history.clone();
         drop(history); // Release lock
-        
+
         // Update correlations
-        self.update_correlations(&key, &cache_type, history_snapshot).await;
+        self.update_correlations(&key, &cache_type, history_snapshot)
+            .await;
     }
 
     /// Process a batch of events in the background
@@ -185,25 +185,27 @@ impl AccessPatternTracker {
         metrics_collector: &Option<Arc<AccessPatternMetricsCollector>>,
     ) {
         let mut history_guard = history.lock().await;
-        
+
         for event in batch.drain(..) {
             // Record metrics if collector is available
             if let Some(ref collector) = metrics_collector {
                 // Map cache type to collection ID for metrics
                 let collection_id = format!("cache_{:?}", event.cache_type);
-                collector.record_access(
-                    event.key.clone(),
-                    collection_id,
-                    0, // size_bytes - would need to be passed in event
-                    0.0, // latency_ms - would need to be measured
-                    true, // cache_hit - assume true for now
-                ).await;
+                collector
+                    .record_access(
+                        event.key.clone(),
+                        collection_id,
+                        0,    // size_bytes - would need to be passed in event
+                        0.0,  // latency_ms - would need to be measured
+                        true, // cache_hit - assume true for now
+                    )
+                    .await;
             }
-            
+
             // Update followed_by for recent accesses
             let history_len = history_guard.len();
             let update_count = history_len.min(3);
-            
+
             for i in 0..update_count {
                 let idx = history_len - 1 - i;
                 if let Some(record) = history_guard.get_mut(idx) {
@@ -212,7 +214,7 @@ impl AccessPatternTracker {
                     }
                 }
             }
-            
+
             // Add new record
             let record = AccessRecord {
                 key: event.key.clone(),
@@ -220,25 +222,30 @@ impl AccessPatternTracker {
                 timestamp: event.timestamp,
                 followed_by: Vec::new(),
             };
-            
+
             history_guard.push_back(record);
-            
+
             // Maintain history size
             while history_guard.len() > max_history {
                 history_guard.pop_front();
             }
-            
+
             // Update correlations for this key
             Self::update_correlations_internal(
                 &event.key,
                 &event.cache_type,
                 &history_guard,
-                correlation_matrix
+                correlation_matrix,
             );
         }
     }
 
-    async fn update_correlations(&self, key: &str, cache_type: &CacheType, history: VecDeque<AccessRecord>) {
+    async fn update_correlations(
+        &self,
+        key: &str,
+        cache_type: &CacheType,
+        history: VecDeque<AccessRecord>,
+    ) {
         Self::update_correlations_internal(key, cache_type, &history, &self.correlation_matrix);
     }
 
@@ -250,7 +257,7 @@ impl AccessPatternTracker {
     ) {
         // Count co-occurrences
         let mut cooccurrence_counts: HashMap<(String, CacheType), usize> = HashMap::new();
-        
+
         for record in history.iter() {
             if record.key == key {
                 for followed in &record.followed_by {
@@ -261,7 +268,7 @@ impl AccessPatternTracker {
                 }
             }
         }
-        
+
         // Convert to correlation scores
         let mut correlated_items = Vec::new();
         for ((item_key, item_type), count) in cooccurrence_counts {
@@ -272,21 +279,28 @@ impl AccessPatternTracker {
                 correlation_score: score,
             });
         }
-        
+
         // Sort by correlation score
         correlated_items.sort_by(|a, b| {
-            b.correlation_score.partial_cmp(&a.correlation_score).unwrap()
+            b.correlation_score
+                .partial_cmp(&a.correlation_score)
+                .unwrap()
         });
-        
+
         // Use DashMap's insert (lock-free)
         correlation_matrix.insert(key.to_string(), correlated_items);
     }
 
     /// Get items likely to be accessed after the given key
-    pub async fn get_predicted_accesses(&self, key: &str, limit: usize) -> Vec<(String, CacheType)> {
+    pub async fn get_predicted_accesses(
+        &self,
+        key: &str,
+        limit: usize,
+    ) -> Vec<(String, CacheType)> {
         // DashMap allows lock-free reads
         if let Some(entry) = self.correlation_matrix.get(key) {
-            entry.value()
+            entry
+                .value()
                 .iter()
                 .take(limit)
                 .filter(|item| item.correlation_score > 0.3)
@@ -302,7 +316,7 @@ impl AccessPatternTracker {
         let history = self.access_history.lock().await;
         history.iter().filter(|r| r.key == key).count() >= threshold
     }
-    
+
     /// Get the metrics collector for registration with unified framework
     pub fn metrics_collector(&self) -> Option<Arc<AccessPatternMetricsCollector>> {
         self.metrics_collector.clone()
@@ -330,14 +344,14 @@ pub struct UsageStats {
 impl DynamicMemoryAllocator {
     pub fn new(total_budget: usize) -> Self {
         let allocations = Arc::new(DashMap::new());
-        
+
         // Initial allocation percentages
         allocations.insert(CacheType::VectorData, total_budget * 40 / 100);
         allocations.insert(CacheType::QueryResult, total_budget * 30 / 100);
         allocations.insert(CacheType::FilterBitmap, total_budget * 15 / 100);
         allocations.insert(CacheType::IndexStructure, total_budget * 10 / 100);
         allocations.insert(CacheType::Metadata, total_budget * 5 / 100);
-        
+
         Self {
             total_budget,
             allocations,
@@ -353,23 +367,23 @@ impl DynamicMemoryAllocator {
     /// Rebalance memory allocations based on usage patterns
     pub async fn rebalance(&self) -> HashMap<CacheType, usize> {
         let mut new_allocations = HashMap::new();
-        
+
         // Calculate scores for each cache type
         let mut scores: HashMap<CacheType, f64> = HashMap::new();
         let mut total_score = 0.0;
-        
+
         // Iterate through DashMap entries
         for entry in self.usage_stats.iter() {
             let cache_type = entry.key().clone();
             let stat = entry.value();
-            
+
             // Score based on hit rate, access frequency, and efficiency
             let efficiency = stat.hit_rate * stat.access_frequency;
             let score = efficiency * (1.0 + (1.0 / stat.avg_entry_size as f64));
             scores.insert(cache_type, score);
             total_score += score;
         }
-        
+
         // Allocate memory proportionally to scores
         if total_score > 0.0 {
             for (cache_type, score) in scores {
@@ -384,22 +398,23 @@ impl DynamicMemoryAllocator {
                 new_allocations.insert(entry.key().clone(), *entry.value());
             }
         }
-        
+
         new_allocations
     }
 
     /// Get current allocation for a cache type
     pub async fn get_allocation(&self, cache_type: CacheType) -> usize {
-        self.allocations.get(&cache_type)
+        self.allocations
+            .get(&cache_type)
             .map(|entry| *entry.value())
             .unwrap_or(0)
     }
-    
+
     /// Get total memory budget
     pub fn total_budget(&self) -> usize {
         self.total_budget
     }
-    
+
     /// Update allocation for a specific cache type
     pub async fn update_allocation(&self, cache_type: CacheType, new_allocation: usize) {
         self.allocations.insert(cache_type, new_allocation);
@@ -434,12 +449,15 @@ impl PredictivePrefetchEngine {
     pub async fn queue_predictive_fetch(&self, trigger_key: &str, _trigger_type: CacheType) {
         // Note: Access is already recorded by the caller (on_vector_access, etc.)
         // Don't record again to avoid duplication
-        
+
         // Get predicted next accesses
-        let predictions = self.pattern_tracker.get_predicted_accesses(trigger_key, 5).await;
-        
+        let predictions = self
+            .pattern_tracker
+            .get_predicted_accesses(trigger_key, 5)
+            .await;
+
         let mut queue = self.prefetch_queue.lock().await;
-        
+
         for (key, cache_type) in predictions {
             let request = PrefetchRequest {
                 key,
@@ -447,7 +465,7 @@ impl PredictivePrefetchEngine {
                 priority: 5, // Medium priority for pattern-based prefetch
                 requested_at: SystemTime::now(),
             };
-            
+
             // Add to queue if not full
             if queue.len() < self.max_queue_size {
                 queue.push_back(request);
@@ -464,17 +482,17 @@ impl PredictivePrefetchEngine {
     /// Add high-priority prefetch request
     pub async fn prefetch_urgent(&self, key: String, cache_type: CacheType) {
         let mut queue = self.prefetch_queue.lock().await;
-        
+
         let request = PrefetchRequest {
             key,
             cache_type,
             priority: 10, // High priority
             requested_at: SystemTime::now(),
         };
-        
+
         // Add to front for urgent requests
         queue.push_front(request);
-        
+
         // Maintain queue size
         while queue.len() > self.max_queue_size {
             queue.pop_back();
@@ -505,7 +523,7 @@ impl CascadeInvalidator {
             .entry(key.clone())
             .or_insert_with(Vec::new)
             .push(depends_on.clone());
-        
+
         // Add reverse dependency
         self.reverse_index
             .entry(depends_on)
@@ -518,7 +536,7 @@ impl CascadeInvalidator {
         let mut to_invalidate = Vec::new();
         let mut visited = std::collections::HashSet::new();
         let mut queue = VecDeque::new();
-        
+
         // Start with direct dependents
         if let Some(entry) = self.reverse_index.get(key) {
             for dependent in entry.value() {
@@ -528,7 +546,7 @@ impl CascadeInvalidator {
                 }
             }
         }
-        
+
         // Process transitive dependencies
         while let Some(current) = queue.pop_front() {
             if let Some(entry) = self.reverse_index.get(key) {
@@ -540,7 +558,7 @@ impl CascadeInvalidator {
                 }
             }
         }
-        
+
         to_invalidate
     }
 
@@ -556,22 +574,22 @@ impl CascadeInvalidator {
             }
         }
     }
-    
+
     /// Invalidate all dependent entries when a key changes
     pub async fn invalidate_cascade(&self, key: &str) -> Result<()> {
         // Get all entries that depend on this key
         let to_invalidate = self.get_invalidation_cascade(key).await;
-        
+
         // In a real implementation, we would actually invalidate these entries
         // from their respective caches. For now, we just track them.
         // The actual invalidation is handled by the CrossCacheOrchestrator
         // which has access to all the cache instances.
-        
+
         // Remove the dependencies since they're now invalidated
         for invalid_key in &to_invalidate {
             self.remove_dependencies(invalid_key).await;
         }
-        
+
         Ok(())
     }
 }
@@ -588,7 +606,7 @@ pub struct CrossCacheOrchestrator {
     index_cache: Option<Arc<IndexNodeCache>>,
     /// Metadata cache
     metadata_cache: Option<Arc<MetadataStore>>,
-    
+
     /// Pattern analyzer for predictive operations
     pattern_tracker: Arc<AccessPatternTracker>,
     /// Memory allocator for dynamic tier management
@@ -597,7 +615,7 @@ pub struct CrossCacheOrchestrator {
     prefetch_engine: Arc<PredictivePrefetchEngine>,
     /// Cascade invalidator for propagating updates
     cascade_invalidator: Arc<CascadeInvalidator>,
-    
+
     /// Metrics
     metrics: Arc<CacheMetrics>,
 }
@@ -606,10 +624,11 @@ impl CrossCacheOrchestrator {
     pub fn new(total_memory_budget: usize) -> Self {
         let pattern_tracker = Arc::new(AccessPatternTracker::new(10000));
         let memory_allocator = Arc::new(DynamicMemoryAllocator::new(total_memory_budget));
-        let prefetch_engine = Arc::new(PredictivePrefetchEngine::new(pattern_tracker.clone(), 1000));
+        let prefetch_engine =
+            Arc::new(PredictivePrefetchEngine::new(pattern_tracker.clone(), 1000));
         let cascade_invalidator = Arc::new(CascadeInvalidator::new());
         let metrics = Arc::new(CacheMetrics::new());
-        
+
         Self {
             vector_cache: None,
             query_cache: None,
@@ -623,85 +642,89 @@ impl CrossCacheOrchestrator {
             metrics,
         }
     }
-    
+
     /// Register vector data cache
     pub fn with_vector_cache(mut self, cache: Arc<VectorStore>) -> Self {
         self.vector_cache = Some(cache);
         self
     }
-    
+
     /// Register query result cache
     pub fn with_query_cache(mut self, cache: Arc<QueryCache>) -> Self {
         self.query_cache = Some(cache);
         self
     }
-    
+
     /// Register filter bitmap cache
     pub fn with_filter_cache(mut self, cache: Arc<BitmapFilterCache>) -> Self {
         self.filter_cache = Some(cache);
         self
     }
-    
+
     /// Register index structure cache
     pub fn with_index_cache(mut self, cache: Arc<IndexNodeCache>) -> Self {
         self.index_cache = Some(cache);
         self
     }
-    
+
     /// Register metadata cache
     pub fn with_metadata_cache(mut self, cache: Arc<MetadataStore>) -> Self {
         self.metadata_cache = Some(cache);
         self
     }
-    
+
     /// Handle vector access with cross-cache operations
     pub async fn on_vector_access(&self, vector_id: &str) -> Result<()> {
         // Track access pattern (non-blocking)
-        self.pattern_tracker.track_access_async(
-            vector_id.to_string(),
-            CacheType::VectorData
-        );
-        
+        self.pattern_tracker
+            .track_access_async(vector_id.to_string(), CacheType::VectorData);
+
         // Queue predictive prefetching
-        self.prefetch_engine.queue_predictive_fetch(vector_id, CacheType::VectorData).await;
-        
+        self.prefetch_engine
+            .queue_predictive_fetch(vector_id, CacheType::VectorData)
+            .await;
+
         // Check if this is a frequently accessed vector
-        if self.pattern_tracker.is_frequently_accessed(vector_id, 10).await {
+        if self
+            .pattern_tracker
+            .is_frequently_accessed(vector_id, 10)
+            .await
+        {
             // Prefetch related metadata
             if let Some(_metadata_cache) = &self.metadata_cache {
                 // Would actually fetch from storage
                 // metadata_cache.prefetch(vector_id).await?;
             }
-            
+
             // Prefetch common filters for this vector
             if let Some(_filter_cache) = &self.filter_cache {
                 // Would actually compute common filters
                 // filter_cache.prefetch_filters(vector_id).await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle query execution with result caching
     pub async fn on_query_execution(&self, query_key: &str) -> Result<()> {
         // Track access pattern (non-blocking)
-        self.pattern_tracker.track_access_async(
-            query_key.to_string(),
-            CacheType::QueryResult
-        );
-        
+        self.pattern_tracker
+            .track_access_async(query_key.to_string(), CacheType::QueryResult);
+
         // Queue predictive prefetching for similar queries
-        self.prefetch_engine.queue_predictive_fetch(query_key, CacheType::QueryResult).await;
-        
+        self.prefetch_engine
+            .queue_predictive_fetch(query_key, CacheType::QueryResult)
+            .await;
+
         Ok(())
     }
-    
+
     /// Orchestrate cascade invalidation across caches
     pub async fn orchestrate_cascade_invalidation(&self, key: &str) -> Result<()> {
         // Invalidate from all caches that might have this key
         let mut tasks = vec![];
-        
+
         if let Some(ref cache) = self.vector_cache {
             let cache = cache.clone();
             let key = key.to_string();
@@ -709,7 +732,7 @@ impl CrossCacheOrchestrator {
                 cache.invalidate(&key).await;
             }));
         }
-        
+
         if let Some(ref cache) = self.query_cache {
             let cache = cache.clone();
             let key = key.to_string();
@@ -717,7 +740,7 @@ impl CrossCacheOrchestrator {
                 cache.invalidate(&key).await;
             }));
         }
-        
+
         if let Some(ref cache) = self.filter_cache {
             let cache = cache.clone();
             let key = key.to_string();
@@ -725,7 +748,7 @@ impl CrossCacheOrchestrator {
                 cache.invalidate(&key).await;
             }));
         }
-        
+
         if let Some(ref cache) = self.index_cache {
             let cache = cache.clone();
             let key = key.to_string();
@@ -733,7 +756,7 @@ impl CrossCacheOrchestrator {
                 cache.invalidate(&key).await;
             }));
         }
-        
+
         if let Some(ref cache) = self.metadata_cache {
             let cache = cache.clone();
             let key = key.to_string();
@@ -741,23 +764,23 @@ impl CrossCacheOrchestrator {
                 cache.invalidate(&key).await;
             }));
         }
-        
+
         // Wait for all invalidations to complete
         for task in tasks {
             let _ = task.await;
         }
-        
+
         // Trigger cascade invalidation for dependent entries
         self.cascade_invalidator.invalidate_cascade(key).await?;
-        
+
         Ok(())
     }
-    
+
     /// Reallocate memory tiers based on usage patterns
     pub async fn reallocate_memory_tiers(&self) -> Result<()> {
         // Collect current usage stats
         let mut stats_updates = Vec::new();
-        
+
         if let Some(vector_cache) = &self.vector_cache {
             let metrics = vector_cache.metrics();
             stats_updates.push((
@@ -767,18 +790,18 @@ impl CrossCacheOrchestrator {
                     avg_entry_size: 1024, // Would calculate actual size
                     access_frequency: metrics.total_gets() as f64 / 3600.0,
                     last_rebalance: SystemTime::now(),
-                }
+                },
             ));
         }
-        
+
         // Update stats in memory manager
         for (cache_type, stats) in stats_updates {
             self.memory_allocator.update_stats(cache_type, stats).await;
         }
-        
+
         // Perform reallocation
         let new_allocations = self.memory_allocator.rebalance().await;
-        
+
         // Apply new allocations to caches
         for (cache_type, allocation) in new_allocations {
             match cache_type {
@@ -800,22 +823,22 @@ impl CrossCacheOrchestrator {
                 _ => {}
             }
         }
-        
+
         self.metrics.record_memory_rebalance();
-        
+
         Ok(())
     }
-    
+
     /// Start background prefetch worker
     pub async fn start_prefetch_worker(&self) {
         let prefetch_engine = self.prefetch_engine.clone();
         let vector_cache = self.vector_cache.clone();
         let metadata_cache = self.metadata_cache.clone();
-        
+
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                
+
                 if let Some(request) = prefetch_engine.dequeue_fetch_request().await {
                     match request.cache_type {
                         CacheType::VectorData => {
@@ -836,17 +859,17 @@ impl CrossCacheOrchestrator {
             }
         });
     }
-    
+
     /// Get pattern tracker for external use
     pub fn pattern_tracker(&self) -> Arc<AccessPatternTracker> {
         self.pattern_tracker.clone()
     }
-    
+
     /// Get memory allocator for external use
     pub fn memory_allocator(&self) -> Arc<DynamicMemoryAllocator> {
         self.memory_allocator.clone()
     }
-    
+
     /// Get metrics
     pub fn metrics(&self) -> Arc<CacheMetrics> {
         self.metrics.clone()

@@ -17,23 +17,26 @@ impl SystemMetricsCollector {
 impl MetricsCollector for SystemMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
         let mut values = HashMap::new();
-        
+
         // Placeholder values - would use actual system metrics
         values.insert("cpu_usage_percent".to_string(), 45.0);
         values.insert("memory_used_bytes".to_string(), 1024.0 * 1024.0 * 512.0);
-        values.insert("disk_used_bytes".to_string(), 1024.0 * 1024.0 * 1024.0 * 10.0);
-        
+        values.insert(
+            "disk_used_bytes".to_string(),
+            1024.0 * 1024.0 * 1024.0 * 10.0,
+        );
+
         Ok(MetricsSample {
             timestamp: Instant::now(),
             collector: self.name().to_string(),
             values,
         })
     }
-    
+
     fn name(&self) -> &'static str {
         "system"
     }
-    
+
     fn recommended_interval(&self) -> Duration {
         Duration::from_secs(60) // Optimized: 30s -> 60s (1 minute)
     }

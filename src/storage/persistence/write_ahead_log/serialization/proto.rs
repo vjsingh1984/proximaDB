@@ -1,9 +1,9 @@
 //! Protocol Buffers serialization for WAL
-//! 
+//!
 //! This is the default and recommended format for ProximaDB's proto-first architecture.
 
-use anyhow::Result;
 use crate::core::VectorRecord;
+use anyhow::Result;
 use prost::Message;
 
 /// Protocol Buffers serializer - the default for proto-first architecture
@@ -23,15 +23,15 @@ struct ProtoVectorBatch {
     /// Batch of vector records
     #[prost(message, repeated, tag = "1")]
     pub vectors: Vec<crate::proto::proximadb::VectorRecord>,
-    
+
     /// Batch metadata
     #[prost(string, optional, tag = "2")]
     pub batch_id: Option<String>,
-    
+
     /// Batch timestamp (microseconds since epoch)
     #[prost(int64, tag = "3")]
     pub timestamp: i64,
-    
+
     /// Collection ID for this batch
     #[prost(string, tag = "4")]
     pub collection_id: String,
@@ -46,24 +46,25 @@ impl super::VectorBatchSerializer for ProtocolBuffersSerializer {
             timestamp: chrono::Utc::now().timestamp_micros(),
             collection_id: String::new(), // Collection ID is managed externally
         };
-        
+
         // Serialize using protobuf
         let mut buf = Vec::new();
-        batch.encode(&mut buf)
+        batch
+            .encode(&mut buf)
             .map_err(|e| anyhow::anyhow!("Failed to encode proto vector batch: {}", e))?;
-        
+
         Ok(buf)
     }
-    
+
     fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
         // Deserialize protobuf
         let batch = ProtoVectorBatch::decode(data)
             .map_err(|e| anyhow::anyhow!("Failed to decode proto vector batch: {}", e))?;
-        
+
         // Direct return - VectorRecord is already proto type in proto-first architecture
         Ok(batch.vectors)
     }
-    
+
     fn format(&self) -> super::SerializationFormat {
         super::SerializationFormat::ProtocolBuffers
     }
@@ -79,12 +80,12 @@ mod tests {
         VectorRecord {
             id: Some("test_vector_1".to_string()),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("test".to_string())),
-                },
-            ],
+            metadata: vec![MetadataItem {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    "test".to_string(),
+                )),
+            }],
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
@@ -99,14 +100,16 @@ mod tests {
     fn test_protocol_buffers_round_trip() {
         let serializer = ProtocolBuffersSerializer::new();
         let vectors = vec![create_test_vector()];
-        
+
         // Serialize
-        let serialized = serializer.serialize_batch(&vectors)
+        let serialized = serializer
+            .serialize_batch(&vectors)
             .expect("Failed to serialize batch");
         assert!(!serialized.is_none());
-        
+
         // Deserialize
-        let deserialized = serializer.deserialize_batch(&serialized)
+        let deserialized = serializer
+            .deserialize_batch(&serialized)
             .expect("Failed to deserialize batch");
         assert_eq!(deserialized.len(), 1);
         assert_eq!(deserialized[0].id, vectors[0].id);
@@ -117,18 +120,23 @@ mod tests {
     fn test_empty_batch_handling() {
         let serializer = ProtocolBuffersSerializer::new();
         let vectors = vec![];
-        
-        let serialized = serializer.serialize_batch(&vectors)
+
+        let serialized = serializer
+            .serialize_batch(&vectors)
             .expect("Failed to serialize empty batch");
-        let deserialized = serializer.deserialize_batch(&serialized)
+        let deserialized = serializer
+            .deserialize_batch(&serialized)
             .expect("Failed to deserialize empty batch");
-        
+
         assert!(deserialized.is_none());
     }
-    
+
     #[test]
     fn test_format_identifier() {
         let serializer = ProtocolBuffersSerializer::new();
-        assert_eq!(serializer.format(), super::super::SerializationFormat::ProtocolBuffers);
+        assert_eq!(
+            serializer.format(),
+            super::super::SerializationFormat::ProtocolBuffers
+        );
     }
 }

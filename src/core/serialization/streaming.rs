@@ -1,5 +1,5 @@
 //! Streaming compression for real-time vector workloads
-//! 
+//!
 //! Provides low-latency compression and decompression for vector streams with:
 //! - Adaptive buffer sizing based on throughput
 //! - Concurrent compression pipelines
@@ -40,12 +40,12 @@ pub struct StreamingConfig {
 impl Default for StreamingConfig {
     fn default() -> Self {
         Self {
-            buffer_size: 100,               // Vectors per batch
+            buffer_size: 100,                         // Vectors per batch
             flush_timeout: Duration::from_millis(10), // 10ms max latency
             worker_count: num_cpus::get().min(8),     // Up to 8 workers
             channel_capacity: 1000,
             adaptive_sizing: true,
-            target_latency_us: 5000,        // 5ms target
+            target_latency_us: 5000, // 5ms target
             enable_monitoring: true,
         }
     }
@@ -69,17 +69,26 @@ pub struct StreamingMetrics {
 impl StreamingMetrics {
     pub fn print_summary(&self) {
         info!("🌊 Streaming Compression Metrics:");
-        info!("   Processed: {} vectors in {} batches", 
-            self.vectors_processed, self.batches_processed);
-        info!("   Throughput: {:.1} vectors/sec", self.throughput_vectors_per_sec);
-        info!("   Latency: avg={} μs, max={} μs", 
-            self.average_latency_us, self.max_latency_us);
-        info!("   Compression: {:.3} ratio ({} → {} bytes)",
-            self.compression_ratio, 
-            self.total_uncompressed_bytes, 
-            self.total_compressed_bytes);
-        info!("   Workers: {} active, queue depth: {}", 
-            self.active_workers, self.queue_depth);
+        info!(
+            "   Processed: {} vectors in {} batches",
+            self.vectors_processed, self.batches_processed
+        );
+        info!(
+            "   Throughput: {:.1} vectors/sec",
+            self.throughput_vectors_per_sec
+        );
+        info!(
+            "   Latency: avg={} μs, max={} μs",
+            self.average_latency_us, self.max_latency_us
+        );
+        info!(
+            "   Compression: {:.3} ratio ({} → {} bytes)",
+            self.compression_ratio, self.total_uncompressed_bytes, self.total_compressed_bytes
+        );
+        info!(
+            "   Workers: {} active, queue depth: {}",
+            self.active_workers, self.queue_depth
+        );
     }
 }
 
@@ -158,8 +167,9 @@ impl AdaptiveController {
             return false;
         }
 
-        let avg_latency = self.recent_latencies.iter().sum::<u64>() / self.recent_latencies.len() as u64;
-        
+        let avg_latency =
+            self.recent_latencies.iter().sum::<u64>() / self.recent_latencies.len() as u64;
+
         // Adjust if significantly off target
         (avg_latency as f64 - target_latency_us as f64).abs() / target_latency_us as f64 > 0.2
     }
@@ -169,8 +179,9 @@ impl AdaptiveController {
             return self.current_buffer_size;
         }
 
-        let avg_latency = self.recent_latencies.iter().sum::<u64>() / self.recent_latencies.len() as u64;
-        
+        let avg_latency =
+            self.recent_latencies.iter().sum::<u64>() / self.recent_latencies.len() as u64;
+
         let new_size = if avg_latency > target_latency_us {
             // Latency too high, reduce buffer size
             (self.current_buffer_size as f32 * 0.8).round() as usize
@@ -182,8 +193,10 @@ impl AdaptiveController {
         self.current_buffer_size = new_size.clamp(10, 1000);
         self.last_adjustment = Instant::now();
 
-        debug!("🎛️ Adaptive buffer size adjustment: {} → {} (latency: {} μs)",
-            self.current_buffer_size, new_size, avg_latency);
+        debug!(
+            "🎛️ Adaptive buffer size adjustment: {} → {} (latency: {} μs)",
+            self.current_buffer_size, new_size, avg_latency
+        );
 
         self.current_buffer_size
     }
@@ -196,9 +209,8 @@ impl StreamingCompressor {
         let (work_tx, work_rx) = mpsc::channel(config.channel_capacity);
         let metrics = Arc::new(RwLock::new(StreamingMetrics::default()));
         let next_batch_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
-        let adaptive_controller = Arc::new(RwLock::new(
-            AdaptiveController::new(config.buffer_size)
-        ));
+        let adaptive_controller =
+            Arc::new(RwLock::new(AdaptiveController::new(config.buffer_size)));
 
         // Start worker threads
         let workers = Self::start_workers(
@@ -225,7 +237,9 @@ impl StreamingCompressor {
         vectors: Vec<Vec<f32>>,
         config: VectorSerializationConfig,
     ) -> Result<CompressionResult> {
-        let batch_id = self.next_batch_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let batch_id = self
+            .next_batch_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (response_tx, response_rx) = oneshot::channel();
 
         let work = CompressionWork {
@@ -236,10 +250,13 @@ impl StreamingCompressor {
             submitted_at: Instant::now(),
         };
 
-        self.work_tx.send(work).await
+        self.work_tx
+            .send(work)
+            .await
             .map_err(|_| anyhow::anyhow!("Compression workers are shut down"))?;
 
-        response_rx.await
+        response_rx
+            .await
             .map_err(|_| anyhow::anyhow!("Compression work was cancelled"))?
     }
 
@@ -264,17 +281,16 @@ impl StreamingCompressor {
             if buffer.len() >= buffer_size {
                 let batch = std::mem::take(&mut buffer);
                 let result = self.compress_batch(batch, config.clone()).await?;
-                
+
                 // Update adaptive controller
                 if self.config.adaptive_sizing {
-                    let throughput = result.compressed_size as f32 / 
-                        result.processing_time.as_secs_f32();
-                    self.adaptive_controller.write().record_performance(
-                        result.processing_time.as_micros() as u64,
-                        throughput,
-                    );
+                    let throughput =
+                        result.compressed_size as f32 / result.processing_time.as_secs_f32();
+                    self.adaptive_controller
+                        .write()
+                        .record_performance(result.processing_time.as_micros() as u64, throughput);
                 }
-                
+
                 results.push(result);
             }
         }
@@ -301,11 +317,14 @@ impl StreamingCompressor {
 
         let mut controller = self.adaptive_controller.write();
         let new_size = controller.adjust_buffer_size(self.config.target_latency_us);
-        
+
         drop(controller);
 
-        debug!("🎯 Performance optimization completed, buffer size: {}", new_size);
-        
+        debug!(
+            "🎯 Performance optimization completed, buffer size: {}",
+            new_size
+        );
+
         Ok(())
     }
 
@@ -355,22 +374,22 @@ impl StreamingCompressor {
                 Some(work) => {
                     let start_time = Instant::now();
                     let queue_time = work.submitted_at.elapsed();
-                    
+
                     let result = Self::process_compression_work(&work, &memory_pool).await;
                     let processing_time = start_time.elapsed();
-                    
+
                     // Update metrics
                     {
                         let mut m = metrics.write();
                         m.vectors_processed += work.vectors.len() as u64;
                         m.batches_processed += 1;
-                        
+
                         if let Ok(ref res) = result {
                             m.total_uncompressed_bytes += res.original_size as u64;
                             m.total_compressed_bytes += res.compressed_size as u64;
-                            m.compression_ratio = m.total_compressed_bytes as f32 / 
-                                m.total_uncompressed_bytes as f32;
-                            
+                            m.compression_ratio =
+                                m.total_compressed_bytes as f32 / m.total_uncompressed_bytes as f32;
+
                             let latency_us = processing_time.as_micros() as u64;
                             m.average_latency_us = (m.average_latency_us + latency_us) / 2;
                             m.max_latency_us = m.max_latency_us.max(latency_us);
@@ -379,12 +398,16 @@ impl StreamingCompressor {
 
                     // Send result
                     if let Err(_) = work.response_tx.send(result) {
-                        warn!("🚫 Worker {}: Failed to send result for batch {}", 
-                            worker_id, work.batch_id);
+                        warn!(
+                            "🚫 Worker {}: Failed to send result for batch {}",
+                            worker_id, work.batch_id
+                        );
                     }
 
-                    trace!("⚡ Worker {} processed batch {} in {:?} (queue: {:?})",
-                        worker_id, work.batch_id, processing_time, queue_time);
+                    trace!(
+                        "⚡ Worker {} processed batch {} in {:?} (queue: {:?})",
+                        worker_id, work.batch_id, processing_time, queue_time
+                    );
                 }
                 None => {
                     debug!("🔧 Worker {} shutting down", worker_id);
@@ -400,17 +423,18 @@ impl StreamingCompressor {
         memory_pool: &VectorMemoryPool,
     ) -> Result<CompressionResult> {
         let start_time = Instant::now();
-        
+
         // Calculate original size
-        let original_size = work.vectors.iter()
+        let original_size = work
+            .vectors
+            .iter()
             .map(|v| v.len() * 4) // f32 = 4 bytes
             .sum::<usize>();
 
         // Serialize vectors using memory pool
-        let compressed_data = memory_pool.serialize_vector_batch_pooled(
-            &work.vectors,
-            &work.config,
-        ).context("Failed to serialize vector batch")?;
+        let compressed_data = memory_pool
+            .serialize_vector_batch_pooled(&work.vectors, &work.config)
+            .context("Failed to serialize vector batch")?;
 
         let processing_time = start_time.elapsed();
         let compressed_size = compressed_data.len();
@@ -437,7 +461,7 @@ impl StreamingCompressor {
         }
 
         info!("🛑 Streaming compressor shutdown complete");
-        
+
         Ok(())
     }
 }
@@ -460,16 +484,19 @@ impl StreamingDecompressor {
     /// Decompress a batch of compressed data
     pub async fn decompress_batch(&self, compressed_data: &[u8]) -> Result<Vec<Vec<f32>>> {
         let start_time = Instant::now();
-        
-        let vectors = self.memory_pool.deserialize_vector_batch_pooled(
-            compressed_data,
-            &self.config,
-        ).context("Failed to deserialize vector batch")?;
+
+        let vectors = self
+            .memory_pool
+            .deserialize_vector_batch_pooled(compressed_data, &self.config)
+            .context("Failed to deserialize vector batch")?;
 
         let processing_time = start_time.elapsed();
-        
-        trace!("🔓 Decompressed {} vectors in {:?}",
-            vectors.len(), processing_time);
+
+        trace!(
+            "🔓 Decompressed {} vectors in {:?}",
+            vectors.len(),
+            processing_time
+        );
 
         Ok(vectors)
     }
@@ -496,9 +523,13 @@ mod tests {
     use crate::core::serialization::CompressionAlgorithm;
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
-        (0..count).map(|i| {
-            (0..dimension).map(|j| (i * dimension + j) as f32 * 0.001).collect()
-        }).collect()
+        (0..count)
+            .map(|i| {
+                (0..dimension)
+                    .map(|j| (i * dimension + j) as f32 * 0.001)
+                    .collect()
+            })
+            .collect()
     }
 
     #[tokio::test]
@@ -508,25 +539,28 @@ mod tests {
             buffer_size: 10,
             ..Default::default()
         };
-        
+
         let compressor = StreamingCompressor::new(config).unwrap();
         let vectors = create_test_vectors(25, 128);
-        
+
         let vector_config = VectorSerializationConfig {
             compression_algorithm: CompressionAlgorithm::Zstd,
             ..Default::default()
         };
-        
-        let results = compressor.compress_stream(vectors.clone(), vector_config.clone()).await.unwrap();
-        
+
+        let results = compressor
+            .compress_stream(vectors.clone(), vector_config.clone())
+            .await
+            .unwrap();
+
         assert!(!results.is_empty());
-        
+
         // Test decompression
         let decompressor = StreamingDecompressor::new(vector_config);
         let decompressed = decompressor.decompress_results(results).await.unwrap();
-        
+
         assert_eq!(vectors.len(), decompressed.len());
-        
+
         compressor.shutdown().await.unwrap();
     }
 
@@ -534,21 +568,27 @@ mod tests {
     async fn test_batch_compression() {
         let config = StreamingConfig::default();
         let compressor = StreamingCompressor::new(config).unwrap();
-        
+
         let vectors = create_test_vectors(50, 256);
         let vector_config = VectorSerializationConfig::default();
-        
-        let result = compressor.compress_batch(vectors.clone(), vector_config.clone()).await.unwrap();
-        
+
+        let result = compressor
+            .compress_batch(vectors.clone(), vector_config.clone())
+            .await
+            .unwrap();
+
         assert!(result.compression_ratio > 0.0);
         assert!(result.processing_time.as_millis() < 1000);
-        
+
         // Test decompression
         let decompressor = StreamingDecompressor::new(vector_config);
-        let decompressed = decompressor.decompress_batch(&result.compressed_data).await.unwrap();
-        
+        let decompressed = decompressor
+            .decompress_batch(&result.compressed_data)
+            .await
+            .unwrap();
+
         assert_eq!(vectors.len(), decompressed.len());
-        
+
         compressor.shutdown().await.unwrap();
     }
 
@@ -557,20 +597,23 @@ mod tests {
         let mut config = StreamingConfig::default();
         config.enable_monitoring = true;
         config.worker_count = 1;
-        
+
         let compressor = StreamingCompressor::new(config).unwrap();
         let vectors = create_test_vectors(100, 512);
         let vector_config = VectorSerializationConfig::default();
-        
-        let _results = compressor.compress_stream(vectors, vector_config).await.unwrap();
-        
+
+        let _results = compressor
+            .compress_stream(vectors, vector_config)
+            .await
+            .unwrap();
+
         let metrics = compressor.metrics();
         assert!(metrics.vectors_processed > 0);
         assert!(metrics.batches_processed > 0);
         assert!(metrics.compression_ratio > 0.0);
-        
+
         metrics.print_summary();
-        
+
         compressor.shutdown().await.unwrap();
     }
 
@@ -580,23 +623,26 @@ mod tests {
         config.adaptive_sizing = true;
         config.target_latency_us = 1000; // 1ms target
         config.buffer_size = 20;
-        
+
         let compressor = StreamingCompressor::new(config).unwrap();
-        
+
         // Process multiple batches to trigger adaptation
         for _ in 0..5 {
             let vectors = create_test_vectors(50, 128);
             let vector_config = VectorSerializationConfig::default();
-            
-            let _results = compressor.compress_stream(vectors, vector_config).await.unwrap();
-            
+
+            let _results = compressor
+                .compress_stream(vectors, vector_config)
+                .await
+                .unwrap();
+
             // Trigger optimization
             compressor.optimize_performance().await.unwrap();
         }
-        
+
         let metrics = compressor.metrics();
         assert!(metrics.vectors_processed > 0);
-        
+
         compressor.shutdown().await.unwrap();
     }
 
@@ -607,29 +653,29 @@ mod tests {
             channel_capacity: 100,
             ..Default::default()
         };
-        
+
         let compressor = Arc::new(StreamingCompressor::new(config).unwrap());
-        
+
         // Start multiple concurrent compression tasks
         let mut handles = Vec::new();
-        
+
         for i in 0..10 {
             let compressor = compressor.clone();
             let handle = tokio::spawn(async move {
                 let vectors = create_test_vectors(20, 256);
                 let vector_config = VectorSerializationConfig::default();
-                
+
                 compressor.compress_batch(vectors, vector_config).await
             });
             handles.push(handle);
         }
-        
+
         // Wait for all tasks to complete
         for handle in handles {
             let result = handle.await.unwrap().unwrap();
             assert!(result.compression_ratio > 0.0);
         }
-        
+
         let final_compressor = Arc::try_unwrap(compressor).ok().unwrap();
         final_compressor.shutdown().await.unwrap();
     }

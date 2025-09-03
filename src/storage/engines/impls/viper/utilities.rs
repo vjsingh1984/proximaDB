@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::core::{String, CompressionAlgorithm, VectorRecord};
+use crate::core::{CompressionAlgorithm, String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Utilities coordinator - Central management for all utility services
@@ -341,7 +341,6 @@ pub struct DataPartitioner {
 
     // ML models for clustering moved to AXIS
     // clustering_models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
-
     /// Partition metadata
     partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
 

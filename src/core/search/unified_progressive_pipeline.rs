@@ -1,33 +1,33 @@
 //! Unified Progressive Search Pipeline
-//! 
+//!
 //! This module provides a unified progressive search pipeline that dynamically
 //! selects and executes search stages based on data characteristics.
-//! 
+//!
 //! Expected Performance Improvement: 40-50% reduction in distance computations
 
-use std::sync::Arc;
-use std::collections::{HashMap, BinaryHeap};
 use anyhow::{Context, Result};
-use tracing::{debug, info};
 use parking_lot::RwLock;
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
+use tracing::{debug, info};
 
-use crate::core::search::FilterExpression;
-use crate::proto::proximadb::QuantizationConfig;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb::VectorRecord;
+use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
+use crate::proto::proximadb::QuantizationConfig;
+use crate::proto::proximadb::VectorRecord;
 
 /// Unified progressive search orchestrator
 pub struct UnifiedProgressiveSearchPipeline {
     /// Query preprocessor for caching
     query_preprocessor: Arc<QueryPreprocessor>,
-    
+
     /// Stage execution statistics
     stage_stats: Arc<RwLock<StageStatistics>>,
-    
+
     /// Dynamic threshold adjuster
     threshold_adjuster: ThresholdAdjuster,
-    
+
     /// Pipeline configuration
     config: PipelineConfig,
 }
@@ -37,19 +37,19 @@ pub struct UnifiedProgressiveSearchPipeline {
 pub struct PipelineConfig {
     /// Enable dynamic stage selection
     pub dynamic_stages: bool,
-    
+
     /// Minimum candidates per stage
     pub min_candidates_per_stage: usize,
-    
+
     /// Maximum candidates to evaluate
     pub max_candidates: usize,
-    
+
     /// Early termination threshold
     pub early_termination_score: f32,
-    
+
     /// Enable adaptive thresholds
     pub adaptive_thresholds: bool,
-    
+
     /// Stage selectivity thresholds
     pub stage_thresholds: StageThresholds,
 }
@@ -57,9 +57,9 @@ pub struct PipelineConfig {
 /// Thresholds for each progressive stage
 #[derive(Debug, Clone)]
 pub struct StageThresholds {
-    pub binary_selectivity: f32,  // e.g., 0.1 = keep top 10%
-    pub int8_selectivity: f32,    // e.g., 0.2 = keep top 20%
-    pub pq_selectivity: f32,      // e.g., 0.3 = keep top 30%
+    pub binary_selectivity: f32, // e.g., 0.1 = keep top 10%
+    pub int8_selectivity: f32,   // e.g., 0.2 = keep top 20%
+    pub pq_selectivity: f32,     // e.g., 0.3 = keep top 30%
 }
 
 /// Statistics for stage execution
@@ -67,13 +67,13 @@ pub struct StageThresholds {
 struct StageStatistics {
     /// Number of vectors processed per stage
     stage_vectors_processed: HashMap<String, usize>,
-    
+
     /// Average selectivity per stage
     stage_selectivity: HashMap<String, f32>,
-    
+
     /// Stage execution times
     stage_times_ms: HashMap<String, u64>,
-    
+
     /// Stage hit rates (how often stage was used)
     stage_hit_rates: HashMap<String, usize>,
 }
@@ -82,7 +82,7 @@ struct StageStatistics {
 struct ThresholdAdjuster {
     /// Historical performance data
     performance_history: Arc<RwLock<Vec<PerformanceRecord>>>,
-    
+
     /// Current thresholds
     current_thresholds: Arc<RwLock<StageThresholds>>,
 }
@@ -117,7 +117,8 @@ struct StageCandidate {
 
 impl Ord for StageCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score.partial_cmp(&other.score)
+        self.score
+            .partial_cmp(&other.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
@@ -146,7 +147,7 @@ impl UnifiedProgressiveSearchPipeline {
             config,
         }
     }
-    
+
     /// Execute progressive search with dynamic stage selection
     pub async fn search_progressive(
         &self,
@@ -159,56 +160,61 @@ impl UnifiedProgressiveSearchPipeline {
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let start = std::time::Instant::now();
         let query_id = self.generate_query_id();
-        
+
         info!(
             "Starting unified progressive search: {} records, top_k={}, stages={:?}",
             records.len(),
             top_k,
             self.determine_stages(quantization_config)
         );
-        
+
         // Preprocess query vector
-        let query_cache = self.query_preprocessor.preprocess(
-            query_vector,
-            distance_metric.clone(),
-            Some(quantization_config),
-        ).await;
-        
+        let query_cache = self
+            .query_preprocessor
+            .preprocess(
+                query_vector,
+                distance_metric.clone(),
+                Some(quantization_config),
+            )
+            .await;
+
         // Determine stages to use
         let stages = if self.config.dynamic_stages {
             self.select_dynamic_stages(&records, quantization_config, top_k)
         } else {
             self.determine_stages(quantization_config)
         };
-        
+
         // Execute progressive search
-        let candidates = self.execute_stages(
-            records,
-            &query_cache,
-            &stages,
-            top_k,
-            &distance_metric,
-            metadata_filter,
-        ).await?;
-        
+        let candidates = self
+            .execute_stages(
+                records,
+                &query_cache,
+                &stages,
+                top_k,
+                &distance_metric,
+                metadata_filter,
+            )
+            .await?;
+
         // Convert to search results
         let results = self.finalize_results(candidates, top_k);
-        
+
         // Update statistics
         self.update_statistics(&stages, start.elapsed(), results.len(), query_id);
-        
+
         // Adjust thresholds if adaptive mode is enabled
         if self.config.adaptive_thresholds {
             self.threshold_adjuster.adjust_thresholds(&stages, &results);
         }
-        
+
         Ok(results)
     }
-    
+
     /// Determine which stages to use based on quantization config
     fn determine_stages(&self, config: &QuantizationConfig) -> Vec<SearchStage> {
         let mut stages = Vec::new();
-        
+
         // Use strategy to determine stages since custom_levels is proto QuantizationLevel
         use crate::proto::proximadb::quantization_config::Strategy;
         match config.strategy() {
@@ -230,15 +236,15 @@ impl UnifiedProgressiveSearchPipeline {
                 stages.push(SearchStage::Int8);
             }
         }
-        
+
         // Always end with FP32 for final refinement
         if !stages.contains(&SearchStage::Fp32) {
             stages.push(SearchStage::Fp32);
         }
-        
+
         stages
     }
-    
+
     /// Dynamically select stages based on data characteristics
     fn select_dynamic_stages(
         &self,
@@ -247,10 +253,8 @@ impl UnifiedProgressiveSearchPipeline {
         top_k: usize,
     ) -> Vec<SearchStage> {
         let record_count = records.len();
-        let dimension = records.first()
-            .map(|r| r.vector.len())
-            .unwrap_or(0);
-        
+        let dimension = records.first().map(|r| r.vector.len()).unwrap_or(0);
+
         // Decision logic based on data size and dimension
         if record_count < 1000 || dimension < 64 {
             // Small dataset or low dimension - skip to FP32
@@ -260,21 +264,13 @@ impl UnifiedProgressiveSearchPipeline {
             vec![SearchStage::Int8, SearchStage::Fp32]
         } else if dimension >= 512 {
             // Large dimension - use all stages
-            vec![
-                SearchStage::Binary,
-                SearchStage::Pq8,
-                SearchStage::Fp32,
-            ]
+            vec![SearchStage::Binary, SearchStage::Pq8, SearchStage::Fp32]
         } else {
             // Large dataset, medium dimension - use progressive stages
-            vec![
-                SearchStage::Binary,
-                SearchStage::Int8,
-                SearchStage::Fp32,
-            ]
+            vec![SearchStage::Binary, SearchStage::Int8, SearchStage::Fp32]
         }
     }
-    
+
     /// Execute search stages progressively
     async fn execute_stages(
         &self,
@@ -286,41 +282,35 @@ impl UnifiedProgressiveSearchPipeline {
         metadata_filter: Option<&FilterExpression>,
     ) -> Result<Vec<StageCandidate>> {
         let mut candidates = BinaryHeap::new();
-        let mut current_records: Vec<Arc<VectorRecord>> = records.into_iter()
-            .map(Arc::new)
-            .collect();
-        
+        let mut current_records: Vec<Arc<VectorRecord>> =
+            records.into_iter().map(Arc::new).collect();
+
         // Apply metadata filter first if present
         if let Some(filter) = metadata_filter {
             current_records = self.apply_metadata_filter(current_records, filter);
         }
-        
+
         // Get dynamic thresholds
         let thresholds = self.threshold_adjuster.get_current_thresholds();
-        
+
         for (stage_idx, stage) in stages.iter().enumerate() {
             let stage_start = std::time::Instant::now();
             let is_final_stage = stage_idx == stages.len() - 1;
-            
+
             debug!(
                 "Executing stage {:?}: {} candidates, final={}",
                 stage,
                 current_records.len(),
                 is_final_stage
             );
-            
+
             // Determine candidates to keep for next stage
             let keep_count = if is_final_stage {
                 top_k
             } else {
-                self.calculate_stage_candidates(
-                    top_k,
-                    current_records.len(),
-                    stage,
-                    &thresholds,
-                )
+                self.calculate_stage_candidates(top_k, current_records.len(), stage, &thresholds)
             };
-            
+
             // Execute stage
             let stage_candidates = match stage {
                 SearchStage::Binary => {
@@ -329,7 +319,8 @@ impl UnifiedProgressiveSearchPipeline {
                         &query_cache.quantized_binary,
                         distance_metric,
                         keep_count,
-                    ).await?
+                    )
+                    .await?
                 }
                 SearchStage::Int8 => {
                     self.execute_int8_stage(
@@ -337,7 +328,8 @@ impl UnifiedProgressiveSearchPipeline {
                         &query_cache.quantized_int8,
                         distance_metric,
                         keep_count,
-                    ).await?
+                    )
+                    .await?
                 }
                 SearchStage::Pq4 => {
                     self.execute_pq_stage(
@@ -346,7 +338,8 @@ impl UnifiedProgressiveSearchPipeline {
                         distance_metric,
                         keep_count,
                         4,
-                    ).await?
+                    )
+                    .await?
                 }
                 SearchStage::Pq8 => {
                     self.execute_pq_stage(
@@ -355,7 +348,8 @@ impl UnifiedProgressiveSearchPipeline {
                         distance_metric,
                         keep_count,
                         8,
-                    ).await?
+                    )
+                    .await?
                 }
                 SearchStage::Fp32 => {
                     self.execute_fp32_stage(
@@ -363,41 +357,40 @@ impl UnifiedProgressiveSearchPipeline {
                         &query_cache.normalized,
                         distance_metric,
                         keep_count,
-                    ).await?
+                    )
+                    .await?
                 }
             };
-            
+
             // Update candidates for next stage
             if !is_final_stage {
-                current_records = stage_candidates.iter()
-                    .map(|c| c.record.clone())
-                    .collect();
+                current_records = stage_candidates.iter().map(|c| c.record.clone()).collect();
             }
-            
+
             // Add to final candidates
             for candidate in stage_candidates {
                 candidates.push(candidate);
             }
-            
+
             let stage_time = stage_start.elapsed();
             self.record_stage_time(stage, stage_time.as_millis() as u64);
-            
+
             // Early termination check
             if self.should_terminate_early(&candidates, top_k) {
                 debug!("Early termination triggered at stage {:?}", stage);
                 break;
             }
         }
-        
+
         // Extract top k candidates
         let mut final_candidates = Vec::new();
         while !candidates.is_empty() && final_candidates.len() < top_k {
             final_candidates.push(candidates.pop().unwrap());
         }
-        
+
         Ok(final_candidates)
     }
-    
+
     /// Execute binary quantization stage
     async fn execute_binary_stage(
         &self,
@@ -406,11 +399,12 @@ impl UnifiedProgressiveSearchPipeline {
         distance_metric: &DistanceMetric,
         keep_count: usize,
     ) -> Result<Vec<StageCandidate>> {
-        let query = query_binary.as_ref()
+        let query = query_binary
+            .as_ref()
             .context("Binary quantized query not available")?;
-        
+
         let mut candidates = Vec::new();
-        
+
         for record in records {
             if let Some(quantized) = &record.quantized_vector {
                 // Compute hamming distance for binary vectors
@@ -423,14 +417,18 @@ impl UnifiedProgressiveSearchPipeline {
                 });
             }
         }
-        
+
         // Sort and keep top candidates
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(keep_count);
-        
+
         Ok(candidates)
     }
-    
+
     /// Execute INT8 quantization stage
     async fn execute_int8_stage(
         &self,
@@ -439,18 +437,17 @@ impl UnifiedProgressiveSearchPipeline {
         distance_metric: &DistanceMetric,
         keep_count: usize,
     ) -> Result<Vec<StageCandidate>> {
-        let query = query_int8.as_ref()
+        let query = query_int8
+            .as_ref()
             .context("INT8 quantized query not available")?;
-        
+
         let mut candidates = Vec::new();
-        
+
         for record in records {
             if let Some(quantized) = &record.quantized_vector {
                 // Convert bytes to i8 and compute distance
-                let record_int8: Vec<i8> = quantized.iter()
-                    .map(|&b| b as i8)
-                    .collect();
-                
+                let record_int8: Vec<i8> = quantized.iter().map(|&b| b as i8).collect();
+
                 let score = self.compute_int8_distance(&query, &record_int8, distance_metric);
                 candidates.push(StageCandidate {
                     record: record.clone(),
@@ -460,13 +457,17 @@ impl UnifiedProgressiveSearchPipeline {
                 });
             }
         }
-        
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(keep_count);
-        
+
         Ok(candidates)
     }
-    
+
     /// Execute PQ quantization stage
     async fn execute_pq_stage(
         &self,
@@ -476,11 +477,12 @@ impl UnifiedProgressiveSearchPipeline {
         keep_count: usize,
         pq_bits: usize,
     ) -> Result<Vec<StageCandidate>> {
-        let query = query_pq.as_ref()
+        let query = query_pq
+            .as_ref()
             .context("PQ quantized query not available")?;
-        
+
         let mut candidates = Vec::new();
-        
+
         for record in records {
             if let Some(quantized) = &record.quantized_vector {
                 // Compute PQ distance
@@ -488,18 +490,26 @@ impl UnifiedProgressiveSearchPipeline {
                 candidates.push(StageCandidate {
                     record: record.clone(),
                     score,
-                    stage: if pq_bits == 4 { SearchStage::Pq4 } else { SearchStage::Pq8 },
+                    stage: if pq_bits == 4 {
+                        SearchStage::Pq4
+                    } else {
+                        SearchStage::Pq8
+                    },
                     refined_count: 1,
                 });
             }
         }
-        
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(keep_count);
-        
+
         Ok(candidates)
     }
-    
+
     /// Execute FP32 stage (final refinement)
     async fn execute_fp32_stage(
         &self,
@@ -509,17 +519,14 @@ impl UnifiedProgressiveSearchPipeline {
         keep_count: usize,
     ) -> Result<Vec<StageCandidate>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-        
+
         let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
         let mut candidates = Vec::new();
-        
+
         for record in records {
-            let result = distance_compute.calculate_distance(
-                query_fp32,
-                &record.vector,
-                distance_metric,
-            );
-            
+            let result =
+                distance_compute.calculate_distance(query_fp32, &record.vector, distance_metric);
+
             candidates.push(StageCandidate {
                 record: record.clone(),
                 score: result.normalized_score,
@@ -527,35 +534,53 @@ impl UnifiedProgressiveSearchPipeline {
                 refined_count: 1,
             });
         }
-        
-        candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+        candidates.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(keep_count);
-        
+
         Ok(candidates)
     }
-    
+
     /// Compute Hamming distance for binary vectors
     fn compute_hamming_distance(&self, a: &[u8], b: &[u8]) -> f32 {
-        let distance: u32 = a.iter()
+        let distance: u32 = a
+            .iter()
             .zip(b.iter())
             .map(|(x, y)| (x ^ y).count_ones())
             .sum();
-        
+
         // Normalize to [0, 1] range (inverse for similarity)
         1.0 - (distance as f32 / (a.len() * 8) as f32)
     }
-    
+
     /// Compute INT8 distance
     fn compute_int8_distance(&self, a: &[i8], b: &[i8], metric: &DistanceMetric) -> f32 {
         match metric {
             DistanceMetric::Cosine => {
-                let dot: i32 = a.iter().zip(b.iter()).map(|(x, y)| *x as i32 * *y as i32).sum();
-                let norm_a: f32 = a.iter().map(|x| (*x as i32 * *x as i32) as f32).sum::<f32>().sqrt();
-                let norm_b: f32 = b.iter().map(|x| (*x as i32 * *x as i32) as f32).sum::<f32>().sqrt();
+                let dot: i32 = a
+                    .iter()
+                    .zip(b.iter())
+                    .map(|(x, y)| *x as i32 * *y as i32)
+                    .sum();
+                let norm_a: f32 = a
+                    .iter()
+                    .map(|x| (*x as i32 * *x as i32) as f32)
+                    .sum::<f32>()
+                    .sqrt();
+                let norm_b: f32 = b
+                    .iter()
+                    .map(|x| (*x as i32 * *x as i32) as f32)
+                    .sum::<f32>()
+                    .sqrt();
                 dot as f32 / (norm_a * norm_b).max(0.0001)
             }
             DistanceMetric::Euclidean => {
-                let sum: i32 = a.iter()
+                let sum: i32 = a
+                    .iter()
                     .zip(b.iter())
                     .map(|(x, y)| {
                         let diff = *x as i32 - *y as i32;
@@ -567,19 +592,20 @@ impl UnifiedProgressiveSearchPipeline {
             _ => 0.0,
         }
     }
-    
+
     /// Compute PQ distance (simplified)
     fn compute_pq_distance(&self, a: &[u8], b: &[u8], pq_bits: usize) -> f32 {
         // Simplified PQ distance - should use lookup tables in production
-        let distance: u32 = a.iter()
+        let distance: u32 = a
+            .iter()
             .zip(b.iter())
             .map(|(x, y)| (*x as i32 - *y as i32).abs() as u32)
             .sum();
-        
+
         // Normalize
         1.0 - (distance as f32 / (a.len() * 256) as f32)
     }
-    
+
     /// Calculate number of candidates to keep for a stage
     fn calculate_stage_candidates(
         &self,
@@ -594,14 +620,14 @@ impl UnifiedProgressiveSearchPipeline {
             SearchStage::Pq4 | SearchStage::Pq8 => thresholds.pq_selectivity,
             SearchStage::Fp32 => 1.0,
         };
-        
+
         let candidates = ((current_count as f32 * selectivity) as usize)
             .max(top_k * 3)
             .min(self.config.max_candidates);
-        
+
         candidates
     }
-    
+
     /// Apply metadata filter to records
     fn apply_metadata_filter(
         &self,
@@ -609,24 +635,25 @@ impl UnifiedProgressiveSearchPipeline {
         filter: &FilterExpression,
     ) -> Vec<Arc<VectorRecord>> {
         use crate::core::search::json_comparison::evaluate_filter;
-        
-        records.into_iter()
+
+        records
+            .into_iter()
             .filter(|record| {
                 let metadata = self.convert_metadata(record);
                 evaluate_filter(filter, &metadata)
             })
             .collect()
     }
-    
+
     /// Convert proto metadata to HashMap
     fn convert_metadata(&self, record: &VectorRecord) -> HashMap<String, serde_json::Value> {
         let mut map = HashMap::new();
-        
+
         for entry in &record.metadata {
             if let Some(ref proto_value) = entry.value {
                 use crate::proto::proximadb::metadata_item;
                 use serde_json::Value;
-                
+
                 let json_value = match proto_value {
                     metadata_item::Value::StringValue(s) => Value::String(s.clone()),
                     metadata_item::Value::NumberValue(n) => {
@@ -641,52 +668,67 @@ impl UnifiedProgressiveSearchPipeline {
                 map.insert(entry.key.clone(), json_value);
             }
         }
-        
+
         map
     }
-    
+
     /// Check if we should terminate early
-    fn should_terminate_early(&self, candidates: &BinaryHeap<StageCandidate>, top_k: usize) -> bool {
+    fn should_terminate_early(
+        &self,
+        candidates: &BinaryHeap<StageCandidate>,
+        top_k: usize,
+    ) -> bool {
         if candidates.len() < top_k {
             return false;
         }
-        
+
         // Check if top candidates have high enough scores
         let top_score = candidates.peek().map(|c| c.score).unwrap_or(0.0);
         top_score >= self.config.early_termination_score
     }
-    
+
     /// Finalize candidates into search results
-    fn finalize_results(&self, candidates: Vec<StageCandidate>, top_k: usize) -> Vec<crate::core::search::InternalSearchResult> {
-        candidates.into_iter()
+    fn finalize_results(
+        &self,
+        candidates: Vec<StageCandidate>,
+        top_k: usize,
+    ) -> Vec<crate::core::search::InternalSearchResult> {
+        candidates
+            .into_iter()
             .take(top_k)
             .enumerate()
-            .map(|(rank, candidate)| crate::core::search::InternalSearchResult {
-                id: candidate.record.id.clone(),
-                vector_id: if candidate.record.id.is_empty() { None } else { Some(candidate.record.id.clone()) },
-                score: candidate.score,
-                similarity: Some(candidate.score),
-                vector: Some(candidate.record.vector.clone()),
-                metadata: self.convert_metadata(&candidate.record),
-                debug_info: Some(crate::core::search::SearchDebugInfo {
-                    algorithm: "progressive".to_string(),
-                    candidates_evaluated: candidate.refined_count as u32,
-                    processing_time_us: 0,
-                }),
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
-                timestamp: Some(candidate.record.timestamp),
-                version: candidate.record.version,
-                expanded_context: vec![],
-                expires_at: None,
-                source: None,
-                updated_at: None,
-            })
+            .map(
+                |(rank, candidate)| crate::core::search::InternalSearchResult {
+                    id: candidate.record.id.clone(),
+                    vector_id: if candidate.record.id.is_empty() {
+                        None
+                    } else {
+                        Some(candidate.record.id.clone())
+                    },
+                    score: candidate.score,
+                    similarity: Some(candidate.score),
+                    vector: Some(candidate.record.vector.clone()),
+                    metadata: self.convert_metadata(&candidate.record),
+                    debug_info: Some(crate::core::search::SearchDebugInfo {
+                        algorithm: "progressive".to_string(),
+                        candidates_evaluated: candidate.refined_count as u32,
+                        processing_time_us: 0,
+                    }),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    timestamp: Some(candidate.record.timestamp),
+                    version: candidate.record.version,
+                    expanded_context: vec![],
+                    expires_at: None,
+                    source: None,
+                    updated_at: None,
+                },
+            )
             .collect()
     }
-    
+
     /// Update execution statistics
     fn update_statistics(
         &self,
@@ -696,12 +738,12 @@ impl UnifiedProgressiveSearchPipeline {
         query_id: u64,
     ) {
         let mut stats = self.stage_stats.write();
-        
+
         for stage in stages {
             let stage_name = format!("{:?}", stage);
             *stats.stage_hit_rates.entry(stage_name.clone()).or_insert(0) += 1;
         }
-        
+
         // Record performance for threshold adjustment
         if self.config.adaptive_thresholds {
             let record = PerformanceRecord {
@@ -711,20 +753,20 @@ impl UnifiedProgressiveSearchPipeline {
                 recall_quality: 1.0, // Would need ground truth to calculate
                 candidates_evaluated: result_count,
             };
-            
+
             self.threshold_adjuster.record_performance(record);
         }
     }
-    
+
     /// Record stage execution time
     fn record_stage_time(&self, stage: &SearchStage, time_ms: u64) {
         let mut stats = self.stage_stats.write();
         let stage_name = format!("{:?}", stage);
-        
+
         let entry = stats.stage_times_ms.entry(stage_name).or_insert(0);
         *entry = (*entry + time_ms) / 2; // Running average
     }
-    
+
     /// Generate unique query ID
     fn generate_query_id(&self) -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -742,25 +784,29 @@ impl ThresholdAdjuster {
             current_thresholds: Arc::new(RwLock::new(initial_thresholds)),
         }
     }
-    
+
     fn get_current_thresholds(&self) -> StageThresholds {
         self.current_thresholds.read().clone()
     }
-    
+
     fn record_performance(&self, record: PerformanceRecord) {
         let mut history = self.performance_history.write();
         history.push(record);
-        
+
         // Keep only recent history
         if history.len() > 100 {
             history.remove(0);
         }
     }
-    
-    fn adjust_thresholds(&self, stages: &[SearchStage], results: &[crate::core::search::InternalSearchResult]) {
+
+    fn adjust_thresholds(
+        &self,
+        stages: &[SearchStage],
+        results: &[crate::core::search::InternalSearchResult],
+    ) {
         // Simple adjustment logic - can be made more sophisticated
         let mut thresholds = self.current_thresholds.write();
-        
+
         // If results are good and we used many stages, increase selectivity
         if results.len() > 0 && stages.len() > 2 {
             thresholds.binary_selectivity = (thresholds.binary_selectivity * 0.95).max(0.05);
@@ -790,12 +836,12 @@ impl Default for PipelineConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_stage_selection() {
         let config = PipelineConfig::default();
         let pipeline = UnifiedProgressiveSearchPipeline::new(config);
-        
+
         let quantization_config = QuantizationConfig {
             enabled: true,
             levels: vec![
@@ -806,25 +852,25 @@ mod tests {
             strategy: None,
             quality_threshold: None,
         };
-        
+
         let stages = pipeline.determine_stages(&quantization_config);
         assert_eq!(stages.len(), 3);
         assert_eq!(stages[0], SearchStage::Binary);
         assert_eq!(stages[1], SearchStage::Int8);
         assert_eq!(stages[2], SearchStage::Fp32);
     }
-    
+
     #[test]
     fn test_hamming_distance() {
         let pipeline = UnifiedProgressiveSearchPipeline::new(PipelineConfig::default());
-        
+
         let a = vec![0b10101010, 0b11110000];
         let b = vec![0b10101010, 0b11110000];
         let c = vec![0b01010101, 0b00001111];
-        
+
         let same = pipeline.compute_hamming_distance(&a, &b);
         assert_eq!(same, 1.0); // Identical vectors
-        
+
         let different = pipeline.compute_hamming_distance(&a, &c);
         assert_eq!(different, 0.0); // Completely different
     }

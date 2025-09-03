@@ -8,10 +8,10 @@ use thiserror::Error;
 pub enum MetadataError {
     #[error("Schema validation failed: {0}")]
     SchemaValidation(String),
-    
+
     #[error("Field type mismatch: expected {expected}, found {found}")]
     TypeMismatch { expected: String, found: String },
-    
+
     #[error("Required field missing: {field}")]
     RequiredFieldMissing { field: String },
 }

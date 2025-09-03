@@ -1,17 +1,17 @@
 //! Test metadata filtering with unified SSTable reader
-//! 
-//! This test module validates metadata filtering capabilities using 
+//!
+//! This test module validates metadata filtering capabilities using
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
 use crate::storage::engines::impls::sst::{SstRecord, SstableWriter};
 // use crate::core::config::{BloomFilterConfig, SstConfig};
-use crate::storage::engines::impls::sst::readers::{UnifiedSstableReader, CollectionContext};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use crate::core::search::SearchParams;
 use crate::compute::distance_computation::DistanceMetric;
-use std::sync::Arc;
+use crate::core::search::SearchParams;
+use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_test_config() -> SstConfig {
@@ -28,13 +28,13 @@ use tracing::{debug, error, info};
 #[ignore = "Needs investigation - Bincode deserialization issue"]
 async fn test_metadata_filtering_basic() {
     let _ = tracing_subscriber::fmt::try_init();
-    
+
     // Create temp directory and filesystem
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-    
+
     // Create SSTable with records having different metadata
     let sstable_path = temp_path.join("metadata_test.sstable");
     let test_config = create_test_config();
@@ -45,27 +45,33 @@ async fn test_metadata_filtering_basic() {
             enabled: true,
             ..Default::default()
         });
-    
+
     // Create test records with various metadata
     let mut records = BTreeMap::new();
-    
+
     // Category A records
     for i in 0..5 {
         let metadata = vec![
             crate::proto::proximadb::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    "A".to_string(),
+                )),
             },
             crate::proto::proximadb::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue((i * 10) as f64)),
+                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                    (i * 10) as f64,
+                )),
             },
             crate::proto::proximadb::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("document".to_string())),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    "document".to_string(),
+                )),
             },
         ];
-        
+
         let record = SstRecord {
             id: format!("vec_a_{}", i),
             vector: vec![i as f32; 3],
@@ -80,24 +86,30 @@ async fn test_metadata_filtering_basic() {
         };
         records.insert(record.id.clone(), record);
     }
-    
+
     // Category B records
     for i in 0..5 {
         let metadata = vec![
             crate::proto::proximadb::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    "B".to_string(),
+                )),
             },
             crate::proto::proximadb::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue((i * 10 + 5) as f64)),
+                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                    (i * 10 + 5) as f64,
+                )),
             },
             crate::proto::proximadb::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("image".to_string())),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    "image".to_string(),
+                )),
             },
         ];
-        
+
         let record = SstRecord {
             id: format!("vec_b_{}", i),
             vector: vec![(i + 10) as f32; 3],
@@ -112,126 +124,163 @@ async fn test_metadata_filtering_basic() {
         };
         records.insert(record.id.clone(), record);
     }
-    
+
     // Write records
     // Write records using streaming approach for production consistency
     let record_count = records.len();
     let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
-    writer.write_sorted_vector_records(sorted_records_iter, record_count).await.unwrap();
+    writer
+        .write_sorted_vector_records(sorted_records_iter, record_count)
+        .await
+        .unwrap();
     info!("Wrote SSTable with 10 records (5 category A, 5 category B)");
-    
+
     // Create reader and load metadata
     let reader = UnifiedSstableReader::new(filesystem.clone());
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
-    
+
     // Create collection context
     let context = CollectionContext {
         file_path: file_url.clone(),
         sstable_files: vec![file_url.clone()],
         total_vectors: 10,
-        metadata_columns: vec!["category".to_string(), "score".to_string(), "type".to_string()],
+        metadata_columns: vec![
+            "category".to_string(),
+            "score".to_string(),
+            "type".to_string(),
+        ],
         level: 0,
         creation_time: chrono::Utc::now(),
-            io_optimization_hints: None,
+        io_optimization_hints: None,
     };
-    
+
     // Test 1: Filter by category = A
     info!("\nTest 1: Filter by category = A");
     let mut filters = HashMap::new();
     filters.insert("category".to_string(), json!("A"));
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![0.0, 0.0, 0.0]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with category=A filter: {}", results.len());
     assert_eq!(results.len(), 5, "Should find 5 records with category A");
     for result in &results {
-        assert!(result.id.starts_with("vec_a_"), "All results should be category A");
+        assert!(
+            result.id.starts_with("vec_a_"),
+            "All results should be category A"
+        );
         let category = result.metadata.get(key).unwrap();
         assert_eq!(category, &json!("A"), "Category should be A");
     }
-    
+
     // Test 2: Filter by type = image
     info!("\nTest 2: Filter by type = image");
     let mut filters = HashMap::new();
     filters.insert("type".to_string(), json!("image"));
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![10.0, 10.0, 10.0]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with type=image filter: {}", results.len());
     assert_eq!(results.len(), 5, "Should find 5 records with type image");
     for result in &results {
-        assert!(result.id.starts_with("vec_b_"), "All image results should be category B");
+        assert!(
+            result.id.starts_with("vec_b_"),
+            "All image results should be category B"
+        );
         let type_val = result.metadata.get(key).unwrap();
         assert_eq!(type_val, &json!("image"), "Type should be image");
     }
-    
+
     // Test 3: Filter by score > 25 (numeric filter)
     info!("\nTest 3: Numeric filter - score > 25");
     // Note: For now we'll test exact match. Range queries need filter expressions
     let mut filters = HashMap::new();
     filters.insert("score".to_string(), json!(30)); // vec_a_3 has score 30
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![3.0, 3.0, 3.0]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with score=30 filter: {}", results.len());
     assert_eq!(results.len(), 1, "Should find 1 record with score 30");
     assert_eq!(results[0].id, "vec_a_3", "Should be vec_a_3");
-    
+
     // Test 4: Multiple filters (category = B AND type = image)
     info!("\nTest 4: Multiple filters - category=B AND type=image");
     let mut filters = HashMap::new();
     filters.insert("category".to_string(), json!("B"));
     filters.insert("type".to_string(), json!("image"));
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![12.0, 12.0, 12.0]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with category=B AND type=image: {}", results.len());
-    assert_eq!(results.len(), 5, "Should find 5 records matching both filters");
+    assert_eq!(
+        results.len(),
+        5,
+        "Should find 5 records matching both filters"
+    );
     for result in &results {
         let category = result.metadata.get(key).unwrap();
         let type_val = result.metadata.get(key).unwrap();
         assert_eq!(category, &json!("B"), "Category should be B");
         assert_eq!(type_val, &json!("image"), "Type should be image");
     }
-    
+
     // Test 5: No results filter
     info!("\nTest 5: Filter that matches no records");
     let mut filters = HashMap::new();
     filters.insert("category".to_string(), json!("Z")); // Doesn't exist
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![0.0, 0.0, 0.0]]),
         top_k: Some(10),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with category=Z filter: {}", results.len());
     assert_eq!(results.len(), 0, "Should find no records with category Z");
 }
@@ -240,13 +289,13 @@ async fn test_metadata_filtering_basic() {
 #[ignore = "Needs investigation - Bincode deserialization issue"]
 async fn test_metadata_bloom_filter_optimization() {
     let _ = tracing_subscriber::fmt::try_init();
-    
+
     // Create temp directory and filesystem
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-    
+
     // Create SSTable with metadata bloom filters
     let sstable_path = temp_path.join("bloom_metadata_test.sstable");
     let test_config = create_test_config();
@@ -257,7 +306,7 @@ async fn test_metadata_bloom_filter_optimization() {
             enabled: true,
             ..Default::default()
         });
-    
+
     // Create records
     let mut records = BTreeMap::new();
     for i in 0..20 {
@@ -265,17 +314,17 @@ async fn test_metadata_bloom_filter_optimization() {
             crate::proto::proximadb::MetadataItem {
                 key: "category".to_string(),
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                    if i % 2 == 0 { "even" } else { "odd" }.to_string()
+                    if i % 2 == 0 { "even" } else { "odd" }.to_string(),
                 )),
             },
             crate::proto::proximadb::MetadataItem {
                 key: "status".to_string(),
                 value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                    if i < 10 { "active" } else { "inactive" }.to_string()
+                    if i < 10 { "active" } else { "inactive" }.to_string(),
                 )),
             },
         ];
-        
+
         let record = SstRecord {
             id: format!("vec_{}", i),
             vector: vec![i as f32; 3],
@@ -290,21 +339,24 @@ async fn test_metadata_bloom_filter_optimization() {
         };
         records.insert(record.id.clone(), record);
     }
-    
+
     // Write records using streaming approach for production consistency
     let record_count = records.len();
     let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
-    writer.write_sorted_vector_records(sorted_records_iter, record_count).await.unwrap();
+    writer
+        .write_sorted_vector_records(sorted_records_iter, record_count)
+        .await
+        .unwrap();
     info!("Wrote SSTable with metadata bloom filters");
-    
+
     // Create reader
     let reader = UnifiedSstableReader::new(filesystem.clone());
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
-    
+
     // Test bloom filter for metadata values
     info!("\nTesting metadata bloom filter functionality");
-    
+
     // Create collection context
     let context = CollectionContext {
         file_path: file_url.clone(),
@@ -313,57 +365,84 @@ async fn test_metadata_bloom_filter_optimization() {
         metadata_columns: vec!["category".to_string(), "status".to_string()],
         level: 0,
         creation_time: chrono::Utc::now(),
-            io_optimization_hints: None,
+        io_optimization_hints: None,
     };
-    
+
     // Test 1: Filter by category = even (10 records)
     info!("\nTest 1: Filter by category = even");
     let mut filters = HashMap::new();
     filters.insert("category".to_string(), json!("even"));
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![10.0, 10.0, 10.0]]),
         top_k: Some(20),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with category=even filter: {}", results.len());
-    assert_eq!(results.len(), 10, "Should find 10 records with category even");
-    
+    assert_eq!(
+        results.len(),
+        10,
+        "Should find 10 records with category even"
+    );
+
     // Test 2: Filter by status = active (10 records)
     info!("\nTest 2: Filter by status = active");
     let mut filters = HashMap::new();
     filters.insert("status".to_string(), json!("active"));
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![5.0, 5.0, 5.0]]),
         top_k: Some(20),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
     info!("Results with status=active filter: {}", results.len());
-    assert_eq!(results.len(), 10, "Should find 10 records with status active");
-    
+    assert_eq!(
+        results.len(),
+        10,
+        "Should find 10 records with status active"
+    );
+
     // Test 3: Combined filters (category = odd AND status = inactive)
     info!("\nTest 3: Combined filters - category=odd AND status=inactive");
     let mut filters = HashMap::new();
     filters.insert("category".to_string(), json!("odd"));
     filters.insert("status".to_string(), json!("inactive"));
-    
+
     let search_params = SearchParams {
         query_vectors: Some(vec![vec![15.0, 15.0, 15.0]]),
         top_k: Some(20),
         distance_metric: Some(DistanceMetric::Euclidean),
         ..Default::default()
-    }.with_simple_filters(filters);
-    
-    let results = reader.search_vectors(&search_params, &context).await.unwrap();
-    info!("Results with category=odd AND status=inactive: {}", results.len());
-    assert_eq!(results.len(), 5, "Should find 5 records matching both filters");
-    
+    }
+    .with_simple_filters(filters);
+
+    let results = reader
+        .search_vectors(&search_params, &context)
+        .await
+        .unwrap();
+    info!(
+        "Results with category=odd AND status=inactive: {}",
+        results.len()
+    );
+    assert_eq!(
+        results.len(),
+        5,
+        "Should find 5 records matching both filters"
+    );
+
     info!("✅ Metadata bloom filter tests completed successfully");
 }

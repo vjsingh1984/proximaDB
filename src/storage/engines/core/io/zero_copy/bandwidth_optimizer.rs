@@ -7,27 +7,22 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tracing::{trace, debug, info};
+use tracing::{debug, info, trace};
 
-use crate::core::error::ProximaDBError;
-use super::traits::{DataRange, QueryContext, QueryType, FileAccessRequest, RequestPriority};
 use super::config::{
-    DownloadOptimizerConfig, SizeBasedThresholds, NetworkAdjustments, 
-    AccessPredictionConfig, CostOptimizationConfig, RangeOptimizationConfig
+    AccessPredictionConfig, CostOptimizationConfig, DownloadOptimizerConfig, NetworkAdjustments,
+    RangeOptimizationConfig, SizeBasedThresholds,
 };
+use super::traits::{DataRange, FileAccessRequest, QueryContext, QueryType, RequestPriority};
+use crate::core::error::ProximaDBError;
 
 /// Download strategy decision
 #[derive(Debug, Clone, PartialEq)]
 pub enum DownloadStrategy {
     /// Skip file entirely (no download needed)
-    SkipFile {
-        reason: String,
-    },
+    SkipFile { reason: String },
     /// Download entire file
-    FullDownload {
-        cache_locally: bool,
-        reason: String,
-    },
+    FullDownload { cache_locally: bool, reason: String },
     /// Download specific ranges only
     SelectiveRanges {
         ranges: Vec<OptimizedRange>,
@@ -94,7 +89,9 @@ impl PartialOrd for OptimizedRange {
 impl Ord for OptimizedRange {
     fn cmp(&self, other: &Self) -> Ordering {
         // Sort by priority first, then by offset
-        self.range.priority.cmp(&other.range.priority)
+        self.range
+            .priority
+            .cmp(&other.range.priority)
             .then(self.range.offset.cmp(&other.range.offset))
     }
 }
@@ -213,22 +210,26 @@ impl BandwidthOptimizer {
         };
 
         // Calculate decision factors with smart thresholds
-        let decision_factors = self.calculate_decision_factors_with_smart_thresholds(
-            file_path,
-            file_size,
-            &ranges,
-            query_context,
-            request_priority,
-        ).await?;
+        let decision_factors = self
+            .calculate_decision_factors_with_smart_thresholds(
+                file_path,
+                file_size,
+                &ranges,
+                query_context,
+                request_priority,
+            )
+            .await?;
 
         // Make strategy decision with bandwidth optimization
-        let strategy = self.make_bandwidth_optimized_decision(
-            file_path,
-            file_size,
-            ranges,
-            &decision_factors,
-            query_context,
-        ).await?;
+        let strategy = self
+            .make_bandwidth_optimized_decision(
+                file_path,
+                file_size,
+                ranges,
+                &decision_factors,
+                query_context,
+            )
+            .await?;
 
         let decision_time = start_time.elapsed();
         debug!(
@@ -256,23 +257,26 @@ impl BandwidthOptimizer {
         sorted_requests.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         // Process requests in batches to optimize cross-file patterns
-        for chunk in sorted_requests.chunks(self.config.range_optimization.max_concurrent_requests) {
+        for chunk in sorted_requests.chunks(self.config.range_optimization.max_concurrent_requests)
+        {
             let mut chunk_strategies = Vec::new();
-            
+
             for request in chunk {
                 // For batch optimization, we would need file size and ranges
                 // This is a simplified version
-                let strategy = self.decide_strategy(
-                    &request.file_path,
-                    0, // Would need actual file size
-                    None, // Would need actual ranges
-                    &request.query_context,
-                    request.priority.clone(),
-                ).await?;
-                
+                let strategy = self
+                    .decide_strategy(
+                        &request.file_path,
+                        0,    // Would need actual file size
+                        None, // Would need actual ranges
+                        &request.query_context,
+                        request.priority.clone(),
+                    )
+                    .await?;
+
                 chunk_strategies.push(strategy);
             }
-            
+
             strategies.extend(chunk_strategies);
         }
 
@@ -318,15 +322,15 @@ impl BandwidthOptimizer {
         let (network_latency_ms, _bandwidth_mbps) = self.network_tracker.get_current_conditions();
 
         // Predict future access
-        let access_prediction = self.access_predictor.predict_access(file_path, query_context);
+        let access_prediction = self
+            .access_predictor
+            .predict_access(file_path, query_context);
         let future_access_probability = access_prediction.future_access_probability;
 
         // Calculate cost savings
-        let cost_savings_estimate = self.cost_calculator.estimate_cost_savings(
-            file_size,
-            required_bytes,
-            request_count,
-        );
+        let cost_savings_estimate =
+            self.cost_calculator
+                .estimate_cost_savings(file_size, required_bytes, request_count);
 
         // Calculate cache value score
         let cache_value_score = self.calculate_cache_value_score(
@@ -366,39 +370,54 @@ impl BandwidthOptimizer {
 
         // Get size-based threshold
         let base_threshold = self.get_size_based_threshold(file_size);
-        rationale.thresholds_applied.insert("base_threshold".to_string(), base_threshold);
+        rationale
+            .thresholds_applied
+            .insert("base_threshold".to_string(), base_threshold);
 
         // Apply network adjustments
         let adjusted_threshold = self.apply_network_adjustments(base_threshold, factors);
-        rationale.thresholds_applied.insert("adjusted_threshold".to_string(), adjusted_threshold);
+        rationale
+            .thresholds_applied
+            .insert("adjusted_threshold".to_string(), adjusted_threshold);
 
         // Check primary decision factors in order of importance
 
         // Smart threshold decision with bandwidth optimization integration
-        
+
         // 1. Small file optimization - always cache for fast future access
-        if file_size < 16 * 1024 * 1024 { // 16MB threshold
+        if file_size < 16 * 1024 * 1024 {
+            // 16MB threshold
             rationale.primary_factor = format!("Small file {} bytes - cache for speed", file_size);
             return Ok(DownloadStrategy::FullDownload {
                 cache_locally: true,
                 reason: rationale.primary_factor,
             });
         }
-        
+
         // 2. Data percentage with bandwidth-aware thresholds
-        let bandwidth_adjusted_threshold = self.get_bandwidth_aware_threshold(factors, adjusted_threshold);
-        rationale.thresholds_applied.insert("bandwidth_threshold".to_string(), bandwidth_adjusted_threshold);
-        
+        let bandwidth_adjusted_threshold =
+            self.get_bandwidth_aware_threshold(factors, adjusted_threshold);
+        rationale.thresholds_applied.insert(
+            "bandwidth_threshold".to_string(),
+            bandwidth_adjusted_threshold,
+        );
+
         if factors.data_percentage >= bandwidth_adjusted_threshold {
             rationale.primary_factor = format!(
                 "Data percentage {:.1}% >= bandwidth-optimized threshold {:.1}%",
                 factors.data_percentage, bandwidth_adjusted_threshold
             );
-            rationale.contributing_factors.push("Network conditions favor full download".to_string());
-            
+            rationale
+                .contributing_factors
+                .push("Network conditions favor full download".to_string());
+
             return Ok(DownloadStrategy::FullDownload {
                 cache_locally: factors.future_access_probability > 0.4,
-                reason: format!("{} - {}", rationale.primary_factor, rationale.contributing_factors.join(", ")),
+                reason: format!(
+                    "{} - {}",
+                    rationale.primary_factor,
+                    rationale.contributing_factors.join(", ")
+                ),
             });
         }
 
@@ -409,11 +428,17 @@ impl BandwidthOptimizer {
                 "Request count {} > latency-optimized limit {}",
                 factors.request_count, max_requests
             );
-            rationale.contributing_factors.push("Reducing round-trips for better performance".to_string());
-            
+            rationale
+                .contributing_factors
+                .push("Reducing round-trips for better performance".to_string());
+
             return Ok(DownloadStrategy::FullDownload {
                 cache_locally: true,
-                reason: format!("{} - {}", rationale.primary_factor, rationale.contributing_factors.join(", ")),
+                reason: format!(
+                    "{} - {}",
+                    rationale.primary_factor,
+                    rationale.contributing_factors.join(", ")
+                ),
             });
         }
 
@@ -425,22 +450,30 @@ impl BandwidthOptimizer {
                 factors.future_access_probability * 100.0,
                 factors.cache_value_score * 100.0
             );
-            rationale.contributing_factors.push("Predictive caching optimization".to_string());
-            
+            rationale
+                .contributing_factors
+                .push("Predictive caching optimization".to_string());
+
             return Ok(DownloadStrategy::FullDownload {
                 cache_locally: true,
-                reason: format!("{} - {}", rationale.primary_factor, rationale.contributing_factors.join(", ")),
+                reason: format!(
+                    "{} - {}",
+                    rationale.primary_factor,
+                    rationale.contributing_factors.join(", ")
+                ),
             });
         }
 
         // 4. Cost optimization check
-        if factors.cost_savings_estimate < self.config.cost_optimization.min_savings_for_selective as f64 {
+        if factors.cost_savings_estimate
+            < self.config.cost_optimization.min_savings_for_selective as f64
+        {
             rationale.primary_factor = format!(
                 "Cost savings ${:.3} < minimum ${:.3}",
                 factors.cost_savings_estimate,
                 self.config.cost_optimization.min_savings_for_selective as f64 / 1_000_000.0
             );
-            
+
             return Ok(DownloadStrategy::FullDownload {
                 cache_locally: false,
                 reason: rationale.primary_factor,
@@ -448,12 +481,14 @@ impl BandwidthOptimizer {
         }
 
         // 5. High cache value for small files
-        if file_size < self.config.size_thresholds.small_file_threshold && factors.cache_value_score > 0.6 {
+        if file_size < self.config.size_thresholds.small_file_threshold
+            && factors.cache_value_score > 0.6
+        {
             rationale.primary_factor = format!(
                 "Small file with high cache value (score: {:.2})",
                 factors.cache_value_score
             );
-            
+
             return Ok(DownloadStrategy::FullDownload {
                 cache_locally: true,
                 reason: rationale.primary_factor,
@@ -463,7 +498,7 @@ impl BandwidthOptimizer {
         // Default: Use selective ranges
         let optimized_ranges = self.range_optimizer.optimize_ranges(ranges);
         let total_bytes: u64 = optimized_ranges.iter().map(|r| r.range.length).sum();
-        
+
         rationale.primary_factor = format!(
             "Selective ranges: {:.1}% of file, {} requests",
             factors.data_percentage, factors.request_count
@@ -476,13 +511,17 @@ impl BandwidthOptimizer {
         Ok(DownloadStrategy::SelectiveRanges {
             ranges: optimized_ranges,
             total_bytes,
-            reason: format!("{} - {}", rationale.primary_factor, rationale.contributing_factors.join(", ")),
+            reason: format!(
+                "{} - {}",
+                rationale.primary_factor,
+                rationale.contributing_factors.join(", ")
+            ),
         })
     }
 
     fn get_size_based_threshold(&self, file_size: u64) -> f32 {
         let thresholds = &self.config.size_thresholds;
-        
+
         if file_size < thresholds.small_file_threshold {
             thresholds.small_file_download_percent
         } else if file_size < thresholds.medium_file_threshold {
@@ -536,9 +575,11 @@ impl BandwidthOptimizer {
         score += priority_weight;
 
         // File size factor (smaller files have higher cache value)
-        let size_factor = if file_size < 10 * 1024 * 1024 { // 10MB
+        let size_factor = if file_size < 10 * 1024 * 1024 {
+            // 10MB
             0.2
-        } else if file_size < 100 * 1024 * 1024 { // 100MB
+        } else if file_size < 100 * 1024 * 1024 {
+            // 100MB
             0.1
         } else {
             0.0
@@ -547,34 +588,34 @@ impl BandwidthOptimizer {
 
         score.clamp(0.0, 1.0)
     }
-    
+
     /// Get bandwidth-aware threshold that considers network conditions
     fn get_bandwidth_aware_threshold(&self, factors: &DecisionFactors, base_threshold: f32) -> f32 {
         let (latency_ms, bandwidth_mbps) = self.network_tracker.get_current_conditions();
         let mut threshold = base_threshold;
-        
+
         // High latency reduces threshold (favor full downloads to reduce round trips)
         if latency_ms > 100.0 {
             threshold *= 0.7; // Reduce by 30%
         } else if latency_ms > 50.0 {
             threshold *= 0.85; // Reduce by 15%
         }
-        
+
         // Low bandwidth increases threshold (favor range requests to save bandwidth)
         if bandwidth_mbps < 10.0 {
             threshold *= 1.5; // Increase by 50%
         } else if bandwidth_mbps < 50.0 {
             threshold *= 1.2; // Increase by 20%
         }
-        
+
         threshold.clamp(5.0, 95.0) // Keep within reasonable bounds
     }
-    
+
     /// Get latency-optimized request limit
     fn get_latency_optimized_request_limit(&self, factors: &DecisionFactors) -> u32 {
         let (latency_ms, _) = self.network_tracker.get_current_conditions();
         let base_limit = self.config.cost_optimization.max_range_requests;
-        
+
         // Reduce request limit for high latency connections
         if latency_ms > 200.0 {
             (base_limit as f32 * 0.5) as u32 // Halve for very high latency
@@ -586,25 +627,28 @@ impl BandwidthOptimizer {
             base_limit as u32 // Normal limit for low latency
         }
     }
-    
+
     /// Get cache value threshold based on file size and query context
     fn get_cache_value_threshold(&self, file_size: u64, query_context: &QueryContext) -> f32 {
         let mut threshold = 0.6; // Base threshold
-        
+
         // Smaller files have lower threshold (easier to cache)
-        if file_size < 10 * 1024 * 1024 { // 10MB
+        if file_size < 10 * 1024 * 1024 {
+            // 10MB
             threshold = 0.3;
-        } else if file_size < 100 * 1024 * 1024 { // 100MB
+        } else if file_size < 100 * 1024 * 1024 {
+            // 100MB
             threshold = 0.5;
-        } else if file_size > 1024 * 1024 * 1024 { // 1GB
+        } else if file_size > 1024 * 1024 * 1024 {
+            // 1GB
             threshold = 0.8;
         }
-        
+
         // Complex queries benefit more from caching
         if query_context.complexity_score() > 0.8 {
             threshold *= 0.8; // Lower threshold for complex queries
         }
-        
+
         threshold
     }
 }
@@ -620,7 +664,7 @@ pub struct NetworkConditionTracker {
 impl NetworkConditionTracker {
     fn new(config: &NetworkAdjustments) -> Self {
         Self {
-            current_latency_ms: 50.0, // Default assumption
+            current_latency_ms: 50.0,      // Default assumption
             current_bandwidth_mbps: 100.0, // Default assumption
             high_latency_threshold: config.high_latency_threshold,
             low_bandwidth_threshold: config.low_bandwidth_threshold,
@@ -671,7 +715,7 @@ impl AccessPatternPredictor {
 
     fn predict_access(&self, file_path: &str, _query_context: &QueryContext) -> AccessPrediction {
         let history = self.file_access_history.get(file_path);
-        
+
         match history {
             None => AccessPrediction {
                 future_access_probability: 0.1, // Low default for unknown files
@@ -690,7 +734,8 @@ impl AccessPatternPredictor {
                 }
 
                 // Simple prediction based on recent access frequency
-                let recent_events = events.iter()
+                let recent_events = events
+                    .iter()
                     .filter(|e| e.timestamp.elapsed() < self.config.history_window)
                     .count();
 
@@ -733,14 +778,21 @@ impl CostCalculator {
         }
     }
 
-    fn estimate_cost_savings(&self, file_size: u64, required_bytes: u64, request_count: u32) -> f64 {
+    fn estimate_cost_savings(
+        &self,
+        file_size: u64,
+        required_bytes: u64,
+        request_count: u32,
+    ) -> f64 {
         // Calculate bandwidth cost savings
         let bytes_saved = file_size.saturating_sub(required_bytes);
-        let bandwidth_savings = (bytes_saved as f64 / (1024.0 * 1024.0 * 1024.0)) * self.config.bandwidth_cost_per_gb;
+        let bandwidth_savings =
+            (bytes_saved as f64 / (1024.0 * 1024.0 * 1024.0)) * self.config.bandwidth_cost_per_gb;
 
         // Calculate request cost impact (negative for additional requests)
         let additional_requests = request_count.saturating_sub(1) as f64; // Assume 1 request for full download
-        let request_cost_impact = additional_requests * self.config.request_cost_weight as f64 * 0.001; // Small per-request cost
+        let request_cost_impact =
+            additional_requests * self.config.request_cost_weight as f64 * 0.001; // Small per-request cost
 
         bandwidth_savings - request_cost_impact
     }
@@ -771,10 +823,12 @@ impl RangeOptimizer {
 
         for range in ranges.into_iter().skip(1) {
             let last_range = current_ranges.last().unwrap();
-            
+
             // Check if ranges should be merged
-            let gap = range.offset.saturating_sub(last_range.offset + last_range.length);
-            
+            let gap = range
+                .offset
+                .saturating_sub(last_range.offset + last_range.length);
+
             if gap <= self.config.max_merge_gap {
                 // Merge ranges
                 current_ranges.push(range);
@@ -810,7 +864,7 @@ mod tests {
     fn test_optimized_range_creation() {
         let range = DataRange::new(100, 200, 255);
         let opt_range = OptimizedRange::new(range);
-        
+
         assert_eq!(opt_range.range.offset, 100);
         assert_eq!(opt_range.range.length, 200);
         assert!(!opt_range.is_merged);
@@ -819,11 +873,8 @@ mod tests {
 
     #[test]
     fn test_range_merging() {
-        let ranges = vec![
-            DataRange::new(100, 50, 255),
-            DataRange::new(200, 50, 128),
-        ];
-        
+        let ranges = vec![DataRange::new(100, 50, 255), DataRange::new(200, 50, 128)];
+
         let merged = OptimizedRange::merged(ranges, 0.9);
         assert_eq!(merged.range.offset, 100);
         assert_eq!(merged.range.length, 150);

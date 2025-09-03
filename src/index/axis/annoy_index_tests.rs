@@ -16,11 +16,11 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::VectorRecord;
-    use crate::proto::proximadb::MetadataItem;
     use crate::index::axis::index_factory::AxisVectorIndex;
+    use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
+    use crate::proto::proximadb::MetadataItem;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -30,8 +30,12 @@ mod tests {
             .unwrap()
             .as_micros() as i64
     }
-    
-    fn create_test_record(id: String, vector: Vec<f32>, metadata: Vec<MetadataItem>) -> Arc<VectorRecord> {
+
+    fn create_test_record(
+        id: String,
+        vector: Vec<f32>,
+        metadata: Vec<MetadataItem>,
+    ) -> Arc<VectorRecord> {
         Arc::new(VectorRecord {
             id: Some(id),
             vector,
@@ -43,7 +47,6 @@ mod tests {
             // rank removed -  None,
             similarity: None,
             similarity: None,
-        
         })
     }
 
@@ -87,8 +90,13 @@ mod tests {
         // Annoy is approximate, so we just check that results are reasonable
         assert!(results[0].1 < 1.0, "Top result should have low distance");
         // Check that vec_0 is in top results (it's an exact match)
-        let has_exact_match = results.iter().any(|(id, dist)| id == "vec_0" && *dist < 0.1);
-        assert!(has_exact_match, "Should find the exact match in top results");
+        let has_exact_match = results
+            .iter()
+            .any(|(id, dist)| id == "vec_0" && *dist < 0.1);
+        assert!(
+            has_exact_match,
+            "Should find the exact match in top results"
+        );
     }
 
     #[tokio::test]
@@ -143,12 +151,14 @@ mod tests {
         for i in 0..10 {
             let mut vec = vec![0.0; 4];
             vec[i % 4] = 1.0;
-            
+
             let metadata = vec![MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue((i % 2).to_string())),
+                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    (i % 2).to_string(),
+                )),
             }];
-            
+
             let record = create_test_record(format!("vec_{}", i), vec, metadata);
             index.add(format!("vec_{}", i), record).await.unwrap();
         }
@@ -188,12 +198,22 @@ mod tests {
         // Try to add after build - should fail
         let result = index.add("v2".to_string(), record2).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains_hash("cannot be modified"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains_hash("cannot be modified")
+        );
 
         // Try to remove - should fail
         let result = index.remove("v1").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains_hash("does not support removal"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains_hash("does not support removal")
+        );
 
         // Search should still work
         let query = vec![1.0, 0.0, 0.0, 0.0];
@@ -242,8 +262,14 @@ mod tests {
         assert_eq!(results1.len(), 5);
         assert_eq!(results2.len(), 5);
         // Both should have found reasonable results (Annoy is approximate)
-        assert!(results1[0].1 < 10.0, "First result distance should be reasonable");
-        assert!(results2[0].1 < 10.0, "Second result distance should be reasonable");
+        assert!(
+            results1[0].1 < 10.0,
+            "First result distance should be reasonable"
+        );
+        assert!(
+            results2[0].1 < 10.0,
+            "Second result distance should be reasonable"
+        );
     }
 
     #[tokio::test]
@@ -262,7 +288,7 @@ mod tests {
         for i in 0..10 {
             let mut vec = vec![0.0; 4];
             vec[i % 4] = 1.0;
-            
+
             let record = create_test_record(format!("vec_{}", i), vec, vec![]);
             index.add(format!("vec_{}", i), record).await.unwrap();
         }

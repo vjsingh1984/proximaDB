@@ -12,7 +12,6 @@
 
 pub mod wal_behavior;
 
-
 use crate::storage::memtable::core::MemtableConfig;
 
 /// Factory methods that use actual data structure names
@@ -20,7 +19,9 @@ pub struct SpecializedMemtableFactory;
 
 impl SpecializedMemtableFactory {
     /// Create global partitioned memtable with WAL-specific behavior
-    pub fn create_global_partitioned_for_wal(config: MemtableConfig) -> wal_behavior::WALBehaviorWrapper {
+    pub fn create_global_partitioned_for_wal(
+        config: MemtableConfig,
+    ) -> wal_behavior::WALBehaviorWrapper {
         wal_behavior::WALBehaviorWrapper::new(config)
     }
 }

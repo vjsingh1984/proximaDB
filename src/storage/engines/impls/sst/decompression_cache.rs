@@ -51,7 +51,8 @@ pub struct DecompressionCache {
     /// Cache statistics
     stats: Arc<RwLock<CacheStats>>,
     /// Compression-specific sub-caches for better locality
-    compression_caches: Arc<RwLock<HashMap<crate::core::compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
+    compression_caches:
+        Arc<RwLock<HashMap<crate::core::compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML
@@ -91,18 +92,19 @@ impl DecompressionCache {
     /// Create a new decompression cache from configuration
     pub fn from_config(config: CacheConfig) -> Self {
         // Apply configurable limits
-        let max_size_mb = config.max_size_mb
-            .min(config.max_cap_mb)     // Apply cap
-            .max(config.min_size_mb);   // Apply minimum
-        
+        let max_size_mb = config
+            .max_size_mb
+            .min(config.max_cap_mb) // Apply cap
+            .max(config.min_size_mb); // Apply minimum
+
         let max_size_bytes = max_size_mb * 1024 * 1024;
         let capacity = NonZeroUsize::new(1000).unwrap(); // Start with 1000 entries
-        
+
         info!(
             "🗂️ SST Decompression Cache initialized: max_size={}MB, prefetch={}, ttl={}s",
             max_size_mb, config.enable_prefetch, config.ttl_seconds
         );
-        
+
         let mut cache = Self {
             block_cache: Arc::new(RwLock::new(LruCache::new(capacity))),
             max_size_bytes,
@@ -113,15 +115,15 @@ impl DecompressionCache {
             config: config.clone(),
             invalidation_task: None,
         };
-        
+
         // Start invalidation task if configured
         if config.invalidation_check_interval_seconds > 0 {
             cache.start_invalidation_task();
         }
-        
+
         cache
     }
-    
+
     /// Create with default configuration
     pub fn new(max_size_mb: usize) -> Self {
         let config = CacheConfig {
@@ -130,7 +132,7 @@ impl DecompressionCache {
         };
         Self::from_config(config)
     }
-    
+
     /// Start background invalidation task
     fn start_invalidation_task(&mut self) {
         let block_cache = Arc::clone(&self.block_cache);
@@ -138,20 +140,19 @@ impl DecompressionCache {
         let current_size = Arc::clone(&self.current_size_bytes);
         let stats = Arc::clone(&self.stats);
         let interval = self.config.invalidation_check_interval_seconds;
-        
+
         let handle = tokio::spawn(async move {
-            let mut interval_timer = tokio::time::interval(
-                tokio::time::Duration::from_secs(interval)
-            );
-            
+            let mut interval_timer =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval));
+
             loop {
                 interval_timer.tick().await;
-                
+
                 // Check for stale entries
                 let mut invalidated = 0;
                 let mut cache = block_cache.write().await;
                 let mut size = current_size.write().await;
-                
+
                 // Get current file timestamps (would check actual files in production)
                 let keys_to_remove: Vec<BlockCacheKey> = cache
                     .iter()
@@ -165,7 +166,7 @@ impl DecompressionCache {
                         None
                     })
                     .collect();
-                
+
                 // Remove invalidated entries
                 for key in keys_to_remove {
                     if let Some(removed) = cache.pop(&key) {
@@ -173,31 +174,32 @@ impl DecompressionCache {
                         invalidated += 1;
                     }
                 }
-                
+
                 if invalidated > 0 {
                     let mut s = stats.write().await;
                     s.evictions += invalidated;
-                    info!("🔄 Cache invalidation: removed {} stale entries", invalidated);
+                    info!(
+                        "🔄 Cache invalidation: removed {} stale entries",
+                        invalidated
+                    );
                 }
             }
         });
-        
+
         self.invalidation_task = Some(handle);
     }
-    
+
     /// Notify cache of file modification
     pub async fn invalidate_file(&self, file_path: &str) {
         // Update file timestamp
-        self.file_timestamps.insert(
-            file_path.to_string(),
-            chrono::Utc::now().timestamp()
-        );
-        
+        self.file_timestamps
+            .insert(file_path.to_string(), chrono::Utc::now().timestamp());
+
         // Remove all blocks from this file
         let mut cache = self.block_cache.write().await;
         let mut current_size = self.current_size_bytes.write().await;
         let mut stats = self.stats.write().await;
-        
+
         let keys_to_remove: Vec<BlockCacheKey> = cache
             .iter()
             .filter_map(|(key, _)| {
@@ -208,33 +210,35 @@ impl DecompressionCache {
                 }
             })
             .collect();
-        
+
         let mut invalidated = 0;
         let mut freed_bytes = 0;
-        
+
         for key in keys_to_remove {
             if let Some(removed) = cache.pop(&key) {
                 freed_bytes += removed.size_bytes;
                 invalidated += 1;
             }
         }
-        
+
         *current_size -= freed_bytes;
         stats.evictions += invalidated;
-        
+
         if invalidated > 0 {
             info!(
                 "🔄 Invalidated {} cache entries for modified file: {} (freed {}KB)",
-                invalidated, file_path, freed_bytes / 1024
+                invalidated,
+                file_path,
+                freed_bytes / 1024
             );
         }
     }
-    
+
     /// Invalidate cache entries for a collection
     pub async fn invalidate_collection(&self, collection_id: &str) {
         let mut cache = self.block_cache.write().await;
         let mut current_size = self.current_size_bytes.write().await;
-        
+
         let keys_to_remove: Vec<BlockCacheKey> = cache
             .iter()
             .filter_map(|(key, _)| {
@@ -245,19 +249,20 @@ impl DecompressionCache {
                 }
             })
             .collect();
-        
+
         let mut freed_bytes = 0;
         for key in keys_to_remove {
             if let Some(removed) = cache.pop(&key) {
                 freed_bytes += removed.size_bytes;
             }
         }
-        
+
         *current_size -= freed_bytes;
-        
+
         info!(
             "🔄 Invalidated cache for collection: {} (freed {}MB)",
-            collection_id, freed_bytes / (1024 * 1024)
+            collection_id,
+            freed_bytes / (1024 * 1024)
         );
     }
 
@@ -265,12 +270,12 @@ impl DecompressionCache {
     pub async fn get(&self, key: &BlockCacheKey) -> Option<FastLanesDataBlock> {
         let mut cache = self.block_cache.write().await;
         let mut stats = self.stats.write().await;
-        
+
         if let Some(cached_block) = cache.get_mut(key) {
             // Update access count
             cached_block.access_count += 1;
             stats.hits += 1;
-            
+
             // Estimate decompression time saved based on compression algorithm
             let time_saved = Self::estimate_decompression_time(
                 cached_block.size_bytes,
@@ -278,7 +283,7 @@ impl DecompressionCache {
             );
             stats.time_saved_us += time_saved;
             stats.bytes_saved += cached_block.size_bytes as u64;
-            
+
             debug!(
                 "🎯 Cache hit for block {}:{} ({}KB, {} accesses)",
                 key.file_path,
@@ -286,7 +291,7 @@ impl DecompressionCache {
                 cached_block.size_bytes / 1024,
                 cached_block.access_count
             );
-            
+
             Some(cached_block.data.clone())
         } else {
             stats.misses += 1;
@@ -304,10 +309,10 @@ impl DecompressionCache {
     ) -> Result<()> {
         // Calculate block size
         let size_bytes = Self::calculate_block_size(&data);
-        
+
         // Check if adding this block would exceed cache size
         let mut current_size = self.current_size_bytes.write().await;
-        
+
         if *current_size + size_bytes > self.max_size_bytes {
             // Need to evict blocks
             let bytes_to_free = *current_size + size_bytes - self.max_size_bytes;
@@ -315,7 +320,7 @@ impl DecompressionCache {
             self.evict_blocks(bytes_to_free).await?;
             current_size = self.current_size_bytes.write().await; // Re-acquire the lock
         }
-        
+
         // Create cached block
         let cached_block = CachedBlock {
             data,
@@ -324,14 +329,14 @@ impl DecompressionCache {
             access_count: 0,
             compression_algorithm: compression_algorithm.clone(),
         };
-        
+
         // Add to cache
         let mut cache = self.block_cache.write().await;
         if let Some(evicted) = cache.put(key.clone(), cached_block) {
             *current_size -= evicted.size_bytes;
         }
         *current_size += size_bytes;
-        
+
         // Update compression-specific cache index
         if let Some(algo) = compression_algorithm {
             let mut comp_caches = self.compression_caches.write().await;
@@ -340,13 +345,13 @@ impl DecompressionCache {
                 .or_insert_with(Vec::new)
                 .push(key.clone());
         }
-        
+
         // Update statistics
         let mut stats = self.stats.write().await;
         if *current_size > stats.peak_size_bytes {
             stats.peak_size_bytes = *current_size;
         }
-        
+
         debug!(
             "📥 Cached block {}:{} ({}KB), cache size: {}MB/{}MB",
             key.file_path,
@@ -355,7 +360,7 @@ impl DecompressionCache {
             *current_size / (1024 * 1024),
             self.max_size_bytes / (1024 * 1024)
         );
-        
+
         Ok(())
     }
 
@@ -364,10 +369,10 @@ impl DecompressionCache {
         let mut cache = self.block_cache.write().await;
         let mut current_size = self.current_size_bytes.write().await;
         let mut stats = self.stats.write().await;
-        
+
         let mut freed_bytes = 0;
         let mut evicted_count = 0;
-        
+
         // LRU eviction - the cache automatically evicts least recently used items
         while freed_bytes < bytes_to_free && cache.len() > 0 {
             // Pop the least recently used item
@@ -375,7 +380,7 @@ impl DecompressionCache {
                 freed_bytes += cached_block.size_bytes;
                 *current_size -= cached_block.size_bytes;
                 evicted_count += 1;
-                
+
                 debug!(
                     "🗑️ Evicted block {}:{} ({}KB, {} accesses)",
                     key.file_path,
@@ -387,9 +392,9 @@ impl DecompressionCache {
                 break;
             }
         }
-        
+
         stats.evictions += evicted_count;
-        
+
         if freed_bytes > 0 {
             info!(
                 "🗑️ Evicted {} blocks, freed {}MB",
@@ -397,19 +402,23 @@ impl DecompressionCache {
                 freed_bytes / (1024 * 1024)
             );
         }
-        
+
         Ok(())
     }
 
     /// Calculate the size of a data block
     fn calculate_block_size(block: &FastLanesDataBlock) -> usize {
         // Estimate based on VectorRecords in the block
-        block.records.iter().map(|r| {
-            std::mem::size_of::<crate::core::VectorRecord>() +
-            r.id.len() +
-            r.vector.len() * std::mem::size_of::<f32>() +
-            r.metadata.iter().map(|m| m.key.len() + 8).sum::<usize>() // Rough metadata size
-        }).sum()
+        block
+            .records
+            .iter()
+            .map(|r| {
+                std::mem::size_of::<crate::core::VectorRecord>()
+                    + r.id.len()
+                    + r.vector.len() * std::mem::size_of::<f32>()
+                    + r.metadata.iter().map(|m| m.key.len() + 8).sum::<usize>() // Rough metadata size
+            })
+            .sum()
     }
 
     /// Estimate decompression time based on algorithm and size
@@ -419,9 +428,13 @@ impl DecompressionCache {
     ) -> u64 {
         // Rough estimates based on typical decompression speeds
         match algorithm {
-            Some(crate::core::compression::CompressionAlgorithm::Zstd) => (size_bytes as u64) / 1000,   // ~1GB/s
-            Some(crate::core::compression::CompressionAlgorithm::Lz4) => (size_bytes as u64) / 2000,    // ~2GB/s
-            Some(crate::core::compression::CompressionAlgorithm::Snappy) => (size_bytes as u64) / 1500, // ~1.5GB/s
+            Some(crate::core::compression::CompressionAlgorithm::Zstd) => {
+                (size_bytes as u64) / 1000
+            } // ~1GB/s
+            Some(crate::core::compression::CompressionAlgorithm::Lz4) => (size_bytes as u64) / 2000, // ~2GB/s
+            Some(crate::core::compression::CompressionAlgorithm::Snappy) => {
+                (size_bytes as u64) / 1500
+            } // ~1.5GB/s
             _ => 0,
         }
     }
@@ -430,13 +443,13 @@ impl DecompressionCache {
     pub async fn clear(&self) {
         let mut cache = self.block_cache.write().await;
         cache.clear();
-        
+
         let mut current_size = self.current_size_bytes.write().await;
         *current_size = 0;
-        
+
         let mut comp_caches = self.compression_caches.write().await;
         comp_caches.clear();
-        
+
         info!("🗑️ Decompression cache cleared");
     }
 
@@ -465,24 +478,28 @@ impl DecompressionCache {
     pub async fn prefetch_file_blocks(
         &self,
         file_path: &str,
-        blocks: Vec<(u32, FastLanesDataBlock, Option<crate::core::compression::CompressionAlgorithm>)>,
+        blocks: Vec<(
+            u32,
+            FastLanesDataBlock,
+            Option<crate::core::compression::CompressionAlgorithm>,
+        )>,
     ) -> Result<()> {
         info!(
             "📥 Prefetching {} blocks for file {}",
             blocks.len(),
             file_path
         );
-        
+
         for (block_id, data, algo) in blocks {
             let key = BlockCacheKey {
                 file_path: file_path.to_string(),
                 block_id,
                 block_offset: 0, // Will be set properly in actual usage
             };
-            
+
             self.put(key, data, algo).await?;
         }
-        
+
         Ok(())
     }
 
@@ -492,10 +509,7 @@ impl DecompressionCache {
         algorithm: crate::core::compression::CompressionAlgorithm,
     ) -> Vec<BlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
-        comp_caches
-            .get(&algorithm)
-            .cloned()
-            .unwrap_or_default()
+        comp_caches.get(&algorithm).cloned().unwrap_or_default()
     }
 }
 
@@ -523,12 +537,12 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            max_size_mb: 512,        // 512MB default
-            min_size_mb: 64,         // 64MB minimum in production
-            max_cap_mb: 8192,        // 8GB cap
+            max_size_mb: 512, // 512MB default
+            min_size_mb: 64,  // 64MB minimum in production
+            max_cap_mb: 8192, // 8GB cap
             enable_prefetch: true,
-            prefetch_threshold: 3,   // Prefetch after 3 accesses
-            ttl_seconds: 0,          // No TTL by default
+            prefetch_threshold: 3, // Prefetch after 3 accesses
+            ttl_seconds: 0,        // No TTL by default
             invalidation_check_interval_seconds: 60, // Check every minute
         }
     }
@@ -549,8 +563,8 @@ mod tests {
     fn test_cache_config(max_size_mb: usize) -> CacheConfig {
         CacheConfig {
             max_size_mb,
-            min_size_mb: 0,      // No minimum for tests
-            max_cap_mb: 8192,    // Keep cap at 8GB
+            min_size_mb: 0,   // No minimum for tests
+            max_cap_mb: 8192, // Keep cap at 8GB
             enable_prefetch: false,
             prefetch_threshold: 3,
             ttl_seconds: 0,
@@ -562,26 +576,31 @@ mod tests {
     async fn test_cache_basic_operations() {
         // Initialize hardware capabilities for testing
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
-        
+
         let key = BlockCacheKey {
             file_path: "test.sstable".to_string(),
             block_id: 1,
             block_offset: 0,
         };
-        
+
         // Test miss
         assert!(cache.get(&key).await.is_some());
-        
+
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
-        cache.put(key.clone(), block.clone(), Some(crate::core::compression::CompressionAlgorithm::Zstd))
+        cache
+            .put(
+                key.clone(),
+                block.clone(),
+                Some(crate::core::compression::CompressionAlgorithm::Zstd),
+            )
             .await
             .unwrap();
-        
+
         assert!(cache.get(&key).await.is_some());
-        
+
         // Check stats
         let stats = cache.stats().await;
         assert_eq!(stats.hits, 1);
@@ -592,9 +611,9 @@ mod tests {
     async fn test_cache_eviction() {
         // Initialize hardware capabilities for testing
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let cache = DecompressionCache::from_config(test_cache_config(1)); // 1MB cache - very small for testing
-        
+
         // Fill cache with blocks - create fewer but larger blocks to ensure we exceed cache size
         for i in 0..20 {
             let key = BlockCacheKey {
@@ -602,7 +621,7 @@ mod tests {
                 block_id: i,
                 block_offset: 0,
             };
-            
+
             // Create a large block with 500 VectorRecords, each with 256-dim vectors
             // This should be approximately 500 * (256 * 4 + overhead) = ~512KB per block
             let mut records = vec![];
@@ -618,16 +637,22 @@ mod tests {
                     quantized_vector: None,
                 });
             }
-            
+
             let block = DataBlock::new(i, records);
             cache.put(key, block, None).await.unwrap();
         }
-        
+
         // Check that evictions happened
         let stats = cache.stats().await;
-        assert!(stats.evictions > 0, "Expected evictions but got none. Cache stats: hits={}, misses={}, evictions={}, peak_size={}", 
-                stats.hits, stats.misses, stats.evictions, stats.peak_size_bytes);
-        
+        assert!(
+            stats.evictions > 0,
+            "Expected evictions but got none. Cache stats: hits={}, misses={}, evictions={}, peak_size={}",
+            stats.hits,
+            stats.misses,
+            stats.evictions,
+            stats.peak_size_bytes
+        );
+
         // Cache size should be under limit
         let current_size = cache.get_current_size().await;
         assert!(current_size <= 1024 * 1024);

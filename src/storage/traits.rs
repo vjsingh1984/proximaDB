@@ -1,7 +1,7 @@
 //! # Unified Storage Engine Traits with Strategy Pattern
 //!
 //! This module defines the core abstraction layer for ProximaDB's pluggable storage engine system.
-//! It implements the Strategy Pattern for storage engines, allowing polymorphic selection between 
+//! It implements the Strategy Pattern for storage engines, allowing polymorphic selection between
 //! different storage backends optimized for various workload patterns.
 //!
 //! ## Role in ProximaDB Architecture
@@ -46,13 +46,13 @@
 //! - **Index Layer**: AXIS engine coordinates with storage for vector retrieval
 //! - **Compaction**: Background processes use this trait for maintenance operations
 
+use crate::proto::proximadb::Collection;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::proto::proximadb::Collection;
 
 /// Performance tier hint for storage engines
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,21 +105,21 @@ impl Default for StorageEngineStrategy {
 pub trait CollectionMetadataProvider: Send + Sync {
     /// Get collection UUID by name or ID
     async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
-    
+
     /// Get full collection metadata
     async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
-    
+
     /// Get collection as unified type
     async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>>;
-    
+
     /// List all collections
     async fn list_collections(&self) -> Result<Vec<Collection>>;
-    
+
     /// Check if collection exists
     async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
         Ok(self.get_uuid(collection_id).await?.is_some())
     }
-    
+
     /// Fast check if collection ID exists (for collision detection)
     /// This should be optimized for speed, returning just bool
     async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
@@ -155,7 +155,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Retrieve a specific vector by ID from storage (required)
     /// This method should search across all storage layers (memtable, SSTables, Parquet files)
-    async fn vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<crate::core::VectorRecord>>;
+    async fn vector_by_id(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+    ) -> Result<Option<crate::core::VectorRecord>>;
 
     /// Engine-specific unified search with optimization capabilities (required)
     /// Each engine implements its own optimizations:
@@ -163,13 +167,13 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// - LSM: Bloom filter hints, range scans, SSTable optimizations
     /// - SST: Hierarchical bloom filters, progressive quantization
     /// - NOVA: Extended Parquet statistics, aggressive pruning
-    /// 
+    ///
     /// Uses StorageQueryContext which provides zero-copy access via Arc references
     async fn search_vectors_unified(
         &self,
         ctx: &StorageQueryContext,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
-    
+
     /// Compact a specific collection's data
     /// Returns standard CompactionResult - engines can add vector tracking in engine_metrics
     async fn compact_collection(
@@ -185,10 +189,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
             synchronous: true,
             ..Default::default()
         };
-        
+
         self.do_compact(&params).await
     }
-    
+
     /// Create a scan iterator based on the unified scan strategy pattern
     /// This follows the successful pattern from RAPTOR's scan_vectors_with_strategy
     /// and is implemented differently by each engine:
@@ -196,7 +200,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// - VIPER: Uses columnar predicate pushdown
     /// - NOVA: Uses progressive quantization stages
     /// - RAPTOR: Uses tier-aware consolidated reading
-    /// 
+    ///
     /// Default implementation returns an error - engines should override
     async fn create_scan(
         &self,
@@ -210,12 +214,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
             self.engine_name()
         ))
     }
-    
+
     /// Get scan capabilities for this engine
     /// Each engine reports its specific optimization capabilities
     fn scan_capabilities(&self) -> crate::storage::unified_scan_strategy::ScanCapabilities {
         use crate::storage::unified_scan_strategy::ScanCapabilities;
-        
+
         match self.strategy() {
             StorageEngineStrategy::Lsm => ScanCapabilities {
                 // SST capabilities
@@ -349,7 +353,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
             StorageEngineStrategy::Prism => true, // Prism supports collection-level ops
             StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
-            StorageEngineStrategy::Nova => true, // NOVA supports collection-level ops
+            StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
             StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
         }
     }
@@ -361,7 +365,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
             StorageEngineStrategy::Prism => true, // Prism provides atomic guarantees
             StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
-            StorageEngineStrategy::Nova => true, // NOVA provides atomic guarantees
+            StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
             StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
         }
     }
@@ -379,9 +383,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
     async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
         // Storage location should be passed through FlushParameters/CompactionParameters
         // or retrieved from collection metadata when actually needed
-        tracing::error!("❌ get_collection_storage_url called without implementation for collection '{}'. Storage URL must be provided through parameters or collection metadata.", collection_id);
+        tracing::error!(
+            "❌ get_collection_storage_url called without implementation for collection '{}'. Storage URL must be provided through parameters or collection metadata.",
+            collection_id
+        );
         Err(anyhow::anyhow!(
-            "Collection '{}' storage location not found. Please ensure collection exists and has a storage assignment.", 
+            "Collection '{}' storage location not found. Please ensure collection exists and has a storage assignment.",
             collection_id
         ))
     }
@@ -391,8 +398,13 @@ pub trait UnifiedStorageEngine: Send + Sync {
     async fn get_base_storage_url(&self, collection_id: &str) -> Result<String> {
         // Base storage should come from collection metadata
         // Engines must override this or provide collection service
-        tracing::error!("❌ get_base_storage_url called without implementation for collection '{}'. Storage engines must provide storage URL.", collection_id);
-        Err(anyhow::anyhow!("Storage engine must implement get_base_storage_url or provide collection service"))
+        tracing::error!(
+            "❌ get_base_storage_url called without implementation for collection '{}'. Storage engines must provide storage URL.",
+            collection_id
+        );
+        Err(anyhow::anyhow!(
+            "Storage engine must implement get_base_storage_url or provide collection service"
+        ))
     }
 
     /// Check if collection has storage assignment
@@ -407,14 +419,19 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Get filesystem factory for this engine - to be implemented by each engine
     fn get_filesystem_factory(&self)
-        -> &crate::storage::persistence::filesystem::FilesystemFactory;
+    -> &crate::storage::persistence::filesystem::FilesystemFactory;
 
     /// Get collection service for IndexConfig retrieval - to be implemented by each engine
     /// IndexConfig should be handled by AXIS indexing service
-    fn get_collection_service(&self) -> Option<&crate::services::collection::manager::CollectionService>;
+    fn get_collection_service(
+        &self,
+    ) -> Option<&crate::services::collection::manager::CollectionService>;
 
     /// Get collection's IndexConfig from collection service
-    async fn get_native_index_config(&self, collection_id: &str) -> Result<crate::index::config::IndexConfig> {
+    async fn get_native_index_config(
+        &self,
+        collection_id: &str,
+    ) -> Result<crate::index::config::IndexConfig> {
         if let Some(collection_service) = self.get_collection_service() {
             match collection_service.native_index_config(collection_id).await {
                 Ok(Some(config)) => {
@@ -427,7 +444,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     Ok(crate::index::config::IndexConfig::default())
                 }
                 Err(e) => {
-                    tracing::error!("❌ Failed to retrieve IndexConfig for collection {}: {}", collection_id, e);
+                    tracing::error!(
+                        "❌ Failed to retrieve IndexConfig for collection {}: {}",
+                        collection_id,
+                        e
+                    );
                     // Return default IndexConfig as fallback
                     Ok(crate::index::config::IndexConfig::default())
                 }
@@ -613,7 +634,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
         // 🚀 INDEX UPDATES: Delegate to AXIS indexing service for proper configuration handling
         if result.success {
             if let Some(collection_id) = &params.collection_id {
-                tracing::debug!("🔄 Flush successful for collection: {} - AXIS will handle index updates", collection_id);
+                tracing::debug!(
+                    "🔄 Flush successful for collection: {} - AXIS will handle index updates",
+                    collection_id
+                );
                 // NOTE: Index updates are now handled by AXIS indexing service based on collection IndexConfig
                 // The flush coordinator will notify AXIS about new vectors to index
             }
@@ -713,7 +737,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("vector_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) > 10)
+                    .unwrap_or(0)
+                    > 10)
             }
             StorageEngineStrategy::Lsm => {
                 // LSM default: compact when level ratios are unbalanced
@@ -722,7 +747,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("index_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) > 10)
+                    .unwrap_or(0)
+                    > 10)
             }
             StorageEngineStrategy::Hybrid => {
                 // Hybrid: check both strategies
@@ -735,7 +761,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("index_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) > 10)
+                    .unwrap_or(0)
+                    > 10)
             }
             StorageEngineStrategy::Swift => {
                 // SWIFT: compact based on file count
@@ -744,7 +771,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("file_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) > 5)
+                    .unwrap_or(0)
+                    > 5)
             }
             StorageEngineStrategy::Nova => {
                 // NOVA: compact when row groups exceed threshold
@@ -753,7 +781,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("row_group_count")
                     .and_then(|v| v.as_u64())
-                    .unwrap_or(0) > 20)
+                    .unwrap_or(0)
+                    > 20)
             }
             StorageEngineStrategy::Raptor => {
                 // RAPTOR: adaptive compaction
@@ -899,18 +928,18 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
         Ok(())
     }
-    
+
     // =============================================================================
     // ADDITIONAL ENGINE OPERATIONS - Default implementations provided
     // =============================================================================
-    
+
     /// Optimize engine performance for a specific collection
     async fn optimize(&self, _collection_id: &str) -> Result<()> {
         // Default implementation: no-op
         tracing::debug!("Engine {} optimize operation (no-op)", self.engine_name());
         Ok(())
     }
-    
+
     /// Get detailed engine statistics
     async fn get_statistics(&self) -> Result<EngineStatistics> {
         // Default implementation: return basic statistics
@@ -928,7 +957,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             engine_specific: HashMap::new(),
         })
     }
-    
+
     /// Check if engine supports a specific feature
     fn supports_feature(&self, feature: &str) -> bool {
         // Default implementation: check common features
@@ -967,10 +996,10 @@ pub struct FlushParameters {
 
     /// Batch IDs involved in this flush operation (for coordination)
     pub batch_ids: Vec<crate::storage::persistence::write_ahead_log::BatchId>,
-    
+
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,
-    
+
     /// Estimated size in bytes for metrics tracking
     pub estimated_size: usize,
 }
@@ -995,10 +1024,10 @@ pub struct CompactionParameters {
 
     /// Priority level for the operation
     pub priority: OperationPriority,
-    
+
     /// Collection configuration to avoid redundant lookups
     pub collection_config: Option<Collection>,
-    
+
     /// Estimated input size in bytes for metrics tracking
     pub estimated_input_size: usize,
 }
@@ -1015,14 +1044,14 @@ pub enum OperationPriority {
 
 /// Search context for STORAGE ENGINES - bundles immutable references to search parameters
 /// and collection configuration for zero-copy access during search operations.
-/// 
+///
 /// **IMPORTANT**: This is the STORAGE LAYER context. Do not confuse with:
 /// - `core::search::SearchPlan` - Used for search planning/optimization  
 /// - `core::service_types::SearchRequest` - Used for API request representation
-/// 
+///
 /// Used by: Storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR)
 /// Created by: VectorOperationsService.execute_search_internal()
-/// 
+///
 /// Design principles:
 /// - Immutable: All references are read-only during search
 /// - Zero-copy: Uses Arc for shared ownership without cloning
@@ -1032,11 +1061,11 @@ pub enum OperationPriority {
 pub struct StorageQueryContext {
     /// Original search parameters (immutable reference)
     pub search_params: Arc<crate::core::search::SearchParams>,
-    
+
     /// Collection configuration from cache (immutable reference)
     /// Contains storage_assignment with storage URL
     pub collection: Arc<Collection>,
-    
+
     /// Additional context that might be needed during search
     /// (can be extended without breaking existing code)
     pub metadata: StorageQueryMetadata,
@@ -1047,18 +1076,18 @@ pub struct StorageQueryContext {
 pub struct ParsedQuantizationConfig {
     /// Strategy being used (SmartDefaults, CustomLevels, etc.)
     pub strategy: crate::proto::proximadb::quantization_config::Strategy,
-    
+
     /// Whether progressive search is enabled
     pub progressive_search_enabled: bool,
-    
+
     /// Ordered quantization levels for progressive refinement  
     pub progressive_levels: Vec<QuantizationLevel>,
-    
+
     /// Search stage selectivity thresholds
     pub binary_filter_selectivity: f32,
     pub int8_ranking_selectivity: f32,
     pub pq_ranking_selectivity: f32,
-    
+
     /// Quality and performance settings
     pub quality_threshold: f32,
     pub training_sample_size: i32,
@@ -1072,19 +1101,19 @@ pub struct ParsedQuantizationConfig {
 pub struct QuantizationLevel {
     /// Level identifier (e.g., "binary", "int8", "pq8")
     pub level_id: String,
-    
+
     /// Quantization type
     pub quantization_type: QuantizationType,
-    
+
     /// Bits per element
     pub bits: i32,
-    
+
     /// Search priority (0 = first filter)
     pub search_priority: i32,
-    
+
     /// PQ-specific settings
     pub num_subvectors: Option<i32>,
-    
+
     /// Minimum recall for this level
     pub min_recall: f32,
 }
@@ -1105,32 +1134,32 @@ pub enum QuantizationType {
 pub struct StorageQueryMetadata {
     /// Collection ID extracted for convenience
     pub collection_id: String,
-    
+
     /// Whether this search should use AXIS indexes
     pub use_axis_indexes: bool,
-    
+
     /// Whether progressive quantization is available
     pub has_quantization: bool,
-    
+
     /// Dimension of vectors in this collection
     pub dimension: usize,
-    
+
     /// Distance metric for the collection
     pub distance_metric: crate::compute::distance_computation::DistanceMetric,
-    
+
     /// Storage engine strategy for this collection
     pub storage_strategy: StorageEngineStrategy,
-    
+
     /// Base storage path for this collection (extracted from storage_assignment)
     pub storage_path: String,
-    
+
     /// Parsed quantization configuration for progressive search
     pub quantization_config: Option<ParsedQuantizationConfig>,
-    
+
     /// Collection size estimates for strategy selection
     pub estimated_vector_count: u64,
     pub estimated_size_bytes: u64,
-    
+
     /// Performance hints for engines
     pub performance_tier: PerformanceTier,
     pub compression_enabled: bool,
@@ -1144,15 +1173,19 @@ impl StorageQueryContext {
         dimension: u32,
     ) -> Option<ParsedQuantizationConfig> {
         use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
-        
+
         if !quant_config.enabled {
             return None;
         }
-        
+
         // Parse or generate progressive levels
         let progressive_levels = if quant_config.custom_levels.is_empty() {
             // Use smart defaults if no custom levels provided
-            if let Ok(smart_config) = crate::compute::quantization::QuantizationSmartDefaults::generate_for_dimension(dimension) {
+            if let Ok(smart_config) =
+                crate::compute::quantization::QuantizationSmartDefaults::generate_for_dimension(
+                    dimension,
+                )
+            {
                 Self::parse_proto_levels(&smart_config.custom_levels)
             } else {
                 Vec::new()
@@ -1160,7 +1193,7 @@ impl StorageQueryContext {
         } else {
             Self::parse_proto_levels(&quant_config.custom_levels)
         };
-        
+
         Some(ParsedQuantizationConfig {
             strategy: quant_config.strategy(),
             progressive_search_enabled: quant_config.enable_progressive_search,
@@ -1175,11 +1208,13 @@ impl StorageQueryContext {
             optimize_for_memory: quant_config.optimize_for_memory,
         })
     }
-    
+
     /// Parse proto levels into internal format
-    fn parse_proto_levels(proto_levels: &[crate::proto::proximadb::QuantizationLevel]) -> Vec<QuantizationLevel> {
+    fn parse_proto_levels(
+        proto_levels: &[crate::proto::proximadb::QuantizationLevel],
+    ) -> Vec<QuantizationLevel> {
         use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
-        
+
         let mut levels: Vec<_> = proto_levels
             .iter()
             .enumerate()
@@ -1191,7 +1226,7 @@ impl StorageQueryContext {
                     ProtoQuantType::Uniform => QuantizationType::Uniform,
                     ProtoQuantType::None => QuantizationType::None,
                 };
-                
+
                 QuantizationLevel {
                     level_id: level.level_id.clone(),
                     quantization_type,
@@ -1202,12 +1237,12 @@ impl StorageQueryContext {
                 }
             })
             .collect();
-        
+
         // Sort by search priority for progressive search
         levels.sort_by_key(|l| l.search_priority);
         levels
     }
-    
+
     /// Create a new search context from cached components
     pub fn new(
         search_params: Arc<crate::core::search::SearchParams>,
@@ -1216,7 +1251,7 @@ impl StorageQueryContext {
         // Extract metadata once during context creation
         let config = collection.config.as_ref();
         let storage_assignment = collection.storage_assignment.as_ref();
-        
+
         let metadata = StorageQueryMetadata {
             collection_id: collection.id.clone(),
             use_axis_indexes: config
@@ -1228,12 +1263,8 @@ impl StorageQueryContext {
                     }
                 })
                 .unwrap_or(false),
-            has_quantization: config
-                .and_then(|c| c.quantization.as_ref())
-                .is_some(),
-            dimension: config
-                .map(|c| c.dimension as usize)
-                .unwrap_or(0),
+            has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
+            dimension: config.map(|c| c.dimension as usize).unwrap_or(0),
             distance_metric: config
                 .map(|c| match c.distance_metric {
                     0 => crate::compute::distance_computation::DistanceMetric::Euclidean,
@@ -1244,12 +1275,12 @@ impl StorageQueryContext {
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
             storage_strategy: config
                 .map(|c| match c.storage_engine {
-                    0 => StorageEngineStrategy::Viper,  // VIPER
-                    1 => StorageEngineStrategy::Lsm,    // SST
-                    2 => StorageEngineStrategy::Prism,  // PRISM
-                    3 => StorageEngineStrategy::Lsm,    // NOVA (use LSM)
-                    4 => StorageEngineStrategy::Lsm,    // SWIFT (use LSM)
-                    5 => StorageEngineStrategy::Lsm,    // RAPTOR (use LSM)
+                    0 => StorageEngineStrategy::Viper, // VIPER
+                    1 => StorageEngineStrategy::Lsm,   // SST
+                    2 => StorageEngineStrategy::Prism, // PRISM
+                    3 => StorageEngineStrategy::Lsm,   // NOVA (use LSM)
+                    4 => StorageEngineStrategy::Lsm,   // SWIFT (use LSM)
+                    5 => StorageEngineStrategy::Lsm,   // RAPTOR (use LSM)
                     _ => StorageEngineStrategy::Viper,
                 })
                 .unwrap_or(StorageEngineStrategy::Viper),
@@ -1278,134 +1309,144 @@ impl StorageQueryContext {
                 .map(|_| true)
                 .unwrap_or(false),
             // Parse quantization config for progressive search
-            quantization_config: config
-                .and_then(|c| c.quantization.as_ref())
-                .and_then(|qc| config.map(|c| c.dimension as u32).and_then(|dim| Self::parse_quantization_config(qc, dim))),
+            quantization_config: config.and_then(|c| c.quantization.as_ref()).and_then(|qc| {
+                config
+                    .map(|c| c.dimension as u32)
+                    .and_then(|dim| Self::parse_quantization_config(qc, dim))
+            }),
         };
-        
+
         Self {
             search_params,
             collection,
             metadata,
         }
     }
-    
+
     /// Get the query vector (convenience method)
     pub fn query_vector(&self) -> Option<&[f32]> {
-        self.search_params.query_vectors.as_ref()
+        self.search_params
+            .query_vectors
+            .as_ref()
             .and_then(|vecs| vecs.first())
             .map(|v| v.as_slice())
     }
-    
+
     /// Get top_k value with fallback to default
     pub fn top_k(&self) -> usize {
         self.search_params.top_k.unwrap_or(10)
     }
-    
+
     /// Get distance metric (pre-computed from collection config)
     pub fn distance_metric(&self) -> crate::compute::distance_computation::DistanceMetric {
         // Use search params override if provided, otherwise use pre-computed value
-        self.search_params.distance_metric.unwrap_or(self.metadata.distance_metric)
+        self.search_params
+            .distance_metric
+            .unwrap_or(self.metadata.distance_metric)
     }
-    
+
     /// Get dimension from metadata (pre-computed)
     pub fn dimension(&self) -> usize {
         self.metadata.dimension
     }
-    
+
     /// Check if progressive search is enabled
     pub fn is_progressive_search_enabled(&self) -> bool {
-        self.metadata.quantization_config
+        self.metadata
+            .quantization_config
             .as_ref()
             .map(|qc| qc.progressive_search_enabled)
             .unwrap_or(false)
     }
-    
+
     /// Get progressive quantization levels ordered by search priority
     pub fn get_progressive_levels(&self) -> Option<&[QuantizationLevel]> {
-        self.metadata.quantization_config
+        self.metadata
+            .quantization_config
             .as_ref()
             .map(|qc| qc.progressive_levels.as_slice())
     }
-    
+
     /// Get binary filter selectivity for progressive search
     pub fn binary_filter_selectivity(&self) -> f32 {
-        self.metadata.quantization_config
+        self.metadata
+            .quantization_config
             .as_ref()
             .map(|qc| qc.binary_filter_selectivity)
             .unwrap_or(0.1)
     }
-    
+
     /// Check if SIMD acceleration should be used
     pub fn use_simd_acceleration(&self) -> bool {
-        self.metadata.quantization_config
+        self.metadata
+            .quantization_config
             .as_ref()
             .map(|qc| qc.enable_simd_acceleration)
             .unwrap_or(true)
-            
     }
-    
+
     /// Get the parsed quantization config
     pub fn quantization_config(&self) -> Option<&ParsedQuantizationConfig> {
         self.metadata.quantization_config.as_ref()
     }
-    
+
     /// Check if quantization is enabled (pre-computed)
     pub fn has_quantization(&self) -> bool {
         self.metadata.has_quantization
     }
-    
+
     /// Get storage path (pre-computed from storage assignment)
     pub fn storage_path(&self) -> &str {
         &self.metadata.storage_path
     }
-    
+
     /// Get storage strategy (pre-computed)
     pub fn storage_strategy(&self) -> StorageEngineStrategy {
         self.metadata.storage_strategy.clone()
     }
-    
+
     /// Get performance tier hint (pre-computed)
     pub fn performance_tier(&self) -> PerformanceTier {
         self.metadata.performance_tier.clone()
     }
-    
+
     /// Get collection size estimates (pre-computed)
     pub fn estimated_vector_count(&self) -> u64 {
         self.metadata.estimated_vector_count
     }
-    
+
     /// Get estimated collection size in bytes (pre-computed)
     pub fn estimated_size_bytes(&self) -> u64 {
         self.metadata.estimated_size_bytes
     }
-    
+
     /// Check if compression is enabled (pre-computed)
     pub fn compression_enabled(&self) -> bool {
         self.metadata.compression_enabled
     }
-    
+
     /// Check if quantization is enabled (pre-computed)
     pub fn quantization_enabled(&self) -> bool {
         self.metadata.quantization_enabled
     }
-    
+
     /// Get collection ID (pre-computed)
     pub fn collection_id(&self) -> &str {
         &self.metadata.collection_id
     }
-    
+
     /// Get storage URL from collection's storage assignment
     pub fn storage_url(&self) -> Option<&str> {
-        self.collection.storage_assignment.as_ref()
+        self.collection
+            .storage_assignment
+            .as_ref()
             .map(|sa| sa.base_location.as_str())
     }
-    
+
     /// Get collection-specific storage path
     pub fn collection_storage_path(&self) -> Option<String> {
-        self.storage_url().map(|base| {
-            format!("{}/{}", base, self.collection_id())
-        })
+        self.storage_url()
+            .map(|base| format!("{}/{}", base, self.collection_id()))
     }
 }
 

@@ -14,16 +14,16 @@ pub struct ARCStrategy<K: Hash + Eq + Clone> {
     b1: RwLock<VecDeque<K>>,
     // B2: Ghost entries recently evicted from T2
     b2: RwLock<VecDeque<K>>,
-    
+
     // Adaptive parameter (target size for T1)
     p: RwLock<f64>,
-    
+
     // Quick lookup maps
     location_map: RwLock<HashMap<K, CacheLocation>>,
-    
+
     // Statistics
     stats: RwLock<EvictionStats>,
-    
+
     // Maximum cache size
     cache_size: usize,
 }
@@ -50,22 +50,22 @@ impl<K: Hash + Eq + Clone> ARCStrategy<K> {
             cache_size,
         }
     }
-    
+
     fn adapt(&self, delta: f64) {
         let mut p = self.p.write().unwrap();
         *p = (*p + delta).max(0.0).min(self.cache_size as f64);
     }
-    
+
     fn move_to_t2(&self, key: &K) {
         let mut t1 = self.t1.write().unwrap();
         let mut t2 = self.t2.write().unwrap();
         let mut locations = self.location_map.write().unwrap();
-        
+
         // Remove from T1
         if let Some(pos) = t1.iter().position(|k| k == key) {
             t1.remove(pos);
         }
-        
+
         // Add to T2 front (MRU position)
         t2.push_front(key.clone());
         locations.insert(key.clone(), CacheLocation::T2);
@@ -74,14 +74,14 @@ impl<K: Hash + Eq + Clone> ARCStrategy<K> {
 
 impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
     type Key = K;
-    
+
     fn select_victim(&self, _cache_state: &CacheState) -> Option<Self::Key> {
         let t1 = self.t1.read().unwrap();
         let t2 = self.t2.read().unwrap();
         let p = *self.p.read().unwrap();
-        
+
         let t1_target_size = p.round() as usize;
-        
+
         // Prefer evicting from T1 if it's above target size
         if t1.len() > t1_target_size {
             t1.back().cloned()
@@ -90,12 +90,12 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
             t2.back().cloned()
         }
     }
-    
+
     fn update_on_access(&mut self, key: &Self::Key) {
         let locations = self.location_map.read().unwrap();
         let location = locations.get(key).copied();
         drop(locations);
-        
+
         match location {
             Some(CacheLocation::T1) => {
                 // Move from T1 to T2 (promote to frequent)
@@ -133,29 +133,29 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
             }
             Some(CacheLocation::NotInCache) | None => {}
         }
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.total_accesses += 1;
     }
-    
+
     fn update_on_insert(&mut self, key: &Self::Key, _size: usize) {
         let mut t1 = self.t1.write().unwrap();
         let mut locations = self.location_map.write().unwrap();
-        
+
         // New entries go to T1 (recent)
         t1.push_front(key.clone());
         locations.insert(key.clone(), CacheLocation::T1);
     }
-    
+
     fn update_on_evict(&mut self, key: &Self::Key) {
         let mut locations = self.location_map.write().unwrap();
         let location = locations.get(key).copied();
-        
+
         match location {
             Some(CacheLocation::T1) => {
                 let mut t1 = self.t1.write().unwrap();
                 let mut b1 = self.b1.write().unwrap();
-                
+
                 if let Some(pos) = t1.iter().position(|k| k == key) {
                     t1.remove(pos);
                     // Add to ghost list B1
@@ -166,7 +166,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
             Some(CacheLocation::T2) => {
                 let mut t2 = self.t2.write().unwrap();
                 let mut b2 = self.b2.write().unwrap();
-                
+
                 if let Some(pos) = t2.iter().position(|k| k == key) {
                     t2.remove(pos);
                     // Add to ghost list B2
@@ -176,15 +176,15 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
             }
             _ => {}
         }
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.total_evictions += 1;
     }
-    
+
     fn stats(&self) -> EvictionStats {
         let stats = self.stats.read().unwrap();
         let mut result = stats.clone();
-        
+
         // Calculate hit rate
         if stats.total_accesses > 0 {
             let t1_size = self.t1.read().unwrap().len();
@@ -192,7 +192,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
             let cache_size = t1_size + t2_size;
             result.hit_rate = cache_size as f64 / self.cache_size as f64;
         }
-        
+
         result
     }
 }

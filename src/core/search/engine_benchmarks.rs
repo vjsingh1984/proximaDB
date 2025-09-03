@@ -1,5 +1,5 @@
 //! Storage Engine Benchmarking Framework
-//! 
+//!
 //! Provides real performance measurements for cost estimation across all storage engines.
 //! This module runs actual benchmarks to populate the SearchCostEstimator with real data.
 
@@ -7,25 +7,25 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
-use crate::storage::traits::{UnifiedStorageEngine, StorageQueryContext};
-use crate::core::search::SearchParams;
 use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::SearchParams;
 use crate::proto::proximadb::Collection;
+use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
 
-use crate::core::search::integrated_search_optimization::{
-    SearchCostEstimator, PerformanceStats, HardwareProfile
-};
 use crate::compute::UnifiedQuantizationLevel as QuantizationLevel;
+use crate::core::search::integrated_search_optimization::{
+    HardwareProfile, PerformanceStats, SearchCostEstimator,
+};
 
 /// Dataset size categories for performance modeling
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DatasetSizeCategory {
-    Small,      // < 100K vectors
-    Medium,     // 100K - 1M vectors
-    Large,      // 1M - 10M vectors
-    VeryLarge,  // > 10M vectors
+    Small,     // < 100K vectors
+    Medium,    // 100K - 1M vectors
+    Large,     // 1M - 10M vectors
+    VeryLarge, // > 10M vectors
 }
 
 /// Storage type for cost estimation
@@ -52,22 +52,22 @@ pub struct StorageProfile {
 pub struct BenchmarkConfig {
     /// Vector dimensions to test
     pub dimensions: Vec<usize>,
-    
+
     /// Dataset sizes to test (number of vectors)
     pub dataset_sizes: Vec<usize>,
-    
+
     /// Top-k values to test
     pub top_k_values: Vec<usize>,
-    
+
     /// Number of iterations per test
     pub iterations: usize,
-    
+
     /// Whether to test with filters
     pub test_filters: bool,
-    
+
     /// Whether to test quantization levels
     pub test_quantization: bool,
-    
+
     /// Distance metrics to test
     pub distance_metrics: Vec<DistanceMetric>,
 }
@@ -103,7 +103,7 @@ impl BenchmarkConfig {
             distance_metrics: vec![DistanceMetric::Cosine],
         }
     }
-    
+
     pub fn comprehensive() -> Self {
         Self {
             dimensions: vec![64, 128, 256, 384, 512, 768, 1024, 1536, 2048],
@@ -128,22 +128,22 @@ impl BenchmarkConfig {
 pub struct EngineBenchmarkResults {
     /// Engine name (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM)
     pub engine_name: String,
-    
+
     /// Direct FP32 search performance by dataset size
     pub direct_search_stats: HashMap<DatasetSizeCategory, PerformanceStats>,
-    
+
     /// Progressive search performance by quantization level
     pub progressive_search_stats: HashMap<QuantizationLevel, PerformanceStats>,
-    
+
     /// Index search performance (if applicable)
     pub index_search_stats: Option<PerformanceStats>,
-    
+
     /// Filter overhead (percentage slowdown)
     pub filter_overhead_percent: f32,
-    
+
     /// Memory usage in MB
     pub memory_usage_mb: f32,
-    
+
     /// Optimal configurations discovered
     pub optimal_configs: HashMap<String, String>,
 }
@@ -152,10 +152,10 @@ pub struct EngineBenchmarkResults {
 pub struct StorageEngineBenchmark {
     /// Configuration for benchmarks
     config: BenchmarkConfig,
-    
+
     /// Hardware profile detected
     hardware_profile: HardwareProfile,
-    
+
     /// Storage profile detected
     storage_profile: StorageProfile,
 }
@@ -168,11 +168,11 @@ impl StorageEngineBenchmark {
             storage_profile: Self::detect_storage_profile(),
         }
     }
-    
+
     /// Detect hardware capabilities
     fn detect_hardware_profile() -> HardwareProfile {
         let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-        
+
         HardwareProfile {
             has_avx512: caps.has_avx512(),
             has_avx2: caps.has_simd(),
@@ -180,7 +180,7 @@ impl StorageEngineBenchmark {
             cpu_cores: num_cpus::get(),
         }
     }
-    
+
     /// Detect storage characteristics
     fn detect_storage_profile() -> StorageProfile {
         // In real implementation, would detect actual storage type
@@ -192,7 +192,7 @@ impl StorageEngineBenchmark {
             sequential_read_latency_ms: 0.05,
         }
     }
-    
+
     /// Run benchmarks for a specific engine
     pub async fn benchmark_engine(
         &self,
@@ -200,7 +200,7 @@ impl StorageEngineBenchmark {
         engine_name: &str,
     ) -> Result<EngineBenchmarkResults> {
         info!("🏁 Starting benchmarks for {} engine", engine_name);
-        
+
         let mut results = EngineBenchmarkResults {
             engine_name: engine_name.to_string(),
             direct_search_stats: HashMap::new(),
@@ -210,53 +210,47 @@ impl StorageEngineBenchmark {
             memory_usage_mb: 0.0,
             optimal_configs: HashMap::new(),
         };
-        
+
         // Benchmark direct FP32 search for different dataset sizes
         for dataset_size in &self.config.dataset_sizes {
             let category = Self::categorize_dataset_size(*dataset_size);
-            let stats = self.benchmark_direct_search(
-                engine.clone(),
-                *dataset_size,
-                engine_name,
-            ).await?;
+            let stats = self
+                .benchmark_direct_search(engine.clone(), *dataset_size, engine_name)
+                .await?;
             results.direct_search_stats.insert(category, stats);
         }
-        
+
         // Benchmark progressive search with different quantization levels
         if self.config.test_quantization {
-            let quant_levels = self.get_quantization_levels_for_dimension(
-                self.config.dimensions[0]
-            );
-            
+            let quant_levels =
+                self.get_quantization_levels_for_dimension(self.config.dimensions[0]);
+
             for level in quant_levels {
-                let stats = self.benchmark_progressive_search(
-                    engine.clone(),
-                    level.clone(),
-                    engine_name,
-                ).await?;
+                let stats = self
+                    .benchmark_progressive_search(engine.clone(), level.clone(), engine_name)
+                    .await?;
                 results.progressive_search_stats.insert(level, stats);
             }
         }
-        
+
         // Benchmark filter overhead
         if self.config.test_filters {
-            results.filter_overhead_percent = self.benchmark_filter_overhead(
-                engine.clone(),
-                engine_name,
-            ).await?;
+            results.filter_overhead_percent = self
+                .benchmark_filter_overhead(engine.clone(), engine_name)
+                .await?;
         }
-        
+
         // Estimate memory usage
         results.memory_usage_mb = self.estimate_memory_usage(engine_name).await?;
-        
+
         // Determine optimal configurations
         results.optimal_configs = self.determine_optimal_configs(&results);
-        
+
         info!("✅ Completed benchmarks for {} engine", engine_name);
-        
+
         Ok(results)
     }
-    
+
     /// Benchmark direct FP32 search
     async fn benchmark_direct_search(
         &self,
@@ -264,31 +258,32 @@ impl StorageEngineBenchmark {
         dataset_size: usize,
         engine_name: &str,
     ) -> Result<PerformanceStats> {
-        debug!("Benchmarking direct search for {} with {} vectors", engine_name, dataset_size);
-        
+        debug!(
+            "Benchmarking direct search for {} with {} vectors",
+            engine_name, dataset_size
+        );
+
         let mut timings = Vec::new();
         let dimension = self.config.dimensions[0];
         let top_k = self.config.top_k_values[0];
-        
+
         for _ in 0..self.config.iterations {
             // Create a mock search context
             let ctx = self.create_mock_search_context(
-                dimension,
-                top_k,
-                false, // No quantization
+                dimension, top_k, false, // No quantization
                 false, // No indexes
             );
-            
+
             let start = Instant::now();
             let _results = engine.search_vectors_unified(&ctx).await?;
             let elapsed = start.elapsed();
-            
+
             timings.push(elapsed.as_secs_f32() * 1000.0); // Convert to ms
         }
-        
+
         Ok(Self::calculate_stats(&timings))
     }
-    
+
     /// Benchmark progressive search with quantization
     async fn benchmark_progressive_search(
         &self,
@@ -296,31 +291,32 @@ impl StorageEngineBenchmark {
         level: QuantizationLevel,
         engine_name: &str,
     ) -> Result<PerformanceStats> {
-        debug!("Benchmarking progressive search for {} with {:?}", engine_name, level);
-        
+        debug!(
+            "Benchmarking progressive search for {} with {:?}",
+            engine_name, level
+        );
+
         let mut timings = Vec::new();
         let dimension = self.config.dimensions[0];
         let top_k = self.config.top_k_values[0];
-        
+
         for _ in 0..self.config.iterations {
             // Create a mock search context with quantization enabled
             let ctx = self.create_mock_search_context(
-                dimension,
-                top_k,
-                true,  // Enable quantization
+                dimension, top_k, true,  // Enable quantization
                 false, // No indexes
             );
-            
+
             let start = Instant::now();
             let _results = engine.search_vectors_unified(&ctx).await?;
             let elapsed = start.elapsed();
-            
+
             timings.push(elapsed.as_secs_f32() * 1000.0);
         }
-        
+
         Ok(Self::calculate_stats(&timings))
     }
-    
+
     /// Benchmark filter overhead
     async fn benchmark_filter_overhead(
         &self,
@@ -328,54 +324,46 @@ impl StorageEngineBenchmark {
         engine_name: &str,
     ) -> Result<f32> {
         debug!("Benchmarking filter overhead for {}", engine_name);
-        
+
         let dimension = self.config.dimensions[0];
         let top_k = self.config.top_k_values[0];
-        
+
         // Benchmark without filters
-        let ctx_no_filter = self.create_mock_search_context(
-            dimension,
-            top_k,
-            false,
-            false,
-        );
-        
+        let ctx_no_filter = self.create_mock_search_context(dimension, top_k, false, false);
+
         let start = Instant::now();
         let _results = engine.search_vectors_unified(&ctx_no_filter).await?;
         let time_no_filter = start.elapsed().as_secs_f32() * 1000.0;
-        
+
         // Benchmark with filters
-        let ctx_with_filter = self.create_mock_search_context_with_filter(
-            dimension,
-            top_k,
-        );
-        
+        let ctx_with_filter = self.create_mock_search_context_with_filter(dimension, top_k);
+
         let start = Instant::now();
         let _results = engine.search_vectors_unified(&ctx_with_filter).await?;
         let time_with_filter = start.elapsed().as_secs_f32() * 1000.0;
-        
+
         // Calculate overhead percentage
         let overhead = ((time_with_filter - time_no_filter) / time_no_filter) * 100.0;
         Ok(overhead.max(0.0))
     }
-    
+
     /// Estimate memory usage for an engine
     async fn estimate_memory_usage(&self, engine_name: &str) -> Result<f32> {
         // This would ideally measure actual memory usage
         // For now, return estimates based on engine characteristics
         let base_memory = match engine_name {
-            "SST" => 100.0,     // Row-based, bloom filters
-            "VIPER" => 150.0,   // Columnar, Parquet overhead
-            "NOVA" => 180.0,    // Enhanced columnar with stats
-            "SWIFT" => 80.0,    // Zero-overhead design
-            "RAPTOR" => 200.0,  // Arrow RecordBatch, HNSW
-            "PRISM" => 250.0,   // Metadata-heavy, multiple indexes
+            "SST" => 100.0,    // Row-based, bloom filters
+            "VIPER" => 150.0,  // Columnar, Parquet overhead
+            "NOVA" => 180.0,   // Enhanced columnar with stats
+            "SWIFT" => 80.0,   // Zero-overhead design
+            "RAPTOR" => 200.0, // Arrow RecordBatch, HNSW
+            "PRISM" => 250.0,  // Metadata-heavy, multiple indexes
             _ => 100.0,
         };
-        
+
         Ok(base_memory)
     }
-    
+
     /// Create a mock search context for benchmarking
     fn create_mock_search_context(
         &self,
@@ -385,12 +373,12 @@ impl StorageEngineBenchmark {
         enable_indexes: bool,
     ) -> StorageQueryContext {
         use crate::storage::traits::StorageQueryMetadata;
-        
+
         // Create mock query vector
         let query_vector: Vec<f32> = (0..dimension)
             .map(|i| (i as f32) / (dimension as f32))
             .collect();
-        
+
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query_vector]),
             top_k: Some(top_k),
@@ -399,7 +387,7 @@ impl StorageEngineBenchmark {
             custom_hints: Some(HashMap::new()),
             ..Default::default()
         });
-        
+
         let collection = Arc::new(Collection {
             id: "benchmark_collection".to_string(),
             config: Some(crate::proto::proximadb::CollectionConfig {
@@ -420,7 +408,7 @@ impl StorageEngineBenchmark {
             }),
             ..Default::default()
         });
-        
+
         StorageQueryContext {
             search_params,
             collection,
@@ -432,7 +420,7 @@ impl StorageEngineBenchmark {
             },
         }
     }
-    
+
     /// Create a mock search context with filter
     fn create_mock_search_context_with_filter(
         &self,
@@ -440,19 +428,21 @@ impl StorageEngineBenchmark {
         top_k: usize,
     ) -> StorageQueryContext {
         let mut ctx = self.create_mock_search_context(dimension, top_k, false, false);
-        
+
         // Add a simple filter expression
         let filter = crate::core::search::FilterExpression::Comparison {
             field: "category".to_string(),
             operator: crate::core::search::ComparisonOperator::Equals,
             value: serde_json::Value::String("test".to_string()),
         };
-        
-        Arc::get_mut(&mut ctx.search_params).unwrap().filter_expression = Some(filter);
-        
+
+        Arc::get_mut(&mut ctx.search_params)
+            .unwrap()
+            .filter_expression = Some(filter);
+
         ctx
     }
-    
+
     /// Categorize dataset size
     fn categorize_dataset_size(size: usize) -> DatasetSizeCategory {
         match size {
@@ -462,15 +452,12 @@ impl StorageEngineBenchmark {
             _ => DatasetSizeCategory::VeryLarge,
         }
     }
-    
+
     /// Get appropriate quantization levels for a dimension
     fn get_quantization_levels_for_dimension(&self, dimension: usize) -> Vec<QuantizationLevel> {
         match dimension {
             d if d < 64 => vec![QuantizationLevel::Int8],
-            d if d < 128 => vec![
-                QuantizationLevel::binary(),
-                QuantizationLevel::int8(),
-            ],
+            d if d < 128 => vec![QuantizationLevel::binary(), QuantizationLevel::int8()],
             d if d < 512 => vec![
                 QuantizationLevel::binary(),
                 QuantizationLevel::int8(),
@@ -483,22 +470,24 @@ impl StorageEngineBenchmark {
             ],
         }
     }
-    
+
     /// Calculate statistics from timings
     fn calculate_stats(timings: &[f32]) -> PerformanceStats {
         let mut sorted_timings = timings.to_vec();
         sorted_timings.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        
+
         let avg = sorted_timings.iter().sum::<f32>() / sorted_timings.len() as f32;
-        
-        let variance = sorted_timings.iter()
+
+        let variance = sorted_timings
+            .iter()
             .map(|t| (t - avg).powi(2))
-            .sum::<f32>() / sorted_timings.len() as f32;
+            .sum::<f32>()
+            / sorted_timings.len() as f32;
         let std_dev = variance.sqrt();
-        
+
         let p95_index = (sorted_timings.len() as f32 * 0.95) as usize;
         let p95 = sorted_timings[p95_index.min(sorted_timings.len() - 1)];
-        
+
         PerformanceStats {
             avg_time_ms: avg,
             std_dev_ms: std_dev,
@@ -506,32 +495,35 @@ impl StorageEngineBenchmark {
             sample_count: timings.len() as u64,
         }
     }
-    
+
     /// Determine optimal configurations from results
     fn determine_optimal_configs(
         &self,
         results: &EngineBenchmarkResults,
     ) -> HashMap<String, String> {
         let mut configs = HashMap::new();
-        
+
         // Find fastest dataset size category
-        if let Some((category, _)) = results.direct_search_stats.iter()
-            .min_by(|a, b| a.1.avg_time_ms.partial_cmp(&b.1.avg_time_ms).unwrap()) {
+        if let Some((category, _)) = results
+            .direct_search_stats
+            .iter()
+            .min_by(|a, b| a.1.avg_time_ms.partial_cmp(&b.1.avg_time_ms).unwrap())
+        {
             configs.insert(
                 "optimal_dataset_size".to_string(),
                 format!("{:?}", category),
             );
         }
-        
+
         // Find best quantization level
-        if let Some((level, _)) = results.progressive_search_stats.iter()
-            .min_by(|a, b| a.1.avg_time_ms.partial_cmp(&b.1.avg_time_ms).unwrap()) {
-            configs.insert(
-                "optimal_quantization".to_string(),
-                format!("{:?}", level),
-            );
+        if let Some((level, _)) = results
+            .progressive_search_stats
+            .iter()
+            .min_by(|a, b| a.1.avg_time_ms.partial_cmp(&b.1.avg_time_ms).unwrap())
+        {
+            configs.insert("optimal_quantization".to_string(), format!("{:?}", level));
         }
-        
+
         // Recommend based on filter overhead
         if results.filter_overhead_percent < 10.0 {
             configs.insert(
@@ -549,7 +541,7 @@ impl StorageEngineBenchmark {
                 "High filter overhead, consider pre-filtering".to_string(),
             );
         }
-        
+
         configs
     }
 }
@@ -557,95 +549,95 @@ impl StorageEngineBenchmark {
 /// Engine-specific benchmark implementations
 pub mod engine_specific {
     use super::*;
-    
+
     /// SST-specific optimizations and benchmarks
     pub async fn benchmark_sst_specific(
         engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
-        
+
         // Benchmark bloom filter effectiveness
         // Would measure false positive rate impact on performance
         metrics.insert("bloom_filter_speedup".to_string(), 2.5);
-        
+
         // Benchmark hierarchical block structure
         metrics.insert("hierarchical_block_speedup".to_string(), 1.8);
-        
+
         Ok(metrics)
     }
-    
+
     /// VIPER-specific optimizations and benchmarks
     pub async fn benchmark_viper_specific(
         engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
-        
+
         // Benchmark Parquet columnar advantages
         metrics.insert("columnar_scan_speedup".to_string(), 3.2);
-        
+
         // Benchmark compression benefits
         metrics.insert("compression_ratio".to_string(), 4.5);
-        
+
         Ok(metrics)
     }
-    
+
     /// NOVA-specific optimizations and benchmarks
     pub async fn benchmark_nova_specific(
         engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
-        
+
         // Benchmark zone map pruning
         metrics.insert("zone_map_pruning_efficiency".to_string(), 0.85);
-        
+
         // Benchmark enhanced statistics
         metrics.insert("stats_overhead_ms".to_string(), 0.5);
-        
+
         Ok(metrics)
     }
-    
+
     /// SWIFT-specific optimizations and benchmarks
     pub async fn benchmark_swift_specific(
         engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
-        
+
         // Benchmark zero-overhead operations
         metrics.insert("zero_overhead_gain".to_string(), 1.2);
-        
+
         // Benchmark instant traversal
         metrics.insert("traversal_speed_mbps".to_string(), 5000.0);
-        
+
         Ok(metrics)
     }
-    
+
     /// RAPTOR-specific optimizations and benchmarks
     pub async fn benchmark_raptor_specific(
         engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
-        
+
         // Benchmark Arrow RecordBatch operations
         metrics.insert("arrow_batch_throughput".to_string(), 4500.0);
-        
+
         // Benchmark HNSW index performance
         metrics.insert("hnsw_search_speedup".to_string(), 10.0);
-        
+
         Ok(metrics)
     }
-    
+
     /// PRISM-specific optimizations and benchmarks
     pub async fn benchmark_prism_specific(
         engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
-        
+
         // Benchmark metadata-first search
         metrics.insert("metadata_filter_efficiency".to_string(), 0.95);
-        
+
         // Benchmark progressive quantization pipeline
         metrics.insert("progressive_stages_optimal".to_string(), 3.0);
-        
+
         Ok(metrics)
     }
 }
@@ -658,19 +650,19 @@ impl SearchCostEstimator {
             // TODO: Need to add insert_direct_stats method to SearchCostEstimator
             // self.insert_direct_stats(category.clone(), stats.clone());
         }
-        
+
         // Update progressive search times
         for (level, stats) in &results.progressive_search_stats {
             // TODO: Need to add insert_progressive_stats method to SearchCostEstimator
             // self.insert_progressive_stats(level.clone(), stats.clone());
         }
-        
+
         info!(
             "📊 Updated SearchCostEstimator with {} benchmarks",
             results.engine_name
         );
     }
-    
+
     /// Create a pre-populated estimator with typical performance data
     pub fn with_typical_benchmarks() -> Self {
         // TODO: Need to add new() method to SearchCostEstimator
@@ -687,10 +679,10 @@ impl SearchCostEstimator {
             direct_search_times: HashMap::new(),
             hardware_profile,
         };
-        
+
         // Populate with typical performance data for immediate use
         // These would be replaced by actual benchmarks in production
-        
+
         // Direct search times (ms)
         // TODO: Need insert_direct_stats method
         /*estimator.insert_direct_stats(
@@ -702,7 +694,7 @@ impl SearchCostEstimator {
                 sample_count: 100,
                 },
         );*/
-        
+
         // TODO: Need insert_direct_stats method
         /*estimator.insert_direct_stats(
             DatasetSizeCategory::Medium,
@@ -713,7 +705,7 @@ impl SearchCostEstimator {
                 sample_count: 100,
                 },
         );*/
-        
+
         // TODO: Need insert_direct_stats method
         /*estimator.insert_direct_stats(
             DatasetSizeCategory::Large,
@@ -724,7 +716,7 @@ impl SearchCostEstimator {
                 sample_count: 100,
                 },
         );*/
-        
+
         // Progressive search times
         // TODO: Need insert_progressive_stats method
         /*estimator.insert_progressive_stats(
@@ -736,7 +728,7 @@ impl SearchCostEstimator {
                 sample_count: 100,
                 },
         );*/
-        
+
         // TODO: Need insert_progressive_stats method
         /*estimator.insert_progressive_stats(
             QuantizationLevel::Int8,
@@ -747,7 +739,7 @@ impl SearchCostEstimator {
                 sample_count: 100,
                 },
         );*/
-        
+
         // TODO: Need insert_progressive_stats method
         /*estimator.insert_progressive_stats(
             QuantizationLevel::pq8(8),
@@ -758,7 +750,7 @@ impl SearchCostEstimator {
                 sample_count: 100,
                 },
         );*/
-        
+
         estimator
     }
 }
@@ -766,25 +758,25 @@ impl SearchCostEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_benchmark_framework() {
         let config = BenchmarkConfig::quick();
         let benchmark = StorageEngineBenchmark::new(config);
-        
+
         // Would test with actual engine instance
         // let engine = create_test_engine();
         // let results = benchmark.benchmark_engine(engine, "TEST").await.unwrap();
-        
+
         // Verify structure
         assert!(benchmark.hardware_profile.cpu_cores > 0);
     }
-    
+
     #[test]
     fn test_performance_stats_calculation() {
         let timings = vec![10.0, 12.0, 11.0, 15.0, 9.0, 11.5, 13.0, 10.5];
         let stats = StorageEngineBenchmark::calculate_stats(&timings);
-        
+
         assert!(stats.avg_time_ms > 0.0);
         assert!(stats.std_dev_ms > 0.0);
         assert!(stats.p95_time_ms >= stats.avg_time_ms);

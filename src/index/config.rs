@@ -13,7 +13,7 @@ pub enum IndexUpdateMode {
     /// Block flush until index is updated (default for strong consistency)
     Synchronous,
     /// Return from flush immediately, update index in background
-    Asynchronous, 
+    Asynchronous,
     /// Sync for small batches, async for large batches
     Hybrid,
 }
@@ -175,11 +175,11 @@ impl Default for IndexConfig {
             async_update_timeout_ms: Some(30000), // 30 seconds
             async_update_batch_size: Some(1000),
             enable_background_optimization: true,
-            hnsw_config: None, // Will be set if HNSW is selected
-            ivf_config: None,  // Will be set if IVF is selected
-            lsh_config: None,  // Will be set if LSH is selected
-            build_concurrency: None, // Use system default
-            memory_limit_mb: Some(1024), // 1GB default
+            hnsw_config: None,                   // Will be set if HNSW is selected
+            ivf_config: None,                    // Will be set if IVF is selected
+            lsh_config: None,                    // Will be set if LSH is selected
+            build_concurrency: None,             // Use system default
+            memory_limit_mb: Some(1024),         // 1GB default
             checkpoint_interval_ms: Some(60000), // 1 minute
         }
     }
@@ -190,7 +190,7 @@ impl IndexConfig {
     pub fn from_proto(proto: &crate::proto::proximadb::IndexConfig) -> Result<Self> {
         let update_mode = match proto.update_mode {
             1 => IndexUpdateMode::Synchronous,
-            2 => IndexUpdateMode::Asynchronous, 
+            2 => IndexUpdateMode::Asynchronous,
             3 => IndexUpdateMode::Hybrid,
             _ => IndexUpdateMode::Synchronous,
         };
@@ -253,41 +253,50 @@ impl IndexConfig {
             IndexUpdateMode::Hybrid => 3,
         };
 
-        let hnsw_config = self.hnsw_config.as_ref().map(|h| crate::proto::proximadb::HnswConfig {
-            m: h.m as u32,
-            ef_construction: h.ef_construction as u32,
-            ef_search: h.ef_search as u32,
-            max_partition_size: h.max_partition_size as u32,
-            adaptive_parameters: h.adaptive_parameters,
-            use_simd: h.use_simd,
-            memory_limit_mb: h.memory_limit_mb as i32,
-            lazy_loading: h.lazy_loading,
-            prune_connections: h.prune_connections as i32,
-            level_multiplier: h.level_multiplier,
-        });
+        let hnsw_config = self
+            .hnsw_config
+            .as_ref()
+            .map(|h| crate::proto::proximadb::HnswConfig {
+                m: h.m as u32,
+                ef_construction: h.ef_construction as u32,
+                ef_search: h.ef_search as u32,
+                max_partition_size: h.max_partition_size as u32,
+                adaptive_parameters: h.adaptive_parameters,
+                use_simd: h.use_simd,
+                memory_limit_mb: h.memory_limit_mb as i32,
+                lazy_loading: h.lazy_loading,
+                prune_connections: h.prune_connections as i32,
+                level_multiplier: h.level_multiplier,
+            });
 
-        let ivf_config = self.ivf_config.as_ref().map(|i| crate::proto::proximadb::IvfConfig {
-            n_lists: i.n_lists as i32,
-            n_probe: i.n_probe as i32,
-            quantization_bits: i.quantization_bits as u32,
-            use_pq: i.use_pq,
-            pq_subspaces: i.pq_subspaces as i32,
-            train_on_insert: i.train_on_insert,
-            min_train_size: i.min_train_size as u32,
-        });
+        let ivf_config = self
+            .ivf_config
+            .as_ref()
+            .map(|i| crate::proto::proximadb::IvfConfig {
+                n_lists: i.n_lists as i32,
+                n_probe: i.n_probe as i32,
+                quantization_bits: i.quantization_bits as u32,
+                use_pq: i.use_pq,
+                pq_subspaces: i.pq_subspaces as i32,
+                train_on_insert: i.train_on_insert,
+                min_train_size: i.min_train_size as u32,
+            });
 
-        let lsh_config = self.lsh_config.as_ref().map(|l| crate::proto::proximadb::LshConfig {
-            n_hash_tables: l.n_hash_tables as i32,
-            n_hash_functions: l.n_hash_functions as i32,
-            bucket_width: l.bucket_width,
-            binary_vectors: l.binary_vectors,
-            max_candidates: l.max_candidates as i32,
-            projection: match l.projection {
-                RandomProjection::Gaussian => 0,
-                RandomProjection::Binary => 1,
-                RandomProjection::Sparse => 2,
-            },
-        });
+        let lsh_config = self
+            .lsh_config
+            .as_ref()
+            .map(|l| crate::proto::proximadb::LshConfig {
+                n_hash_tables: l.n_hash_tables as i32,
+                n_hash_functions: l.n_hash_functions as i32,
+                bucket_width: l.bucket_width,
+                binary_vectors: l.binary_vectors,
+                max_candidates: l.max_candidates as i32,
+                projection: match l.projection {
+                    RandomProjection::Gaussian => 0,
+                    RandomProjection::Binary => 1,
+                    RandomProjection::Sparse => 2,
+                },
+            });
 
         crate::proto::proximadb::IndexConfig {
             index_name: "default".to_string(), // Default index name
@@ -298,8 +307,8 @@ impl IndexConfig {
                     None => match &self.lsh_config {
                         Some(_) => crate::proto::proximadb::IndexingAlgorithm::Lsh as i32,
                         None => crate::proto::proximadb::IndexingAlgorithm::Flat as i32,
-                    }
-                }
+                    },
+                },
             },
             update_mode,
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as i64),
@@ -308,82 +317,154 @@ impl IndexConfig {
             hnsw_config,
             ivf_config,
             flat_config: None, // Flat config is algorithm-specific, set when FLAT algorithm is selected
-            pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected  
+            pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected
             annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
             lsh_config,
             build_concurrency: self.build_concurrency.map(|c| c as i32),
             memory_limit_mb: self.memory_limit_mb.map(|m| m as i64),
             checkpoint_interval_ms: self.checkpoint_interval_ms.map(|i| i as i32),
-            is_primary: true, // Default to primary index
-            use_cases: vec![], // Default empty use cases
+            is_primary: true,            // Default to primary index
+            use_cases: vec![],           // Default empty use cases
             selectivity_threshold: None, // Default no selectivity threshold
-            use_quantization: None, // Default: inherit from collection config
+            use_quantization: None,      // Default: inherit from collection config
             quantization_override: None, // Default: no override
-            queue_representation: None, // Default: auto-detect from queue
+            queue_representation: None,  // Default: auto-detect from queue
         }
     }
 
     /// Get configuration for specific algorithm
     pub fn algorithm_config(&self, algorithm: &str) -> HashMap<String, serde_json::Value> {
         let mut config = HashMap::new();
-        
+
         match algorithm {
             "HNSW" => {
                 if let Some(hnsw) = &self.hnsw_config {
                     config.insert("m".to_string(), serde_json::json!(hnsw.m));
-                    config.insert("ef_construction".to_string(), serde_json::json!(hnsw.ef_construction));
+                    config.insert(
+                        "ef_construction".to_string(),
+                        serde_json::json!(hnsw.ef_construction),
+                    );
                     config.insert("ef_search".to_string(), serde_json::json!(hnsw.ef_search));
-                    config.insert("max_partition_size".to_string(), serde_json::json!(hnsw.max_partition_size));
-                    config.insert("adaptive_parameters".to_string(), serde_json::json!(hnsw.adaptive_parameters));
+                    config.insert(
+                        "max_partition_size".to_string(),
+                        serde_json::json!(hnsw.max_partition_size),
+                    );
+                    config.insert(
+                        "adaptive_parameters".to_string(),
+                        serde_json::json!(hnsw.adaptive_parameters),
+                    );
                     config.insert("use_simd".to_string(), serde_json::json!(hnsw.use_simd));
-                    config.insert("memory_limit_mb".to_string(), serde_json::json!(hnsw.memory_limit_mb));
-                    config.insert("lazy_loading".to_string(), serde_json::json!(hnsw.lazy_loading));
-                    config.insert("prune_connections".to_string(), serde_json::json!(hnsw.prune_connections));
-                    config.insert("level_multiplier".to_string(), serde_json::json!(hnsw.level_multiplier));
+                    config.insert(
+                        "memory_limit_mb".to_string(),
+                        serde_json::json!(hnsw.memory_limit_mb),
+                    );
+                    config.insert(
+                        "lazy_loading".to_string(),
+                        serde_json::json!(hnsw.lazy_loading),
+                    );
+                    config.insert(
+                        "prune_connections".to_string(),
+                        serde_json::json!(hnsw.prune_connections),
+                    );
+                    config.insert(
+                        "level_multiplier".to_string(),
+                        serde_json::json!(hnsw.level_multiplier),
+                    );
                 }
             }
             "IVF" => {
                 if let Some(ivf) = &self.ivf_config {
                     config.insert("n_lists".to_string(), serde_json::json!(ivf.n_lists));
                     config.insert("n_probe".to_string(), serde_json::json!(ivf.n_probe));
-                    config.insert("quantization_bits".to_string(), serde_json::json!(ivf.quantization_bits));
+                    config.insert(
+                        "quantization_bits".to_string(),
+                        serde_json::json!(ivf.quantization_bits),
+                    );
                     config.insert("use_pq".to_string(), serde_json::json!(ivf.use_pq));
-                    config.insert("pq_subspaces".to_string(), serde_json::json!(ivf.pq_subspaces));
-                    config.insert("train_on_insert".to_string(), serde_json::json!(ivf.train_on_insert));
-                    config.insert("min_train_size".to_string(), serde_json::json!(ivf.min_train_size));
+                    config.insert(
+                        "pq_subspaces".to_string(),
+                        serde_json::json!(ivf.pq_subspaces),
+                    );
+                    config.insert(
+                        "train_on_insert".to_string(),
+                        serde_json::json!(ivf.train_on_insert),
+                    );
+                    config.insert(
+                        "min_train_size".to_string(),
+                        serde_json::json!(ivf.min_train_size),
+                    );
                 }
             }
             "LSH" => {
                 if let Some(lsh) = &self.lsh_config {
-                    config.insert("n_hash_tables".to_string(), serde_json::json!(lsh.n_hash_tables));
-                    config.insert("n_hash_functions".to_string(), serde_json::json!(lsh.n_hash_functions));
-                    config.insert("bucket_width".to_string(), serde_json::json!(lsh.bucket_width));
-                    config.insert("binary_vectors".to_string(), serde_json::json!(lsh.binary_vectors));
-                    config.insert("max_candidates".to_string(), serde_json::json!(lsh.max_candidates));
-                    config.insert("projection".to_string(), serde_json::json!(format!("{:?}", lsh.projection)));
+                    config.insert(
+                        "n_hash_tables".to_string(),
+                        serde_json::json!(lsh.n_hash_tables),
+                    );
+                    config.insert(
+                        "n_hash_functions".to_string(),
+                        serde_json::json!(lsh.n_hash_functions),
+                    );
+                    config.insert(
+                        "bucket_width".to_string(),
+                        serde_json::json!(lsh.bucket_width),
+                    );
+                    config.insert(
+                        "binary_vectors".to_string(),
+                        serde_json::json!(lsh.binary_vectors),
+                    );
+                    config.insert(
+                        "max_candidates".to_string(),
+                        serde_json::json!(lsh.max_candidates),
+                    );
+                    config.insert(
+                        "projection".to_string(),
+                        serde_json::json!(format!("{:?}", lsh.projection)),
+                    );
                 }
             }
             _ => {}
         }
 
         // Add general config
-        config.insert("update_mode".to_string(), serde_json::json!(format!("{:?}", self.update_mode)));
-        config.insert("enable_background_optimization".to_string(), serde_json::json!(self.enable_background_optimization));
-        
+        config.insert(
+            "update_mode".to_string(),
+            serde_json::json!(format!("{:?}", self.update_mode)),
+        );
+        config.insert(
+            "enable_background_optimization".to_string(),
+            serde_json::json!(self.enable_background_optimization),
+        );
+
         if let Some(timeout) = self.async_update_timeout_ms {
-            config.insert("async_update_timeout_ms".to_string(), serde_json::json!(timeout));
+            config.insert(
+                "async_update_timeout_ms".to_string(),
+                serde_json::json!(timeout),
+            );
         }
         if let Some(batch_size) = self.async_update_batch_size {
-            config.insert("async_update_batch_size".to_string(), serde_json::json!(batch_size));
+            config.insert(
+                "async_update_batch_size".to_string(),
+                serde_json::json!(batch_size),
+            );
         }
         if let Some(concurrency) = self.build_concurrency {
-            config.insert("build_concurrency".to_string(), serde_json::json!(concurrency));
+            config.insert(
+                "build_concurrency".to_string(),
+                serde_json::json!(concurrency),
+            );
         }
         if let Some(memory_limit) = self.memory_limit_mb {
-            config.insert("memory_limit_mb".to_string(), serde_json::json!(memory_limit));
+            config.insert(
+                "memory_limit_mb".to_string(),
+                serde_json::json!(memory_limit),
+            );
         }
         if let Some(checkpoint) = self.checkpoint_interval_ms {
-            config.insert("checkpoint_interval_ms".to_string(), serde_json::json!(checkpoint));
+            config.insert(
+                "checkpoint_interval_ms".to_string(),
+                serde_json::json!(checkpoint),
+            );
         }
 
         config
@@ -403,10 +484,14 @@ impl IndexConfig {
                 return Err(anyhow::anyhow!("HNSW ef_search must be greater than 0"));
             }
             if hnsw.max_partition_size < 1000 {
-                return Err(anyhow::anyhow!("HNSW max_partition_size should be at least 1000"));
+                return Err(anyhow::anyhow!(
+                    "HNSW max_partition_size should be at least 1000"
+                ));
             }
             if hnsw.memory_limit_mb < 64 {
-                return Err(anyhow::anyhow!("HNSW memory_limit_mb should be at least 64MB"));
+                return Err(anyhow::anyhow!(
+                    "HNSW memory_limit_mb should be at least 64MB"
+                ));
             }
             if hnsw.level_multiplier <= 0.0 {
                 return Err(anyhow::anyhow!("HNSW level_multiplier must be positive"));
@@ -422,13 +507,19 @@ impl IndexConfig {
                 return Err(anyhow::anyhow!("IVF n_probe must be greater than 0"));
             }
             if ivf.n_probe > ivf.n_lists {
-                return Err(anyhow::anyhow!("IVF n_probe cannot be greater than n_lists"));
+                return Err(anyhow::anyhow!(
+                    "IVF n_probe cannot be greater than n_lists"
+                ));
             }
             if ivf.quantization_bits == 0 || ivf.quantization_bits > 16 {
-                return Err(anyhow::anyhow!("IVF quantization_bits must be between 1 and 16"));
+                return Err(anyhow::anyhow!(
+                    "IVF quantization_bits must be between 1 and 16"
+                ));
             }
             if ivf.use_pq && ivf.pq_subspaces == 0 {
-                return Err(anyhow::anyhow!("IVF pq_subspaces must be greater than 0 when using PQ"));
+                return Err(anyhow::anyhow!(
+                    "IVF pq_subspaces must be greater than 0 when using PQ"
+                ));
             }
             if ivf.min_train_size < 100 {
                 return Err(anyhow::anyhow!("IVF min_train_size should be at least 100"));
@@ -441,7 +532,9 @@ impl IndexConfig {
                 return Err(anyhow::anyhow!("LSH n_hash_tables must be greater than 0"));
             }
             if lsh.n_hash_functions == 0 {
-                return Err(anyhow::anyhow!("LSH n_hash_functions must be greater than 0"));
+                return Err(anyhow::anyhow!(
+                    "LSH n_hash_functions must be greater than 0"
+                ));
             }
             if lsh.bucket_width <= 0.0 {
                 return Err(anyhow::anyhow!("LSH bucket_width must be positive"));
@@ -450,23 +543,31 @@ impl IndexConfig {
                 return Err(anyhow::anyhow!("LSH max_candidates must be greater than 0"));
             }
             if lsh.n_hash_tables > 100 {
-                return Err(anyhow::anyhow!("LSH n_hash_tables should not exceed 100 for reasonable performance"));
+                return Err(anyhow::anyhow!(
+                    "LSH n_hash_tables should not exceed 100 for reasonable performance"
+                ));
             }
             if lsh.n_hash_functions > 32 {
-                return Err(anyhow::anyhow!("LSH n_hash_functions should not exceed 32 for reasonable performance"));
+                return Err(anyhow::anyhow!(
+                    "LSH n_hash_functions should not exceed 32 for reasonable performance"
+                ));
             }
         }
 
         // Validate general config
         if let Some(timeout) = self.async_update_timeout_ms {
             if timeout < 1000 {
-                return Err(anyhow::anyhow!("async_update_timeout_ms should be at least 1000ms"));
+                return Err(anyhow::anyhow!(
+                    "async_update_timeout_ms should be at least 1000ms"
+                ));
             }
         }
 
         if let Some(batch_size) = self.async_update_batch_size {
             if batch_size == 0 {
-                return Err(anyhow::anyhow!("async_update_batch_size must be greater than 0"));
+                return Err(anyhow::anyhow!(
+                    "async_update_batch_size must be greater than 0"
+                ));
             }
         }
 
@@ -484,7 +585,9 @@ impl IndexConfig {
 
         if let Some(checkpoint) = self.checkpoint_interval_ms {
             if checkpoint < 1000 {
-                return Err(anyhow::anyhow!("checkpoint_interval_ms should be at least 1000ms"));
+                return Err(anyhow::anyhow!(
+                    "checkpoint_interval_ms should be at least 1000ms"
+                ));
             }
         }
 
@@ -494,11 +597,11 @@ impl IndexConfig {
     /// Create optimal configuration for specific algorithm with smart defaults
     pub fn create_for_algorithm(algorithm: &str, collection_size_hint: Option<usize>) -> Self {
         let mut config = Self::default();
-        
+
         match algorithm {
             "HNSW" => {
                 let mut hnsw = HnswConfig::default();
-                
+
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
                     if size < 10_000 {
@@ -529,18 +632,18 @@ impl IndexConfig {
                         config.async_update_batch_size = Some(5000); // Larger batches for efficiency
                     }
                 }
-                
+
                 config.hnsw_config = Some(hnsw);
             }
             "IVF" => {
                 let mut ivf = IvfConfig::default();
-                
+
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
                     // Rule of thumb: n_lists = sqrt(N)
                     ivf.n_lists = (size as f64).sqrt().ceil() as usize;
                     ivf.n_lists = ivf.n_lists.max(100).min(10_000);
-                    
+
                     if size < 10_000 {
                         // Small collection: simple setup
                         ivf.n_probe = 4;
@@ -562,7 +665,7 @@ impl IndexConfig {
                         config.async_update_batch_size = Some(10000); // Large batches for IVF efficiency
                     }
                 }
-                
+
                 config.ivf_config = Some(ivf);
             }
             "FLAT" => {
@@ -576,7 +679,7 @@ impl IndexConfig {
             "PQ" => {
                 // Product Quantization: memory-efficient approximate search
                 config.update_mode = IndexUpdateMode::Asynchronous; // PQ training is expensive
-                
+
                 if let Some(size) = collection_size_hint {
                     if size < 50_000 {
                         // Small collection: simpler PQ setup
@@ -590,7 +693,7 @@ impl IndexConfig {
                         config.memory_limit_mb = Some(1024);
                     }
                 }
-                
+
                 // PQ typically uses IVF as the coarse quantizer
                 let mut ivf = IvfConfig::default();
                 if let Some(size) = collection_size_hint {
@@ -606,7 +709,7 @@ impl IndexConfig {
             "ANNOY" => {
                 // Annoy (Approximate Nearest Neighbors Oh Yeah): tree-based index
                 config.update_mode = IndexUpdateMode::Synchronous; // Annoy builds are relatively fast
-                
+
                 if let Some(size) = collection_size_hint {
                     if size < 10_000 {
                         // Small collection: more trees for accuracy
@@ -629,7 +732,7 @@ impl IndexConfig {
                         config.build_concurrency = Some(16);
                     }
                 }
-                
+
                 // Annoy-specific parameters could be added to a new AnnoyConfig struct
                 // For now, we use general config parameters
                 config.checkpoint_interval_ms = Some(30000); // More frequent checkpoints for tree-based
@@ -637,7 +740,7 @@ impl IndexConfig {
             "LSH" => {
                 // Locality-Sensitive Hashing: probabilistic indexing
                 let mut lsh = LshConfig::default();
-                
+
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
                     if size < 10_000 {
@@ -677,7 +780,7 @@ impl IndexConfig {
                         config.memory_limit_mb = Some(2048);
                     }
                 }
-                
+
                 config.lsh_config = Some(lsh);
             }
             _ => {
@@ -697,7 +800,7 @@ impl IndexConfig {
     ) -> Result<Self> {
         // Start with algorithm-specific optimal config
         let mut config = Self::create_for_algorithm(algorithm, collection_size_hint);
-        
+
         // Override with user-provided values from proto
         if proto.update_mode != 0 {
             config.update_mode = match proto.update_mode {
@@ -715,28 +818,42 @@ impl IndexConfig {
         if let Some(batch_size) = proto.async_update_batch_size {
             config.async_update_batch_size = Some(batch_size as usize);
         }
-        
+
         config.enable_background_optimization = proto.enable_background_optimization;
-        
+
         // Handle algorithm-specific overrides
         match algorithm {
             "HNSW" => {
                 if let Some(user_hnsw) = &proto.hnsw_config {
                     if let Some(mut smart_hnsw) = config.hnsw_config.take() {
                         // Apply user overrides to smart defaults
-                        if user_hnsw.m != 0 { smart_hnsw.m = user_hnsw.m as usize; }
-                        if user_hnsw.ef_construction != 0 { smart_hnsw.ef_construction = user_hnsw.ef_construction as usize; }
-                        if user_hnsw.ef_search != 0 { smart_hnsw.ef_search = user_hnsw.ef_search as usize; }
-                        if user_hnsw.max_partition_size != 0 { smart_hnsw.max_partition_size = user_hnsw.max_partition_size as usize; }
-                        if user_hnsw.memory_limit_mb != 0 { smart_hnsw.memory_limit_mb = user_hnsw.memory_limit_mb as usize; }
-                        if user_hnsw.prune_connections != 0 { smart_hnsw.prune_connections = user_hnsw.prune_connections as usize; }
-                        if user_hnsw.level_multiplier != 0.0 { smart_hnsw.level_multiplier = user_hnsw.level_multiplier; }
-                        
+                        if user_hnsw.m != 0 {
+                            smart_hnsw.m = user_hnsw.m as usize;
+                        }
+                        if user_hnsw.ef_construction != 0 {
+                            smart_hnsw.ef_construction = user_hnsw.ef_construction as usize;
+                        }
+                        if user_hnsw.ef_search != 0 {
+                            smart_hnsw.ef_search = user_hnsw.ef_search as usize;
+                        }
+                        if user_hnsw.max_partition_size != 0 {
+                            smart_hnsw.max_partition_size = user_hnsw.max_partition_size as usize;
+                        }
+                        if user_hnsw.memory_limit_mb != 0 {
+                            smart_hnsw.memory_limit_mb = user_hnsw.memory_limit_mb as usize;
+                        }
+                        if user_hnsw.prune_connections != 0 {
+                            smart_hnsw.prune_connections = user_hnsw.prune_connections as usize;
+                        }
+                        if user_hnsw.level_multiplier != 0.0 {
+                            smart_hnsw.level_multiplier = user_hnsw.level_multiplier;
+                        }
+
                         // Boolean fields: use user value if explicitly set, otherwise keep smart default
                         smart_hnsw.adaptive_parameters = user_hnsw.adaptive_parameters;
                         smart_hnsw.use_simd = user_hnsw.use_simd;
                         smart_hnsw.lazy_loading = user_hnsw.lazy_loading;
-                        
+
                         config.hnsw_config = Some(smart_hnsw);
                     }
                 }
@@ -745,16 +862,26 @@ impl IndexConfig {
                 if let Some(user_ivf) = &proto.ivf_config {
                     if let Some(mut smart_ivf) = config.ivf_config.take() {
                         // Apply user overrides to smart defaults
-                        if user_ivf.n_lists != 0 { smart_ivf.n_lists = user_ivf.n_lists as usize; }
-                        if user_ivf.n_probe != 0 { smart_ivf.n_probe = user_ivf.n_probe as usize; }
-                        if user_ivf.quantization_bits != 0 { smart_ivf.quantization_bits = user_ivf.quantization_bits as usize; }
-                        if user_ivf.pq_subspaces != 0 { smart_ivf.pq_subspaces = user_ivf.pq_subspaces as usize; }
-                        if user_ivf.min_train_size != 0 { smart_ivf.min_train_size = user_ivf.min_train_size as usize; }
-                        
+                        if user_ivf.n_lists != 0 {
+                            smart_ivf.n_lists = user_ivf.n_lists as usize;
+                        }
+                        if user_ivf.n_probe != 0 {
+                            smart_ivf.n_probe = user_ivf.n_probe as usize;
+                        }
+                        if user_ivf.quantization_bits != 0 {
+                            smart_ivf.quantization_bits = user_ivf.quantization_bits as usize;
+                        }
+                        if user_ivf.pq_subspaces != 0 {
+                            smart_ivf.pq_subspaces = user_ivf.pq_subspaces as usize;
+                        }
+                        if user_ivf.min_train_size != 0 {
+                            smart_ivf.min_train_size = user_ivf.min_train_size as usize;
+                        }
+
                         // Boolean fields: use user value if explicitly set, otherwise keep smart default
                         smart_ivf.use_pq = user_ivf.use_pq;
                         smart_ivf.train_on_insert = user_ivf.train_on_insert;
-                        
+
                         config.ivf_config = Some(smart_ivf);
                     }
                 }
@@ -775,20 +902,24 @@ impl IndexConfig {
 
         // Validate the final configuration
         config.validate()?;
-        
+
         Ok(config)
     }
 
     /// Create IndexConfig with smart defaults when no config is provided
-    pub fn create_smart_default(algorithm: &str, dimension: usize, collection_size_hint: Option<usize>) -> Self {
+    pub fn create_smart_default(
+        algorithm: &str,
+        dimension: usize,
+        collection_size_hint: Option<usize>,
+    ) -> Self {
         let mut config = Self::create_for_algorithm(algorithm, collection_size_hint);
-        
+
         // Adjust based on vector dimension
         if dimension > 1024 {
             // High-dimensional vectors: optimize for memory
             config.memory_limit_mb = Some(2048); // 2GB for high-dim vectors
             config.checkpoint_interval_ms = Some(30000); // More frequent checkpoints
-            
+
             if let Some(hnsw) = &mut config.hnsw_config {
                 hnsw.memory_limit_mb = 1024; // 1GB per partition
                 hnsw.max_partition_size = 25_000; // Smaller partitions for high-dim
@@ -797,7 +928,7 @@ impl IndexConfig {
             // Low-dimensional vectors: optimize for speed
             config.memory_limit_mb = Some(512); // 512MB for low-dim vectors
             config.checkpoint_interval_ms = Some(120000); // Less frequent checkpoints
-            
+
             if let Some(hnsw) = &mut config.hnsw_config {
                 hnsw.memory_limit_mb = 256; // 256MB per partition
                 hnsw.max_partition_size = 200_000; // Larger partitions for low-dim
@@ -887,12 +1018,12 @@ mod tests {
     fn test_get_algorithm_config() {
         let mut config = IndexConfig::default();
         config.hnsw_config = Some(HnswConfig::default());
-        
+
         let hnsw_config = config.get_algorithm_config("HNSW");
         assert!(hnsw_config.contains_key("m"));
         assert!(hnsw_config.contains_key("ef_construction"));
         assert!(hnsw_config.contains_key("update_mode"));
-        
+
         let empty_config = config.get_algorithm_config("UNKNOWN");
         assert!(empty_config.contains_key("update_mode")); // Should contain general config
         assert!(!empty_config.contains_key("m")); // Should not contain HNSW-specific config

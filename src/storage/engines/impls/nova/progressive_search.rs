@@ -1,21 +1,21 @@
 // Progressive columnar search implementation for optimized NOVA engine
 // Multi-stage search pipeline: Binary → INT8 → PQ → FP32 with streaming support
 
-use anyhow::{anyhow, Result};
-use arrow_array::RecordBatch;
-use std::collections::{BinaryHeap, HashMap};
-use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, instrument, warn};
-use crate::core::VectorRecord;
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::streaming_processor::{
+    ProcessingStage, RowGroupCandidate, RowGroupProcessingResult, StreamingConfig,
+    StreamingContext, StreamingRowGroupProcessor,
+};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use super::hierarchical_stats::{SuperBlock, EnhancedRowGroupStats, ZoneMap};
-use super::streaming_processor::{
-    StreamingRowGroupProcessor, StreamingContext, RowGroupProcessingResult,
-    RowGroupCandidate, ProcessingStage, StreamingConfig,
-};
+use crate::core::VectorRecord;
+use anyhow::{Result, anyhow};
+use arrow_array::RecordBatch;
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::Arc;
+use tokio::sync::{RwLock, mpsc};
+use tracing::{debug, info, instrument, warn};
 // Import types from refactored quantized_columns module
 use super::quantized_columns::{Int8QuantizedData, PQQuantizedData};
 
@@ -55,25 +55,27 @@ impl QuantizationAdapter {
         let binary = self.engine.quantize_to_binary(vector)?;
         Ok(binary)
     }
-    
+
     /// Compute hamming distance between binary vectors
     async fn compute_hamming_distance(&self, v1: &[u8], v2: &[u8]) -> Result<f32> {
-        let distance = v1.iter()
+        let distance = v1
+            .iter()
             .zip(v2.iter())
             .map(|(a, b)| (a ^ b).count_ones() as f32)
             .sum();
         Ok(distance)
     }
-    
+
     /// Quantize vector to INT8 format
     async fn quantize_to_int8(&self, vector: &[f32]) -> Result<Vec<i8>> {
         let quantized = self.engine.quantize_to_int8(vector)?;
         Ok(quantized.iter().map(|&b| b as i8).collect())
     }
-    
+
     /// Compute INT8 distance
     async fn compute_int8_distance(&self, v1: &[i8], v2: &[i8]) -> Result<f32> {
-        let distance: f32 = v1.iter()
+        let distance: f32 = v1
+            .iter()
             .zip(v2.iter())
             .map(|(a, b)| {
                 let diff = (*a as f32) - (*b as f32);
@@ -82,28 +84,35 @@ impl QuantizationAdapter {
             .sum();
         Ok(distance.sqrt())
     }
-    
+
     /// Compute PQ distance table
-    async fn compute_pq_distance_table(&self, vector: &[f32], segments: u8, bits: u8) -> Result<DistanceTable> {
+    async fn compute_pq_distance_table(
+        &self,
+        vector: &[f32],
+        segments: u8,
+        bits: u8,
+    ) -> Result<DistanceTable> {
         DistanceTable::compute_for_query(vector, segments, bits)
     }
-    
+
     /// Compute PQ distance
     async fn compute_pq_distance(&self, table: &DistanceTable, code: &[u8]) -> Result<f32> {
-        let pq_code = PQCode { codes: code.to_vec() };
+        let pq_code = PQCode {
+            codes: code.to_vec(),
+        };
         Ok(table.lookup_distance(&pq_code))
     }
-    
+
     /// Load binary sketch (stub for now)
     async fn load_binary_sketch(&self, _row_group_id: u32, _row_offset: u32) -> Result<Vec<u8>> {
         Ok(vec![0u8; 96]) // Placeholder
     }
-    
+
     /// Load INT8 vector (stub for now)
     async fn load_int8_vector(&self, _row_group_id: u32, _row_offset: u32) -> Result<Vec<i8>> {
         Ok(vec![0i8; 768]) // Placeholder
     }
-    
+
     /// Load PQ code (stub for now)
     async fn load_pq_code(&self, _row_group_id: u32, _row_offset: u32) -> Result<Vec<u8>> {
         Ok(vec![0u8; 32]) // Placeholder
@@ -117,7 +126,7 @@ pub struct ProgressiveSearchConfig {
     pub int8_config: StageConfig,
     pub pq_config: StageConfig,
     pub full_precision_config: StageConfig,
-    
+
     /// Streaming configuration
     pub streaming_config: StreamingConfig,
     /// Search optimization settings
@@ -125,7 +134,7 @@ pub struct ProgressiveSearchConfig {
     pub adaptive_thresholds: bool,
     pub enable_superblock_pruning: bool,
     /// Quality vs Performance trade-offs
-    pub quality_target: f32,        // 0.0 (speed) to 1.0 (quality_level)
+    pub quality_target: f32, // 0.0 (speed) to 1.0 (quality_level)
     pub latency_budget_ms: Option<u64>,
     pub memory_budget_bytes: Option<usize>,
 }
@@ -213,7 +222,7 @@ pub struct ProgressiveColumnarSearch {
 impl ProgressiveColumnarSearch {
     /// Create a new progressive search engine
     pub fn new(
-        config: ProgressiveSearchConfig, 
+        config: ProgressiveSearchConfig,
         distance_metric: DistanceMetric,
         distance_compute: Arc<UnifiedDistanceCompute>,
         quantization_engine: Arc<UnifiedQuantizationEngine>,
@@ -222,7 +231,7 @@ impl ProgressiveColumnarSearch {
         let quantization_adapter = QuantizationAdapter {
             engine: quantization_engine,
         };
-        
+
         Self {
             config,
             streaming_processor,
@@ -231,7 +240,7 @@ impl ProgressiveColumnarSearch {
             quantization_adapter,
         }
     }
-    
+
     /// Execute progressive search with streaming optimization
     #[instrument(skip(self, query_vector, superblocks, enhanced_stats))]
     pub async fn search_progressive(
@@ -257,11 +266,16 @@ impl ProgressiveColumnarSearch {
         let mut superblocks_pruned = 0;
         // Phase 1: SuperBlock pruning
         let relevant_superblocks = if self.config.enable_superblock_pruning {
-            self.prune_superblocks(query_vector, superblocks, &mut superblocks_pruned).await?
+            self.prune_superblocks(query_vector, superblocks, &mut superblocks_pruned)
+                .await?
         } else {
             superblocks.to_vec()
         };
-        info!("SuperBlock pruning: {} → {} superblocks", superblocks.len(), relevant_superblocks.len());
+        info!(
+            "SuperBlock pruning: {} → {} superblocks",
+            superblocks.len(),
+            relevant_superblocks.len()
+        );
         // Phase 2: Row group ordering and streaming processing
         let streaming_context = StreamingContext {
             query_vector: query_vector.to_vec(),
@@ -270,55 +284,64 @@ impl ProgressiveColumnarSearch {
             superblocks: relevant_superblocks,
             enhanced_stats: enhanced_stats.to_vec(),
         };
-        
-        let row_group_results = self.streaming_processor
+
+        let row_group_results = self
+            .streaming_processor
             .process_row_groups_streaming(streaming_context, parquet_metadata)
             .await?;
         // Phase 3: Progressive refinement stages
         let mut candidates = self.collect_initial_candidates(&row_group_results).await?;
         // Binary stage
-        let (candidates, binary_metrics) = self.execute_binary_stage(
-            query_vector,
-            candidates,
-            &mut total_candidates_processed,
-            &mut total_candidates_filtered,
-            &mut memory_peak_usage,
-        ).await?;
+        let (candidates, binary_metrics) = self
+            .execute_binary_stage(
+                query_vector,
+                candidates,
+                &mut total_candidates_processed,
+                &mut total_candidates_filtered,
+                &mut memory_peak_usage,
+            )
+            .await?;
         stage_metrics.push(binary_metrics);
         if candidates.is_empty() {
             return Ok(self.build_empty_result(stage_metrics, start_time));
         }
-        
+
         // INT8 stage
-        let (candidates, int8_metrics) = self.execute_int8_stage(
-            query_vector,
-            candidates,
-            &mut total_candidates_processed,
-            &mut total_candidates_filtered,
-            &mut memory_peak_usage,
-        ).await?;
+        let (candidates, int8_metrics) = self
+            .execute_int8_stage(
+                query_vector,
+                candidates,
+                &mut total_candidates_processed,
+                &mut total_candidates_filtered,
+                &mut memory_peak_usage,
+            )
+            .await?;
         stage_metrics.push(int8_metrics);
-        
+
         // PQ stage
-        let (candidates, pq_metrics) = self.execute_pq_stage(
-            query_vector,
-            candidates,
-            &mut total_candidates_processed,
-            &mut total_candidates_filtered,
-            &mut memory_peak_usage,
-        ).await?;
+        let (candidates, pq_metrics) = self
+            .execute_pq_stage(
+                query_vector,
+                candidates,
+                &mut total_candidates_processed,
+                &mut total_candidates_filtered,
+                &mut memory_peak_usage,
+            )
+            .await?;
         stage_metrics.push(pq_metrics);
-        
+
         // Full precision stage
-        let (final_results, fp_metrics) = self.execute_full_precision_stage(
-            query_vector,
-            candidates,
-            top_k,
-            &mut total_candidates_processed,
-            &mut memory_peak_usage,
-        ).await?;
+        let (final_results, fp_metrics) = self
+            .execute_full_precision_stage(
+                query_vector,
+                candidates,
+                top_k,
+                &mut total_candidates_processed,
+                &mut memory_peak_usage,
+            )
+            .await?;
         stage_metrics.push(fp_metrics);
-        
+
         let total_time_ms = start_time.elapsed().as_millis() as u64;
         info!(
             "Progressive search completed: {} results in {}ms, processed {} candidates",
@@ -326,7 +349,7 @@ impl ProgressiveColumnarSearch {
             total_time_ms,
             total_candidates_processed
         );
-        
+
         Ok(ProgressiveSearchResult {
             results: final_results,
             stage_metrics,
@@ -338,7 +361,7 @@ impl ProgressiveColumnarSearch {
             total_time_ms,
         })
     }
-    
+
     /// Prune SuperBlocks based on query
     async fn prune_superblocks(
         &self,
@@ -359,16 +382,17 @@ impl ProgressiveColumnarSearch {
                 *pruned_count += 1;
             }
         }
-        
+
         // Sort by estimated search cost
         relevant_blocks.sort_by(|a, b| {
-            a.selectivity_hints.search_cost_estimate
+            a.selectivity_hints
+                .search_cost_estimate
                 .partial_cmp(&b.selectivity_hints.search_cost_estimate)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         Ok(relevant_blocks)
     }
-    
+
     /// Collect initial candidates from row group processing results
     async fn collect_initial_candidates(
         &self,
@@ -388,7 +412,7 @@ impl ProgressiveColumnarSearch {
         }
         Ok(candidates)
     }
-    
+
     /// Execute binary quantization stage
     async fn execute_binary_stage(
         &self,
@@ -403,27 +427,32 @@ impl ProgressiveColumnarSearch {
         *total_processed += candidates_in;
         debug!("Binary stage: processing {} candidates", candidates_in);
         // Convert query to binary sketch using quantization adapter
-        let binary_query = self.quantization_adapter.quantize_to_binary(query_vector).await?;
+        let binary_query = self
+            .quantization_adapter
+            .quantize_to_binary(query_vector)
+            .await?;
         // Process candidates through binary filtering
         let mut filtered_candidates = Vec::new();
         let max_candidates = self.config.binary_config.max_candidates;
         let mut candidate_heap = BinaryHeap::new();
         for candidate in candidates {
             // Simulate loading binary sketch for this candidate
-            let binary_sketch = self.load_binary_sketch(
-                candidate.row_group_id,
-                candidate.row_offset,
-            ).await?;
-            
+            let binary_sketch = self
+                .load_binary_sketch(candidate.row_group_id, candidate.row_offset)
+                .await?;
+
             // Compute binary distance using quantization adapter
-            let binary_distance = self.quantization_adapter.compute_hamming_distance(&binary_query, &binary_sketch).await?;
+            let binary_distance = self
+                .quantization_adapter
+                .compute_hamming_distance(&binary_query, &binary_sketch)
+                .await?;
             // Check threshold
             if let Some(threshold) = self.config.binary_config.distance_threshold {
                 if binary_distance > threshold {
                     continue;
                 }
             }
-            
+
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
                 row_offset: candidate.row_offset as u32,
@@ -437,7 +466,7 @@ impl ProgressiveColumnarSearch {
                 candidate_heap.pop();
             }
         }
-        
+
         // Convert heap to vector
         while let Some(candidate) = candidate_heap.pop() {
             filtered_candidates.push(candidate);
@@ -452,7 +481,7 @@ impl ProgressiveColumnarSearch {
         } else {
             0.0
         };
-        
+
         debug!(
             "Binary stage completed: {} → {} candidates ({}% filtered) in {}ms",
             candidates_in,
@@ -460,20 +489,20 @@ impl ProgressiveColumnarSearch {
             (effectiveness * 100.0) as u32,
             duration_ms
         );
-        
+
         let metrics = StageMetrics {
             stage: ProcessingStage::BinaryFilter,
             duration_ms,
             memory_used: candidates_in * 96, // Approximate binary sketch size
-            row_groups_processed: 0, // Calculated elsewhere
+            row_groups_processed: 0,         // Calculated elsewhere
             effectiveness,
             candidates_in,
             candidates_out,
         };
-        
+
         Ok((filtered_candidates, metrics))
     }
-    
+
     /// Execute INT8 quantization stage
     async fn execute_int8_stage(
         &self,
@@ -488,28 +517,33 @@ impl ProgressiveColumnarSearch {
         *total_processed += candidates_in;
         debug!("INT8 stage: processing {} candidates", candidates_in);
         // Convert query to INT8 using quantization adapter
-        let int8_query = self.quantization_adapter.quantize_to_int8(query_vector).await?;
+        let int8_query = self
+            .quantization_adapter
+            .quantize_to_int8(query_vector)
+            .await?;
         let max_candidates = self.config.int8_config.max_candidates;
         let mut filtered_candidates = Vec::new();
         let mut candidate_heap = BinaryHeap::new();
-        
+
         for candidate in candidates {
             // Simulate loading INT8 vector for this candidate
-            let int8_vector = self.load_int8_vector(
-                candidate.row_group_id,
-                candidate.row_offset,
-            ).await?;
-            
+            let int8_vector = self
+                .load_int8_vector(candidate.row_group_id, candidate.row_offset)
+                .await?;
+
             // Compute INT8 distance using quantization adapter
-            let int8_distance = self.quantization_adapter.compute_int8_distance(&int8_query, &int8_vector).await?;
-            
+            let int8_distance = self
+                .quantization_adapter
+                .compute_int8_distance(&int8_query, &int8_vector)
+                .await?;
+
             // Check threshold
             if let Some(threshold) = self.config.int8_config.distance_threshold {
                 if int8_distance > threshold {
                     continue;
                 }
             }
-            
+
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
                 row_offset: candidate.row_offset,
@@ -518,17 +552,17 @@ impl ProgressiveColumnarSearch {
                 record: None,
             };
             candidate_heap.push(updated_candidate);
-            
+
             if candidate_heap.len() > max_candidates {
                 candidate_heap.pop();
             }
         }
-        
+
         while let Some(candidate) = candidate_heap.pop() {
             filtered_candidates.push(candidate);
         }
         filtered_candidates.reverse();
-        
+
         let candidates_out = filtered_candidates.len();
         let filtered = candidates_in - candidates_out;
         *total_filtered += filtered;
@@ -538,7 +572,7 @@ impl ProgressiveColumnarSearch {
         } else {
             0.0
         };
-        
+
         debug!(
             "INT8 stage completed: {} → {} candidates ({}% filtered) in {}ms",
             candidates_in,
@@ -546,7 +580,7 @@ impl ProgressiveColumnarSearch {
             (effectiveness * 100.0) as u32,
             duration_ms
         );
-        
+
         let metrics = StageMetrics {
             stage: ProcessingStage::Int8Filter,
             duration_ms,
@@ -556,10 +590,10 @@ impl ProgressiveColumnarSearch {
             row_groups_processed: 0,
             effectiveness,
         };
-        
+
         Ok((filtered_candidates, metrics))
     }
-    
+
     /// Execute PQ stage
     async fn execute_pq_stage(
         &self,
@@ -574,28 +608,33 @@ impl ProgressiveColumnarSearch {
         *total_processed += candidates_in;
         debug!("PQ stage: processing {} candidates", candidates_in);
         // Compute PQ distance table using quantization adapter
-        let distance_table = self.quantization_adapter.compute_pq_distance_table(query_vector, 32, 8).await?;
+        let distance_table = self
+            .quantization_adapter
+            .compute_pq_distance_table(query_vector, 32, 8)
+            .await?;
         let max_candidates = self.config.pq_config.max_candidates;
         let mut filtered_candidates = Vec::new();
         let mut candidate_heap = BinaryHeap::new();
-        
+
         for candidate in candidates {
             // Simulate loading PQ code for this candidate
-            let pq_code = self.load_pq_code(
-                candidate.row_group_id,
-                candidate.row_offset,
-            ).await?;
-            
+            let pq_code = self
+                .load_pq_code(candidate.row_group_id, candidate.row_offset)
+                .await?;
+
             // Compute PQ distance using quantization adapter
-            let pq_distance = self.quantization_adapter.compute_pq_distance(&distance_table, &pq_code).await?;
-            
+            let pq_distance = self
+                .quantization_adapter
+                .compute_pq_distance(&distance_table, &pq_code)
+                .await?;
+
             // Check threshold
             if let Some(threshold) = self.config.pq_config.distance_threshold {
                 if pq_distance > threshold {
                     continue;
                 }
             }
-            
+
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
                 row_offset: candidate.row_offset,
@@ -604,17 +643,17 @@ impl ProgressiveColumnarSearch {
                 record: None,
             };
             candidate_heap.push(updated_candidate);
-            
+
             if candidate_heap.len() > max_candidates {
                 candidate_heap.pop();
             }
         }
-        
+
         while let Some(candidate) = candidate_heap.pop() {
             filtered_candidates.push(candidate);
         }
         filtered_candidates.reverse();
-        
+
         let candidates_out = filtered_candidates.len();
         let filtered = candidates_in - candidates_out;
         *total_filtered += filtered;
@@ -624,7 +663,7 @@ impl ProgressiveColumnarSearch {
         } else {
             0.0
         };
-        
+
         debug!(
             "PQ stage completed: {} → {} candidates ({}% filtered) in {}ms",
             candidates_in,
@@ -632,7 +671,7 @@ impl ProgressiveColumnarSearch {
             (effectiveness * 100.0) as u32,
             duration_ms
         );
-        
+
         let metrics = StageMetrics {
             stage: ProcessingStage::PQ8Filter,
             duration_ms,
@@ -642,10 +681,10 @@ impl ProgressiveColumnarSearch {
             row_groups_processed: 0,
             effectiveness,
         };
-        
+
         Ok((filtered_candidates, metrics))
     }
-    
+
     /// Execute full precision stage
     async fn execute_full_precision_stage(
         &self,
@@ -658,21 +697,26 @@ impl ProgressiveColumnarSearch {
         let stage_start = std::time::Instant::now();
         let candidates_in = candidates.len();
         *total_processed += candidates_in;
-        debug!("Full precision stage: processing {} candidates", candidates_in);
+        debug!(
+            "Full precision stage: processing {} candidates",
+            candidates_in
+        );
         let mut final_candidates = Vec::new();
-        
+
         for (i, candidate) in candidates.into_iter().enumerate() {
             // Load full precision vector
-            let full_vector = self.load_full_vector(
-                candidate.row_group_id,
-                candidate.row_offset,
-            ).await?;
-            
+            let full_vector = self
+                .load_full_vector(candidate.row_group_id, candidate.row_offset)
+                .await?;
+
             // Compute exact distance using universal adapter
             let exact_distance = self.compute_exact_distance(query_vector, &full_vector)?;
-            
+
             let record = VectorRecord {
-                id: candidate.vector_id.clone().unwrap_or_else(|| format!("unknown_{}", i)),
+                id: candidate
+                    .vector_id
+                    .clone()
+                    .unwrap_or_else(|| format!("unknown_{}", i)),
                 vector: full_vector,
                 metadata: Vec::new(),
                 timestamp: 0,
@@ -684,24 +728,23 @@ impl ProgressiveColumnarSearch {
             };
             final_candidates.push((record, exact_distance));
         }
-        
+
         // Sort by exact distance and take top-k
         final_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         final_candidates.truncate(top_k);
-        
-        let results: Vec<VectorRecord> = final_candidates.into_iter()
+
+        let results: Vec<VectorRecord> = final_candidates
+            .into_iter()
             .map(|(record, _)| record)
             .collect();
         let candidates_out = results.len();
         let duration_ms = stage_start.elapsed().as_millis() as u64;
-        
+
         debug!(
             "Full precision stage completed: {} → {} results in {}ms",
-            candidates_in,
-            candidates_out,
-            duration_ms
+            candidates_in, candidates_out, duration_ms
         );
-        
+
         let metrics = StageMetrics {
             stage: ProcessingStage::FullPrecision,
             duration_ms,
@@ -711,37 +754,45 @@ impl ProgressiveColumnarSearch {
             row_groups_processed: 0,
             effectiveness: 1.0, // Full precision doesn't filter
         };
-        
+
         Ok((results, metrics))
     }
-    
+
     // Helper methods for loading data (would be implemented with actual Parquet reading)
     async fn load_binary_sketch(&self, row_group_id: u32, row_offset: u32) -> Result<Vec<u8>> {
         // Load binary sketch from Parquet using quantization adapter
-        self.quantization_adapter.load_binary_sketch(row_group_id, row_offset).await
+        self.quantization_adapter
+            .load_binary_sketch(row_group_id, row_offset)
+            .await
     }
-    
+
     async fn load_int8_vector(&self, row_group_id: u32, row_offset: u32) -> Result<Vec<i8>> {
         // Load INT8 vector from Parquet using quantization adapter
-        self.quantization_adapter.load_int8_vector(row_group_id, row_offset).await
+        self.quantization_adapter
+            .load_int8_vector(row_group_id, row_offset)
+            .await
     }
-    
+
     async fn load_pq_code(&self, row_group_id: u32, row_offset: u32) -> Result<Vec<u8>> {
         // Load PQ code from Parquet using quantization adapter
-        self.quantization_adapter.load_pq_code(row_group_id, row_offset).await
+        self.quantization_adapter
+            .load_pq_code(row_group_id, row_offset)
+            .await
     }
-    
+
     async fn load_full_vector(&self, _row_group_id: u32, _row_offset: u32) -> Result<Vec<f32>> {
         // Simulate loading full vector from Parquet
         Ok(vec![0.0f32; 768])
     }
-    
+
     fn compute_exact_distance(&self, query: &[f32], vector: &[f32]) -> Result<f32> {
         // Use UnifiedDistanceCompute instead of local implementation
-        let result = self.distance_compute.calculate_distance(query, vector, &self.distance_metric);
+        let result = self
+            .distance_compute
+            .calculate_distance(query, vector, &self.distance_metric);
         Ok(result.normalized_score)
     }
-    
+
     fn build_empty_result(
         &self,
         stage_metrics: Vec<StageMetrics>,
@@ -818,7 +869,7 @@ impl DistanceTable {
         }
         Ok(Self { table })
     }
-    
+
     fn lookup_distance(&self, pq_code: &PQCode) -> f32 {
         let mut total_distance = 0.0;
         for (segment_idx, &code) in pq_code.codes.iter().enumerate() {
@@ -844,9 +895,10 @@ impl BinarySketch {
         }
         Self { bits }
     }
-    
+
     fn hamming_distance(&self, other: &Self) -> u32 {
-        self.bits.iter()
+        self.bits
+            .iter()
             .zip(other.bits.iter())
             .map(|(a, b)| (a ^ b).count_ones())
             .sum()
@@ -860,19 +912,25 @@ impl Int8Vector {
         let max_val = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let scale = (max_val - min_val) / 255.0;
         let zero_point = (-min_val / scale).round() as i8;
-        let values = vector.iter()
-            .map(|&x| ((x / scale) + zero_point as f32).round().clamp(-128.0, 127.0) as i8)
+        let values = vector
+            .iter()
+            .map(|&x| {
+                ((x / scale) + zero_point as f32)
+                    .round()
+                    .clamp(-128.0, 127.0) as i8
+            })
             .collect();
-            
+
         Self {
             values,
             scale,
             zero_point,
         }
     }
-    
+
     fn l2_distance_squared(&self, other: &Self) -> f32 {
-        self.values.iter()
+        self.values
+            .iter()
             .zip(other.values.iter())
             .map(|(&a, &b)| {
                 let diff = (a as f32 - b as f32) * self.scale;
@@ -906,7 +964,7 @@ mod tests {
     #[test]
     fn test_progressive_candidate_ordering() {
         let mut heap = BinaryHeap::new();
-        
+
         heap.push(ProgressiveCandidate {
             row_group_id: 0,
             row_offset: 0,
@@ -914,7 +972,7 @@ mod tests {
             vector_id: None,
             record: None,
         });
-        
+
         heap.push(ProgressiveCandidate {
             row_group_id: 0,
             row_offset: 1,
@@ -922,7 +980,7 @@ mod tests {
             vector_id: None,
             record: None,
         });
-        
+
         // Should pop smallest similarity first (min-heap behavior)
         assert_eq!(heap.pop().unwrap().similarity, 5.0);
         assert_eq!(heap.pop().unwrap().similarity, 10.0);

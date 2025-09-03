@@ -13,7 +13,7 @@ use tokio::sync::{RwLock, Semaphore};
 
 use crate::index::axis::{
     MigrationPriority,
-    types::{IndexSelectionStrategy, IndexSpecification, Data},
+    types::{Data, IndexSelectionStrategy, IndexSpecification},
 };
 
 // Type aliases and structs for compatibility
@@ -39,7 +39,6 @@ pub enum MigrationDecision {
         reason: String,
     },
 }
-
 
 /// Engine for performing zero-downtime index migrations
 pub struct IndexMigrationEngine {
@@ -232,7 +231,7 @@ pub struct MigrationExecutor {
 #[async_trait::async_trait]
 pub trait StepExecutor {
     async fn execute(&self, step: &MigrationStep, context: &MigrationContext)
-        -> Result<StepResult>;
+    -> Result<StepResult>;
     fn can_handle(&self, step_type: &MigrationStepType) -> bool;
 }
 
@@ -455,13 +454,16 @@ impl IndexMigrationEngine {
         for index_spec in &to.indexes {
             // Check if this index doesn't exist in the from strategy
             let exists_in_from = from.indexes.iter().any(|from_spec| {
-                from_spec.data_type == index_spec.data_type && 
-                from_spec.algorithm == index_spec.algorithm
+                from_spec.data_type == index_spec.data_type
+                    && from_spec.algorithm == index_spec.algorithm
             });
-            
+
             if !exists_in_from {
                 steps.push(MigrationStep {
-                    step_id: format!("create_index_{:?}_{:?}", index_spec.data_type, index_spec.algorithm),
+                    step_id: format!(
+                        "create_index_{:?}_{:?}",
+                        index_spec.data_type, index_spec.algorithm
+                    ),
                     step_type: MigrationStepType::CreateNewIndex {
                         index_spec: index_spec.clone(),
                     },
@@ -498,13 +500,16 @@ impl IndexMigrationEngine {
         for index_spec in &to.indexes {
             // Check if we need to build this index (doesn't exist in from strategy)
             let exists_in_from = from.indexes.iter().any(|from_spec| {
-                from_spec.data_type == index_spec.data_type && 
-                from_spec.algorithm == index_spec.algorithm
+                from_spec.data_type == index_spec.data_type
+                    && from_spec.algorithm == index_spec.algorithm
             });
-            
+
             if !exists_in_from {
                 steps.push(MigrationStep {
-                    step_id: format!("build_index_{:?}_{:?}", index_spec.data_type, index_spec.algorithm),
+                    step_id: format!(
+                        "build_index_{:?}_{:?}",
+                        index_spec.data_type, index_spec.algorithm
+                    ),
                     step_type: MigrationStepType::BuildIndex {
                         index_spec: index_spec.clone(),
                         build_params: IndexBuildParams {

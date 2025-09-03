@@ -59,39 +59,42 @@ impl MmapVectorStorage {
             mappings: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Map a vector file into memory
     pub fn map_file(&self, path: impl AsRef<Path>, dimension: usize) -> Result<Arc<Mmap>> {
         let path = path.as_ref();
-        let file = File::open(path)
-            .with_context(|| format!("Failed to open vector file: {:?}", path))?;
-        
+        let file =
+            File::open(path).with_context(|| format!("Failed to open vector file: {:?}", path))?;
+
         let metadata = file.metadata()?;
         let file_size = metadata.len() as usize;
-        
+
         // Check if file is large enough for mmap
         if !self.config.enabled || file_size < self.config.min_size {
             // Fall back to regular I/O for small files
-            return Err(anyhow::anyhow!("File too small for mmap: {} bytes", file_size));
+            return Err(anyhow::anyhow!(
+                "File too small for mmap: {} bytes",
+                file_size
+            ));
         }
-        
+
         // Create memory mapping
         let mut mmap_opts = MmapOptions::new();
-        
+
         if self.config.populate {
             mmap_opts.populate();
         }
-        
+
         let mmap = unsafe { mmap_opts.map(&file)? };
-        
+
         // Lock pages if requested (requires privileges)
         if self.config.lock_memory {
             #[cfg(unix)]
             {
-                use libc::{mlock, sysconf, _SC_PAGESIZE};
+                use libc::{_SC_PAGESIZE, mlock, sysconf};
                 let page_size = unsafe { sysconf(_SC_PAGESIZE) } as usize;
                 let aligned_size = (file_size + page_size - 1) & !(page_size - 1);
-                
+
                 unsafe {
                     if mlock(mmap.as_ptr() as *const _, aligned_size) != 0 {
                         tracing::warn!("Failed to lock memory pages (requires privileges)");
@@ -99,13 +102,13 @@ impl MmapVectorStorage {
                 }
             }
         }
-        
+
         // Calculate vector count (assuming f32 vectors)
         let bytes_per_vector = dimension * std::mem::size_of::<f32>();
         let vector_count = file_size / bytes_per_vector;
-        
+
         let mmap_arc = Arc::new(mmap);
-        
+
         let handle = MmapHandle {
             path: path.to_path_buf(),
             mmap: mmap_arc.clone(),
@@ -113,12 +116,12 @@ impl MmapVectorStorage {
             vector_count,
             dimension,
         };
-        
+
         self.mappings.write().push(handle);
-        
+
         Ok(mmap_arc)
     }
-    
+
     /// Create a new memory-mapped file for writing vectors
     pub fn create_mmap_file(
         &self,
@@ -129,7 +132,7 @@ impl MmapVectorStorage {
         let path = path.as_ref();
         let bytes_per_vector = dimension * std::mem::size_of::<f32>();
         let file_size = vector_count * bytes_per_vector;
-        
+
         // Create and size the file
         let file = OpenOptions::new()
             .read(true)
@@ -137,15 +140,15 @@ impl MmapVectorStorage {
             .create(true)
             .truncate(true)
             .open(path)?;
-        
+
         file.set_len(file_size as u64)?;
-        
+
         // Create mutable memory mapping
         let mmap = unsafe { MmapMut::map_mut(&file)? };
-        
+
         Ok(mmap)
     }
-    
+
     /// Read vectors directly from memory-mapped file
     pub fn read_vectors(
         &self,
@@ -157,18 +160,18 @@ impl MmapVectorStorage {
         let bytes_per_vector = dimension * std::mem::size_of::<f32>();
         let start_byte = start_idx * bytes_per_vector;
         let end_byte = (start_idx + count) * bytes_per_vector;
-        
+
         if end_byte > mmap.len() {
             return Err(anyhow::anyhow!("Read exceeds mmap bounds"));
         }
-        
+
         let mut vectors = Vec::with_capacity(count);
         let data = &mmap[start_byte..end_byte];
-        
+
         for i in 0..count {
             let offset = i * bytes_per_vector;
             let vector_bytes = &data[offset..offset + bytes_per_vector];
-            
+
             // Convert bytes to f32 vector
             let vector: Vec<f32> = vector_bytes
                 .chunks_exact(4)
@@ -177,13 +180,13 @@ impl MmapVectorStorage {
                     f32::from_le_bytes(bytes)
                 })
                 .collect();
-            
+
             vectors.push(vector);
         }
-        
+
         Ok(vectors)
     }
-    
+
     /// Get a zero-copy slice of vectors
     pub unsafe fn get_vector_slice<'a>(
         mmap: &'a Mmap,
@@ -194,19 +197,19 @@ impl MmapVectorStorage {
         let floats_per_vector = dimension;
         let start_float = start_idx * floats_per_vector;
         let total_floats = count * floats_per_vector;
-        
+
         let ptr = mmap.as_ptr() as *const f32;
         std::slice::from_raw_parts(ptr.add(start_float), total_floats)
     }
-    
+
     /// Prefetch vectors into CPU cache
     #[cfg(target_arch = "x86_64")]
     pub fn prefetch_vectors(&self, mmap: &Mmap, start_idx: usize, count: usize, dimension: usize) {
         use std::arch::x86_64::_mm_prefetch;
-        
+
         let bytes_per_vector = dimension * std::mem::size_of::<f32>();
         let start_byte = start_idx * bytes_per_vector;
-        
+
         unsafe {
             for i in 0..count {
                 let offset = start_byte + i * bytes_per_vector;
@@ -216,11 +219,11 @@ impl MmapVectorStorage {
             }
         }
     }
-    
+
     /// Get statistics about memory-mapped files
     pub fn stats(&self) -> MmapStats {
         let mappings = self.mappings.read();
-        
+
         MmapStats {
             total_files: mappings.len(),
             total_size: mappings.iter().map(|h| h.size).sum(),
@@ -241,25 +244,25 @@ pub struct MmapStats {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     #[test]
     fn test_mmap_vector_storage() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().join("vectors.bin");
-        
+
         let config = MmapConfig::default();
         let storage = MmapVectorStorage::new(config);
-        
+
         // Create a file with some vectors
         let dimension = 128;
         let vector_count = 1000;
         let mut mmap_mut = storage.create_mmap_file(&path, vector_count, dimension)?;
-        
+
         // Write test data
         let test_data: Vec<f32> = (0..dimension * vector_count)
             .map(|i| i as f32 / 100.0)
             .collect();
-        
+
         for (i, chunk) in test_data.chunks_exact(dimension).enumerate() {
             let offset = i * dimension * 4;
             for (j, &val) in chunk.iter().enumerate() {
@@ -267,16 +270,16 @@ mod tests {
                 mmap_mut[offset + j * 4..offset + j * 4 + 4].copy_from_slice(&bytes);
             }
         }
-        
+
         drop(mmap_mut);
-        
+
         // Map the file and read vectors
         let mmap = storage.map_file(&path, dimension)?;
         let vectors = storage.read_vectors(&mmap, 0, 10, dimension)?;
-        
+
         assert_eq!(vectors.len(), 10);
         assert_eq!(vectors[0].len(), dimension);
-        
+
         Ok(())
     }
 }

@@ -25,14 +25,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 use crate::storage::persistence::write_ahead_log::{
-    config::{MemTableType, WriteBufferStrategyType},
     WALConfig,
     // Using modern batch architecture - no more WalEntry
+    config::{MemTableType, WriteBufferStrategyType},
 };
 
 /// Metadata-specific write buffer configuration
@@ -67,7 +66,8 @@ impl Default for MetadataWALConfig {
         base_config.memtable.memtable_type = MemTableType::BTree;
 
         // Separate directory from vector write buffer data
-        base_config.multi_disk.data_directories = vec!["./data/metadata/write_buffer".to_string().into()];
+        base_config.multi_disk.data_directories =
+            vec!["./data/metadata/write_buffer".to_string().into()];
 
         // Smaller memory limit for metadata (fewer operations than vectors)
         base_config.performance.memory_flush_size_bytes = 32 * 1024 * 1024; // 32MB size threshold
@@ -98,10 +98,10 @@ impl Default for MetadataWALConfig {
 pub struct VersionedCollectionMetadata {
     pub id: String,
     pub name: String,
-    pub dimension: u32,  // Aligned with proto
+    pub dimension: u32, // Aligned with proto
     pub distance_metric: String,
     pub indexing_algorithm: String,
-    pub timestamp: u32,  // Seconds since epoch (when last modified)
+    pub timestamp: u32, // Seconds since epoch (when last modified)
     pub version: Option<u32>,
     pub vector_count: u64,
     pub total_size_bytes: u64,
@@ -228,9 +228,11 @@ impl MetadataWriteAheadLog {
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 1024, // Approximate for metadata
                 is_flushed: false,
-            metadata_bloom_filter: None,
+                metadata_bloom_filter: None,
             };
-            let _sequence = behavior_wrapper.add_vector_batch(&collection_id, batch).await?;
+            let _sequence = behavior_wrapper
+                .add_vector_batch(&collection_id, batch)
+                .await?;
         }
 
         // Update cache if enabled
@@ -306,7 +308,9 @@ impl MetadataWriteAheadLog {
         // Search in write buffer using modern vector_by_id through WALBehaviorWrapper
         let vector_id = format!("metadata_{}", collection_id);
         let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
-        let vector_record = behavior_wrapper.vector_by_id(collection_id, &vector_id).await?;
+        let vector_record = behavior_wrapper
+            .vector_by_id(collection_id, &vector_id)
+            .await?;
 
         if let Some(record) = vector_record {
             let metadata = self.vector_record_to_metadata(&record)?;
@@ -354,7 +358,10 @@ impl MetadataWriteAheadLog {
             // Sort by name for consistent ordering (B+Tree advantage)
             collections.sort_by(|a, b| a.name.cmp(&b.name));
 
-            tracing::debug!("✅ Listed {} collections from cache_info", collections.len());
+            tracing::debug!(
+                "✅ Listed {} collections from cache_info",
+                collections.len()
+            );
             return Ok(collections);
         }
 
@@ -364,7 +371,9 @@ impl MetadataWriteAheadLog {
         // For now, return empty list when cache is not populated
         // The cache will be populated on-demand when collections are accessed
         // This is a simplified approach - in production, we'd implement full write buffer scanning
-        tracing::warn!("⚠️ Cache empty and full write buffer scan not implemented - collections will be loaded on-demand");
+        tracing::warn!(
+            "⚠️ Cache empty and full write buffer scan not implemented - collections will be loaded on-demand"
+        );
 
         // Try to get stats to see if there's any data using modern interface
         let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
@@ -392,7 +401,10 @@ impl MetadataWriteAheadLog {
         } else {
             0
         };
-        tracing::info!("📂 Write buffer recovery found {} total entries", recovered_entries);
+        tracing::info!(
+            "📂 Write buffer recovery found {} total entries",
+            recovered_entries
+        );
 
         if recovered_entries == 0 {
             tracing::info!("📭 No existing metadata found in write buffer - starting fresh");
@@ -452,10 +464,10 @@ impl MetadataWriteAheadLog {
         if let Ok(stats_map) = behavior_wrapper.stats().await {
             // Extract collection IDs from write buffer stats
             let collection_ids: Vec<String> = stats_map.keys().cloned().collect();
-            
+
             let total_entries: u64 = stats_map.values().map(|s| s.total_entries).sum();
             let collections_count = stats_map.len();
-            
+
             tracing::debug!(
                 "📊 Write buffer has {} total entries across {} collections",
                 total_entries,
@@ -479,7 +491,7 @@ impl MetadataWriteAheadLog {
             // Create vector record for delete operation using MVCC logical delete
             let vector_id = format!("metadata_{}", collection_id);
             let current_time = chrono::Utc::now().timestamp_micros();
-            
+
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
             let delete_record = crate::proto::proximadb::VectorRecord {
                 id: vector_id,
@@ -499,16 +511,23 @@ impl MetadataWriteAheadLog {
                 let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
                 // Create WALVectorBatch for the delete
                 let vector_count = delete_batch_records.len() as u64;
-                let _end_sequence = if vector_count > 0 { 2 + vector_count - 1 } else { 2 };
-                let delete_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
-                    batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
-                    vector_records: Arc::new(delete_batch_records),
-                    timestamp: std::time::SystemTime::now(),
-                    total_size_bytes: 1024, // Approximate for metadata
-                    is_flushed: false,
-            metadata_bloom_filter: None,
+                let _end_sequence = if vector_count > 0 {
+                    2 + vector_count - 1
+                } else {
+                    2
                 };
-                let _sequence = behavior_wrapper.add_vector_batch(collection_id, delete_batch).await?;
+                let delete_batch =
+                    crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
+                        batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
+                        vector_records: Arc::new(delete_batch_records),
+                        timestamp: std::time::SystemTime::now(),
+                        total_size_bytes: 1024, // Approximate for metadata
+                        is_flushed: false,
+                        metadata_bloom_filter: None,
+                    };
+                let _sequence = behavior_wrapper
+                    .add_vector_batch(collection_id, delete_batch)
+                    .await?;
             }
 
             // Remove from cache
@@ -585,7 +604,7 @@ impl MetadataWriteAheadLog {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }
-    
+
     /// Get metadata statistics (alias for get_stats)
     pub async fn stats(&self) -> Result<MetadataStats> {
         self.get_stats().await
@@ -634,8 +653,8 @@ pub struct SystemMetadata {
     pub version: String,
     pub node_id: String,
     pub cluster_name: String,
-    pub timestamp: u32,  // Seconds since epoch
-    pub updated_at: Option<u32>,  // Seconds since epoch
+    pub timestamp: u32,          // Seconds since epoch
+    pub updated_at: Option<u32>, // Seconds since epoch
     pub total_collections: u64,
     pub total_vectors: u64,
     pub total_size_bytes: u64,

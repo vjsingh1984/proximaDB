@@ -70,7 +70,7 @@
 //! # HELP proximadb_queries_total Total number of queries
 //! # TYPE proximadb_queries_total counter
 //! proximadb_queries_total 12345
-//! 
+//!
 //! # HELP proximadb_latency_seconds Query latency
 //! # TYPE proximadb_latency_seconds histogram
 //! proximadb_latency_seconds_bucket{le="0.01"} 1000
@@ -141,10 +141,10 @@
 //! ```bash
 //! # Open in browser
 //! http://localhost:5678/
-//! 
+//!
 //! # Get JSON metrics
 //! curl http://localhost:5678/api/metrics
-//! 
+//!
 //! # Prometheus scrape
 //! curl http://localhost:5678/metrics
 //! ```
@@ -159,11 +159,11 @@
 
 use anyhow::Result;
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::{Html, Json},
     routing::get,
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -364,9 +364,7 @@ async fn api_metrics_endpoint(
 }
 
 /// Alerts endpoint
-async fn alerts_endpoint(
-    State(state): State<DashboardState>,
-) -> Json<Vec<crate::metrics::Alert>> {
+async fn alerts_endpoint(State(state): State<DashboardState>) -> Json<Vec<crate::metrics::Alert>> {
     let alerts = state.metrics_collector.active_alerts().await;
     Json(alerts)
 }
@@ -400,9 +398,15 @@ async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>
                     alert.threshold_value,
                     {
                         use std::time::UNIX_EPOCH;
-                        let duration = alert.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default();
-                        let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(duration.as_secs() as i64, 0)
-                            .unwrap_or_else(chrono::Utc::now);
+                        let duration = alert
+                            .timestamp
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default();
+                        let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                            duration.as_secs() as i64,
+                            0,
+                        )
+                        .unwrap_or_else(chrono::Utc::now);
                         datetime.format("%Y-%m-%d %H:%M:%S UTC")
                     }
                 )

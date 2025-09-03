@@ -27,8 +27,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 /// Workload pattern classification for adaptive structures
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -113,39 +113,39 @@ pub struct CostMetrics {
 pub enum StorageTier {
     /// L1: System memory (RAM) - fastest acceleration tier
     Memory,
-    
+
     /// L2: Fast NVMe SSD storage - high-speed acceleration
     NvmeSsd { mount_path: String },
-    
+
     /// L3: Traditional spinning disk storage - moderate acceleration  
     HardDisk { mount_path: String },
-    
+
     /// L4: Local fast cloud storage (single AZ) - cloud acceleration
-    CloudExpressOneZone { 
+    CloudExpressOneZone {
         provider: CloudProvider,
         region: String,
     },
-    
+
     /// L5: Standard cloud storage (multi-AZ) - baseline cloud durability
-    CloudStandard { 
+    CloudStandard {
         provider: CloudProvider,
         region: String,
     },
-    
+
     /// L6: Infrequent access cloud storage - cost-optimized durability
-    CloudInfrequentAccess { 
+    CloudInfrequentAccess {
         provider: CloudProvider,
         region: String,
     },
-    
+
     /// L7: Archive storage (retrieval time in minutes/hours) - long-term durability
-    CloudArchive { 
+    CloudArchive {
         provider: CloudProvider,
         region: String,
     },
-    
+
     /// L8: Deep archive (retrieval time in hours) - maximum durability, lowest cost
-    CloudDeepArchive { 
+    CloudDeepArchive {
         provider: CloudProvider,
         region: String,
     },
@@ -165,12 +165,12 @@ impl StorageTier {
             StorageTier::CloudDeepArchive { .. } => 8,
         }
     }
-    
+
     /// Check if this tier is faster than another (lower level number)
     pub fn is_faster_than(&self, other: &StorageTier) -> bool {
         self.tier_level() < other.tier_level()
     }
-    
+
     /// Check if this tier is at or above baseline durability
     /// Note: For tiering purposes, faster tiers (like Memory) are allowed even if less durable,
     /// as long as data is also stored at the baseline tier
@@ -189,14 +189,14 @@ pub enum CloudProvider {
         storage_class: AwsStorageClass,
         lifecycle_enabled: bool,
     },
-    
+
     /// Azure Blob Storage with access tiers
     AzureBlob {
         account: String,
         container: String,
         access_tier: AzureAccessTier,
     },
-    
+
     /// Google Cloud Storage with storage classes
     GoogleCloud {
         bucket: String,
@@ -207,28 +207,28 @@ pub enum CloudProvider {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AwsStorageClass {
-    Standard,              // $0.023/GB/month, ms access
-    ExpressOneZone,        // $0.16/GB/month, single-digit ms access
-    StandardIA,            // $0.0125/GB/month, 30-day minimum
-    OneZoneIA,             // $0.01/GB/month, single AZ
-    Glacier,               // $0.004/GB/month, 1-5 min retrieval  
-    GlacierDeepArchive,    // $0.00099/GB/month, 12-hour retrieval
-    IntelligentTiering,    // Auto-optimization based on access
+    Standard,           // $0.023/GB/month, ms access
+    ExpressOneZone,     // $0.16/GB/month, single-digit ms access
+    StandardIA,         // $0.0125/GB/month, 30-day minimum
+    OneZoneIA,          // $0.01/GB/month, single AZ
+    Glacier,            // $0.004/GB/month, 1-5 min retrieval
+    GlacierDeepArchive, // $0.00099/GB/month, 12-hour retrieval
+    IntelligentTiering, // Auto-optimization based on access
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AzureAccessTier {
-    Hot,      // $0.0184/GB/month, immediate access
-    Cool,     // $0.01/GB/month, 30-day minimum
-    Archive,  // $0.00099/GB/month, hours retrieval
+    Hot,     // $0.0184/GB/month, immediate access
+    Cool,    // $0.01/GB/month, 30-day minimum
+    Archive, // $0.00099/GB/month, hours retrieval
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum GcsStorageClass {
-    Standard,   // $0.020/GB/month, immediate access
-    Nearline,   // $0.010/GB/month, 30-day minimum  
-    Coldline,   // $0.004/GB/month, 90-day minimum
-    Archive,    // $0.0012/GB/month, 365-day minimum
+    Standard, // $0.020/GB/month, immediate access
+    Nearline, // $0.010/GB/month, 30-day minimum
+    Coldline, // $0.004/GB/month, 90-day minimum
+    Archive,  // $0.0012/GB/month, 365-day minimum
 }
 
 /// Collection storage configuration from metadata
@@ -236,16 +236,16 @@ pub enum GcsStorageClass {
 pub struct CollectionStorageConfig {
     /// Collection ID
     pub collection_id: String,
-    
+
     /// Base storage URL pattern: {base_location}/{collection_id}/indexes/
     pub base_location: String,
-    
+
     /// Durable store baseline tier - indexes can use faster tiers above this
     pub durable_baseline: StorageTier,
-    
+
     /// Maximum allowed tier for acceleration (optional constraint)
     pub max_acceleration_tier: Option<StorageTier>,
-    
+
     /// Collection-specific storage limits
     pub storage_limits: CollectionStorageLimits,
 }
@@ -254,10 +254,10 @@ pub struct CollectionStorageConfig {
 pub struct CollectionStorageLimits {
     /// Maximum memory allocation for this collection (bytes)
     pub max_memory_bytes: Option<usize>,
-    
+
     /// Maximum local disk allocation (bytes)
     pub max_local_disk_bytes: Option<usize>,
-    
+
     /// Budget constraints
     pub max_monthly_cost_usd: Option<f64>,
 }
@@ -265,39 +265,42 @@ pub struct CollectionStorageLimits {
 impl CollectionStorageConfig {
     /// Parse base location to determine storage constraints
     pub fn from_base_location(collection_id: String, base_location: String) -> Result<Self> {
-        let durable_baseline = if base_location.starts_with("s3://") || base_location.starts_with("gs://") || base_location.starts_with("azure://") {
+        let durable_baseline = if base_location.starts_with("s3://")
+            || base_location.starts_with("gs://")
+            || base_location.starts_with("azure://")
+        {
             // Cloud base location -> Allow acceleration up to local disk
-            StorageTier::CloudStandard { 
+            StorageTier::CloudStandard {
                 provider: Self::parse_cloud_provider(&base_location)?,
                 region: "us-east-1".to_string(), // Default region
             }
         } else if base_location.starts_with("/mnt/disk") || base_location.starts_with("/data") {
             // HDD base location -> Allow acceleration up to memory + NVMe
-            StorageTier::HardDisk { 
-                mount_path: base_location.clone() 
+            StorageTier::HardDisk {
+                mount_path: base_location.clone(),
             }
         } else if base_location.starts_with("/mnt/nvme") {
             // NVMe base location -> Allow memory acceleration only
-            StorageTier::NvmeSsd { 
-                mount_path: base_location.clone() 
+            StorageTier::NvmeSsd {
+                mount_path: base_location.clone(),
             }
         } else {
             // Memory-only base location -> No additional tiers
             StorageTier::Memory
         };
-        
+
         let max_acceleration_tier = match &durable_baseline {
-            StorageTier::CloudStandard { .. } => Some(StorageTier::HardDisk { 
-                mount_path: "/mnt/index-cache_info".to_string() 
+            StorageTier::CloudStandard { .. } => Some(StorageTier::HardDisk {
+                mount_path: "/mnt/index-cache_info".to_string(),
             }),
             StorageTier::HardDisk { .. } => Some(StorageTier::Memory),
             StorageTier::NvmeSsd { .. } => Some(StorageTier::Memory),
             StorageTier::Memory => None, // No acceleration above memory
-            _ => Some(StorageTier::HardDisk { 
-                mount_path: "/mnt/index-cache_info".to_string() 
+            _ => Some(StorageTier::HardDisk {
+                mount_path: "/mnt/index-cache_info".to_string(),
             }),
         };
-        
+
         Ok(Self {
             collection_id,
             base_location,
@@ -306,30 +309,32 @@ impl CollectionStorageConfig {
             storage_limits: CollectionStorageLimits {
                 max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB default
                 max_local_disk_bytes: Some(10 * 1024 * 1024 * 1024), // 10GB default
-                max_monthly_cost_usd: Some(100.0), // $100/month default
+                max_monthly_cost_usd: Some(100.0),          // $100/month default
             },
         })
     }
-    
+
     /// Parse cloud provider from base location URL
     fn parse_cloud_provider(base_location: &str) -> Result<CloudProvider> {
         if base_location.starts_with("s3://") {
-            let bucket = base_location.strip_prefix("s3://")
+            let bucket = base_location
+                .strip_prefix("s3://")
                 .and_then(|s| s.split('/').next())
                 .unwrap_or("")
                 .to_string();
-            
+
             Ok(CloudProvider::AwsS3 {
                 bucket,
                 storage_class: AwsStorageClass::Standard,
                 lifecycle_enabled: true,
             })
         } else if base_location.starts_with("gs://") {
-            let bucket = base_location.strip_prefix("gs://")
+            let bucket = base_location
+                .strip_prefix("gs://")
                 .and_then(|s| s.split('/').next())
                 .unwrap_or("")
                 .to_string();
-            
+
             Ok(CloudProvider::GoogleCloud {
                 bucket,
                 storage_class: GcsStorageClass::Standard,
@@ -342,22 +347,28 @@ impl CollectionStorageConfig {
                 access_tier: AzureAccessTier::Hot,
             })
         } else {
-            Err(anyhow::anyhow!("Unsupported cloud provider in base location: {}", base_location))
+            Err(anyhow::anyhow!(
+                "Unsupported cloud provider in base location: {}",
+                base_location
+            ))
         }
     }
-    
+
     /// Get the storage path for indexes of this collection
     pub fn index_path(&self, index_name: &str) -> String {
-        format!("{}/{}/indexes/{}/", self.base_location, self.collection_id, index_name)
+        format!(
+            "{}/{}/indexes/{}/",
+            self.base_location, self.collection_id, index_name
+        )
     }
-    
+
     /// Check if a tier is allowed for acceleration based on baseline
     pub fn is_tier_allowed(&self, tier: &StorageTier) -> bool {
         // The baseline is always allowed
         if tier == &self.durable_baseline {
             return true;
         }
-        
+
         // For acceleration tiers (faster than baseline), check against max_acceleration_tier
         if tier.tier_level() < self.durable_baseline.tier_level() {
             // This is an acceleration tier (e.g., Memory or NVMe when baseline is HDD)
@@ -373,30 +384,37 @@ impl CollectionStorageConfig {
             tier.meets_durability(&self.durable_baseline)
         }
     }
-    
+
     /// Get available tiers for this collection (sorted by speed)
     pub fn available_tiers(&self) -> Vec<StorageTier> {
         let all_tiers = vec![
             StorageTier::Memory,
-            StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
-            StorageTier::HardDisk { mount_path: "/mnt/disk".to_string() },
+            StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string(),
+            },
+            StorageTier::HardDisk {
+                mount_path: "/mnt/disk".to_string(),
+            },
             // Only include cloud tiers if baseline is cloud-based
             match &self.durable_baseline {
-                StorageTier::CloudStandard { provider, region } |
-                StorageTier::CloudArchive { provider, region } |
-                StorageTier::CloudExpressOneZone { provider, region } |
-                StorageTier::CloudInfrequentAccess { provider, region } => {
-                    StorageTier::CloudExpressOneZone { 
+                StorageTier::CloudStandard { provider, region }
+                | StorageTier::CloudArchive { provider, region }
+                | StorageTier::CloudExpressOneZone { provider, region }
+                | StorageTier::CloudInfrequentAccess { provider, region } => {
+                    StorageTier::CloudExpressOneZone {
                         provider: provider.clone(),
                         region: region.clone(),
                     }
                 }
-                _ => StorageTier::HardDisk { mount_path: "/mnt/cache_info".to_string() },
+                _ => StorageTier::HardDisk {
+                    mount_path: "/mnt/cache_info".to_string(),
+                },
             },
             self.durable_baseline.clone(),
         ];
-        
-        all_tiers.into_iter()
+
+        all_tiers
+            .into_iter()
             .filter(|tier| self.is_tier_allowed(tier))
             .collect()
     }
@@ -407,22 +425,22 @@ impl CollectionStorageConfig {
 pub struct SmartTierPolicy {
     /// Workload type determines default behavior
     workload_type: WorkloadType,
-    
+
     /// Collection storage configuration (determines baseline and constraints)
     collection_config: CollectionStorageConfig,
-    
+
     /// Available storage tiers filtered by collection constraints
     available_tiers: Vec<StorageTier>,
-    
+
     /// Tier configuration with capacity limits and costs
     tier_configs: HashMap<StorageTier, TierConfig>,
-    
+
     /// Access pattern rules for intelligent placement
     placement_rules: Vec<PlacementRule>,
-    
+
     /// Memory pressure thresholds
     memory_thresholds: MemoryThresholds,
-    
+
     /// Cost optimization settings
     cost_optimization: CostOptimization,
 }
@@ -436,7 +454,7 @@ pub enum WorkloadType {
         /// Preference for data durability vs cost
         durability_preference: DurabilityPreference,
     },
-    
+
     /// Cache workload: CAN evict, optimize for hit rate and cost
     Cache {
         /// Target cache hit rate
@@ -444,7 +462,7 @@ pub enum WorkloadType {
         /// Maximum cost per GB per month
         max_cost_per_gb_per_month: f64,
     },
-    
+
     /// Hybrid workload: Adaptive based on access patterns
     Hybrid {
         /// Adaptation sensitivity (0.0-1.0)
@@ -452,7 +470,7 @@ pub enum WorkloadType {
         /// Balance between performance and cost (0.0=cost, 1.0=performance)  
         performance_cost_balance: f64,
     },
-    
+
     /// Mixed workload: Balanced read/write operations
     Mixed,
 }
@@ -473,16 +491,16 @@ pub enum DurabilityPreference {
 pub struct TierConfig {
     /// Maximum capacity for this tier (bytes)
     max_capacity_bytes: Option<usize>,
-    
+
     /// Cost per GB per month (USD)
     cost_per_gb_per_month: f64,
-    
+
     /// Expected access latency
     access_latency: Duration,
-    
+
     /// Retrieval latency (for archived tiers)
     retrieval_latency: Option<Duration>,
-    
+
     /// Minimum storage duration (for cost optimization)
     min_storage_duration: Option<Duration>,
 }
@@ -491,10 +509,10 @@ pub struct TierConfig {
 pub struct PlacementRule {
     /// Condition to match
     condition: PlacementCondition,
-    
+
     /// Target tier for matching data
     target_tier: StorageTier,
-    
+
     /// Rule priority (higher = evaluated first)
     priority: u8,
 }
@@ -502,37 +520,37 @@ pub struct PlacementRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PlacementCondition {
     /// Size-based placement
-    SizeRange { 
-        min_bytes: Option<usize>, 
-        max_bytes: Option<usize> 
+    SizeRange {
+        min_bytes: Option<usize>,
+        max_bytes: Option<usize>,
     },
-    
+
     /// Access frequency-based placement
-    AccessFrequency { 
+    AccessFrequency {
         min_accesses_per_day: Option<f64>,
         max_accesses_per_day: Option<f64>,
     },
-    
+
     /// Age-based placement
-    Age { 
+    Age {
         min_age_days: Option<u32>,
         max_age_days: Option<u32>,
     },
-    
+
     /// Collection-specific rules
-    Collection { 
-        collection_patterns: Vec<String> // regex patterns
+    Collection {
+        collection_patterns: Vec<String>, // regex patterns
     },
-    
+
     /// Business priority-based placement
-    Priority { 
+    Priority {
         min_priority: Option<u8>,
         max_priority: Option<u8>,
     },
-    
+
     /// Combined condition (all must match)
     And(Vec<PlacementCondition>),
-    
+
     /// Alternative condition (any must match)
     Or(Vec<PlacementCondition>),
 }
@@ -541,10 +559,10 @@ pub enum PlacementCondition {
 pub struct MemoryThresholds {
     /// Start promoting data to next tier (0.0-1.0)
     promotion_threshold: f64,
-    
+
     /// Urgent promotion/eviction threshold (0.0-1.0)
     critical_threshold: f64,
-    
+
     /// Target utilization after cleanup (0.0-1.0)
     target_utilization: f64,
 }
@@ -553,13 +571,13 @@ pub struct MemoryThresholds {
 pub struct CostOptimization {
     /// Maximum total monthly cost (USD)
     max_monthly_cost: Option<f64>,
-    
+
     /// Cost per operation budget (USD)
     cost_per_operation_budget: Option<f64>,
-    
+
     /// Enable automatic cost optimization
     auto_optimize: bool,
-    
+
     /// Cost tracking window for optimization decisions
     cost_tracking_window_days: u32,
 }
@@ -570,16 +588,16 @@ pub struct CostOptimization {
 pub struct RuleBasedTierPolicy {
     /// Default disk partition path (configurable via server config)
     default_disk_path: String,
-    
+
     /// Maximum tier level for local storage (Memory=1, NVMe=2, HDD=3)
     max_local_tier_level: u8,
-    
+
     /// Default rules for data placement
     default_rules: Vec<DefaultPlacementRule>,
-    
+
     /// Memory pressure thresholds
     memory_thresholds: MemoryPressureThresholds,
-    
+
     /// Age-based rules for automatic demotion
     aging_rules: AgingRules,
 }
@@ -589,16 +607,16 @@ pub struct RuleBasedTierPolicy {
 pub struct DefaultPlacementRule {
     /// Rule name for debugging
     name: String,
-    
+
     /// Target workload pattern
     workload_pattern: WorkloadPattern,
-    
+
     /// Placement condition
     condition: PlacementCondition,
-    
+
     /// Target tier
     target_tier_level: u8,
-    
+
     /// Rule priority (higher = more important)
     priority: u32,
 }
@@ -608,10 +626,10 @@ pub struct DefaultPlacementRule {
 pub struct MemoryPressureThresholds {
     /// Promote to faster tier threshold (0.0-1.0)
     promote_threshold: f64,
-    
+
     /// Demote to slower tier threshold (0.0-1.0)
     demote_threshold: f64,
-    
+
     /// Emergency eviction threshold (0.0-1.0)
     emergency_threshold: f64,
 }
@@ -621,10 +639,10 @@ pub struct MemoryPressureThresholds {
 pub struct AgingRules {
     /// Demote to HDD after this many days of no access
     hdd_demotion_days: u32,
-    
+
     /// Demote from memory after this many hours of no access
     memory_demotion_hours: u32,
-    
+
     /// Enable automatic aging (can be disabled)
     enable_automatic_aging: bool,
 }
@@ -634,16 +652,16 @@ pub struct AgingRules {
 pub struct ServerTierConfig {
     /// Base path for disk storage (/tmp by default, configurable via server config.toml)
     base_disk_path: String,
-    
+
     /// Base path for NVMe storage (if available)
     base_nvme_path: Option<String>,
-    
+
     /// Maximum memory allocation for tier management (bytes)
     max_memory_bytes: usize,
-    
+
     /// Enable cloud storage (requires cloud provider configuration)
     enable_cloud_storage: bool,
-    
+
     /// Default cloud provider (if enabled)
     default_cloud_provider: Option<CloudProvider>,
 }
@@ -655,8 +673,8 @@ impl Default for RuleBasedTierPolicy {
             max_local_tier_level: 3, // Up to HDD
             default_rules: Self::create_default_rules(),
             memory_thresholds: MemoryPressureThresholds {
-                promote_threshold: 0.7,   // Promote at 70% memory usage
-                demote_threshold: 0.85,   // Demote at 85% memory usage
+                promote_threshold: 0.7,    // Promote at 70% memory usage
+                demote_threshold: 0.85,    // Demote at 85% memory usage
                 emergency_threshold: 0.95, // Emergency eviction at 95%
             },
             aging_rules: AgingRules {
@@ -676,7 +694,7 @@ impl RuleBasedTierPolicy {
             ..Default::default()
         }
     }
-    
+
     /// Create default placement rules
     fn create_default_rules() -> Vec<DefaultPlacementRule> {
         vec![
@@ -684,52 +702,49 @@ impl RuleBasedTierPolicy {
             DefaultPlacementRule {
                 name: "hot_memory".to_string(),
                 workload_pattern: WorkloadPattern::ReadHeavy,
-                condition: PlacementCondition::AccessFrequency { 
-                    min_accesses_per_day: Some(100.0), 
-                    max_accesses_per_day: None 
+                condition: PlacementCondition::AccessFrequency {
+                    min_accesses_per_day: Some(100.0),
+                    max_accesses_per_day: None,
                 },
                 target_tier_level: 1, // Memory
                 priority: 100,
             },
-            
             // Medium-hot data goes to NVMe (if available)
             DefaultPlacementRule {
                 name: "warm_nvme".to_string(),
                 workload_pattern: WorkloadPattern::Mixed,
-                condition: PlacementCondition::AccessFrequency { 
-                    min_accesses_per_day: Some(10.0), 
-                    max_accesses_per_day: Some(100.0) 
+                condition: PlacementCondition::AccessFrequency {
+                    min_accesses_per_day: Some(10.0),
+                    max_accesses_per_day: Some(100.0),
                 },
                 target_tier_level: 2, // NVMe
                 priority: 80,
             },
-            
             // Cold data goes to HDD
             DefaultPlacementRule {
                 name: "cold_hdd".to_string(),
                 workload_pattern: WorkloadPattern::WriteHeavy,
-                condition: PlacementCondition::AccessFrequency { 
-                    min_accesses_per_day: Some(1.0), 
-                    max_accesses_per_day: Some(10.0) 
+                condition: PlacementCondition::AccessFrequency {
+                    min_accesses_per_day: Some(1.0),
+                    max_accesses_per_day: Some(10.0),
                 },
                 target_tier_level: 3, // HDD
                 priority: 60,
             },
-            
             // Very old data can be evicted or moved to cloud (if enabled)
             DefaultPlacementRule {
                 name: "ancient_evict".to_string(),
                 workload_pattern: WorkloadPattern::Mixed,
-                condition: PlacementCondition::Age { 
-                    min_age_days: Some(90), 
-                    max_age_days: None 
+                condition: PlacementCondition::Age {
+                    min_age_days: Some(90),
+                    max_age_days: None,
                 },
                 target_tier_level: 4, // Cloud or eviction
                 priority: 40,
             },
         ]
     }
-    
+
     /// Get storage path for a collection
     pub fn collection_path(&self, collection_id: &str, tier_level: u8) -> String {
         match tier_level {
@@ -739,42 +754,67 @@ impl RuleBasedTierPolicy {
             _ => format!("{}/archive/{}", self.default_disk_path, collection_id),
         }
     }
-    
+
     /// Determine target tier for data based on rules
-    pub fn determine_tier(&self, workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> u8 {
+    pub fn determine_tier(
+        &self,
+        workload: &WorkloadPattern,
+        access_frequency: f64,
+        age_days: u32,
+    ) -> u8 {
         // Apply rules in priority order
         for rule in &self.default_rules {
             if self.rule_matches(rule, workload, access_frequency, age_days) {
                 return rule.target_tier_level.min(self.max_local_tier_level);
             }
         }
-        
+
         // Default to HDD if no rules match
         3
     }
-    
+
     /// Check if a rule matches the current data characteristics
-    fn rule_matches(&self, rule: &DefaultPlacementRule, _workload: &WorkloadPattern, access_frequency: f64, age_days: u32) -> bool {
+    fn rule_matches(
+        &self,
+        rule: &DefaultPlacementRule,
+        _workload: &WorkloadPattern,
+        access_frequency: f64,
+        age_days: u32,
+    ) -> bool {
         // Simple matching logic - can be enhanced
         match &rule.condition {
-            PlacementCondition::AccessFrequency { min_accesses_per_day, max_accesses_per_day } => {
+            PlacementCondition::AccessFrequency {
+                min_accesses_per_day,
+                max_accesses_per_day,
+            } => {
                 if let Some(min) = min_accesses_per_day {
-                    if access_frequency < *min { return false; }
+                    if access_frequency < *min {
+                        return false;
+                    }
                 }
                 if let Some(max) = max_accesses_per_day {
-                    if access_frequency > *max { return false; }
+                    if access_frequency > *max {
+                        return false;
+                    }
                 }
                 true
-            },
-            PlacementCondition::Age { min_age_days, max_age_days } => {
+            }
+            PlacementCondition::Age {
+                min_age_days,
+                max_age_days,
+            } => {
                 if let Some(min) = min_age_days {
-                    if age_days < *min { return false; }
+                    if age_days < *min {
+                        return false;
+                    }
                 }
                 if let Some(max) = max_age_days {
-                    if age_days > *max { return false; }
+                    if age_days > *max {
+                        return false;
+                    }
                 }
                 true
-            },
+            }
             _ => false, // Other conditions not implemented yet
         }
     }
@@ -798,22 +838,22 @@ impl Default for ServerTierConfig {
 pub struct GlobalTier {
     /// All available storage tiers on this server
     available_tiers: Vec<StorageTier>,
-    
+
     /// Global tier configurations (capacity, cost, latency)
     tier_configs: HashMap<StorageTier, TierConfig>,
-    
+
     /// Rule-based policy engine (scalable, not per-collection)
     rule_based_policy: RuleBasedTierPolicy,
-    
+
     /// Global memory management across all collections
     global_memory_manager: GlobalMemory,
-    
+
     /// Global metrics aggregation (wrapped for interior mutability)
     metrics_collector: Arc<Mutex<GlobalMetricsCollector>>,
-    
+
     /// Server configuration for default paths
     server_config: ServerTierConfig,
-    
+
     /// Collection-specific policies
     collection_policies: HashMap<String, SmartTierPolicy>,
 }
@@ -822,10 +862,10 @@ pub struct GlobalTier {
 pub struct GlobalMemory {
     /// Total server memory budget
     total_memory_budget: usize,
-    
+
     /// Current memory usage by collection
     collection_usage: HashMap<String, usize>,
-    
+
     /// Memory allocation priorities
     collection_priorities: HashMap<String, u8>,
 }
@@ -834,7 +874,7 @@ pub struct GlobalMemory {
 pub struct GlobalMetricsCollector {
     /// Cross-collection tier usage metrics
     tier_usage_stats: HashMap<StorageTier, TierUsageStats>,
-    
+
     /// Collection performance metrics
     collection_metrics: HashMap<String, CollectionTierMetrics>,
 }
@@ -866,7 +906,7 @@ impl GlobalMetricsCollector {
             collection_metrics: HashMap::new(),
         }
     }
-    
+
     pub fn register_collection(&mut self, _collection_id: &str) {
         // Initialize collection metrics (implementation placeholder)
         // In production, this would track actual collection usage
@@ -881,15 +921,15 @@ impl GlobalMemory {
             collection_priorities: HashMap::new(),
         }
     }
-    
+
     fn get_system_memory() -> usize {
         // Get 80% of available system memory as default budget
         // Get system memory info - for now use reasonable defaults
         // In production, would use sysinfo::System::new_all()
         if false {
-            0  // Placeholder
+            0 // Placeholder
         } else {
-            8 * 1024 * 1024 * 1024  // Default to 8GB if detection fails
+            8 * 1024 * 1024 * 1024 // Default to 8GB if detection fails
         }
     }
 }
@@ -899,18 +939,19 @@ impl GlobalTier {
     pub fn new() -> Self {
         Self::with_config(ServerTierConfig::default())
     }
-    
+
     /// Create with specific server configuration
     pub fn with_config(server_config: ServerTierConfig) -> Self {
         // Detect all available storage tiers on this server
         let available_tiers = Self::detect_available_tiers(&server_config);
-        
+
         // Create tier configurations based on server capabilities
         let tier_configs = Self::create_default_tier_configs(&available_tiers);
-        
+
         // Create rule-based policy with server config
-        let rule_based_policy = RuleBasedTierPolicy::with_disk_path(server_config.base_disk_path.clone());
-        
+        let rule_based_policy =
+            RuleBasedTierPolicy::with_disk_path(server_config.base_disk_path.clone());
+
         Self {
             available_tiers,
             tier_configs,
@@ -921,31 +962,37 @@ impl GlobalTier {
             collection_policies: HashMap::new(),
         }
     }
-    
+
     /// Initialize a collection for tier management
     /// Uses rule-based policy instead of per-collection policies for scalability
     pub async fn initialize_collection(&self, collection_id: &str) -> Result<()> {
         // Create directory structure for this collection
         self.create_collection_directories(collection_id).await?;
-        
+
         // Update metrics
-        self.metrics_collector.lock().await.register_collection(collection_id);
-        
+        self.metrics_collector
+            .lock()
+            .await
+            .register_collection(collection_id);
+
         Ok(())
     }
-    
+
     /// Create directory structure for a collection based on server config
     async fn create_collection_directories(&self, collection_id: &str) -> Result<()> {
         // Create directories for each available tier
-        for tier_level in 2..=3 { // NVMe and HDD tiers (Memory is virtual)
-            let path = self.rule_based_policy.collection_path(collection_id, tier_level);
+        for tier_level in 2..=3 {
+            // NVMe and HDD tiers (Memory is virtual)
+            let path = self
+                .rule_based_policy
+                .collection_path(collection_id, tier_level);
             if let Some(parent) = std::path::Path::new(&path).parent() {
                 std::fs::create_dir_all(parent)?;
             }
         }
         Ok(())
     }
-    
+
     /// Rebalance tiers for a collection using rule-based policy
     pub async fn rebalance_collection_tiers(
         &self,
@@ -954,15 +1001,15 @@ impl GlobalTier {
     ) -> Result<crate::infrastructure::adaptive_structures::TierRebalanceResult> {
         use crate::infrastructure::adaptive_structures::TierRebalanceResult;
         use std::time::Instant;
-        
+
         let start = Instant::now();
-        
+
         // Use rule-based policy for tier decisions
         // This is much more scalable than per-collection policies
         let promoted_count = 0; // Placeholder - real implementation would analyze data
-        let demoted_count = 0;   // and move data between tiers based on rules
+        let demoted_count = 0; // and move data between tiers based on rules
         let evicted_count = 0;
-        
+
         Ok(TierRebalanceResult {
             promoted_count,
             demoted_count,
@@ -972,31 +1019,29 @@ impl GlobalTier {
             memory_allocated_bytes: 0,
         })
     }
-    
+
     /// Get rule-based policy
     pub fn rule_based_policy(&self) -> &RuleBasedTierPolicy {
         &self.rule_based_policy
     }
-    
+
     /// Get server configuration
     pub fn server_config(&self) -> &ServerTierConfig {
         &self.server_config
     }
-    
+
     /// Register a collection with its storage configuration
     /// DEPRECATED: Use rule-based approach instead
     pub fn register_collection(
-        &mut self, 
+        &mut self,
         collection_id: String,
         base_location: String,
         workload_type: WorkloadType,
     ) -> Result<()> {
         // Parse collection storage config from base location
-        let collection_config = CollectionStorageConfig::from_base_location(
-            collection_id.clone(), 
-            base_location
-        )?;
-        
+        let collection_config =
+            CollectionStorageConfig::from_base_location(collection_id.clone(), base_location)?;
+
         // Create collection-specific policy within server constraints
         let policy = match workload_type {
             WorkloadType::Index { .. } => {
@@ -1005,14 +1050,12 @@ impl GlobalTier {
                     &self.available_tiers, // Server's available tiers
                     &self.tier_configs,    // Server's tier configurations
                 )
-            },
-            WorkloadType::Cache { .. } => {
-                SmartTierPolicy::for_cache_workload_constrained(
-                    collection_config,
-                    &self.available_tiers,
-                    &self.tier_configs,
-                )
-            },
+            }
+            WorkloadType::Cache { .. } => SmartTierPolicy::for_cache_workload_constrained(
+                collection_config,
+                &self.available_tiers,
+                &self.tier_configs,
+            ),
             WorkloadType::Mixed => {
                 // Use hybrid policy for mixed workload
                 SmartTierPolicy::for_hybrid_workload_constrained(
@@ -1020,27 +1063,26 @@ impl GlobalTier {
                     &self.available_tiers,
                     &self.tier_configs,
                 )
-            },
-            WorkloadType::Hybrid { .. } => {
-                SmartTierPolicy::for_hybrid_workload_constrained(
-                    collection_config,
-                    &self.available_tiers,
-                    &self.tier_configs,
-                )
-            },
+            }
+            WorkloadType::Hybrid { .. } => SmartTierPolicy::for_hybrid_workload_constrained(
+                collection_config,
+                &self.available_tiers,
+                &self.tier_configs,
+            ),
         };
-        
+
         // Note: In rule-based approach, we don't store per-collection policies
         // But for testing and backwards compatibility, we store them
-        self.collection_policies.insert(collection_id.clone(), policy);
-        
+        self.collection_policies
+            .insert(collection_id.clone(), policy);
+
         // Register with global memory manager
         // Just register for metrics tracking (commented out for now)
         // self.global_memory_manager.register_collection(&collection_id, 1024 * 1024 * 1024)?;
-        
+
         Ok(())
     }
-    
+
     /// Get tier placement for data from a specific collection
     pub fn determine_placement(
         &self,
@@ -1050,24 +1092,32 @@ impl GlobalTier {
         age_days: u32,
         priority: Option<u8>,
     ) -> Result<StorageTier> {
-        let policy = self.collection_policies.get(collection_id)
+        let policy = self
+            .collection_policies
+            .get(collection_id)
             .ok_or_else(|| anyhow::anyhow!("Collection {} not registered", collection_id))?;
-        
-        Ok(policy.determine_placement(size_bytes, access_frequency, age_days, collection_id, priority))
+
+        Ok(policy.determine_placement(
+            size_bytes,
+            access_frequency,
+            age_days,
+            collection_id,
+            priority,
+        ))
     }
-    
+
     /// Handle global memory pressure affecting all collections
     pub fn handle_global_memory_pressure(&mut self) -> Result<GlobalPressureResponse> {
         let mut response = GlobalPressureResponse {
             total_memory_freed: 0,
             collection_actions: HashMap::new(),
         };
-        
+
         // Get collections sorted by priority (low priority = evicted first)
         // In rule-based approach, we would get collections from metrics
         // For testing, use registered collections
         let collections: Vec<String> = self.collection_policies.keys().cloned().collect();
-        
+
         let mut memory_freed = 0;
         // Ensure we have a reasonable target even if budget is not set
         let target_memory = if self.global_memory_manager.total_memory_budget > 0 {
@@ -1075,12 +1125,12 @@ impl GlobalTier {
         } else {
             1024 * 1024 * 256 // Default: free 256MB
         };
-        
+
         for collection_id in collections {
             if memory_freed >= target_memory {
                 break;
             }
-            
+
             // In rule-based approach, determine workload type from metrics
             // For testing, use the registered workload type
             if let Some(policy) = self.collection_policies.get(&collection_id) {
@@ -1093,7 +1143,7 @@ impl GlobalTier {
                         let evicted = 50; // Evict some items even for Index workload under pressure
                         response.add_eviction(collection_id.to_string(), evicted);
                         memory_freed += evicted * 1024; // Estimate
-                    },
+                    }
                     WorkloadType::Cache { .. } => {
                         // Cache: Can evict or promote to local disk
                         // let (promoted, evicted) = self.handle_cache_memory_pressure(&collection_id)?;
@@ -1102,14 +1152,14 @@ impl GlobalTier {
                         response.add_promotion(collection_id.to_string(), promoted);
                         response.add_eviction(collection_id.to_string(), evicted);
                         memory_freed += (promoted + evicted) * 1024;
-                    },
+                    }
                     WorkloadType::Mixed => {
                         // Mixed: Balance between eviction and promotion
                         let (promoted, evicted) = (40, 60); // Balance between cache and index
                         response.add_promotion(collection_id.to_string(), promoted);
                         response.add_eviction(collection_id.to_string(), evicted);
                         memory_freed += (promoted + evicted) * 1024;
-                    },
+                    }
                     WorkloadType::Hybrid { .. } => {
                         // Hybrid: Adaptive based on access patterns
                         // let action = self.handle_hybrid_memory_pressure(collection_id)?;
@@ -1119,53 +1169,55 @@ impl GlobalTier {
                         response.add_promotion(collection_id.to_string(), promoted);
                         response.add_eviction(collection_id.to_string(), evicted);
                         memory_freed += evicted * 1024; // Estimate 1KB per item
-                    },
+                    }
                 }
             }
         }
-        
+
         response.total_memory_freed = memory_freed;
         Ok(response)
     }
-    
+
     /// Detect all available storage tiers on this server
     fn detect_available_tiers(server_config: &ServerTierConfig) -> Vec<StorageTier> {
         let mut tiers = vec![StorageTier::Memory]; // Memory always available
-        
+
         // Check for NVMe SSDs based on server config
         if let Some(nvme_path) = &server_config.base_nvme_path {
             if std::path::Path::new(nvme_path).exists() {
-                tiers.push(StorageTier::NvmeSsd { 
-                    mount_path: nvme_path.clone() 
+                tiers.push(StorageTier::NvmeSsd {
+                    mount_path: nvme_path.clone(),
                 });
             }
-        } else if std::path::Path::new("/mnt/nvme").exists() || 
-                  std::path::Path::new("/dev/nvme0n1").exists() {
-            tiers.push(StorageTier::NvmeSsd { 
-                mount_path: "/mnt/nvme".to_string() 
+        } else if std::path::Path::new("/mnt/nvme").exists()
+            || std::path::Path::new("/dev/nvme0n1").exists()
+        {
+            tiers.push(StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string(),
             });
         }
-        
+
         // Check for HDDs based on server config
         let hdd_path = format!("{}/hdd", server_config.base_disk_path);
-        if std::path::Path::new(&hdd_path).exists() || 
-           std::path::Path::new("/mnt/disk").exists() || 
-           std::path::Path::new("/data").exists() {
-            tiers.push(StorageTier::HardDisk { 
-                mount_path: server_config.base_disk_path.clone() 
+        if std::path::Path::new(&hdd_path).exists()
+            || std::path::Path::new("/mnt/disk").exists()
+            || std::path::Path::new("/data").exists()
+        {
+            tiers.push(StorageTier::HardDisk {
+                mount_path: server_config.base_disk_path.clone(),
             });
         }
-        
+
         // Cloud tiers are configuration-dependent, not auto-detected
         // They will be added when collections specify cloud base locations
-        
+
         tiers
     }
-    
+
     /// Create default tier configurations based on detected hardware
     fn create_default_tier_configs(tiers: &[StorageTier]) -> HashMap<StorageTier, TierConfig> {
         let mut configs = HashMap::new();
-        
+
         for tier in tiers {
             let config = match tier {
                 StorageTier::Memory => TierConfig {
@@ -1191,37 +1243,37 @@ impl GlobalTier {
                 },
                 _ => continue, // Cloud tiers configured per collection
             };
-            
+
             configs.insert(tier.clone(), config);
         }
-        
+
         configs
     }
-    
+
     /// Detect system memory capacity with smart defaults
     fn detect_memory_capacity() -> Option<usize> {
         // Use 20% of total system memory for index/cache tiers
         // Get system memory info - for now use reasonable defaults
         // In production, would use sysinfo::System::new_all()
         if false {
-            Some(0)  // Placeholder
+            Some(0) // Placeholder
         } else {
-            Some(4 * 1024 * 1024 * 1024)  // Default 4GB if detection fails
+            Some(4 * 1024 * 1024 * 1024) // Default 4GB if detection fails
         }
     }
-    
+
     /// Detect NVMe capacity with smart defaults
     fn detect_nvme_capacity() -> Option<usize> {
         // Check /tmp or configured NVMe path
         // Check available space on /tmp - for now use reasonable defaults
         // In production, would use std::fs::metadata or sysinfo
         if false {
-            Some(0)  // Placeholder
+            Some(0) // Placeholder
         } else {
-            Some(50 * 1024 * 1024 * 1024)  // Default 50GB
+            Some(50 * 1024 * 1024 * 1024) // Default 50GB
         }
     }
-    
+
     /// Detect HDD capacity with smart defaults
     fn detect_hdd_capacity() -> Option<usize> {
         // Check configured disk path or /var
@@ -1242,29 +1294,39 @@ impl GlobalPressureResponse {
     pub fn add_promotion(&mut self, collection_id: String, promoted: usize) {
         self.collection_actions.insert(
             collection_id,
-            MemoryPressureAction::Promoted { 
-                items: promoted, 
-                bytes: 0  // Would need actual byte count in real implementation
-            }
+            MemoryPressureAction::Promoted {
+                items: promoted,
+                bytes: 0, // Would need actual byte count in real implementation
+            },
         );
     }
-    
+
     pub fn add_eviction(&mut self, collection_id: String, evicted: usize) {
         self.collection_actions.insert(
             collection_id,
-            MemoryPressureAction::Evicted { 
-                items: evicted, 
-                bytes: 0  // Would need actual byte count in real implementation
-            }
+            MemoryPressureAction::Evicted {
+                items: evicted,
+                bytes: 0, // Would need actual byte count in real implementation
+            },
         );
     }
 }
 
 #[derive(Debug)]
 pub enum MemoryPressureAction {
-    Promoted { items: usize, bytes: usize },
-    Evicted { items: usize, bytes: usize },
-    Hybrid { promoted: usize, evicted: usize, bytes_freed: usize },
+    Promoted {
+        items: usize,
+        bytes: usize,
+    },
+    Evicted {
+        items: usize,
+        bytes: usize,
+    },
+    Hybrid {
+        promoted: usize,
+        evicted: usize,
+        bytes_freed: usize,
+    },
 }
 
 impl SmartTierPolicy {
@@ -1275,16 +1337,17 @@ impl SmartTierPolicy {
         _server_tier_configs: &HashMap<StorageTier, TierConfig>,
     ) -> Self {
         // Filter server tiers by collection constraints
-        let _available_tiers: Vec<StorageTier> = server_available_tiers.iter()
+        let _available_tiers: Vec<StorageTier> = server_available_tiers
+            .iter()
             .filter(|tier| collection_config.is_tier_allowed(tier))
             .cloned()
             .collect();
         let available_tiers = vec![
             StorageTier::Memory,
-            StorageTier::NvmeSsd { 
-                mount_path: "/mnt/nvme".to_string() 
+            StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string(),
             },
-            StorageTier::CloudStandard { 
+            StorageTier::CloudStandard {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-index-standard".to_string(),
                     storage_class: AwsStorageClass::Standard,
@@ -1292,7 +1355,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudInfrequentAccess { 
+            StorageTier::CloudInfrequentAccess {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-index-ia".to_string(),
                     storage_class: AwsStorageClass::StandardIA,
@@ -1300,7 +1363,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudArchive { 
+            StorageTier::CloudArchive {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-index-archive".to_string(),
                     storage_class: AwsStorageClass::Glacier,
@@ -1309,32 +1372,47 @@ impl SmartTierPolicy {
                 region: "us-east-1".to_string(),
             },
         ];
-        
+
         let placement_rules = vec![
             // Small, frequently accessed data -> Memory
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::SizeRange { min_bytes: None, max_bytes: Some(1024 * 1024) },
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(100.0), max_accesses_per_day: None },
+                    PlacementCondition::SizeRange {
+                        min_bytes: None,
+                        max_bytes: Some(1024 * 1024),
+                    },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(100.0),
+                        max_accesses_per_day: None,
+                    },
                 ]),
                 target_tier: StorageTier::Memory,
                 priority: 90,
             },
-            
             // Medium size, moderate access -> NVMe
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::SizeRange { min_bytes: Some(1024 * 1024), max_bytes: Some(100 * 1024 * 1024) },
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(10.0), max_accesses_per_day: Some(100.0) },
+                    PlacementCondition::SizeRange {
+                        min_bytes: Some(1024 * 1024),
+                        max_bytes: Some(100 * 1024 * 1024),
+                    },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(10.0),
+                        max_accesses_per_day: Some(100.0),
+                    },
                 ]),
-                target_tier: StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() },
+                target_tier: StorageTier::NvmeSsd {
+                    mount_path: "/mnt/nvme".to_string(),
+                },
                 priority: 80,
             },
-            
             // Old data -> Archive tiers
             PlacementRule {
-                condition: PlacementCondition::Age { min_age_days: Some(90), max_age_days: None },
-                target_tier: StorageTier::CloudArchive { 
+                condition: PlacementCondition::Age {
+                    min_age_days: Some(90),
+                    max_age_days: None,
+                },
+                target_tier: StorageTier::CloudArchive {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-index-archive".to_string(),
                         storage_class: AwsStorageClass::Glacier,
@@ -1344,11 +1422,13 @@ impl SmartTierPolicy {
                 },
                 priority: 70,
             },
-            
             // Large objects -> Cloud standard (default)
             PlacementRule {
-                condition: PlacementCondition::SizeRange { min_bytes: Some(100 * 1024 * 1024), max_bytes: None },
-                target_tier: StorageTier::CloudStandard { 
+                condition: PlacementCondition::SizeRange {
+                    min_bytes: Some(100 * 1024 * 1024),
+                    max_bytes: None,
+                },
+                target_tier: StorageTier::CloudStandard {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-index-standard".to_string(),
                         storage_class: AwsStorageClass::Standard,
@@ -1359,30 +1439,35 @@ impl SmartTierPolicy {
                 priority: 60,
             },
         ];
-        
+
         let mut tier_configs = HashMap::new();
-        
+
         // Memory tier config
-        tier_configs.insert(StorageTier::Memory, TierConfig {
-            max_capacity_bytes: Some(4 * 1024 * 1024 * 1024), // 4GB default
-            cost_per_gb_per_month: 100.0, // Expensive per GB but fast
-            access_latency: Duration::from_micros(100),
-            retrieval_latency: None,
-            min_storage_duration: None,
-        });
-        
+        tier_configs.insert(
+            StorageTier::Memory,
+            TierConfig {
+                max_capacity_bytes: Some(4 * 1024 * 1024 * 1024), // 4GB default
+                cost_per_gb_per_month: 100.0,                     // Expensive per GB but fast
+                access_latency: Duration::from_micros(100),
+                retrieval_latency: None,
+                min_storage_duration: None,
+            },
+        );
+
         // NVMe SSD config
         tier_configs.insert(
-            StorageTier::NvmeSsd { mount_path: "/mnt/nvme".to_string() }, 
+            StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string(),
+            },
             TierConfig {
                 max_capacity_bytes: Some(1024 * 1024 * 1024 * 1024), // 1TB default
-                cost_per_gb_per_month: 10.0, // NVMe cost approximation
+                cost_per_gb_per_month: 10.0,                         // NVMe cost approximation
                 access_latency: Duration::from_millis(1),
                 retrieval_latency: None,
                 min_storage_duration: None,
-            }
+            },
         );
-        
+
         Self {
             workload_type: WorkloadType::Index {
                 max_access_latency_ms: 100,
@@ -1398,14 +1483,14 @@ impl SmartTierPolicy {
                 target_utilization: 0.60,  // Target 60% after cleanup
             },
             cost_optimization: CostOptimization {
-                max_monthly_cost: Some(1000.0), // $1000/month budget
+                max_monthly_cost: Some(1000.0),         // $1000/month budget
                 cost_per_operation_budget: Some(0.001), // $0.001 per operation
                 auto_optimize: true,
                 cost_tracking_window_days: 30,
             },
         }
     }
-    
+
     /// Create optimized policy for cache workloads
     pub fn for_cache_workload_constrained(
         collection_config: CollectionStorageConfig,
@@ -1417,14 +1502,14 @@ impl SmartTierPolicy {
         policy.collection_config = collection_config;
         policy
     }
-    
+
     pub fn for_cache_workload() -> Self {
         let available_tiers = vec![
             StorageTier::Memory,
-            StorageTier::NvmeSsd { 
-                mount_path: "/mnt/cache-nvme".to_string() 
+            StorageTier::NvmeSsd {
+                mount_path: "/mnt/cache-nvme".to_string(),
             },
-            StorageTier::CloudExpressOneZone { 
+            StorageTier::CloudExpressOneZone {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-cache-express".to_string(),
                     storage_class: AwsStorageClass::ExpressOneZone,
@@ -1432,7 +1517,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudStandard { 
+            StorageTier::CloudStandard {
                 provider: CloudProvider::GoogleCloud {
                     bucket: "proximadb-cache-standard".to_string(),
                     storage_class: GcsStorageClass::Standard,
@@ -1441,35 +1526,41 @@ impl SmartTierPolicy {
                 region: "us-central1".to_string(),
             },
         ];
-        
+
         let placement_rules = vec![
             // Very hot data -> Memory
             PlacementRule {
-                condition: PlacementCondition::AccessFrequency { 
-                    min_accesses_per_day: Some(1000.0), 
-                    max_accesses_per_day: None 
+                condition: PlacementCondition::AccessFrequency {
+                    min_accesses_per_day: Some(1000.0),
+                    max_accesses_per_day: None,
                 },
                 target_tier: StorageTier::Memory,
                 priority: 95,
             },
-            
             // Warm data -> NVMe
             PlacementRule {
-                condition: PlacementCondition::AccessFrequency { 
-                    min_accesses_per_day: Some(50.0), 
-                    max_accesses_per_day: Some(1000.0) 
+                condition: PlacementCondition::AccessFrequency {
+                    min_accesses_per_day: Some(50.0),
+                    max_accesses_per_day: Some(1000.0),
                 },
-                target_tier: StorageTier::NvmeSsd { mount_path: "/mnt/cache-nvme".to_string() },
+                target_tier: StorageTier::NvmeSsd {
+                    mount_path: "/mnt/cache-nvme".to_string(),
+                },
                 priority: 85,
             },
-            
             // Recent large objects -> Express One Zone
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::SizeRange { min_bytes: Some(10 * 1024 * 1024), max_bytes: None },
-                    PlacementCondition::Age { min_age_days: None, max_age_days: Some(7) },
+                    PlacementCondition::SizeRange {
+                        min_bytes: Some(10 * 1024 * 1024),
+                        max_bytes: None,
+                    },
+                    PlacementCondition::Age {
+                        min_age_days: None,
+                        max_age_days: Some(7),
+                    },
                 ]),
-                target_tier: StorageTier::CloudExpressOneZone { 
+                target_tier: StorageTier::CloudExpressOneZone {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-cache-express".to_string(),
                         storage_class: AwsStorageClass::ExpressOneZone,
@@ -1480,10 +1571,10 @@ impl SmartTierPolicy {
                 priority: 75,
             },
         ];
-        
+
         Self {
             workload_type: WorkloadType::Cache {
-                target_hit_rate: 0.85, // Target 85% hit rate
+                target_hit_rate: 0.85,           // Target 85% hit rate
                 max_cost_per_gb_per_month: 50.0, // $50/GB/month max
             },
             collection_config: CollectionStorageConfig {
@@ -1506,14 +1597,14 @@ impl SmartTierPolicy {
                 target_utilization: 0.70,
             },
             cost_optimization: CostOptimization {
-                max_monthly_cost: Some(500.0), // Lower budget for cache
+                max_monthly_cost: Some(500.0),           // Lower budget for cache
                 cost_per_operation_budget: Some(0.0001), // $0.0001 per operation
                 auto_optimize: true,
                 cost_tracking_window_days: 7, // Shorter window for cache
             },
         }
     }
-    
+
     /// Create hybrid policy that adapts based on workload patterns
     pub fn for_hybrid_workload_constrained(
         collection_config: CollectionStorageConfig,
@@ -1525,17 +1616,17 @@ impl SmartTierPolicy {
         policy.collection_config = collection_config;
         policy
     }
-    
+
     pub fn for_hybrid_workload() -> Self {
         let available_tiers = vec![
             StorageTier::Memory,
-            StorageTier::NvmeSsd { 
-                mount_path: "/mnt/hybrid-nvme".to_string() 
+            StorageTier::NvmeSsd {
+                mount_path: "/mnt/hybrid-nvme".to_string(),
             },
-            StorageTier::HardDisk { 
-                mount_path: "/mnt/hybrid-hdd".to_string() 
+            StorageTier::HardDisk {
+                mount_path: "/mnt/hybrid-hdd".to_string(),
             },
-            StorageTier::CloudExpressOneZone { 
+            StorageTier::CloudExpressOneZone {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-hybrid-express".to_string(),
                     storage_class: AwsStorageClass::ExpressOneZone,
@@ -1543,7 +1634,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudStandard { 
+            StorageTier::CloudStandard {
                 provider: CloudProvider::AzureBlob {
                     account: "proximadb".to_string(),
                     container: "hybrid-standard".to_string(),
@@ -1551,7 +1642,7 @@ impl SmartTierPolicy {
                 },
                 region: "eastus".to_string(),
             },
-            StorageTier::CloudInfrequentAccess { 
+            StorageTier::CloudInfrequentAccess {
                 provider: CloudProvider::GoogleCloud {
                     bucket: "proximadb-hybrid-nearline".to_string(),
                     storage_class: GcsStorageClass::Nearline,
@@ -1559,7 +1650,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-central1".to_string(),
             },
-            StorageTier::CloudArchive { 
+            StorageTier::CloudArchive {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-hybrid-glacier".to_string(),
                     storage_class: AwsStorageClass::Glacier,
@@ -1568,46 +1659,71 @@ impl SmartTierPolicy {
                 region: "us-east-1".to_string(),
             },
         ];
-        
+
         // More complex rules for hybrid workload
         let placement_rules = vec![
             // Ultra-hot data -> Memory
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(500.0), max_accesses_per_day: None },
-                    PlacementCondition::SizeRange { min_bytes: None, max_bytes: Some(10 * 1024 * 1024) },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(500.0),
+                        max_accesses_per_day: None,
+                    },
+                    PlacementCondition::SizeRange {
+                        min_bytes: None,
+                        max_bytes: Some(10 * 1024 * 1024),
+                    },
                 ]),
                 target_tier: StorageTier::Memory,
                 priority: 100,
             },
-            
             // Hot, medium-size data -> NVMe
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(50.0), max_accesses_per_day: Some(500.0) },
-                    PlacementCondition::SizeRange { min_bytes: Some(1024 * 1024), max_bytes: Some(100 * 1024 * 1024) },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(50.0),
+                        max_accesses_per_day: Some(500.0),
+                    },
+                    PlacementCondition::SizeRange {
+                        min_bytes: Some(1024 * 1024),
+                        max_bytes: Some(100 * 1024 * 1024),
+                    },
                 ]),
-                target_tier: StorageTier::NvmeSsd { mount_path: "/mnt/hybrid-nvme".to_string() },
+                target_tier: StorageTier::NvmeSsd {
+                    mount_path: "/mnt/hybrid-nvme".to_string(),
+                },
                 priority: 90,
             },
-            
             // Large, less frequent data -> HDD
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(5.0), max_accesses_per_day: Some(50.0) },
-                    PlacementCondition::SizeRange { min_bytes: Some(100 * 1024 * 1024), max_bytes: None },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(5.0),
+                        max_accesses_per_day: Some(50.0),
+                    },
+                    PlacementCondition::SizeRange {
+                        min_bytes: Some(100 * 1024 * 1024),
+                        max_bytes: None,
+                    },
                 ]),
-                target_tier: StorageTier::HardDisk { mount_path: "/mnt/hybrid-hdd".to_string() },
+                target_tier: StorageTier::HardDisk {
+                    mount_path: "/mnt/hybrid-hdd".to_string(),
+                },
                 priority: 80,
             },
-            
             // Recent data -> Express cloud
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::Age { min_age_days: None, max_age_days: Some(14) },
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(1.0), max_accesses_per_day: Some(50.0) },
+                    PlacementCondition::Age {
+                        min_age_days: None,
+                        max_age_days: Some(14),
+                    },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(1.0),
+                        max_accesses_per_day: Some(50.0),
+                    },
                 ]),
-                target_tier: StorageTier::CloudExpressOneZone { 
+                target_tier: StorageTier::CloudExpressOneZone {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-hybrid-express".to_string(),
                         storage_class: AwsStorageClass::ExpressOneZone,
@@ -1617,14 +1733,19 @@ impl SmartTierPolicy {
                 },
                 priority: 70,
             },
-            
             // Older, occasionally accessed data -> Standard cloud
             PlacementRule {
                 condition: PlacementCondition::And(vec![
-                    PlacementCondition::Age { min_age_days: Some(30), max_age_days: Some(90) },
-                    PlacementCondition::AccessFrequency { min_accesses_per_day: Some(0.1), max_accesses_per_day: Some(10.0) },
+                    PlacementCondition::Age {
+                        min_age_days: Some(30),
+                        max_age_days: Some(90),
+                    },
+                    PlacementCondition::AccessFrequency {
+                        min_accesses_per_day: Some(0.1),
+                        max_accesses_per_day: Some(10.0),
+                    },
                 ]),
-                target_tier: StorageTier::CloudStandard { 
+                target_tier: StorageTier::CloudStandard {
                     provider: CloudProvider::AzureBlob {
                         account: "proximadb".to_string(),
                         container: "hybrid-standard".to_string(),
@@ -1634,11 +1755,13 @@ impl SmartTierPolicy {
                 },
                 priority: 60,
             },
-            
             // Old, rarely accessed data -> Archive
             PlacementRule {
-                condition: PlacementCondition::Age { min_age_days: Some(90), max_age_days: None },
-                target_tier: StorageTier::CloudArchive { 
+                condition: PlacementCondition::Age {
+                    min_age_days: Some(90),
+                    max_age_days: None,
+                },
+                target_tier: StorageTier::CloudArchive {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-hybrid-glacier".to_string(),
                         storage_class: AwsStorageClass::Glacier,
@@ -1649,10 +1772,10 @@ impl SmartTierPolicy {
                 priority: 50,
             },
         ];
-        
+
         Self {
             workload_type: WorkloadType::Hybrid {
-                adaptation_sensitivity: 0.7, // Moderate sensitivity
+                adaptation_sensitivity: 0.7,   // Moderate sensitivity
                 performance_cost_balance: 0.6, // Slightly favor performance
             },
             collection_config: CollectionStorageConfig {
@@ -1682,36 +1805,43 @@ impl SmartTierPolicy {
             },
         }
     }
-    
+
     /// Determine optimal tier placement for data
     pub fn determine_placement(
-        &self, 
+        &self,
         size_bytes: usize,
-        access_frequency: f64, 
+        access_frequency: f64,
         age_days: u32,
         collection_id: &str,
-        priority: Option<u8>
+        priority: Option<u8>,
     ) -> StorageTier {
         // Evaluate placement rules in priority order
         let mut sorted_rules = self.placement_rules.clone();
         sorted_rules.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
-        
+
         for rule in sorted_rules {
-            if self.evaluate_condition(&rule.condition, size_bytes, access_frequency, age_days, collection_id, priority) {
+            if self.evaluate_condition(
+                &rule.condition,
+                size_bytes,
+                access_frequency,
+                age_days,
+                collection_id,
+                priority,
+            ) {
                 return rule.target_tier;
             }
         }
-        
+
         // Default fallback based on workload type
         match self.workload_type {
-            WorkloadType::Index { .. } => StorageTier::NvmeSsd { 
-                mount_path: "/mnt/nvme".to_string() 
+            WorkloadType::Index { .. } => StorageTier::NvmeSsd {
+                mount_path: "/mnt/nvme".to_string(),
             },
             WorkloadType::Cache { .. } => StorageTier::Memory,
             WorkloadType::Mixed { .. } => StorageTier::NvmeSsd {
-                mount_path: "/mnt/nvme".to_string()
+                mount_path: "/mnt/nvme".to_string(),
             },
-            WorkloadType::Hybrid { .. } => StorageTier::CloudStandard { 
+            WorkloadType::Hybrid { .. } => StorageTier::CloudStandard {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-default".to_string(),
                     storage_class: AwsStorageClass::Standard,
@@ -1721,7 +1851,7 @@ impl SmartTierPolicy {
             },
         }
     }
-    
+
     /// Evaluate a placement condition
     fn evaluate_condition(
         &self,
@@ -1733,71 +1863,111 @@ impl SmartTierPolicy {
         priority: Option<u8>,
     ) -> bool {
         match condition {
-            PlacementCondition::SizeRange { min_bytes, max_bytes } => {
+            PlacementCondition::SizeRange {
+                min_bytes,
+                max_bytes,
+            } => {
                 if let Some(min) = min_bytes {
-                    if size_bytes < *min { return false; }
+                    if size_bytes < *min {
+                        return false;
+                    }
                 }
                 if let Some(max) = max_bytes {
-                    if size_bytes > *max { return false; }
+                    if size_bytes > *max {
+                        return false;
+                    }
                 }
                 true
-            },
-            
-            PlacementCondition::AccessFrequency { min_accesses_per_day, max_accesses_per_day } => {
+            }
+
+            PlacementCondition::AccessFrequency {
+                min_accesses_per_day,
+                max_accesses_per_day,
+            } => {
                 if let Some(min) = min_accesses_per_day {
-                    if access_frequency < *min { return false; }
+                    if access_frequency < *min {
+                        return false;
+                    }
                 }
                 if let Some(max) = max_accesses_per_day {
-                    if access_frequency > *max { return false; }
+                    if access_frequency > *max {
+                        return false;
+                    }
                 }
                 true
-            },
-            
-            PlacementCondition::Age { min_age_days, max_age_days } => {
+            }
+
+            PlacementCondition::Age {
+                min_age_days,
+                max_age_days,
+            } => {
                 if let Some(min) = min_age_days {
-                    if age_days < *min { return false; }
+                    if age_days < *min {
+                        return false;
+                    }
                 }
                 if let Some(max) = max_age_days {
-                    if age_days > *max { return false; }
+                    if age_days > *max {
+                        return false;
+                    }
                 }
                 true
-            },
-            
-            PlacementCondition::Collection { collection_patterns } => {
+            }
+
+            PlacementCondition::Collection {
+                collection_patterns,
+            } => {
                 collection_patterns.iter().any(|pattern| {
                     // Simple pattern matching - could be enhanced with regex
                     collection_id.contains(pattern)
                 })
-            },
-            
-            PlacementCondition::Priority { min_priority, max_priority } => {
+            }
+
+            PlacementCondition::Priority {
+                min_priority,
+                max_priority,
+            } => {
                 if let Some(prio) = priority {
                     if let Some(min) = min_priority {
-                        if prio < *min { return false; }
+                        if prio < *min {
+                            return false;
+                        }
                     }
                     if let Some(max) = max_priority {
-                        if prio > *max { return false; }
+                        if prio > *max {
+                            return false;
+                        }
                     }
                     true
                 } else {
                     false // No priority set
                 }
-            },
-            
-            PlacementCondition::And(conditions) => {
-                conditions.iter().all(|cond| 
-                    self.evaluate_condition(cond, size_bytes, access_frequency, age_days, collection_id, priority)
+            }
+
+            PlacementCondition::And(conditions) => conditions.iter().all(|cond| {
+                self.evaluate_condition(
+                    cond,
+                    size_bytes,
+                    access_frequency,
+                    age_days,
+                    collection_id,
+                    priority,
                 )
-            },
-            
-            PlacementCondition::Or(conditions) => {
-                conditions.iter().any(|cond| 
-                    self.evaluate_condition(cond, size_bytes, access_frequency, age_days, collection_id, priority)
+            }),
+
+            PlacementCondition::Or(conditions) => conditions.iter().any(|cond| {
+                self.evaluate_condition(
+                    cond,
+                    size_bytes,
+                    access_frequency,
+                    age_days,
+                    collection_id,
+                    priority,
                 )
-            },
+            }),
         }
     }
-    
+
     /// Get estimated cost for storing data in a specific tier
     pub fn storage_cost(&self, tier: &StorageTier, size_bytes: usize, duration_days: u32) -> f64 {
         if let Some(config) = self.tier_configs.get(tier) {
@@ -1810,39 +1980,39 @@ impl SmartTierPolicy {
                 StorageTier::Memory => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 100.0 * (duration_days as f64 / 30.0) // $100/GB/month for memory
-                },
+                }
                 StorageTier::NvmeSsd { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 10.0 * (duration_days as f64 / 30.0) // $10/GB/month for NVMe
-                },
+                }
                 StorageTier::HardDisk { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 2.0 * (duration_days as f64 / 30.0) // $2/GB/month for HDD
-                },
+                }
                 StorageTier::CloudExpressOneZone { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.16 * (duration_days as f64 / 30.0) // AWS S3 Express One Zone
-                },
+                }
                 StorageTier::CloudStandard { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.023 * (duration_days as f64 / 30.0) // AWS S3 Standard
-                },
+                }
                 StorageTier::CloudInfrequentAccess { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.0125 * (duration_days as f64 / 30.0) // AWS S3 IA
-                },
+                }
                 StorageTier::CloudArchive { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.004 * (duration_days as f64 / 30.0) // AWS S3 Glacier
-                },
+                }
                 StorageTier::CloudDeepArchive { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.00099 * (duration_days as f64 / 30.0) // AWS S3 Deep Archive
-                },
+                }
             }
         }
     }
-    
+
     /// Get expected access latency for a tier
     pub fn access_latency(&self, tier: &StorageTier) -> Duration {
         if let Some(config) = self.tier_configs.get(tier) {
@@ -1866,7 +2036,7 @@ impl SmartTierPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_index_policy_placement() {
         let collection_config = CollectionStorageConfig {
@@ -1882,18 +2052,22 @@ mod tests {
         };
         let available_tiers = vec![StorageTier::Memory];
         let tier_configs = HashMap::new();
-        let policy = SmartTierPolicy::for_index_workload_constrained(collection_config, &available_tiers, &tier_configs);
-        
+        let policy = SmartTierPolicy::for_index_workload_constrained(
+            collection_config,
+            &available_tiers,
+            &tier_configs,
+        );
+
         // Small, hot data -> Memory
         let tier = policy.determine_placement(
-            512 * 1024,    // 512KB
-            150.0,         // 150 accesses/day
-            1,             // 1 day old
+            512 * 1024, // 512KB
+            150.0,      // 150 accesses/day
+            1,          // 1 day old
             "test_collection",
             Some(5),
         );
         assert_eq!(tier, StorageTier::Memory);
-        
+
         // Large, old data -> Archive
         let tier = policy.determine_placement(
             500 * 1024 * 1024, // 500MB
@@ -1903,176 +2077,225 @@ mod tests {
             Some(3),
         );
         match tier {
-            StorageTier::CloudArchive { .. } => {},
+            StorageTier::CloudArchive { .. } => {}
             _ => panic!("Expected CloudArchive tier for old, large data"),
         }
     }
-    
+
     #[test]
     fn test_cache_policy_placement() {
         let policy = SmartTierPolicy::for_cache_workload();
-        
+
         // Very hot data -> Memory
         let tier = policy.determine_placement(
-            1024 * 1024,   // 1MB
-            2000.0,        // 2000 accesses/day
-            1,             // 1 day old
+            1024 * 1024, // 1MB
+            2000.0,      // 2000 accesses/day
+            1,           // 1 day old
             "cache_collection",
             Some(8),
         );
         assert_eq!(tier, StorageTier::Memory);
     }
-    
+
     #[test]
     fn test_global_shared_infrastructure() {
         // Create ONE global tier manager for the entire server
         let mut global_manager = GlobalTier::new();
-        
+
         // Register multiple collections with different base locations and constraints
-        
-        // Collection 1: Cloud-based durability (s3://bucket/collection1)  
+
+        // Collection 1: Cloud-based durability (s3://bucket/collection1)
         // Can use acceleration up to local disk
-        global_manager.register_collection(
-            "cloud_collection".to_string(),
-            "s3://proximadb-prod/collections".to_string(),
-            WorkloadType::Index {
-                max_access_latency_ms: 100,
-                durability_preference: DurabilityPreference::High,
-            },
-        ).unwrap();
-        
+        global_manager
+            .register_collection(
+                "cloud_collection".to_string(),
+                "s3://proximadb-prod/collections".to_string(),
+                WorkloadType::Index {
+                    max_access_latency_ms: 100,
+                    durability_preference: DurabilityPreference::High,
+                },
+            )
+            .unwrap();
+
         // Collection 2: Local disk durability (/mnt/disk/collection2)
         // Can use acceleration up to memory + NVMe
-        global_manager.register_collection(
-            "disk_collection".to_string(),
-            "/mnt/disk/proximadb".to_string(),
-            WorkloadType::Index {
-                max_access_latency_ms: 50,
-                durability_preference: DurabilityPreference::Standard,
-            },
-        ).unwrap();
-        
-        // Collection 3: Memory-only (/tmp/cache_collection)  
+        global_manager
+            .register_collection(
+                "disk_collection".to_string(),
+                "/mnt/disk/proximadb".to_string(),
+                WorkloadType::Index {
+                    max_access_latency_ms: 50,
+                    durability_preference: DurabilityPreference::Standard,
+                },
+            )
+            .unwrap();
+
+        // Collection 3: Memory-only (/tmp/cache_collection)
         // Cache workload - can evict
-        global_manager.register_collection(
-            "cache_collection".to_string(),
-            "/tmp".to_string(),
-            WorkloadType::Cache {
-                target_hit_rate: 0.85,
-                max_cost_per_gb_per_month: 50.0,
-            },
-        ).unwrap();
-        
+        global_manager
+            .register_collection(
+                "cache_collection".to_string(),
+                "/tmp".to_string(),
+                WorkloadType::Cache {
+                    target_hit_rate: 0.85,
+                    max_cost_per_gb_per_month: 50.0,
+                },
+            )
+            .unwrap();
+
         // Test placement decisions respect per-collection constraints
-        
+
         // Cloud collection: Hot data -> Memory (acceleration above cloud baseline)
-        let tier = global_manager.determine_placement(
-            "cloud_collection",
-            1024 * 1024,    // 1MB
-            200.0,          // Hot data
-            1,              // Recent
-            Some(8),        // High priority
-        ).unwrap();
+        let tier = global_manager
+            .determine_placement(
+                "cloud_collection",
+                1024 * 1024, // 1MB
+                200.0,       // Hot data
+                1,           // Recent
+                Some(8),     // High priority
+            )
+            .unwrap();
         assert_eq!(tier, StorageTier::Memory);
-        
-        // Disk collection: Similar data -> Memory (acceleration above disk baseline)  
-        let tier = global_manager.determine_placement(
-            "disk_collection", 
-            1024 * 1024,
-            200.0,
-            1,
-            Some(8),
-        ).unwrap();
+
+        // Disk collection: Similar data -> Memory (acceleration above disk baseline)
+        let tier = global_manager
+            .determine_placement("disk_collection", 1024 * 1024, 200.0, 1, Some(8))
+            .unwrap();
         assert_eq!(tier, StorageTier::Memory);
-        
+
         // Cache collection: Can be more aggressive with memory
         // Access frequency > 1000 should go to Memory tier
-        let tier = global_manager.determine_placement(
-            "cache_collection",
-            1024 * 1024,
-            1500.0,  // High access frequency for Memory tier
-            1,
-            Some(8),
-        ).unwrap();
+        let tier = global_manager
+            .determine_placement(
+                "cache_collection",
+                1024 * 1024,
+                1500.0, // High access frequency for Memory tier
+                1,
+                Some(8),
+            )
+            .unwrap();
         assert_eq!(tier, StorageTier::Memory);
     }
-    
+
     #[test]
     fn test_collection_storage_constraints() {
         // Test constraint parsing from base locations
-        
+
         // S3 base location
         let config = CollectionStorageConfig::from_base_location(
             "test_collection".to_string(),
             "s3://my-bucket/collections".to_string(),
-        ).unwrap();
-        
-        assert!(matches!(config.durable_baseline, StorageTier::CloudStandard { .. }));
-        assert!(matches!(config.max_acceleration_tier, Some(StorageTier::HardDisk { .. })));
-        
-        // Local disk base location  
+        )
+        .unwrap();
+
+        assert!(matches!(
+            config.durable_baseline,
+            StorageTier::CloudStandard { .. }
+        ));
+        assert!(matches!(
+            config.max_acceleration_tier,
+            Some(StorageTier::HardDisk { .. })
+        ));
+
+        // Local disk base location
         let config = CollectionStorageConfig::from_base_location(
             "disk_collection".to_string(),
             "/mnt/disk/data".to_string(),
-        ).unwrap();
-        
-        assert!(matches!(config.durable_baseline, StorageTier::HardDisk { .. }));
-        assert!(matches!(config.max_acceleration_tier, Some(StorageTier::Memory)));
-        
+        )
+        .unwrap();
+
+        assert!(matches!(
+            config.durable_baseline,
+            StorageTier::HardDisk { .. }
+        ));
+        assert!(matches!(
+            config.max_acceleration_tier,
+            Some(StorageTier::Memory)
+        ));
+
         // Test tier allowance
         assert!(config.is_tier_allowed(&StorageTier::Memory)); // Allowed (faster than baseline)
         assert!(config.is_tier_allowed(&config.durable_baseline)); // Baseline always allowed
-        
+
         // Test index path generation
         let index_path = config.get_index_path("hnsw_index");
-        assert_eq!(index_path, "/mnt/disk/data/disk_collection/indexes/hnsw_index/");
+        assert_eq!(
+            index_path,
+            "/mnt/disk/data/disk_collection/indexes/hnsw_index/"
+        );
     }
-    
+
     #[test]
     fn test_global_memory_pressure_handling() {
         let mut global_manager = GlobalTier::new();
-        
+
         // Register collections with different priorities
-        global_manager.register_collection(
-            "critical_index".to_string(),
-            "s3://prod-bucket/critical".to_string(),
-            WorkloadType::Index {
-                max_access_latency_ms: 10,
-                durability_preference: DurabilityPreference::Maximum,
-            },
-        ).unwrap();
-        
-        global_manager.register_collection(
-            "cache_workload".to_string(),
-            "/tmp/cache_info".to_string(),
-            WorkloadType::Cache {
-                target_hit_rate: 0.80,
-                max_cost_per_gb_per_month: 25.0,
-            },
-        ).unwrap();
-        
+        global_manager
+            .register_collection(
+                "critical_index".to_string(),
+                "s3://prod-bucket/critical".to_string(),
+                WorkloadType::Index {
+                    max_access_latency_ms: 10,
+                    durability_preference: DurabilityPreference::Maximum,
+                },
+            )
+            .unwrap();
+
+        global_manager
+            .register_collection(
+                "cache_workload".to_string(),
+                "/tmp/cache_info".to_string(),
+                WorkloadType::Cache {
+                    target_hit_rate: 0.80,
+                    max_cost_per_gb_per_month: 25.0,
+                },
+            )
+            .unwrap();
+
         // Simulate global memory pressure
         let response = global_manager.handle_global_memory_pressure().unwrap();
-        
+
         // Should free significant memory
         assert!(response.total_memory_freed > 0);
-        
+
         // Should have actions for both collections
         assert!(response.collection_actions.len() >= 2);
     }
-    
+
     #[test]
     fn test_tier_level_hierarchy() {
         // Test tier level ordering (lower = faster)
-        assert!(StorageTier::Memory.tier_level() < StorageTier::NvmeSsd { mount_path: "/test".to_string() }.tier_level());
-        assert!(StorageTier::NvmeSsd { mount_path: "/test".to_string() }.tier_level() < StorageTier::HardDisk { mount_path: "/test".to_string() }.tier_level());
-        
+        assert!(
+            StorageTier::Memory.tier_level()
+                < StorageTier::NvmeSsd {
+                    mount_path: "/test".to_string()
+                }
+                .tier_level()
+        );
+        assert!(
+            StorageTier::NvmeSsd {
+                mount_path: "/test".to_string()
+            }
+            .tier_level()
+                < StorageTier::HardDisk {
+                    mount_path: "/test".to_string()
+                }
+                .tier_level()
+        );
+
         // Test faster-than comparison
-        assert!(StorageTier::Memory.is_faster_than(&StorageTier::HardDisk { mount_path: "/test".to_string() }));
-        assert!(!StorageTier::HardDisk { mount_path: "/test".to_string() }.is_faster_than(&StorageTier::Memory));
-        
+        assert!(StorageTier::Memory.is_faster_than(&StorageTier::HardDisk {
+            mount_path: "/test".to_string()
+        }));
+        assert!(
+            !StorageTier::HardDisk {
+                mount_path: "/test".to_string()
+            }
+            .is_faster_than(&StorageTier::Memory)
+        );
+
         // Test durability requirement
-        let baseline = StorageTier::CloudStandard { 
+        let baseline = StorageTier::CloudStandard {
             provider: CloudProvider::AwsS3 {
                 bucket: "test".to_string(),
                 storage_class: AwsStorageClass::Standard,
@@ -2080,16 +2303,19 @@ mod tests {
             },
             region: "us-east-1".to_string(),
         };
-        
+
         assert!(baseline.meets_durability(&baseline)); // Meets itself
         assert!(!StorageTier::Memory.meets_durability(&baseline)); // Memory doesn't meet cloud durability
-        assert!(StorageTier::CloudArchive { 
-            provider: CloudProvider::AwsS3 {
-                bucket: "archive".to_string(),
-                storage_class: AwsStorageClass::Glacier,
-                lifecycle_enabled: true,
-            },
-            region: "us-east-1".to_string(),
-        }.meets_durability(&baseline)); // Archive meets standard cloud durability
+        assert!(
+            StorageTier::CloudArchive {
+                provider: CloudProvider::AwsS3 {
+                    bucket: "archive".to_string(),
+                    storage_class: AwsStorageClass::Glacier,
+                    lifecycle_enabled: true,
+                },
+                region: "us-east-1".to_string(),
+            }
+            .meets_durability(&baseline)
+        ); // Archive meets standard cloud durability
     }
 }

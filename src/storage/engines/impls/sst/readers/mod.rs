@@ -6,30 +6,18 @@
 //! - Metadata bloom filters for efficient filtering
 //! - Predictive prefetching for intelligent read-ahead
 
-pub mod sst_query_engine;  // High-level query logic (formerly sst_query_engine)
-pub mod predictive_prefetcher;
 pub mod block_filter;
+pub mod predictive_prefetcher;
+pub mod sst_query_engine; // High-level query logic (formerly sst_query_engine)
 
 // Test modules
 #[cfg(test)]
 pub mod tests;
 
-pub use sst_query_engine::{
-    UnifiedSstableReader,
-    CollectionContext,
-};
+pub use sst_query_engine::{CollectionContext, UnifiedSstableReader};
 
-pub use predictive_prefetcher::{
-    PredictivePrefetcher,
-    PrefetchConfig,
-    PrefetchStats,
-};
+pub use predictive_prefetcher::{PredictivePrefetcher, PrefetchConfig, PrefetchStats};
 
 pub use block_filter::{
-    BlockFilter, 
-    IntelligentBlockFilter, 
-    QueryType, 
-    MetadataFilter, 
-    BlockFilterStrategy
+    BlockFilter, BlockFilterStrategy, IntelligentBlockFilter, MetadataFilter, QueryType,
 };
-

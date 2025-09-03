@@ -22,7 +22,7 @@ use axum::{
     middleware::Next,
     response::{Json, Response},
 };
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -35,36 +35,42 @@ pub struct RateLimitConfig {
     /// Enable rate limiting (if false, all requests pass through)
     #[serde(default)]
     pub enabled: bool,
-    
+
     /// Maximum requests per minute (TOML-friendly)
     #[serde(default = "default_requests_per_minute")]
     pub requests_per_minute: u32,
-    
+
     /// Burst allowance for sudden spikes
     #[serde(default = "default_burst_size")]
     pub burst_size: u32,
-    
+
     /// Apply rate limiting per IP address
     #[serde(default = "default_true")]
     pub by_ip: bool,
-    
+
     /// Whether to apply rate limiting to health endpoints
     #[serde(default)]
     pub limit_health_endpoints: bool,
-    
+
     /// Global rate limit (applies to all IPs combined, optional)
     pub global_requests_per_minute: Option<u32>,
 }
 
 // Default functions for serde
-fn default_requests_per_minute() -> u32 { 1000 }
-fn default_burst_size() -> u32 { 100 } 
-fn default_true() -> bool { true }
+fn default_requests_per_minute() -> u32 {
+    1000
+}
+fn default_burst_size() -> u32 {
+    100
+}
+fn default_true() -> bool {
+    true
+}
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            enabled: false,  // Disabled by default for demo and testing
+            enabled: false, // Disabled by default for demo and testing
             requests_per_minute: 1000,
             burst_size: 100,
             by_ip: true,

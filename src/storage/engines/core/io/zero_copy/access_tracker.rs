@@ -55,23 +55,16 @@ pub enum TimingPattern {
     /// Random access times
     Random,
     /// Regular periodic access
-    Periodic {
-        interval: Duration,
-        confidence: f64,
-    },
+    Periodic { interval: Duration, confidence: f64 },
     /// Burst access (many accesses in short time)
     Burst {
         burst_duration: Duration,
         quiet_duration: Duration,
     },
     /// Trending (increasing frequency)
-    Trending {
-        growth_rate: f64,
-    },
+    Trending { growth_rate: f64 },
     /// Declining (decreasing frequency)
-    Declining {
-        decay_rate: f64,
-    },
+    Declining { decay_rate: f64 },
 }
 
 /// Collection-level access patterns
@@ -165,24 +158,24 @@ impl AccessPatternTracker {
     /// Record a file access event
     pub fn record_access(&mut self, event: AccessEvent) {
         let file_key = self.create_file_key(&event.file_path, &event.collection_id);
-        
+
         // Update file-level statistics
         self.update_file_stats(&file_key, &event);
-        
+
         // Update collection-level patterns
         self.update_collection_patterns(&event);
-        
+
         // Add to recent events
         self.recent_events.push_back(event);
-        
+
         // Maintain sliding window
         if self.recent_events.len() > self.max_events {
             self.recent_events.pop_front();
         }
-        
+
         // Clean up old events
         self.cleanup_old_events();
-        
+
         trace!(
             file_path = event.file_path,
             collection_id = event.collection_id,
@@ -199,7 +192,7 @@ impl AccessPatternTracker {
         prediction_window: Duration,
     ) -> AccessPrediction {
         let file_key = self.create_file_key(file_path, collection_id);
-        
+
         match self.file_stats.get(&file_key) {
             None => AccessPrediction {
                 access_probability: 0.1,
@@ -236,7 +229,8 @@ impl AccessPatternTracker {
 
     /// Get hot files across all collections
     pub fn get_hot_files(&self, limit: usize) -> Vec<(String, String, f64)> {
-        let mut hot_files: Vec<_> = self.file_stats
+        let mut hot_files: Vec<_> = self
+            .file_stats
             .iter()
             .map(|(key, stats)| {
                 let (file_path, collection_id) = self.parse_file_key(key);
@@ -260,7 +254,8 @@ impl AccessPatternTracker {
         self.collection_patterns.remove(collection_id);
 
         // Remove recent events for this collection
-        self.recent_events.retain(|event| event.collection_id != collection_id);
+        self.recent_events
+            .retain(|event| event.collection_id != collection_id);
 
         debug!(collection_id, "Cleared access patterns for collection");
     }
@@ -272,16 +267,20 @@ impl AccessPatternTracker {
         let total_events = self.recent_events.len();
 
         // Find top collections by activity
-        let mut active_collections: Vec<_> = self.collection_patterns
+        let mut active_collections: Vec<_> = self
+            .collection_patterns
             .values()
             .map(|pattern| (pattern.collection_id.clone(), pattern.access_velocity))
             .collect();
-        active_collections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        active_collections
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Analyze query type distribution
         let mut query_type_counts = HashMap::new();
         for event in &self.recent_events {
-            *query_type_counts.entry(event.query_type.clone()).or_insert(0u64) += 1;
+            *query_type_counts
+                .entry(event.query_type.clone())
+                .or_insert(0u64) += 1;
         }
 
         // Identify trending files
@@ -319,8 +318,10 @@ impl AccessPatternTracker {
     }
 
     fn update_file_stats(&mut self, file_key: &str, event: &AccessEvent) {
-        let stats = self.file_stats.entry(file_key.to_string()).or_insert_with(|| {
-            AccessStats {
+        let stats = self
+            .file_stats
+            .entry(file_key.to_string())
+            .or_insert_with(|| AccessStats {
                 total_accesses: 0,
                 last_accessed: event.timestamp,
                 first_accessed: event.timestamp,
@@ -329,28 +330,26 @@ impl AccessPatternTracker {
                 query_type_distribution: HashMap::new(),
                 recent_pattern: VecDeque::new(),
                 timing_pattern: TimingPattern::Random,
-            }
-        });
+            });
 
         stats.total_accesses += 1;
         stats.last_accessed = event.timestamp;
 
         // Update query type distribution
-        *stats.query_type_distribution
+        *stats
+            .query_type_distribution
             .entry(event.query_type.clone())
             .or_insert(0) += 1;
 
         // Update primary query type
-        let max_count = stats.query_type_distribution
-            .values()
-            .max()
-            .copied()
-            ;
-        
+        let max_count = stats.query_type_distribution.values().max().copied();
+
         if let Some(max_count) = max_count {
-            if let Some((query_type, _)) = stats.query_type_distribution
+            if let Some((query_type, _)) = stats
+                .query_type_distribution
                 .iter()
-                .find(|(_, &count)| count == max_count) {
+                .find(|(_, &count)| count == max_count)
+            {
                 stats.primary_query_type = query_type.clone();
             }
         }
@@ -372,7 +371,8 @@ impl AccessPatternTracker {
     }
 
     fn update_collection_patterns(&mut self, event: &AccessEvent) {
-        let pattern = self.collection_patterns
+        let pattern = self
+            .collection_patterns
             .entry(event.collection_id.clone())
             .or_insert_with(|| CollectionAccessPattern {
                 collection_id: event.collection_id.clone(),
@@ -430,13 +430,19 @@ impl AccessPatternTracker {
 
         // Check for trending
         if intervals.len() >= 4 {
-            let early_avg = intervals.iter().take(intervals.len() / 2)
+            let early_avg = intervals
+                .iter()
+                .take(intervals.len() / 2)
                 .map(|d| d.as_secs_f64())
-                .sum::<f64>() / (intervals.len() / 2) as f64;
-            
-            let late_avg = intervals.iter().skip(intervals.len() / 2)
+                .sum::<f64>()
+                / (intervals.len() / 2) as f64;
+
+            let late_avg = intervals
+                .iter()
+                .skip(intervals.len() / 2)
                 .map(|d| d.as_secs_f64())
-                .sum::<f64>() / (intervals.len() - intervals.len() / 2) as f64;
+                .sum::<f64>()
+                / (intervals.len() - intervals.len() / 2) as f64;
 
             if late_avg < early_avg * 0.8 {
                 return TimingPattern::Trending {
@@ -459,7 +465,8 @@ impl AccessPatternTracker {
 
         // Simple periodicity detection: check if intervals are similar
         let avg_interval = intervals.iter().sum::<Duration>() / intervals.len() as u32;
-        let variance = intervals.iter()
+        let variance = intervals
+            .iter()
             .map(|&interval| {
                 let diff = if interval > avg_interval {
                     interval - avg_interval
@@ -468,7 +475,8 @@ impl AccessPatternTracker {
                 };
                 diff.as_secs_f64().powi(2)
             })
-            .sum::<f64>() / intervals.len() as f64;
+            .sum::<f64>()
+            / intervals.len() as f64;
 
         let std_dev = variance.sqrt();
         let coefficient_of_variation = std_dev / avg_interval.as_secs_f64();
@@ -486,14 +494,19 @@ impl AccessPatternTracker {
         }
 
         // Check if most intervals are very short (indicating burst)
-        let short_intervals = intervals.iter()
+        let short_intervals = intervals
+            .iter()
             .filter(|&&interval| interval < self.learning_params.burst_threshold)
             .count();
 
         short_intervals as f64 / intervals.len() as f64 > 0.7
     }
 
-    fn make_prediction(&self, stats: &AccessStats, prediction_window: Duration) -> AccessPrediction {
+    fn make_prediction(
+        &self,
+        stats: &AccessStats,
+        prediction_window: Duration,
+    ) -> AccessPrediction {
         if stats.total_accesses < self.learning_params.min_accesses_for_prediction as u64 {
             return AccessPrediction {
                 access_probability: 0.3,
@@ -505,9 +518,12 @@ impl AccessPatternTracker {
         }
 
         let time_since_last_access = Instant::now().duration_since(stats.last_accessed);
-        
+
         match &stats.timing_pattern {
-            TimingPattern::Periodic { interval, confidence } => {
+            TimingPattern::Periodic {
+                interval,
+                confidence,
+            } => {
                 let time_until_next = if time_since_last_access < *interval {
                     *interval - time_since_last_access
                 } else {
@@ -525,7 +541,10 @@ impl AccessPatternTracker {
                     predicted_next_access: Some(time_until_next),
                     confidence: *confidence,
                     predicted_query_type: Some(stats.primary_query_type.clone()),
-                    prediction_rationale: format!("Periodic pattern detected with {:.1}s interval", interval.as_secs_f64()),
+                    prediction_rationale: format!(
+                        "Periodic pattern detected with {:.1}s interval",
+                        interval.as_secs_f64()
+                    ),
                 }
             }
 
@@ -534,18 +553,21 @@ impl AccessPatternTracker {
                 AccessPrediction {
                     access_probability: probability,
                     predicted_next_access: Some(Duration::from_secs(
-                        (3600.0 / stats.access_frequency) as u64
+                        (3600.0 / stats.access_frequency) as u64,
                     )),
                     confidence: 0.7,
                     predicted_query_type: Some(stats.primary_query_type.clone()),
-                    prediction_rationale: format!("Trending pattern with {:.1}% growth rate", growth_rate * 100.0),
+                    prediction_rationale: format!(
+                        "Trending pattern with {:.1}% growth rate",
+                        growth_rate * 100.0
+                    ),
                 }
             }
 
             TimingPattern::Burst { burst_duration, .. } => {
                 let in_burst = time_since_last_access < *burst_duration;
                 let probability = if in_burst { 0.8 } else { 0.2 };
-                
+
                 AccessPrediction {
                     access_probability: probability,
                     predicted_next_access: if in_burst {
@@ -555,8 +577,10 @@ impl AccessPatternTracker {
                     },
                     confidence: 0.6,
                     predicted_query_type: Some(stats.primary_query_type.clone()),
-                    prediction_rationale: format!("Burst pattern detected, currently {} burst", 
-                        if in_burst { "in" } else { "outside" }),
+                    prediction_rationale: format!(
+                        "Burst pattern detected, currently {} burst",
+                        if in_burst { "in" } else { "outside" }
+                    ),
                 }
             }
 
@@ -579,7 +603,10 @@ impl AccessPatternTracker {
                     predicted_next_access: Some(expected_interval),
                     confidence: 0.5,
                     predicted_query_type: Some(stats.primary_query_type.clone()),
-                    prediction_rationale: format!("Frequency-based prediction: {:.1} accesses/hour", stats.access_frequency),
+                    prediction_rationale: format!(
+                        "Frequency-based prediction: {:.1} accesses/hour",
+                        stats.access_frequency
+                    ),
                 }
             }
         }
@@ -642,7 +669,7 @@ mod tests {
     #[test]
     fn test_access_recording() {
         let mut tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
-        
+
         let event = AccessEvent {
             file_path: "/test/file.sst".to_string(),
             collection_id: "test_collection".to_string(),
@@ -652,12 +679,12 @@ mod tests {
         };
 
         tracker.record_access(event.clone());
-        
+
         assert_eq!(tracker.recent_events.len(), 1);
-        
+
         let stats = tracker.get_file_stats(&event.file_path, &event.collection_id);
         assert!(stats.is_some());
-        
+
         let stats = stats.unwrap();
         assert_eq!(stats.total_accesses, 1);
         assert_eq!(stats.primary_query_type, QueryType::SimilaritySearch);
@@ -666,13 +693,13 @@ mod tests {
     #[test]
     fn test_prediction_with_no_data() {
         let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
-        
+
         let prediction = tracker.predict_access(
             "/unknown/file.sst",
             "unknown_collection",
             Duration::from_secs(300),
         );
-        
+
         assert!(prediction.access_probability < 0.5);
         assert!(prediction.confidence < 0.5);
         assert!(prediction.predicted_query_type.is_none());
@@ -681,7 +708,7 @@ mod tests {
     #[test]
     fn test_periodicity_detection() {
         let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
-        
+
         // Create intervals with similar duration (periodic pattern)
         let intervals = vec![
             Duration::from_secs(300),
@@ -689,10 +716,10 @@ mod tests {
             Duration::from_secs(295),
             Duration::from_secs(305),
         ];
-        
+
         let periodic_interval = tracker.detect_periodicity(&intervals);
         assert!(periodic_interval.is_some());
-        
+
         let interval = periodic_interval.unwrap();
         assert!(interval.as_secs() >= 300 && interval.as_secs() <= 310);
     }
@@ -700,7 +727,7 @@ mod tests {
     #[test]
     fn test_burst_pattern_detection() {
         let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
-        
+
         // Create short intervals (burst pattern)
         let intervals = vec![
             Duration::from_secs(30),
@@ -708,17 +735,17 @@ mod tests {
             Duration::from_secs(20),
             Duration::from_secs(60),
         ];
-        
+
         let is_burst = tracker.is_burst_pattern(&intervals);
         assert!(is_burst);
-        
+
         // Create long intervals (not burst)
         let intervals = vec![
             Duration::from_secs(3600),
             Duration::from_secs(7200),
             Duration::from_secs(1800),
         ];
-        
+
         let is_burst = tracker.is_burst_pattern(&intervals);
         assert!(!is_burst);
     }

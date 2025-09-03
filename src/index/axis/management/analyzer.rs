@@ -12,11 +12,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::core::{String, service_types::VectorRecord};
 use crate::index::axis::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
-use crate::core::{service_types::VectorRecord, String};
 
 /// Analyzer for collection characteristics and behavior patterns
 pub struct CollectionAnalyzer {
@@ -271,11 +271,7 @@ impl CollectionAnalyzer {
         collection_id: &str,
     ) -> Result<AccessFrequencyMetrics> {
         let tracker = self.query_tracker.read().await;
-        let stats = tracker
-            .query_stats
-            .get(collection_id)
-            .cloned()
-            .clone();
+        let stats = tracker.query_stats.get(collection_id).cloned().clone();
 
         // Calculate metrics from query statistics
         let time_window_hours = 1.0;
@@ -360,11 +356,7 @@ impl QueryPatternTracker {
 
     /// Analyze query patterns for a collection
     fn analyze_patterns(&self, collection_id: &str) -> QueryPatternAnalysis {
-        let stats = self
-            .query_stats
-            .get(collection_id)
-            .cloned()
-            .clone();
+        let stats = self.query_stats.get(collection_id).cloned().clone();
 
         let total = stats.as_ref().map(|s| s.total_queries).unwrap_or(0) as f32;
         if total == 0.0 {
@@ -384,9 +376,14 @@ impl QueryPatternTracker {
 
         QueryPatternAnalysis {
             total_queries: stats.as_ref().map(|s| s.total_queries).unwrap_or(0),
-            point_query_percentage: stats.as_ref().map(|s| s.point_queries).unwrap_or(0) as f32 / total,
-            similarity_search_percentage: stats.as_ref().map(|s| s.similarity_queries).unwrap_or(0) as f32 / total,
-            metadata_filter_percentage: stats.as_ref().map(|s| s.filtered_queries).unwrap_or(0) as f32 / total,
+            point_query_percentage: stats.as_ref().map(|s| s.point_queries).unwrap_or(0) as f32
+                / total,
+            similarity_search_percentage: stats.as_ref().map(|s| s.similarity_queries).unwrap_or(0)
+                as f32
+                / total,
+            metadata_filter_percentage: stats.as_ref().map(|s| s.filtered_queries).unwrap_or(0)
+                as f32
+                / total,
             average_k: stats.as_ref().map(|s| s.average_k).unwrap_or(10.0),
             query_distribution: QueryDistribution {
                 uniform: true,                              // TODO: Analyze actual distribution

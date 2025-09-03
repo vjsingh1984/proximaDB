@@ -15,16 +15,16 @@ pub struct ClusterAssignment {
 pub enum Data {
     /// Dense vectors (fixed dimension, most elements non-zero)
     DenseVector { dimension: usize },
-    
+
     /// Sparse vectors (many zero elements, variable dimension)
     SparseVector { max_dimension: usize },
-    
+
     /// Metadata fields for filtering
     Metadata,
-    
+
     /// Full-text search data
     FullText,
-    
+
     /// Unique identifiers
     Identifier,
 }
@@ -34,61 +34,56 @@ pub enum Data {
 pub enum IndexAlgorithm {
     /// Hierarchical Navigable Small World - for dense vectors
     HNSW {
-        m: u32,                // Number of bi-directional links
-        ef_construction: u32,  // Size of dynamic candidate list
+        m: u32,               // Number of bi-directional links
+        ef_construction: u32, // Size of dynamic candidate list
         ef_search: u32,       // Size of dynamic candidate list during search
         max_elements: usize,  // Maximum number of elements
     },
-    
+
     /// Inverted File Index - for dense vectors with clustering
     IVF {
-        nlist: u32,    // Number of clusters
-        nprobe: u32,   // Number of clusters to search
+        nlist: u32,                             // Number of clusters
+        nprobe: u32,                            // Number of clusters to search
         quantizer: Option<Box<IndexAlgorithm>>, // Optional quantization
     },
-    
+
     /// Product Quantization - for compressed dense vectors
     PQ {
-        m: u32,        // Number of subquantizers
-        nbits: u32,    // Number of bits per subquantizer
+        m: u32,            // Number of subquantizers
+        nbits: u32,        // Number of bits per subquantizer
         train_size: usize, // Number of vectors for training
     },
-    
+
     /// Locality Sensitive Hashing - for approximate search
     LSH {
-        n_projections: u32,  // Number of hash functions
-        n_hash_tables: u32,  // Number of hash tables
-        hash_width: f32,     // Width of hash buckets
+        n_projections: u32, // Number of hash functions
+        n_hash_tables: u32, // Number of hash tables
+        hash_width: f32,    // Width of hash buckets
     },
-    
+
     /// BTree - for exact metadata indexing
-    BTree {
-        max_keys_per_node: usize,
-    },
-    
+    BTree { max_keys_per_node: usize },
+
     /// Inverted Index - for full-text search
     InvertedIndex {
         analyzer: TextAnalyzer,
         enable_positions: bool,
     },
-    
+
     /// Skip List - for sorted data
-    SkipList {
-        max_level: u32,
-        probability: f32,
-    },
-    
+    SkipList { max_level: u32, probability: f32 },
+
     /// Bloom Filter - for membership testing
     BloomFilter {
         expected_elements: usize,
         false_positive_rate: f64,
     },
-    
+
     /// Annoy (Approximate Nearest Neighbors Oh Yeah) - for fast tree-based search
     Annoy {
-        n_trees: u32,        // Number of trees to build
-        search_k: i32,       // Number of nodes to inspect (-1 = auto)
-        max_leaf_size: u32,  // Maximum number of descendants in a leaf
+        n_trees: u32,       // Number of trees to build
+        search_k: i32,      // Number of nodes to inspect (-1 = auto)
+        max_leaf_size: u32, // Maximum number of descendants in a leaf
     },
 }
 
@@ -120,16 +115,16 @@ pub enum TokenFilter {
 pub struct IndexSpecification {
     /// What data are we indexing
     pub data_type: Data,
-    
+
     /// How are we indexing it
     pub algorithm: IndexAlgorithm,
-    
+
     /// Optional name for this index
     pub name: Option<String>,
-    
+
     /// Is this the primary index for queries
     pub is_primary: bool,
-    
+
     /// When to use this index (query selectivity threshold)
     pub selectivity_threshold: Option<f32>,
 }
@@ -145,34 +140,43 @@ impl IndexSpecification {
             selectivity_threshold: None,
         }
     }
-    
+
     /// Check if this index supports clustering optimization
     pub fn supports_clustering(&self) -> bool {
-        matches!(self.data_type, Data::DenseVector { .. } | Data::SparseVector { .. }) &&
-        matches!(self.algorithm, 
-            IndexAlgorithm::HNSW { .. } | 
-            IndexAlgorithm::IVF { .. } | 
-            IndexAlgorithm::PQ { .. } |
-            IndexAlgorithm::LSH { .. } |
-            IndexAlgorithm::Annoy { .. }
+        matches!(
+            self.data_type,
+            Data::DenseVector { .. } | Data::SparseVector { .. }
+        ) && matches!(
+            self.algorithm,
+            IndexAlgorithm::HNSW { .. }
+                | IndexAlgorithm::IVF { .. }
+                | IndexAlgorithm::PQ { .. }
+                | IndexAlgorithm::LSH { .. }
+                | IndexAlgorithm::Annoy { .. }
         )
     }
-    
+
     /// Check if this index supports vector search
     pub fn supports_vector_search(&self) -> bool {
-        matches!(self.data_type, Data::DenseVector { .. } | Data::SparseVector { .. })
+        matches!(
+            self.data_type,
+            Data::DenseVector { .. } | Data::SparseVector { .. }
+        )
     }
-    
+
     /// Check if this index supports metadata filtering
     pub fn supports_filtering(&self) -> bool {
-        matches!(self.data_type, Data::Metadata) ||
-        matches!(self.algorithm, IndexAlgorithm::BTree { .. } | IndexAlgorithm::SkipList { .. })
+        matches!(self.data_type, Data::Metadata)
+            || matches!(
+                self.algorithm,
+                IndexAlgorithm::BTree { .. } | IndexAlgorithm::SkipList { .. }
+            )
     }
-    
+
     /// Check if this index supports full-text search
     pub fn supports_text_search(&self) -> bool {
-        matches!(self.data_type, Data::FullText) &&
-        matches!(self.algorithm, IndexAlgorithm::InvertedIndex { .. })
+        matches!(self.data_type, Data::FullText)
+            && matches!(self.algorithm, IndexAlgorithm::InvertedIndex { .. })
     }
 }
 
@@ -181,7 +185,7 @@ impl IndexSpecification {
 pub struct IndexSelectionStrategy {
     /// Available indexes
     pub indexes: Vec<IndexSpecification>,
-    
+
     /// Query routing rules
     pub routing_rules: Vec<RoutingRule>,
 }
@@ -190,10 +194,10 @@ pub struct IndexSelectionStrategy {
 pub struct RoutingRule {
     /// Condition for using this rule
     pub condition: QueryCondition,
-    
+
     /// Which indexes to use
     pub use_indexes: Vec<usize>, // indices into indexes vec
-    
+
     /// How to combine results
     pub combination: ResultCombination,
 }
@@ -202,19 +206,19 @@ pub struct RoutingRule {
 pub enum QueryCondition {
     /// Always apply this rule
     Always,
-    
+
     /// Vector dimension matches
     VectorDimension(usize),
-    
+
     /// Query has metadata filters
     HasFilters,
-    
+
     /// Query selectivity above threshold
     SelectivityAbove(f32),
-    
+
     /// Text query present
     HasTextQuery,
-    
+
     /// Combine conditions
     And(Vec<QueryCondition>),
     Or(Vec<QueryCondition>),
@@ -225,16 +229,16 @@ pub enum QueryCondition {
 pub enum ResultCombination {
     /// Use first index results only
     First,
-    
+
     /// Merge results by score
     MergeByScore,
-    
+
     /// Intersect results (AND)
     Intersect,
-    
+
     /// Union results (OR)
     Union,
-    
+
     /// Re-rank first index results using second
     Rerank,
 }
@@ -244,25 +248,25 @@ pub enum ResultCombination {
 pub struct AxisConfig {
     /// Maximum memory usage in bytes
     pub max_memory_bytes: u64,
-    
+
     /// Default index algorithm to use
     pub default_algorithm: IndexAlgorithm,
-    
+
     /// Auto-migration enabled
     pub enable_auto_migration: bool,
-    
+
     /// Monitoring configuration
     pub monitoring_enabled: bool,
-    
+
     /// Performance thresholds
     pub performance_thresholds: PerformanceThresholds,
-    
+
     /// Strategy configuration
     pub strategy_config: StrategyConfig,
-    
+
     /// Migration configuration
     pub migration_config: MigrationConfig,
-    
+
     /// Monitoring configuration
     pub monitoring_config: MonitoringConfig,
 }
@@ -409,7 +413,7 @@ impl Default for MonitoringConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_index_capabilities() {
         let hnsw_index = IndexSpecification::new(
@@ -419,22 +423,24 @@ mod tests {
                 ef_construction: 200,
                 ef_search: 50,
                 max_elements: 1_000_000,
-            }
+            },
         );
-        
+
         assert!(hnsw_index.supports_clustering());
         assert!(hnsw_index.supports_vector_search());
         assert!(!hnsw_index.supports_filtering());
         assert!(!hnsw_index.supports_text_search());
     }
-    
+
     #[test]
     fn test_metadata_index() {
         let btree_index = IndexSpecification::new(
             Data::Metadata,
-            IndexAlgorithm::BTree { max_keys_per_node: 100 }
+            IndexAlgorithm::BTree {
+                max_keys_per_node: 100,
+            },
         );
-        
+
         assert!(!btree_index.supports_clustering());
         assert!(!btree_index.supports_vector_search());
         assert!(btree_index.supports_filtering());

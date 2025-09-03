@@ -3,20 +3,20 @@
 
 use std::sync::Arc;
 
-use crate::storage::persistence::filesystem::{FilesystemFactory, ZeroCopyFilesystem, FileSystem};
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystemBuilder;
 use crate::core::error::ProximaDBError;
+use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystemBuilder;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, ZeroCopyFilesystem};
 
 /// Example integration showing how to enhance existing readers with zero-copy optimization
-/// 
+///
 /// This example demonstrates the pattern for integrating the zero-copy I/O system
 /// with existing readers. The pattern is:
-/// 
+///
 /// 1. Create zero-copy I/O system with appropriate configuration
 /// 2. Wrap existing filesystem with zero-copy filesystem
 /// 3. Use the wrapped filesystem in readers - all operations become cache-first
-/// 
-/// The beauty is that existing readers don't need to change their code - 
+///
+/// The beauty is that existing readers don't need to change their code -
 /// they just get the optimized filesystem and automatically benefit from:
 /// - Metadata-based file skipping
 /// - Selective range downloads
@@ -26,7 +26,7 @@ pub struct ZeroCopyReaderIntegration;
 
 impl ZeroCopyReaderIntegration {
     /// Example: Create a zero-copy enhanced SST reader
-    /// 
+    ///
     /// This shows how to wrap the existing FilesystemFactory to create
     /// zero-copy filesystem instances that automatically optimize I/O
     pub async fn create_enhanced_sst_reader(
@@ -36,9 +36,12 @@ impl ZeroCopyReaderIntegration {
     ) -> Result<EnhancedSstReader, ProximaDBError> {
         // 1. Create zero-copy I/O system with SST-optimized configuration
         let io_system = ZeroCopyIOSystemBuilder::new()
-            .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::HighThroughput)
+            .for_workload(
+                crate::storage::engines::core::io::zero_copy::WorkloadType::HighThroughput,
+            )
             .with_filesystem(filesystem_factory.clone())
-            .build().await?;
+            .build()
+            .await?;
 
         // 2. Create zero-copy filesystem wrapper
         let zero_copy_fs = filesystem_factory
@@ -65,7 +68,8 @@ impl ZeroCopyReaderIntegration {
         let io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::Analytics)
             .with_filesystem(filesystem_factory.clone())
-            .build().await?;
+            .build()
+            .await?;
 
         // 2. Create zero-copy filesystem wrapper for columnar storage
         let zero_copy_fs = filesystem_factory
@@ -91,7 +95,8 @@ impl ZeroCopyReaderIntegration {
         let io_system = ZeroCopyIOSystemBuilder::new()
             .for_workload(crate::storage::engines::core::io::zero_copy::WorkloadType::RealTime)
             .with_filesystem(filesystem_factory.clone())
-            .build().await?;
+            .build()
+            .await?;
 
         // 2. Create zero-copy filesystem wrapper for hierarchical storage
         let zero_copy_fs = filesystem_factory
@@ -119,8 +124,12 @@ impl ZeroCopyReaderIntegration {
         for engine_type in engine_types {
             let workload_type = match engine_type {
                 "SST" => crate::storage::engines::core::io::zero_copy::WorkloadType::HighThroughput,
-                "VIPER" | "NOVA" => crate::storage::engines::core::io::zero_copy::WorkloadType::Analytics,
-                "SWIFT" | "RAPTOR" => crate::storage::engines::core::io::zero_copy::WorkloadType::RealTime,
+                "VIPER" | "NOVA" => {
+                    crate::storage::engines::core::io::zero_copy::WorkloadType::Analytics
+                }
+                "SWIFT" | "RAPTOR" => {
+                    crate::storage::engines::core::io::zero_copy::WorkloadType::RealTime
+                }
                 _ => crate::storage::engines::core::io::zero_copy::WorkloadType::HighThroughput,
             };
 
@@ -128,7 +137,8 @@ impl ZeroCopyReaderIntegration {
             let io_system = ZeroCopyIOSystemBuilder::new()
                 .for_workload(workload_type)
                 .with_filesystem(filesystem_factory.clone())
-                .build().await?;
+                .build()
+                .await?;
 
             // Create zero-copy filesystem
             let zero_copy_fs = filesystem_factory
@@ -147,9 +157,10 @@ impl ZeroCopyReaderIntegration {
                 "VIPER" => Box::new(EnhancedParquetReader::new(Arc::new(zero_copy_fs))),
                 "SWIFT" => Box::new(EnhancedSwiftReader::new(Arc::new(zero_copy_fs))),
                 _ => {
-                    return Err(ProximaDBError::Config(
-                        format!("Unsupported engine type: {}", engine_type)
-                    ));
+                    return Err(ProximaDBError::Config(format!(
+                        "Unsupported engine type: {}",
+                        engine_type
+                    )));
                 }
             };
 
@@ -164,10 +175,15 @@ impl ZeroCopyReaderIntegration {
 pub trait EnhancedReader: Send + Sync {
     /// Get engine type
     fn engine_type(&self) -> &str;
-    
+
     /// Read with zero-copy optimization (object-safe version)
-    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>>;
-    
+    fn read_optimized<'a>(
+        &'a self,
+        file_path: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>,
+    >;
+
     /// Get optimization metrics
     fn get_metrics(&self) -> ReaderMetrics;
 }
@@ -192,7 +208,12 @@ impl EnhancedReader for EnhancedSstReader {
         "SST"
     }
 
-    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+    fn read_optimized<'a>(
+        &'a self,
+        file_path: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>,
+    > {
         Box::pin(async move {
             // All read operations automatically go through zero-copy optimization
             // including metadata cache checks, selective downloading, and disk cache
@@ -206,7 +227,7 @@ impl EnhancedReader for EnhancedSstReader {
     fn get_metrics(&self) -> ReaderMetrics {
         ReaderMetrics {
             reads: self.metrics.load(std::sync::atomic::Ordering::Relaxed),
-            cache_hits: 0, // Would be populated from the zero-copy system
+            cache_hits: 0,  // Would be populated from the zero-copy system
             bytes_saved: 0, // Would be populated from the zero-copy system
         }
     }
@@ -232,7 +253,12 @@ impl EnhancedReader for EnhancedParquetReader {
         "VIPER"
     }
 
-    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+    fn read_optimized<'a>(
+        &'a self,
+        file_path: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>,
+    > {
         Box::pin(async move {
             // Parquet files benefit greatly from selective range downloads
             // The zero-copy system uses NOVA metadata serializer for optimal column access
@@ -272,7 +298,12 @@ impl EnhancedReader for EnhancedSwiftReader {
         "SWIFT"
     }
 
-    fn read_optimized<'a>(&'a self, file_path: &'a str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+    fn read_optimized<'a>(
+        &'a self,
+        file_path: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>,
+    > {
         Box::pin(async move {
             // SWIFT files benefit from segment-level optimization
             // The zero-copy system uses SWIFT metadata serializer for segment pruning
@@ -319,7 +350,7 @@ impl ReaderMigrationHelper {
     /// Migration example for existing readers
     pub async fn migrate_existing_reader_example() -> Result<(), ProximaDBError> {
         // This is what existing code looks like:
-        // 
+        //
         // ```rust
         // let reader = ExistingReader::new(filesystem_factory.clone());
         // let data = reader.read("s3://bucket/file.sst").await?;
@@ -365,7 +396,8 @@ mod tests {
             "test_collection",
             temp_dir.path().to_str().unwrap(),
             filesystem_factory,
-        ).await;
+        )
+        .await;
 
         assert!(enhanced_reader.is_ok());
         let reader = enhanced_reader.unwrap();
@@ -383,7 +415,8 @@ mod tests {
             temp_dir.path().to_str().unwrap(),
             filesystem_factory,
             vec!["SST", "VIPER", "SWIFT"],
-        ).await;
+        )
+        .await;
 
         assert!(readers.is_ok());
         let readers = readers.unwrap();

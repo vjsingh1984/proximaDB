@@ -12,12 +12,8 @@ use std::time::SystemTime;
 
 // Import columnar common types to avoid duplication
 pub use crate::storage::engines::core::formats::columnar::{
-    ColumnarFileMetadata as CollectionMetadata,
-    FilterCondition,
-    ColumnStatistics,
+    ColumnStatistics, ColumnarFileMetadata as CollectionMetadata, FilterCondition,
 };
-
-
 
 /// Filterable column configuration for server-side metadata filtering
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -308,17 +304,17 @@ impl EngineStats {
     pub fn get_compression_ratio(&self) -> f32 {
         *self.avg_compression_ratio.read().unwrap()
     }
-    
+
     /// Update compression ratio (requires write lock)
     pub fn update_compression_ratio(&self, ratio: f32) {
         *self.avg_compression_ratio.write().unwrap() = ratio;
     }
-    
+
     /// Get ML prediction accuracy (requires read lock)
     pub fn get_ml_accuracy(&self) -> f32 {
         *self.avg_ml_prediction_accuracy.read().unwrap()
     }
-    
+
     /// Update ML prediction accuracy (requires write lock)  
     pub fn update_ml_accuracy(&self, accuracy: f32) {
         *self.avg_ml_prediction_accuracy.write().unwrap() = accuracy;
@@ -345,9 +341,9 @@ impl ViperEngineConfig {
     /// Create from the user-facing core config
     pub fn from_core_config(config: &crate::core::config::ViperConfig) -> Self {
         Self {
-            enable_ml_clustering: false,  // Disabled by default
+            enable_ml_clustering: false, // Disabled by default
             initial_cluster_count: 16,
-            enable_quantization: false,    // Disabled by default
+            enable_quantization: false, // Disabled by default
             parquet_compression: match config.compression.as_str() {
                 "zstd" => ParquetCompression::Zstd,
                 "snappy" => ParquetCompression::Snappy,
@@ -383,8 +379,6 @@ impl Default for ViperEngineConfig {
         }
     }
 }
-
-
 
 impl Default for SchemaConfig {
     fn default() -> Self {

@@ -18,11 +18,11 @@
 //! This is a service that creates metrics endpoints, not a server that binds to ports
 
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::Json,
     routing::get,
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

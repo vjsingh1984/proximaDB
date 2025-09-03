@@ -4,15 +4,15 @@
 //! It builds on the foundation module for common functionality.
 
 pub mod config_error;
+pub mod core_error;
 pub mod metadata_error;
 pub mod service_error;
-pub mod core_error;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export all error types
 pub use config_error::*;
+pub use core_error::*;
 pub use metadata_error::*;
 pub use service_error::*;
-pub use core_error::*;

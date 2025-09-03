@@ -1,34 +1,34 @@
 //! Parallel WAL Search with SIMD Optimization
-//! 
+//!
 //! This module provides a parallel, SIMD-optimized search implementation
 //! for the Write-Ahead Log (WAL) to improve search performance.
-//! 
+//!
 //! Expected Performance Improvement: 30-40% reduction in WAL search time
 
-use std::sync::Arc;
 use anyhow::{Context, Result};
-use rayon::prelude::*;
-use tracing::{debug, trace};
 use parking_lot::RwLock;
+use rayon::prelude::*;
+use std::sync::Arc;
+use tracing::{debug, trace};
 
-use crate::core::search::{InternalSearchResult, FilterExpression};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use crate::proto::proximadb::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::search::{FilterExpression, InternalSearchResult};
+use crate::proto::proximadb::VectorRecord;
+use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 
 /// Parallel WAL search coordinator
 pub struct ParallelWALSearch {
     /// Hardware capabilities for SIMD
     hardware: Arc<HardwareCapabilities>,
-    
+
     /// Distance compute engine
     distance_compute: Arc<UnifiedDistanceCompute>,
-    
+
     /// Batch size for parallel processing
     parallel_batch_size: usize,
-    
+
     /// Early termination threshold (stop when we have k * multiplier candidates)
     early_termination_multiplier: f32,
 }
@@ -39,11 +39,11 @@ impl ParallelWALSearch {
         Self {
             hardware: crate::core::hardware_capabilities::get_hardware_capabilities(),
             distance_compute: Arc::new(UnifiedDistanceCompute::new(distance_metric)),
-            parallel_batch_size: 4, // Process 4 batches in parallel
+            parallel_batch_size: 4,            // Process 4 batches in parallel
             early_termination_multiplier: 3.0, // Stop when we have 3x candidates
         }
     }
-    
+
     /// Perform parallel search across WAL batches
     pub async fn search_parallel(
         &self,
@@ -56,22 +56,22 @@ impl ParallelWALSearch {
         include_metadata: bool,
     ) -> Result<Vec<InternalSearchResult>> {
         let start = std::time::Instant::now();
-        
+
         if batches.is_empty() {
             return Ok(vec![]);
         }
-        
+
         debug!(
             "Starting parallel WAL search across {} batches for top_k={}",
             batches.len(),
             top_k
         );
-        
+
         // Use Arc for shared query vector to avoid cloning
         let query_arc = Arc::new(query_vector.to_vec());
         let filters_arc = metadata_filters.cloned();
         let distance_metric_arc = Arc::new(distance_metric.clone());
-        
+
         // Process batches in parallel using rayon
         let candidates: Vec<SearchCandidate> = batches
             .into_par_iter()
@@ -86,23 +86,21 @@ impl ParallelWALSearch {
                 )
             })
             .collect();
-        
+
         // Use parallel sorting for large result sets
         let mut sorted_candidates = if candidates.len() > 1000 {
             self.parallel_top_k_sort(candidates, top_k)
         } else {
             self.sequential_top_k_sort(candidates, top_k)
         };
-        
+
         // Convert to SearchResults and set ranks
         let results = sorted_candidates
             .into_iter()
             .enumerate()
-            .map(|(_rank, candidate)| {
-                candidate.to_search_result()
-            })
+            .map(|(_rank, candidate)| candidate.to_search_result())
             .collect();
-        
+
         let elapsed = start.elapsed();
         debug!(
             "Parallel WAL search completed in {:?} (SIMD: {}, parallelism: {})",
@@ -110,10 +108,10 @@ impl ParallelWALSearch {
             self.hardware.has_simd(),
             rayon::current_num_threads()
         );
-        
+
         Ok(results)
     }
-    
+
     /// Process a single batch in parallel
     fn process_batch_parallel(
         &self,
@@ -125,9 +123,11 @@ impl ParallelWALSearch {
         include_metadata: bool,
     ) -> Vec<SearchCandidate> {
         // Use SIMD-optimized distance computation when available
-        let use_simd = self.hardware.cpu.features.avx2_support || self.hardware.cpu.features.sse42_support;
-        
-        batch.vector_records
+        let use_simd =
+            self.hardware.cpu.features.avx2_support || self.hardware.cpu.features.sse42_support;
+
+        batch
+            .vector_records
             .par_iter()
             .filter_map(|record| {
                 // Apply metadata filter if present
@@ -136,14 +136,14 @@ impl ParallelWALSearch {
                         return None;
                     }
                 }
-                
+
                 // Calculate distance using SIMD when available
                 let score = if use_simd {
                     self.compute_distance_simd(&query_vector, &record.vector, &distance_metric)
                 } else {
                     self.compute_distance_scalar(&query_vector, &record.vector, &distance_metric)
                 };
-                
+
                 Some(SearchCandidate {
                     record: record.clone(),
                     score,
@@ -153,14 +153,9 @@ impl ParallelWALSearch {
             })
             .collect()
     }
-    
+
     /// SIMD-optimized distance computation
-    fn compute_distance_simd(
-        &self,
-        query: &[f32],
-        vector: &[f32],
-        metric: &DistanceMetric,
-    ) -> f32 {
+    fn compute_distance_simd(&self, query: &[f32], vector: &[f32], metric: &DistanceMetric) -> f32 {
         match metric {
             DistanceMetric::Cosine => self.cosine_similarity_simd(query, vector),
             DistanceMetric::Euclidean => self.euclidean_distance_simd(query, vector),
@@ -168,55 +163,55 @@ impl ParallelWALSearch {
             _ => self.compute_distance_scalar(query, vector, metric),
         }
     }
-    
+
     /// AVX2 optimized cosine similarity
     #[cfg(target_arch = "x86_64")]
     fn cosine_similarity_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
-        
+
         if !self.hardware.cpu.features.avx2_support {
             return self.cosine_similarity_scalar(a, b);
         }
-        
+
         unsafe {
             let len = a.len().min(b.len());
             let chunks = len / 8;
             let remainder = len % 8;
-            
+
             let mut dot = 0.0f32;
             let mut norm_a = 0.0f32;
             let mut norm_b = 0.0f32;
-            
+
             // Process 8 elements at a time with AVX2
             for i in 0..chunks {
                 let va = _mm256_loadu_ps(a.as_ptr().add(i * 8));
                 let vb = _mm256_loadu_ps(b.as_ptr().add(i * 8));
-                
+
                 // Dot product
                 let prod = _mm256_mul_ps(va, vb);
                 let sum = _mm256_hadd_ps(prod, prod);
                 let sum = _mm256_hadd_ps(sum, sum);
                 dot += _mm256_cvtss_f32(sum);
-                
+
                 // Norms
                 let sq_a = _mm256_mul_ps(va, va);
                 let sum_a = _mm256_hadd_ps(sq_a, sq_a);
                 let sum_a = _mm256_hadd_ps(sum_a, sum_a);
                 norm_a += _mm256_cvtss_f32(sum_a);
-                
+
                 let sq_b = _mm256_mul_ps(vb, vb);
                 let sum_b = _mm256_hadd_ps(sq_b, sq_b);
                 let sum_b = _mm256_hadd_ps(sum_b, sum_b);
                 norm_b += _mm256_cvtss_f32(sum_b);
             }
-            
+
             // Handle remainder
             for i in (chunks * 8)..len {
                 dot += a[i] * b[i];
                 norm_a += a[i] * a[i];
                 norm_b += b[i] * b[i];
             }
-            
+
             let denominator = (norm_a * norm_b).sqrt();
             if denominator > 0.0 {
                 dot / denominator
@@ -225,72 +220,73 @@ impl ParallelWALSearch {
             }
         }
     }
-    
+
     /// Fallback for non-x86_64
     #[cfg(not(target_arch = "x86_64"))]
     fn cosine_similarity_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         self.cosine_similarity_scalar(a, b)
     }
-    
+
     /// Scalar cosine similarity fallback
     fn cosine_similarity_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm_a > 0.0 && norm_b > 0.0 {
             dot / (norm_a * norm_b)
         } else {
             0.0
         }
     }
-    
+
     /// AVX2 optimized Euclidean distance
     #[cfg(target_arch = "x86_64")]
     fn euclidean_distance_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
-        
+
         if !self.hardware.cpu.features.avx2_support {
             return self.euclidean_distance_scalar(a, b);
         }
-        
+
         unsafe {
             let len = a.len().min(b.len());
             let chunks = len / 8;
             let remainder = len % 8;
-            
+
             let mut sum = 0.0f32;
-            
+
             // Process 8 elements at a time
             for i in 0..chunks {
                 let va = _mm256_loadu_ps(a.as_ptr().add(i * 8));
                 let vb = _mm256_loadu_ps(b.as_ptr().add(i * 8));
-                
+
                 let diff = _mm256_sub_ps(va, vb);
                 let sq = _mm256_mul_ps(diff, diff);
                 let s = _mm256_hadd_ps(sq, sq);
                 let s = _mm256_hadd_ps(s, s);
                 sum += _mm256_cvtss_f32(s);
             }
-            
+
             // Handle remainder
             for i in (chunks * 8)..len {
                 let diff = a[i] - b[i];
                 sum += diff * diff;
             }
-            
+
             -sum.sqrt() // Negative for sorting (higher is better)
         }
     }
-    
+
     #[cfg(not(target_arch = "x86_64"))]
     fn euclidean_distance_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         self.euclidean_distance_scalar(a, b)
     }
-    
+
     /// Scalar Euclidean distance
     fn euclidean_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
-        let sum: f32 = a.iter()
+        let sum: f32 = a
+            .iter()
             .zip(b.iter())
             .map(|(x, y)| {
                 let diff = x - y;
@@ -299,50 +295,50 @@ impl ParallelWALSearch {
             .sum();
         -sum.sqrt() // Negative for sorting
     }
-    
+
     /// AVX2 optimized dot product
     #[cfg(target_arch = "x86_64")]
     fn dot_product_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::x86_64::*;
-        
+
         if !self.hardware.cpu.features.avx2_support {
             return self.dot_product_scalar(a, b);
         }
-        
+
         unsafe {
             let len = a.len().min(b.len());
             let chunks = len / 8;
             let remainder = len % 8;
-            
+
             let mut dot = 0.0f32;
-            
+
             for i in 0..chunks {
                 let va = _mm256_loadu_ps(a.as_ptr().add(i * 8));
                 let vb = _mm256_loadu_ps(b.as_ptr().add(i * 8));
-                
+
                 let prod = _mm256_mul_ps(va, vb);
                 let sum = _mm256_hadd_ps(prod, prod);
                 let sum = _mm256_hadd_ps(sum, sum);
                 dot += _mm256_cvtss_f32(sum);
             }
-            
+
             for i in (chunks * 8)..len {
                 dot += a[i] * b[i];
             }
-            
+
             dot
         }
     }
-    
+
     #[cfg(not(target_arch = "x86_64"))]
     fn dot_product_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         self.dot_product_scalar(a, b)
     }
-    
+
     fn dot_product_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
     }
-    
+
     /// Scalar distance computation fallback
     fn compute_distance_scalar(
         &self,
@@ -350,53 +346,79 @@ impl ParallelWALSearch {
         vector: &[f32],
         metric: &DistanceMetric,
     ) -> f32 {
-        let result = self.distance_compute.calculate_distance(query, vector, metric);
+        let result = self
+            .distance_compute
+            .calculate_distance(query, vector, metric);
         result.raw_value
     }
-    
+
     /// Parallel top-k sorting for large result sets
-    fn parallel_top_k_sort(&self, mut candidates: Vec<SearchCandidate>, k: usize) -> Vec<SearchCandidate> {
+    fn parallel_top_k_sort(
+        &self,
+        mut candidates: Vec<SearchCandidate>,
+        k: usize,
+    ) -> Vec<SearchCandidate> {
         // Use parallel partial sort for large datasets
         candidates.par_sort_unstable_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates.truncate(k);
         candidates
     }
-    
+
     /// Sequential top-k sorting for small result sets
-    fn sequential_top_k_sort(&self, mut candidates: Vec<SearchCandidate>, k: usize) -> Vec<SearchCandidate> {
+    fn sequential_top_k_sort(
+        &self,
+        mut candidates: Vec<SearchCandidate>,
+        k: usize,
+    ) -> Vec<SearchCandidate> {
         candidates.sort_unstable_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates.truncate(k);
         candidates
     }
-    
+
     /// Evaluate metadata filter on a record
     fn evaluate_filter(&self, record: &VectorRecord, filter: &FilterExpression) -> bool {
         use crate::core::search::json_comparison::evaluate_filter;
-        
+
         // Convert proto metadata to HashMap for evaluation
         let metadata = self.convert_metadata(record);
         evaluate_filter(filter, &metadata)
     }
-    
+
     /// Convert proto metadata to HashMap
-    fn convert_metadata(&self, record: &VectorRecord) -> std::collections::HashMap<String, serde_json::Value> {
+    fn convert_metadata(
+        &self,
+        record: &VectorRecord,
+    ) -> std::collections::HashMap<String, serde_json::Value> {
         let mut map = std::collections::HashMap::new();
-        
+
         for entry in &record.metadata {
             if let Some(value) = &entry.value {
                 let json_value = match value {
-                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => serde_json::Value::String(s.clone()),
-                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))),
-                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                        serde_json::Value::Number(
+                            serde_json::Number::from_f64(*n)
+                                .unwrap_or_else(|| serde_json::Number::from(0)),
+                        )
+                    }
+                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                        serde_json::Value::Bool(*b)
+                    }
                 };
                 map.insert(entry.key.clone(), json_value);
             }
         }
-        
+
         map
     }
 }
@@ -415,7 +437,7 @@ impl SearchCandidate {
     fn to_search_result(self) -> InternalSearchResult {
         // Use the new from_vector_record method to preserve all fields including source
         let mut result = InternalSearchResult::from_vector_record(&self.record, self.score);
-        
+
         // Override vector and metadata based on include flags
         if !self.include_vectors {
             result.vector = None;
@@ -423,7 +445,7 @@ impl SearchCandidate {
         if !self.include_metadata {
             result.metadata = std::collections::HashMap::new();
         }
-        
+
         result
     }
 }
@@ -443,27 +465,29 @@ impl EarlyTerminationTracker {
             candidates: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Check if we should terminate early
     pub fn should_terminate(&self) -> bool {
         let candidates = self.candidates.read();
         candidates.len() >= (self.target_k as f32 * self.multiplier) as usize
     }
-    
+
     /// Add candidates
     pub fn add_candidates(&self, mut new_candidates: Vec<SearchCandidate>) {
         let mut candidates = self.candidates.write();
         candidates.append(&mut new_candidates);
     }
-    
+
     /// Get final results
     pub fn get_top_k(self) -> Vec<SearchCandidate> {
         let mut candidates = Arc::try_unwrap(self.candidates)
             .map(|rwlock| rwlock.into_inner())
             .unwrap_or_else(|arc| arc.read().clone());
-        
+
         candidates.sort_unstable_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates.truncate(self.target_k);
         candidates
@@ -473,24 +497,24 @@ impl EarlyTerminationTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_simd_cosine_similarity() {
         let search = ParallelWALSearch::new(DistanceMetric::Cosine);
-        
+
         let a = vec![1.0, 2.0, 3.0, 4.0];
         let b = vec![2.0, 3.0, 4.0, 5.0];
-        
+
         let simd_result = search.cosine_similarity_simd(&a, &b);
         let scalar_result = search.cosine_similarity_scalar(&a, &b);
-        
+
         assert!((simd_result - scalar_result).abs() < 0.001);
     }
-    
+
     #[test]
     fn test_parallel_sorting() {
         let search = ParallelWALSearch::new(DistanceMetric::Cosine);
-        
+
         let mut candidates = vec![];
         for i in 0..1000 {
             candidates.push(SearchCandidate {
@@ -500,13 +524,13 @@ mod tests {
                 include_metadata: false,
             });
         }
-        
+
         let sorted = search.parallel_top_k_sort(candidates, 10);
         assert_eq!(sorted.len(), 10);
-        
+
         // Check that results are sorted in descending order
         for i in 1..sorted.len() {
-            assert!(sorted[i-1].score >= sorted[i].score);
+            assert!(sorted[i - 1].score >= sorted[i].score);
         }
     }
 }

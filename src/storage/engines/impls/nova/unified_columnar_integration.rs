@@ -4,25 +4,24 @@
 //! while maintaining NOVA-specific optimizations like hierarchical statistics,
 //! zone maps, and streaming processing.
 
+use crate::compute::ComputationMethod;
+use crate::compute::distance_computation::DistanceMetric;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::ComputationMethod;
 
-use crate::core::VectorRecord;
-use crate::storage::engines::core::formats::columnar::{
-    CommonColumnarOperations, CommonColumnarConfig, ColumnarSchemaBuilder,
-    ColumnarSerializer, FormatPreference,
-    FilterableColumnSpec, FilterableData, QuantizationConfig,
-};
-use crate::storage::engines::core::formats::columnar::common::{
-    NovaOptimizations, ZoneMapOptimization, StreamingProcessingConfig,
-};
 use crate::compute::distance_computation::{
-    QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
-    SelectedFormat, Int8VectorData, PQVectorData,
+    Int8VectorData, PQVectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig,
+    QuantizedVectorData, SelectedFormat,
+};
+use crate::core::VectorRecord;
+use crate::storage::engines::core::formats::columnar::common::{
+    NovaOptimizations, StreamingProcessingConfig, ZoneMapOptimization,
+};
+use crate::storage::engines::core::formats::columnar::{
+    ColumnarSchemaBuilder, ColumnarSerializer, CommonColumnarConfig, CommonColumnarOperations,
+    FilterableColumnSpec, FilterableData, FormatPreference, QuantizationConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -30,22 +29,22 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 pub struct NovaUnifiedEngine {
     /// Common columnar operations
     common_ops: Arc<CommonColumnarOperations>,
-    
+
     /// NOVA-specific configuration
     nova_config: NovaSpecificConfig,
-    
+
     /// Hierarchical statistics manager
     hierarchical_stats: Arc<HierarchicalStatsManager>,
-    
+
     /// Zone map manager for multi-dimensional pruning
     zone_map_manager: Arc<ZoneMapManager>,
-    
+
     /// Streaming processor for large-scale operations
     streaming_processor: Arc<StreamingProcessor>,
-    
+
     /// Collection metadata cache
     collection_cache: Arc<tokio::sync::RwLock<HashMap<String, NovaCollectionMetadata>>>,
-    
+
     /// Distance computation engine
     distance_compute: Arc<crate::compute::distance_computation::UnifiedDistanceCompute>,
 }
@@ -55,16 +54,16 @@ pub struct NovaUnifiedEngine {
 pub struct NovaSpecificConfig {
     /// Enable hierarchical statistics
     pub enable_hierarchical_stats: bool,
-    
+
     /// Zone map configuration
     pub zone_map_config: ZoneMapConfig,
-    
+
     /// Streaming processing settings
     pub streaming_config: StreamingConfig,
-    
+
     /// Advanced caching configuration
     pub caching_config: AdvancedCachingConfig,
-    
+
     /// Progressive search optimization
     pub progressive_search_config: ProgressiveSearchConfig,
 }
@@ -74,16 +73,16 @@ pub struct NovaSpecificConfig {
 pub struct ZoneMapConfig {
     /// Enable zone maps
     pub enable_zone_maps: bool,
-    
+
     /// Zone size (number of vectors per zone)
     pub zone_size: usize,
-    
+
     /// Enable nested zone maps
     pub enable_nested_zones: bool,
-    
+
     /// Maximum zone depth
     pub max_zone_depth: usize,
-    
+
     /// Zone map pruning threshold
     pub pruning_threshold: f32,
 }
@@ -93,16 +92,16 @@ pub struct ZoneMapConfig {
 pub struct StreamingConfig {
     /// Enable streaming processing
     pub enable_streaming: bool,
-    
+
     /// Stream buffer size
     pub stream_buffer_size: usize,
-    
+
     /// Maximum concurrent streams
     pub max_concurrent_streams: usize,
-    
+
     /// Stream timeout in seconds
     pub stream_timeout_seconds: u64,
-    
+
     /// Enable adaptive streaming
     pub enable_adaptive_streaming: bool,
 }
@@ -112,16 +111,16 @@ pub struct StreamingConfig {
 pub struct AdvancedCachingConfig {
     /// Enable adaptive caching
     pub enable_adaptive_caching: bool,
-    
+
     /// Cache size in MB
     pub cache_size_mb: usize,
-    
+
     /// Number of cache levels
     pub cache_levels: usize,
-    
+
     /// Prefetch strategy
     pub prefetch_strategy: PrefetchStrategy,
-    
+
     /// Enable cache warming
     pub enable_cache_warming: bool,
 }
@@ -140,13 +139,13 @@ pub enum PrefetchStrategy {
 pub struct ProgressiveSearchConfig {
     /// Enable progressive refinement
     pub enable_progressive: bool,
-    
+
     /// Quality thresholds for each stage
     pub quality_thresholds: QualityThresholds,
-    
+
     /// Enable early termination
     pub enable_early_termination: bool,
-    
+
     /// Confidence threshold for early termination
     pub confidence_threshold: f32,
 }
@@ -178,13 +177,13 @@ struct NovaCollectionMetadata {
 pub struct HierarchicalStatistics {
     /// Super block statistics
     pub super_blocks: Vec<SuperBlockStats>,
-    
+
     /// Row group statistics
     pub row_group_stats: Vec<RowGroupStats>,
-    
+
     /// Column statistics
     pub column_stats: HashMap<String, ColumnStats>,
-    
+
     /// Global statistics
     pub global_stats: GlobalStats,
 }
@@ -260,7 +259,7 @@ impl HierarchicalStatsManager {
             stats_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
-    
+
     pub async fn metrics(&self) -> HashMap<String, f64> {
         let mut metrics = HashMap::new();
         let stats = self.stats_cache.read().await;
@@ -282,7 +281,7 @@ impl ZoneMapManager {
             zone_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
-    
+
     pub async fn metrics(&self) -> HashMap<String, f64> {
         let mut metrics = HashMap::new();
         let zones = self.zone_cache.read().await;
@@ -304,7 +303,7 @@ impl StreamingProcessor {
             active_streams: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
-    
+
     pub async fn metrics(&self) -> HashMap<String, f64> {
         let mut metrics = HashMap::new();
         let streams = self.active_streams.read().await;
@@ -356,27 +355,29 @@ impl NovaUnifiedEngine {
         nova_config: NovaSpecificConfig,
     ) -> Result<Self> {
         info!("Initializing NOVA engine with unified columnar infrastructure");
-        
+
         // Create common columnar configuration optimized for NOVA
         let common_config = Self::create_nova_optimized_config(&nova_config);
-        
+
         // Initialize common operations
-        let common_ops = Arc::new(
-            CommonColumnarOperations::new(common_config, filesystem_factory).await?
-        );
-        
+        let common_ops =
+            Arc::new(CommonColumnarOperations::new(common_config, filesystem_factory).await?);
+
         // Initialize NOVA-specific components
         let hierarchical_stats = Arc::new(HierarchicalStatsManager::new(nova_config.clone()));
         let zone_map_manager = Arc::new(ZoneMapManager::new(nova_config.zone_map_config.clone()));
-        let streaming_processor = Arc::new(StreamingProcessor::new(nova_config.streaming_config.clone()));
-        
+        let streaming_processor = Arc::new(StreamingProcessor::new(
+            nova_config.streaming_config.clone(),
+        ));
+
         let collection_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
-        
+
         // Initialize distance compute engine
-        let distance_compute = Arc::new(crate::compute::distance_computation::UnifiedDistanceCompute::default());
-        
+        let distance_compute =
+            Arc::new(crate::compute::distance_computation::UnifiedDistanceCompute::default());
+
         info!("NOVA engine initialized with unified infrastructure and hierarchical optimizations");
-        
+
         Ok(Self {
             common_ops,
             nova_config,
@@ -387,89 +388,116 @@ impl NovaUnifiedEngine {
             distance_compute,
         })
     }
-    
+
     /// Streaming insert with hierarchical statistics and quantization
     pub async fn streaming_insert_with_quantization(
         &self,
         collection_id: &str,
         vector_stream: impl futures::Stream<Item = VectorRecord> + Send + Unpin,
-        quantization_engine: Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
+        quantization_engine: Option<
+            Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+        >,
     ) -> Result<StreamingInsertResult> {
         let start_time = std::time::Instant::now();
-        let session_id = format!("insert_{}_{}", collection_id, chrono::Utc::now().timestamp());
-        
-        info!("Starting streaming insert with quantization for collection: {}", collection_id);
-        
+        let session_id = format!(
+            "insert_{}_{}",
+            collection_id,
+            chrono::Utc::now().timestamp()
+        );
+
+        info!(
+            "Starting streaming insert with quantization for collection: {}",
+            collection_id
+        );
+
         // Initialize streaming session
-        let session = self.streaming_processor.start_session(
-            session_id.clone(),
-            collection_id.to_string(),
-            StreamType::Insert,
-        ).await?;
-        
+        let session = self
+            .streaming_processor
+            .start_session(
+                session_id.clone(),
+                collection_id.to_string(),
+                StreamType::Insert,
+            )
+            .await?;
+
         // Get collection metadata
-        let collection_metadata = self.get_or_create_nova_collection_metadata(collection_id).await?;
-        
+        let collection_metadata = self
+            .get_or_create_nova_collection_metadata(collection_id)
+            .await?;
+
         // Process stream in batches
         let mut total_inserted = 0;
         let mut batch_count = 0;
         let mut hierarchical_updates = Vec::new();
-        
+
         let batch_size = self.nova_config.streaming_config.stream_buffer_size;
         let mut current_batch = Vec::with_capacity(batch_size);
-        
+
         use futures::StreamExt;
         let mut stream = Box::pin(vector_stream);
-        
+
         while let Some(vector) = stream.next().await {
             current_batch.push(vector);
-            
+
             if current_batch.len() >= batch_size {
                 // Process batch using unified infrastructure
-                let batch_result = self.process_insert_batch(
-                    collection_id,
-                    &collection_metadata,
-                    std::mem::take(&mut current_batch),
-                ).await?;
-                
+                let batch_result = self
+                    .process_insert_batch(
+                        collection_id,
+                        &collection_metadata,
+                        std::mem::take(&mut current_batch),
+                    )
+                    .await?;
+
                 total_inserted += batch_result.vectors_inserted;
                 hierarchical_updates.extend(batch_result.hierarchical_updates);
                 batch_count += 1;
-                
+
                 // Update streaming session
-                self.streaming_processor.update_session(&session_id, batch_result.vectors_inserted).await?;
-                
-                debug!("Processed batch {} ({} vectors)", batch_count, batch_result.vectors_inserted);
+                self.streaming_processor
+                    .update_session(&session_id, batch_result.vectors_inserted)
+                    .await?;
+
+                debug!(
+                    "Processed batch {} ({} vectors)",
+                    batch_count, batch_result.vectors_inserted
+                );
             }
         }
-        
+
         // Process remaining vectors
         if !current_batch.is_empty() {
-            let batch_result = self.process_insert_batch(
-                collection_id,
-                &collection_metadata,
-                current_batch,
-            ).await?;
-            
+            let batch_result = self
+                .process_insert_batch(collection_id, &collection_metadata, current_batch)
+                .await?;
+
             total_inserted += batch_result.vectors_inserted;
             hierarchical_updates.extend(batch_result.hierarchical_updates);
             batch_count += 1;
         }
-        
+
         // Update hierarchical statistics
-        self.hierarchical_stats.update_statistics(collection_id, hierarchical_updates).await?;
-        
+        self.hierarchical_stats
+            .update_statistics(collection_id, hierarchical_updates)
+            .await?;
+
         // Update zone maps
-        self.zone_map_manager.rebuild_zones(collection_id, &collection_metadata).await?;
-        
+        self.zone_map_manager
+            .rebuild_zones(collection_id, &collection_metadata)
+            .await?;
+
         // Complete streaming session
-        self.streaming_processor.complete_session(&session_id).await?;
-        
+        self.streaming_processor
+            .complete_session(&session_id)
+            .await?;
+
         let total_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
-        info!("Streaming insert completed: {} vectors in {:.2}ms ({} batches)", 
-              total_inserted, total_time, batch_count);
-        
+
+        info!(
+            "Streaming insert completed: {} vectors in {:.2}ms ({} batches)",
+            total_inserted, total_time, batch_count
+        );
+
         Ok(StreamingInsertResult {
             vectors_inserted: total_inserted,
             batches_processed: batch_count,
@@ -478,7 +506,7 @@ impl NovaUnifiedEngine {
             zone_maps_rebuilt: true,
         })
     }
-    
+
     /// Advanced search with hierarchical pruning and progressive refinement
     pub async fn advanced_search(
         &self,
@@ -488,97 +516,121 @@ impl NovaUnifiedEngine {
         search_options: AdvancedSearchOptions,
     ) -> Result<AdvancedSearchResult> {
         let start_time = std::time::Instant::now();
-        
-        info!("Advanced search on collection: {} (top_k: {}, quality_level: {:.2})", 
-              collection_id, top_k, search_options.target_quality);
-        
+
+        info!(
+            "Advanced search on collection: {} (top_k: {}, quality_level: {:.2})",
+            collection_id, top_k, search_options.target_quality
+        );
+
         // Get collection metadata with hierarchical stats
         let collection_metadata = self.get_nova_collection_metadata(collection_id).await?;
-        
+
         // Phase 1: Hierarchical pruning using super blocks
         let pruning_start = std::time::Instant::now();
-        let candidate_super_blocks = self.prune_super_blocks(
-            &query_vector,
-            &collection_metadata.hierarchical_stats,
-            &search_options,
-        ).await?;
+        let candidate_super_blocks = self
+            .prune_super_blocks(
+                &query_vector,
+                &collection_metadata.hierarchical_stats,
+                &search_options,
+            )
+            .await?;
         let pruning_time = pruning_start.elapsed().as_secs_f64() * 1000.0;
-        
-        debug!("Hierarchical pruning selected {} super blocks in {:.2}ms", 
-               candidate_super_blocks.len(), pruning_time);
-        
+
+        debug!(
+            "Hierarchical pruning selected {} super blocks in {:.2}ms",
+            candidate_super_blocks.len(),
+            pruning_time
+        );
+
         // Phase 2: Zone map pruning
         let zone_pruning_start = std::time::Instant::now();
-        let candidate_zones = self.zone_map_manager.prune_zones(
-            &query_vector,
-            &collection_metadata.zone_maps,
-            &candidate_super_blocks,
-        ).await?;
+        let candidate_zones = self
+            .zone_map_manager
+            .prune_zones(
+                &query_vector,
+                &collection_metadata.zone_maps,
+                &candidate_super_blocks,
+            )
+            .await?;
         let zone_pruning_time = zone_pruning_start.elapsed().as_secs_f64() * 1000.0;
-        
-        debug!("Zone map pruning selected {} zones in {:.2}ms", 
-               candidate_zones.len(), zone_pruning_time);
-        
+
+        debug!(
+            "Zone map pruning selected {} zones in {:.2}ms",
+            candidate_zones.len(),
+            zone_pruning_time
+        );
+
         // Phase 3: Load quantized vectors from selected zones
         let loading_start = std::time::Instant::now();
-        let quantized_vectors = self.load_vectors_from_zones(
-            collection_id,
-            &candidate_zones,
-            search_options.max_vectors_to_evaluate,
-        ).await?;
+        let quantized_vectors = self
+            .load_vectors_from_zones(
+                collection_id,
+                &candidate_zones,
+                search_options.max_vectors_to_evaluate,
+            )
+            .await?;
         let loading_time = loading_start.elapsed().as_secs_f64() * 1000.0;
-        
-        debug!("Loaded {} quantized vectors in {:.2}ms", 
-               quantized_vectors.len(), loading_time);
-        
+
+        debug!(
+            "Loaded {} quantized vectors in {:.2}ms",
+            quantized_vectors.len(),
+            loading_time
+        );
+
         // Phase 4: Progressive distance computation
         let computation_start = std::time::Instant::now();
         let distance_results = if search_options.enable_progressive {
-            let prog_results = self.compute_progressive_distances(
-                &query_vector,
-                &quantized_vectors,
-                search_options.target_quality,
-                top_k,
-            ).await?;
+            let prog_results = self
+                .compute_progressive_distances(
+                    &query_vector,
+                    &quantized_vectors,
+                    search_options.target_quality,
+                    top_k,
+                )
+                .await?;
             // Convert QuantizedDistanceResult to (VectorRecord, f32)
             // TODO: This needs to be refactored to load IDs from storage along with vectors
             // The current implementation is a placeholder that won't work in production
             Vec::new()
         } else {
             // Use centralized quantized distance calculator
-            let distance_calc = QuantizedDistanceCalculator::new(QuantizedDistanceConfig::default())?;
-            let format = search_options.format_preference.as_ref()
+            let distance_calc =
+                QuantizedDistanceCalculator::new(QuantizedDistanceConfig::default())?;
+            let format = search_options
+                .format_preference
+                .as_ref()
                 .cloned()
                 .unwrap_or(SelectedFormat::FP32); // Default to full precision
-            let distances = distance_calc.compute_columnar_batch_distances(
-                &query_vector,
-                &quantized_vectors,
-                format,
-            ).await?;
-            
+            let distances = distance_calc
+                .compute_columnar_batch_distances(&query_vector, &quantized_vectors, format)
+                .await?;
+
             // Convert to VectorRecords with scores
             // TODO: This needs to be refactored to load IDs from storage along with vectors
             // The current implementation is a placeholder that won't work in production
             Vec::new()
         };
         let computation_time = computation_start.elapsed().as_secs_f64() * 1000.0;
-        
-        debug!("Distance computation completed in {:.2}ms", computation_time);
-        
+
+        debug!(
+            "Distance computation completed in {:.2}ms",
+            computation_time
+        );
+
         // Phase 5: Result ranking and post-processing
         let ranking_start = std::time::Instant::now();
-        let final_results = self.rank_and_filter_results(
-            distance_results,
-            top_k,
-            &search_options,
-        ).await?;
+        let final_results = self
+            .rank_and_filter_results(distance_results, top_k, &search_options)
+            .await?;
         let ranking_time = ranking_start.elapsed().as_secs_f64() * 1000.0;
-        
+
         let total_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
-        info!("Advanced search completed in {:.2}ms with {} phases", 
-              total_time, 5);
-        
+
+        info!(
+            "Advanced search completed in {:.2}ms with {} phases",
+            total_time, 5
+        );
+
         Ok(AdvancedSearchResult {
             results: final_results,
             total_time_ms: total_time,
@@ -595,15 +647,21 @@ impl NovaUnifiedEngine {
                 zones_evaluated: collection_metadata.zone_maps.len(),
                 zones_selected: candidate_zones.len(),
                 vectors_evaluated: quantized_vectors.len(),
-                pruning_efficiency: 1.0 - (quantized_vectors.len() as f32 / collection_metadata.hierarchical_stats.global_stats.total_vectors as f32),
+                pruning_efficiency: 1.0
+                    - (quantized_vectors.len() as f32
+                        / collection_metadata
+                            .hierarchical_stats
+                            .global_stats
+                            .total_vectors as f32),
             },
         })
     }
-    
+
     /// Get NOVA performance metrics including hierarchical statistics
     pub async fn get_nova_performance_metrics(&self) -> Result<NovaPerformanceMetrics> {
-        let (operation_metrics, resource_metrics) = self.common_ops.get_performance_metrics().await?;
-        
+        let (operation_metrics, resource_metrics) =
+            self.common_ops.get_performance_metrics().await?;
+
         // Convert HashMap metrics to proper types
         let hierarchical_metrics = HierarchicalMetrics {
             super_blocks_count: 0,
@@ -611,21 +669,21 @@ impl NovaUnifiedEngine {
             statistics_updates: 0,
             pruning_efficiency: 0.85,
         };
-        
+
         let zone_map_metrics = ZoneMapMetrics {
             zones_count: 0,
             nested_zones_count: 0,
             pruning_operations: 0,
             pruning_effectiveness: 0.9,
         };
-        
+
         let streaming_metrics = StreamingMetrics {
             active_streams: 0,
             completed_streams: 0,
             total_vectors_streamed: 0,
             average_stream_throughput: 100.0,
         };
-        
+
         Ok(NovaPerformanceMetrics {
             operation_metrics,
             resource_metrics,
@@ -634,16 +692,15 @@ impl NovaUnifiedEngine {
             streaming_metrics,
         })
     }
-    
+
     // Helper methods
-    
+
     /// Create NOVA-optimized configuration
     fn create_nova_optimized_config(nova_config: &NovaSpecificConfig) -> CommonColumnarConfig {
-        use crate::storage::engines::core::formats::columnar::{
-        };
         
+
         let mut config = CommonColumnarConfig::default();
-        
+
         // NOVA-specific optimizations
         config.engine_optimizations.nova_optimizations = NovaOptimizations {
             enable_hierarchical_stats: nova_config.enable_hierarchical_stats,
@@ -667,18 +724,21 @@ impl NovaUnifiedEngine {
                 enable_cache_warming: false, // Default to false for now
             },
         };
-        
+
         // Progressive search optimization is now handled by the engine directly
         // Distance computation configuration is managed through the compute module
-        
+
         config
     }
-    
+
     // Placeholder implementations for complex operations
-    async fn get_or_create_nova_collection_metadata(&self, collection_id: &str) -> Result<NovaCollectionMetadata> {
+    async fn get_or_create_nova_collection_metadata(
+        &self,
+        collection_id: &str,
+    ) -> Result<NovaCollectionMetadata> {
         // Similar to VIPER but with NOVA-specific hierarchical stats and zone maps
         // This would be implemented with actual collection service integration
-        
+
         let metadata = NovaCollectionMetadata {
             collection_id: collection_id.to_string(),
             dimension: 768,
@@ -704,17 +764,21 @@ impl NovaUnifiedEngine {
             },
             zone_maps: vec![],
         };
-        
+
         Ok(metadata)
     }
-    
-    async fn get_nova_collection_metadata(&self, collection_id: &str) -> Result<NovaCollectionMetadata> {
+
+    async fn get_nova_collection_metadata(
+        &self,
+        collection_id: &str,
+    ) -> Result<NovaCollectionMetadata> {
         let cache = self.collection_cache.read().await;
-        cache.get(collection_id)
+        cache
+            .get(collection_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("NOVA collection metadata not found: {}", collection_id))
     }
-    
+
     async fn process_insert_batch(
         &self,
         collection_id: &str,
@@ -722,21 +786,34 @@ impl NovaUnifiedEngine {
         batch: Vec<VectorRecord>,
     ) -> Result<BatchInsertResult> {
         // Process batch using unified infrastructure
-        let serialization_result = self.common_ops.serialize_records(&batch, &metadata.schema).await?;
-        
+        let serialization_result = self
+            .common_ops
+            .serialize_records(&batch, &metadata.schema)
+            .await?;
+
         // Generate hierarchical updates (placeholder)
         let hierarchical_updates = vec![
-            HierarchicalUpdate::SuperBlockCreated { super_block_id: 1, vector_count: batch.len() },
-            HierarchicalUpdate::RowGroupCreated { row_group_id: 1, super_block_id: 1, vector_count: batch.len() },
+            HierarchicalUpdate::SuperBlockCreated {
+                super_block_id: 1,
+                vector_count: batch.len(),
+            },
+            HierarchicalUpdate::RowGroupCreated {
+                row_group_id: 1,
+                super_block_id: 1,
+                vector_count: batch.len(),
+            },
         ];
-        
+
         Ok(BatchInsertResult {
             vectors_inserted: batch.len(),
-            compression_ratio: serialization_result.metadata.compression_stats.compression_ratio,
+            compression_ratio: serialization_result
+                .metadata
+                .compression_stats
+                .compression_ratio,
             hierarchical_updates,
         })
     }
-    
+
     async fn prune_super_blocks(
         &self,
         _query_vector: &[f32],
@@ -744,9 +821,13 @@ impl NovaUnifiedEngine {
         _search_options: &AdvancedSearchOptions,
     ) -> Result<Vec<usize>> {
         // Placeholder: return all super block IDs
-        Ok(hierarchical_stats.super_blocks.iter().map(|sb| sb.super_block_id).collect())
+        Ok(hierarchical_stats
+            .super_blocks
+            .iter()
+            .map(|sb| sb.super_block_id)
+            .collect())
     }
-    
+
     async fn load_vectors_from_zones(
         &self,
         _collection_id: &str,
@@ -770,7 +851,7 @@ impl NovaUnifiedEngine {
         ];
         Ok(vectors)
     }
-    
+
     async fn compute_progressive_distances(
         &self,
         query_vector: &[f32],
@@ -781,7 +862,7 @@ impl NovaUnifiedEngine {
         // Progressive distance computation using best available representation
         let mut results = Vec::new();
         let distance_metric = DistanceMetric::Cosine; // Get from collection config in production
-        
+
         for vector in quantized_vectors {
             // Determine quality level based on available data
             let (similarity, quality_estimate) = if let Some(fp32_vec) = &vector.fp32 {
@@ -794,7 +875,8 @@ impl NovaUnifiedEngine {
                 (sim, 1.0) // Perfect quality
             } else if let Some(int8_data) = &vector.int8 {
                 // Good quality: dequantize INT8 and compute
-                let dequantized = dequantize_int8(&int8_data.values, int8_data.scale, int8_data.zero_point);
+                let dequantized =
+                    dequantize_int8(&int8_data.values, int8_data.scale, int8_data.zero_point);
                 let sim = self.distance_compute.calculate_distance(
                     query_vector,
                     &dequantized,
@@ -822,26 +904,28 @@ impl NovaUnifiedEngine {
                 };
                 (sim, 0.0)
             };
-            
+
             // Create QuantizedDistanceResult
             let result = crate::compute::distance_computation::quantized::QuantizedDistanceResult {
                 similarity: similarity.normalized_score,
                 quality_estimate,
-                method: crate::compute::distance_computation::quantized::ComputationMethod::ExactFP32,
-                metrics: crate::compute::distance_computation::quantized::DistanceMetrics::default(),
+                method:
+                    crate::compute::distance_computation::quantized::ComputationMethod::ExactFP32,
+                metrics: crate::compute::distance_computation::quantized::DistanceMetrics::default(
+                ),
             };
-            
+
             results.push(result);
-            
+
             // Early termination if quality threshold met
             if quality_estimate >= target_quality {
                 break;
             }
         }
-        
+
         Ok(results)
     }
-    
+
     async fn rank_and_filter_results(
         &self,
         mut distance_results: Vec<crate::compute::distance_computation::QuantizedDistanceResult>,
@@ -850,8 +934,9 @@ impl NovaUnifiedEngine {
     ) -> Result<Vec<NovaSearchResult>> {
         // Sort by distance and take top_k
         distance_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
-        
-        let results = distance_results.into_iter()
+
+        let results = distance_results
+            .into_iter()
             .take(top_k)
             .enumerate()
             .map(|(i, result)| NovaSearchResult {
@@ -862,7 +947,7 @@ impl NovaUnifiedEngine {
                 zone_id: None,
             })
             .collect();
-        
+
         Ok(results)
     }
 }
@@ -890,9 +975,19 @@ struct BatchInsertResult {
 /// Hierarchical statistics update
 #[derive(Debug)]
 enum HierarchicalUpdate {
-    SuperBlockCreated { super_block_id: usize, vector_count: usize },
-    RowGroupCreated { row_group_id: usize, super_block_id: usize, vector_count: usize },
-    StatisticsUpdated { component: String, change: f32 },
+    SuperBlockCreated {
+        super_block_id: usize,
+        vector_count: usize,
+    },
+    RowGroupCreated {
+        row_group_id: usize,
+        super_block_id: usize,
+        vector_count: usize,
+    },
+    StatisticsUpdated {
+        component: String,
+        change: f32,
+    },
 }
 
 /// Advanced search options
@@ -949,7 +1044,8 @@ pub struct PruningStatistics {
 /// NOVA performance metrics
 #[derive(Debug)]
 pub struct NovaPerformanceMetrics {
-    pub operation_metrics: crate::storage::engines::core::formats::columnar::common::OperationMetrics,
+    pub operation_metrics:
+        crate::storage::engines::core::formats::columnar::common::OperationMetrics,
     pub resource_metrics: crate::storage::engines::core::formats::columnar::common::ResourceMetrics,
     pub hierarchical_metrics: HierarchicalMetrics,
     pub zone_map_metrics: ZoneMapMetrics,
@@ -986,11 +1082,15 @@ pub struct StreamingMetrics {
 // Implementation of supporting managers
 
 impl HierarchicalStatsManager {
-    async fn update_statistics(&self, _collection_id: &str, _updates: Vec<HierarchicalUpdate>) -> Result<()> {
+    async fn update_statistics(
+        &self,
+        _collection_id: &str,
+        _updates: Vec<HierarchicalUpdate>,
+    ) -> Result<()> {
         // Placeholder implementation
         Ok(())
     }
-    
+
     async fn get_metrics(&self) -> HierarchicalMetrics {
         HierarchicalMetrics {
             super_blocks_count: 0,
@@ -1002,11 +1102,15 @@ impl HierarchicalStatsManager {
 }
 
 impl ZoneMapManager {
-    async fn rebuild_zones(&self, _collection_id: &str, _metadata: &NovaCollectionMetadata) -> Result<()> {
+    async fn rebuild_zones(
+        &self,
+        _collection_id: &str,
+        _metadata: &NovaCollectionMetadata,
+    ) -> Result<()> {
         // Placeholder implementation
         Ok(())
     }
-    
+
     async fn prune_zones(
         &self,
         _query_vector: &[f32],
@@ -1016,7 +1120,7 @@ impl ZoneMapManager {
         // Placeholder: return all zone IDs
         Ok(zone_maps.iter().map(|z| z.zone_id).collect())
     }
-    
+
     async fn get_metrics(&self) -> ZoneMapMetrics {
         ZoneMapMetrics {
             zones_count: 0,
@@ -1042,13 +1146,13 @@ impl StreamingProcessor {
             processed_count: 0,
             start_time: std::time::Instant::now(),
         };
-        
+
         let mut active_streams = self.active_streams.write().await;
         active_streams.insert(session_id, session.clone());
-        
+
         Ok(session)
     }
-    
+
     async fn update_session(&self, session_id: &str, processed_count: usize) -> Result<()> {
         let mut active_streams = self.active_streams.write().await;
         if let Some(session) = active_streams.get_mut(session_id) {
@@ -1056,18 +1160,18 @@ impl StreamingProcessor {
         }
         Ok(())
     }
-    
+
     async fn complete_session(&self, session_id: &str) -> Result<()> {
         let mut active_streams = self.active_streams.write().await;
         active_streams.remove(session_id);
         Ok(())
     }
-    
+
     async fn get_metrics(&self) -> StreamingMetrics {
         let active_streams = self.active_streams.read().await;
         StreamingMetrics {
             active_streams: active_streams.len(),
-            completed_streams: 0, // Would track in real implementation
+            completed_streams: 0,      // Would track in real implementation
             total_vectors_streamed: 0, // Would track in real implementation
             average_stream_throughput: 1000.0, // Placeholder
         }
@@ -1143,32 +1247,32 @@ impl Default for ProgressiveSearchConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_nova_config_defaults() {
         let config = NovaSpecificConfig::default();
-        
+
         assert!(config.enable_hierarchical_stats);
         assert!(config.zone_map_config.enable_zone_maps);
         assert!(config.streaming_config.enable_streaming);
         assert!(config.caching_config.enable_adaptive_caching);
         assert!(config.progressive_search_config.enable_progressive);
     }
-    
+
     #[test]
     fn test_zone_map_config() {
         let config = ZoneMapConfig::default();
-        
+
         assert_eq!(config.zone_size, 10000);
         assert!(config.enable_nested_zones);
         assert_eq!(config.max_zone_depth, 3);
         assert_eq!(config.pruning_threshold, 0.1);
     }
-    
+
     #[test]
     fn test_streaming_config() {
         let config = StreamingConfig::default();
-        
+
         assert_eq!(config.stream_buffer_size, 1000);
         assert_eq!(config.max_concurrent_streams, 8);
         assert_eq!(config.stream_timeout_seconds, 300);

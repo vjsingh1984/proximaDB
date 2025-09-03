@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::index::axis::types::{
-    Data, IndexAlgorithm, IndexSpecification, IndexSelectionStrategy,
-    QueryCondition, ResultCombination, RoutingRule, TextAnalyzer, Tokenizer, TokenFilter,
+    Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification, QueryCondition,
+    ResultCombination, RoutingRule, TextAnalyzer, TokenFilter, Tokenizer,
 };
 
 // Type aliases for compatibility
@@ -86,42 +86,41 @@ pub struct QueryPatterns {
 }
 
 impl IndexStrategyBuilder {
-    pub fn new(
-        collection_stats: CollectionStatistics,
-        query_patterns: QueryPatterns,
-    ) -> Self {
+    pub fn new(collection_stats: CollectionStatistics, query_patterns: QueryPatterns) -> Self {
         Self {
             collection_stats,
             query_patterns,
             optimization_config: OptimizationConfig::default(),
         }
     }
-    
+
     pub fn with_optimization(mut self, config: OptimizationConfig) -> Self {
         self.optimization_config = config;
         self
     }
-    
+
     /// Build optimal index strategy
     pub fn build(&self) -> Result<IndexSelectionStrategy> {
         let mut indexes = Vec::new();
         let mut routing_rules = Vec::new();
-        
+
         // Always add identifier index
         indexes.push(IndexSpecification {
             data_type: Data::Identifier,
-            algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+            algorithm: IndexAlgorithm::BTree {
+                max_keys_per_node: 256,
+            },
             name: Some("primary_id".to_string()),
             is_primary: false,
             selectivity_threshold: None,
         });
-        
+
         // Add vector index if we have vectors
         if self.collection_stats.total_vectors > 0 {
             let vector_index = self.select_vector_index()?;
             indexes.push(vector_index);
         }
-        
+
         // Add metadata indexes if needed
         if self.collection_stats.has_metadata && self.query_patterns.filter_usage_ratio > 0.1 {
             for (field, cardinality) in &self.collection_stats.metadata_cardinality {
@@ -141,7 +140,9 @@ impl IndexStrategyBuilder {
                     // High cardinality - use BTree
                     indexes.push(IndexSpecification {
                         data_type: Data::Metadata,
-                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        algorithm: IndexAlgorithm::BTree {
+                            max_keys_per_node: 256,
+                        },
                         name: Some(format!("btree_{}", field)),
                         is_primary: false,
                         selectivity_threshold: Some(0.5),
@@ -149,7 +150,7 @@ impl IndexStrategyBuilder {
                 }
             }
         }
-        
+
         // Add text index if needed
         if self.collection_stats.has_text_fields && self.query_patterns.text_search_ratio > 0.05 {
             indexes.push(IndexSpecification {
@@ -167,27 +168,29 @@ impl IndexStrategyBuilder {
                 selectivity_threshold: None,
             });
         }
-        
+
         // Create routing rules
         routing_rules.push(self.create_default_routing_rule(indexes.len()));
-        
+
         Ok(IndexSelectionStrategy {
             indexes,
             routing_rules,
         })
     }
-    
+
     fn select_vector_index(&self) -> Result<IndexSpecification> {
         let dimension = self.collection_stats.vector_dimension;
         let total_vectors = self.collection_stats.total_vectors;
         let sparsity = self.collection_stats.avg_vector_sparsity;
-        
+
         let data_type = if sparsity > 0.8 {
-            Data::SparseVector { max_dimension: dimension }
+            Data::SparseVector {
+                max_dimension: dimension,
+            }
         } else {
             Data::DenseVector { dimension }
         };
-        
+
         // Select algorithm based on size and requirements
         let algorithm = match (total_vectors, self.optimization_config.goal) {
             // Small collections - use HNSW
@@ -197,7 +200,7 @@ impl IndexStrategyBuilder {
                 ef_search: 50,
                 max_elements: n * 2,
             },
-            
+
             // Large collections with latency focus - partitioned HNSW
             (n, OptimizationGoal::MinLatency) if n < 10_000_000 => IndexAlgorithm::HNSW {
                 m: 32,
@@ -205,7 +208,7 @@ impl IndexStrategyBuilder {
                 ef_search: 100,
                 max_elements: n + (n / 10), // 10% growth buffer
             },
-            
+
             // Large collections with memory constraints - IVF+PQ
             (_, OptimizationGoal::MinMemory) => IndexAlgorithm::IVF {
                 nlist: (total_vectors as f64).sqrt() as u32,
@@ -216,7 +219,7 @@ impl IndexStrategyBuilder {
                     train_size: total_vectors.min(100_000),
                 })),
             },
-            
+
             // Very large collections - IVF
             _ => IndexAlgorithm::IVF {
                 nlist: (total_vectors as f64).sqrt() as u32,
@@ -224,7 +227,7 @@ impl IndexStrategyBuilder {
                 quantizer: None,
             },
         };
-        
+
         Ok(IndexSpecification {
             data_type,
             algorithm,
@@ -233,7 +236,7 @@ impl IndexStrategyBuilder {
             selectivity_threshold: None,
         })
     }
-    
+
     fn create_default_routing_rule(&self, num_indexes: usize) -> RoutingRule {
         RoutingRule {
             condition: QueryCondition::Always,
@@ -271,30 +274,28 @@ impl AdaptiveIndexStrategy {
             adaptation_enabled: true,
         }
     }
-    
+
     /// Adapt strategy based on observed performance
     pub fn adapt(&mut self) -> Result<()> {
         if !self.adaptation_enabled || self.performance_history.len() < 100 {
             return Ok(());
         }
-        
+
         // Analyze recent performance
         let recent_perf = &self.performance_history[self.performance_history.len() - 100..];
-        let avg_latency = recent_perf.iter()
-            .map(|p| p.latency_ms)
-            .sum::<f64>() / recent_perf.len() as f64;
-        let avg_recall = recent_perf.iter()
-            .map(|p| p.recall)
-            .sum::<f32>() / recent_perf.len() as f32;
-        
+        let avg_latency =
+            recent_perf.iter().map(|p| p.latency_ms).sum::<f64>() / recent_perf.len() as f64;
+        let avg_recall =
+            recent_perf.iter().map(|p| p.recall).sum::<f32>() / recent_perf.len() as f32;
+
         // Adjust routing rules if performance is poor
         if avg_latency > 100.0 || avg_recall < 0.9 {
             self.optimize_routing_rules(avg_latency, avg_recall)?;
         }
-        
+
         Ok(())
     }
-    
+
     fn optimize_routing_rules(&mut self, avg_latency: f64, avg_recall: f32) -> Result<()> {
         // This is a simplified optimization - real implementation would be more sophisticated
         for rule in &mut self.base_strategy.routing_rules {
@@ -315,7 +316,7 @@ impl AdaptiveIndexStrategy {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
-    
+
     #[test]
     fn test_strategy_builder_small_collection() {
         let stats = CollectionStatistics {
@@ -323,14 +324,13 @@ mod tests {
             vector_dimension: 128,
             avg_vector_sparsity: 0.1,
             has_metadata: true,
-            metadata_cardinality: vec![
-                ("category".to_string(), 10),
-                ("price".to_string(), 1000),
-            ].into_iter().collect(),
+            metadata_cardinality: vec![("category".to_string(), 10), ("price".to_string(), 1000)]
+                .into_iter()
+                .collect(),
             has_text_fields: false,
             update_frequency: 1.0,
         };
-        
+
         let patterns = QueryPatterns {
             avg_queries_per_second: 100.0,
             filter_usage_ratio: 0.3,
@@ -338,18 +338,21 @@ mod tests {
             typical_k: 10,
             recall_requirement: 0.95,
         };
-        
-        let strategy = IndexStrategyBuilder::new(stats, patterns)
-            .build()
-            .unwrap();
-        
+
+        let strategy = IndexStrategyBuilder::new(stats, patterns).build().unwrap();
+
         // Should have identifier, vector, and metadata indexes
         assert!(strategy.indexes.len() >= 3);
-        
+
         // Vector index should be HNSW for small collection
-        let vector_index = strategy.indexes.iter()
+        let vector_index = strategy
+            .indexes
+            .iter()
             .find(|idx| matches!(idx.data_type, Data::DenseVector { .. }))
             .unwrap();
-        assert!(matches!(vector_index.algorithm, IndexAlgorithm::HNSW { .. }));
+        assert!(matches!(
+            vector_index.algorithm,
+            IndexAlgorithm::HNSW { .. }
+        ));
     }
 }

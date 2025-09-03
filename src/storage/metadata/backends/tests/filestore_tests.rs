@@ -14,7 +14,8 @@ mod tests {
     #[tokio::test]
     async fn test_filestore_backend_create() {
         // Basic creation test
-        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let config = FilestoreMetadataConfig {
             storage_url: "file:///tmp/test_metadata_info".to_string(),
             compression: true,

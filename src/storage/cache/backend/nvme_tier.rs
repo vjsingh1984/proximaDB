@@ -27,40 +27,40 @@ where
 {
     type Key = K;
     type Value = V;
-    
+
     async fn get(&self, _key: &Self::Key) -> Option<Self::Value> {
         // TODO: Implement NVMe storage
         None
     }
-    
+
     async fn put(&self, _key: Self::Key, _value: Self::Value) -> Result<(), StorageError> {
         // TODO: Implement NVMe storage
         Ok(())
     }
-    
+
     async fn remove(&self, _key: &Self::Key) -> bool {
         // TODO: Implement NVMe storage
         false
     }
-    
+
     async fn contains(&self, _key: &Self::Key) -> bool {
         // TODO: Implement NVMe storage
         false
     }
-    
+
     async fn clear(&self) -> Result<(), StorageError> {
         // TODO: Implement NVMe storage
         Ok(())
     }
-    
+
     async fn size_bytes(&self) -> usize {
         0
     }
-    
+
     async fn entry_count(&self) -> usize {
         0
     }
-    
+
     fn tier(&self) -> CacheTier {
         CacheTier::L2
     }

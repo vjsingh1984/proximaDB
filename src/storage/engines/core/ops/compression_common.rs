@@ -5,8 +5,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::compression::CompressionAlgorithm;
+use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
 
 /// Universal compression configuration
@@ -14,28 +14,28 @@ use crate::metrics::compression::CompressionData;
 pub struct UniversalCompressionConfig {
     /// Enable compression
     pub enabled: bool,
-    
+
     /// Primary compression algorithm
     pub primary_algorithm: CompressionAlgorithm,
-    
+
     /// Fallback algorithms
     pub fallback_algorithms: Vec<CompressionAlgorithm>,
-    
+
     /// Compression level (1-9, algorithm dependent)
     pub compression_level: u8,
-    
+
     /// Adaptive compression settings
     pub adaptive_settings: AdaptiveCompressionSettings,
-    
+
     /// Context-aware compression
     pub context_aware: ContextAwareCompressionConfig,
-    
+
     /// Hardware optimizations
     pub hardware_optimizations: CompressionHardwareConfig,
-    
+
     /// Performance tuning
     pub performance_config: CompressionPerformanceConfig,
-    
+
     /// Quality settings
     pub quality_settings: CompressionQualitySettings,
 }
@@ -45,16 +45,16 @@ pub struct UniversalCompressionConfig {
 pub struct AdaptiveCompressionSettings {
     /// Enable adaptive compression
     pub enabled: bool,
-    
+
     /// Adaptation strategies
     pub strategies: Vec<CompressionStrategy>,
-    
+
     /// Adaptation criteria
     pub criteria: AdaptationCriteria,
-    
+
     /// Minimum adaptation interval
     pub min_adaptation_interval_ms: u64,
-    
+
     /// Maximum adaptation overhead
     pub max_adaptation_overhead_percent: f32,
 }
@@ -80,43 +80,43 @@ pub enum CompressionStrategy {
         target_latency_ms: f64,
         min_compression_ratio: f32,
     },
-    
+
     /// Optimize for compression ratio
     Ratio {
         target_compression_ratio: f32,
         max_latency_ms: f64,
     },
-    
+
     /// Balanced optimization
     Balanced {
         speed_weight: f32,
         ratio_weight: f32,
     },
-    
+
     /// Memory-constrained optimization
     Memory {
         max_memory_usage_mb: u64,
         prefer_streaming: bool,
     },
-    
+
     /// CPU-constrained optimization
     CPU {
         max_cpu_percent: f32,
         enable_hardware_acceleration: bool,
     },
-    
+
     /// Network-optimized compression
     Network {
         bandwidth_mbps: f64,
         latency_ms: f64,
     },
-    
+
     /// Storage-optimized compression
     Storage {
         storage_type: StorageType,
         io_pattern: IOPattern,
     },
-    
+
     /// Custom strategy
     Custom {
         strategy_name: String,
@@ -150,13 +150,13 @@ pub enum IOPattern {
 pub struct AdaptationCriteria {
     /// Data characteristics
     pub data_characteristics: DataCharacteristics,
-    
+
     /// Performance thresholds
     pub performance_thresholds: PerformanceThresholds,
-    
+
     /// Resource constraints
     pub resource_constraints: ResourceConstraints,
-    
+
     /// Quality requirements
     pub quality_requirements: QualityRequirements,
 }
@@ -166,13 +166,13 @@ pub struct AdaptationCriteria {
 pub struct DataCharacteristics {
     /// Data entropy thresholds
     pub entropy_thresholds: EntropyThresholds,
-    
+
     /// Data size thresholds
     pub size_thresholds: SizeThresholds,
-    
+
     /// Data pattern recognition
     pub pattern_recognition: PatternRecognitionConfig,
-    
+
     /// Data type hints
     pub data_type_hints: Vec<DataHint>,
 }
@@ -182,10 +182,10 @@ pub struct DataCharacteristics {
 pub struct EntropyThresholds {
     /// Low entropy threshold (highly compressible)
     pub low_entropy: f64,
-    
+
     /// High entropy threshold (less compressible)
     pub high_entropy: f64,
-    
+
     /// Entropy calculation method
     pub calculation_method: EntropyCalculationMethod,
 }
@@ -204,10 +204,10 @@ pub enum EntropyCalculationMethod {
 pub struct SizeThresholds {
     /// Small data threshold (bytes)
     pub small_data_threshold: u64,
-    
+
     /// Large data threshold (bytes)
     pub large_data_threshold: u64,
-    
+
     /// Block size considerations
     pub block_size_optimization: bool,
 }
@@ -217,13 +217,13 @@ pub struct SizeThresholds {
 pub struct PatternRecognitionConfig {
     /// Enable pattern recognition
     pub enabled: bool,
-    
+
     /// Pattern types to detect
     pub pattern_types: Vec<DataPattern>,
-    
+
     /// Recognition accuracy threshold
     pub accuracy_threshold: f32,
-    
+
     /// Pattern cache size
     pub pattern_cache_size: usize,
 }
@@ -263,16 +263,16 @@ pub enum DataHint {
 pub struct PerformanceThresholds {
     /// Maximum compression latency (ms)
     pub max_compression_latency_ms: f64,
-    
+
     /// Maximum decompression latency (ms)
     pub max_decompression_latency_ms: f64,
-    
+
     /// Minimum throughput (MB/s)
     pub min_throughput_mbps: f64,
-    
+
     /// Maximum CPU usage (%)
     pub max_cpu_usage_percent: f32,
-    
+
     /// Maximum memory usage (MB)
     pub max_memory_usage_mb: u64,
 }
@@ -282,13 +282,13 @@ pub struct PerformanceThresholds {
 pub struct ResourceConstraints {
     /// Memory constraints
     pub memory_constraints: MemoryConstraints,
-    
+
     /// CPU constraints
     pub cpu_constraints: CPUConstraints,
-    
+
     /// I/O constraints
     pub io_constraints: IOConstraints,
-    
+
     /// Network constraints
     pub network_constraints: Option<NetworkConstraints>,
 }
@@ -298,13 +298,13 @@ pub struct ResourceConstraints {
 pub struct MemoryConstraints {
     /// Maximum working memory (bytes)
     pub max_working_memory: u64,
-    
+
     /// Maximum buffer size (bytes)
     pub max_buffer_size: u64,
-    
+
     /// Memory pressure threshold
     pub memory_pressure_threshold: f32,
-    
+
     /// Enable memory mapping
     pub enable_memory_mapping: bool,
 }
@@ -314,13 +314,13 @@ pub struct MemoryConstraints {
 pub struct CPUConstraints {
     /// Maximum CPU cores to use
     pub max_cpu_cores: Option<usize>,
-    
+
     /// Maximum CPU usage (%)
     pub max_cpu_usage_percent: f32,
-    
+
     /// Enable hardware acceleration
     pub enable_hardware_acceleration: bool,
-    
+
     /// Thread priority
     pub thread_priority: ThreadPriority,
 }
@@ -339,13 +339,13 @@ pub enum ThreadPriority {
 pub struct IOConstraints {
     /// Maximum I/O bandwidth (MB/s)
     pub max_io_bandwidth_mbps: f64,
-    
+
     /// I/O priority
     pub io_priority: IOPriority,
-    
+
     /// Buffer I/O operations
     pub buffer_io: bool,
-    
+
     /// Use direct I/O
     pub use_direct_io: bool,
 }
@@ -364,13 +364,13 @@ pub enum IOPriority {
 pub struct NetworkConstraints {
     /// Maximum network bandwidth (Mbps)
     pub max_bandwidth_mbps: f64,
-    
+
     /// Network latency (ms)
     pub network_latency_ms: f64,
-    
+
     /// Packet loss rate
     pub packet_loss_rate: f32,
-    
+
     /// Enable compression for network transfer
     pub enable_network_compression: bool,
 }
@@ -380,13 +380,13 @@ pub struct NetworkConstraints {
 pub struct QualityRequirements {
     /// Minimum compression ratio
     pub min_compression_ratio: f32,
-    
+
     /// Maximum quality loss (%)
     pub max_quality_loss_percent: f32,
-    
+
     /// Lossless compression required
     pub require_lossless: bool,
-    
+
     /// Error tolerance
     pub error_tolerance: ErrorTolerance,
 }
@@ -406,16 +406,16 @@ pub enum ErrorTolerance {
 pub struct ContextAwareCompressionConfig {
     /// Enable context-aware compression
     pub enabled: bool,
-    
+
     /// Data type for context-aware compression
     pub data_type: CompressionData,
-    
+
     /// Context types
     pub context_types: Vec<CompressionContext>,
-    
+
     /// Context switching strategy
     pub switching_strategy: ContextSwitchingStrategy,
-    
+
     /// Context learning configuration
     pub learning_config: ContextLearningConfig,
 }
@@ -429,31 +429,28 @@ pub enum CompressionContext {
         // data_type removed -  VectorData,
         sparsity: f32,
     },
-    
+
     /// Metadata compression
     Metadata {
         schema_type: MetadataSchemaType,
         cardinality: MetadataCardinality,
     },
-    
+
     /// Index data compression
-    IndexData {
-        index_type: Index,
-        density: f32,
-    },
-    
+    IndexData { index_type: Index, density: f32 },
+
     /// Binary data compression
     BinaryData {
         data_format: BinaryDataFormat,
         structure: BinaryStructure,
     },
-    
+
     /// Text data compression
     TextData {
         language: Option<String>,
         encoding: TextEncoding,
     },
-    
+
     /// Mixed data compression
     MixedData {
         primary_type: String,
@@ -485,10 +482,10 @@ pub enum MetadataSchemaType {
 /// Metadata cardinality
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetadataCardinality {
-    Low,      // Few distinct values
-    Medium,   // Moderate distinct values
-    High,     // Many distinct values
-    Unique,   // Mostly unique values
+    Low,    // Few distinct values
+    Medium, // Moderate distinct values
+    High,   // Many distinct values
+    Unique, // Mostly unique values
 }
 
 /// Index types for compression
@@ -540,16 +537,16 @@ pub enum ContextSwitchingStrategy {
         detection_threshold: f32,
         min_switch_interval_ms: u64,
     },
-    
+
     /// Manual context specification
     Manual,
-    
+
     /// Hybrid approach
     Hybrid {
         auto_detection: bool,
         manual_override: bool,
     },
-    
+
     /// Learning-based switching
     Learning {
         learning_rate: f32,
@@ -562,13 +559,13 @@ pub enum ContextSwitchingStrategy {
 pub struct ContextLearningConfig {
     /// Enable learning
     pub enabled: bool,
-    
+
     /// Learning algorithms
     pub algorithms: Vec<LearningAlgorithm>,
-    
+
     /// Training data requirements
     pub training_requirements: TrainingRequirements,
-    
+
     /// Model persistence
     pub model_persistence: ModelPersistenceConfig,
 }
@@ -577,23 +574,20 @@ pub struct ContextLearningConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LearningAlgorithm {
     /// Decision tree learning
-    DecisionTree {
-        max_depth: u32,
-        min_samples: u32,
-    },
-    
+    DecisionTree { max_depth: u32, min_samples: u32 },
+
     /// Neural network learning
     NeuralNetwork {
         hidden_layers: Vec<u32>,
         learning_rate: f32,
     },
-    
+
     /// Ensemble methods
     Ensemble {
         base_learners: Vec<String>,
         combination_strategy: CombinationStrategy,
     },
-    
+
     /// Reinforcement learning
     Reinforcement {
         exploration_rate: f32,
@@ -615,13 +609,13 @@ pub enum CombinationStrategy {
 pub struct TrainingRequirements {
     /// Minimum training samples
     pub min_training_samples: u64,
-    
+
     /// Training data diversity
     pub diversity_requirements: DiversityRequirements,
-    
+
     /// Training frequency
     pub training_frequency: TrainingFrequency,
-    
+
     /// Validation requirements
     pub validation_requirements: ValidationRequirements,
 }
@@ -631,13 +625,13 @@ pub struct TrainingRequirements {
 pub struct DiversityRequirements {
     /// Data type diversity
     pub data_types: Vec<String>,
-    
+
     /// Size diversity
     pub size_ranges: Vec<(u64, u64)>,
-    
+
     /// Pattern diversity
     pub pattern_types: Vec<String>,
-    
+
     /// Context diversity
     pub context_types: Vec<String>,
 }
@@ -656,13 +650,13 @@ pub enum TrainingFrequency {
 pub struct ValidationRequirements {
     /// Validation split ratio
     pub validation_split: f32,
-    
+
     /// Cross-validation folds
     pub cross_validation_folds: u32,
-    
+
     /// Performance metrics
     pub performance_metrics: Vec<String>,
-    
+
     /// Minimum performance threshold
     pub min_performance_threshold: f64,
 }
@@ -672,13 +666,13 @@ pub struct ValidationRequirements {
 pub struct ModelPersistenceConfig {
     /// Enable model persistence
     pub enabled: bool,
-    
+
     /// Model storage path
     pub storage_path: Option<String>,
-    
+
     /// Model versioning
     pub versioning: ModelVersioningConfig,
-    
+
     /// Model compression
     pub model_compression: bool,
 }
@@ -688,10 +682,10 @@ pub struct ModelPersistenceConfig {
 pub struct ModelVersioningConfig {
     /// Enable versioning
     pub enabled: bool,
-    
+
     /// Maximum versions to keep
     pub max_versions: u32,
-    
+
     /// Version naming strategy
     pub naming_strategy: VersionNamingStrategy,
 }
@@ -710,13 +704,13 @@ pub enum VersionNamingStrategy {
 pub struct CompressionHardwareConfig {
     /// CPU optimizations
     pub cpu_optimizations: CPUOptimizations,
-    
+
     /// GPU optimizations
     pub gpu_optimizations: GPUOptimizations,
-    
+
     /// SIMD optimizations
     pub simd_optimizations: SIMDOptimizations,
-    
+
     /// Hardware acceleration libraries
     pub acceleration_libraries: AccelerationLibraries,
 }
@@ -726,13 +720,13 @@ pub struct CompressionHardwareConfig {
 pub struct CPUOptimizations {
     /// Enable multithreading
     pub enable_multithreading: bool,
-    
+
     /// Thread pool size
     pub thread_pool_size: Option<usize>,
-    
+
     /// CPU instruction optimizations
     pub instruction_optimizations: Vec<CPUInstruction>,
-    
+
     /// Cache optimization
     pub cache_optimization: CacheOptimization,
 }
@@ -758,13 +752,13 @@ pub enum CPUInstruction {
 pub struct CacheOptimization {
     /// Enable cache-friendly algorithms
     pub cache_friendly_algorithms: bool,
-    
+
     /// Data prefetching
     pub data_prefetching: bool,
-    
+
     /// Cache line alignment
     pub cache_line_alignment: bool,
-    
+
     /// Memory access patterns optimization
     pub memory_access_optimization: bool,
 }
@@ -774,13 +768,13 @@ pub struct CacheOptimization {
 pub struct GPUOptimizations {
     /// Enable GPU acceleration
     pub enabled: bool,
-    
+
     /// GPU compute libraries
     pub compute_libraries: Vec<GPUComputeLibrary>,
-    
+
     /// Memory management
     pub memory_management: GPUMemoryManagement,
-    
+
     /// Kernel optimization
     pub kernel_optimization: GPUKernelOptimization,
 }
@@ -801,10 +795,10 @@ pub enum GPUComputeLibrary {
 pub struct GPUMemoryManagement {
     /// Memory allocation strategy
     pub allocation_strategy: GPUAllocationStrategy,
-    
+
     /// Memory transfer optimization
     pub transfer_optimization: bool,
-    
+
     /// Unified memory usage
     pub unified_memory: bool,
 }
@@ -823,13 +817,13 @@ pub enum GPUAllocationStrategy {
 pub struct GPUKernelOptimization {
     /// Occupancy optimization
     pub occupancy_optimization: bool,
-    
+
     /// Register usage optimization
     pub register_optimization: bool,
-    
+
     /// Shared memory optimization
     pub shared_memory_optimization: bool,
-    
+
     /// Warp efficiency optimization
     pub warp_efficiency_optimization: bool,
 }
@@ -839,13 +833,13 @@ pub struct GPUKernelOptimization {
 pub struct SIMDOptimizations {
     /// Enable SIMD
     pub enabled: bool,
-    
+
     /// Instruction set preferences
     pub instruction_sets: Vec<SIMDInstructionSet>,
-    
+
     /// Vector width optimization
     pub vector_width_optimization: bool,
-    
+
     /// Data alignment requirements
     pub alignment_requirements: AlignmentRequirements,
 }
@@ -873,10 +867,10 @@ pub enum SIMDInstructionSet {
 pub struct AlignmentRequirements {
     /// Data alignment (bytes)
     pub data_alignment: usize,
-    
+
     /// Memory alignment (bytes)
     pub memory_alignment: usize,
-    
+
     /// Stack alignment (bytes)
     pub stack_alignment: usize,
 }
@@ -886,13 +880,13 @@ pub struct AlignmentRequirements {
 pub struct AccelerationLibraries {
     /// Intel libraries
     pub intel_libraries: Vec<IntelLibrary>,
-    
+
     /// AMD libraries
     pub amd_libraries: Vec<AMDLibrary>,
-    
+
     /// NVIDIA libraries
     pub nvidia_libraries: Vec<NVIDIALibrary>,
-    
+
     /// ARM libraries
     pub arm_libraries: Vec<ARMLibrary>,
 }
@@ -900,18 +894,18 @@ pub struct AccelerationLibraries {
 /// Intel acceleration libraries
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IntelLibrary {
-    IPP,      // Intel Performance Primitives
-    MKL,      // Math Kernel Library
-    TBB,      // Threading Building Blocks
-    DAAL,     // Data Analytics Acceleration Library
+    IPP,  // Intel Performance Primitives
+    MKL,  // Math Kernel Library
+    TBB,  // Threading Building Blocks
+    DAAL, // Data Analytics Acceleration Library
 }
 
 /// AMD acceleration libraries
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AMDLibrary {
-    BLIS,     // BLAS-like Library Instantiation Software
-    FFTW,     // Fastest Fourier Transform in the West
-    ROCm,     // Radeon Open Compute
+    BLIS, // BLAS-like Library Instantiation Software
+    FFTW, // Fastest Fourier Transform in the West
+    ROCm, // Radeon Open Compute
 }
 
 /// NVIDIA acceleration libraries
@@ -920,7 +914,7 @@ pub enum NVIDIALibrary {
     cuBLAS,
     cuFFT,
     cuSPARSE,
-    NPP,      // NVIDIA Performance Primitives
+    NPP, // NVIDIA Performance Primitives
     Thrust,
 }
 
@@ -937,13 +931,13 @@ pub enum ARMLibrary {
 pub struct CompressionPerformanceConfig {
     /// Performance targets
     pub targets: PerformanceTargets,
-    
+
     /// Monitoring configuration
     pub monitoring: PerformanceMonitoring,
-    
+
     /// Optimization configuration
     pub optimization: PerformanceOptimization,
-    
+
     /// Profiling configuration
     pub profiling: ProfilingConfig,
 }
@@ -953,16 +947,16 @@ pub struct CompressionPerformanceConfig {
 pub struct PerformanceTargets {
     /// Target compression speed (MB/s)
     pub target_compression_speed: f64,
-    
+
     /// Target decompression speed (MB/s)
     pub target_decompression_speed: f64,
-    
+
     /// Target compression ratio
     pub target_compression_ratio: f32,
-    
+
     /// Target latency (ms)
     pub target_latency_ms: f64,
-    
+
     /// Target throughput (ops/s)
     pub target_throughput: f64,
 }
@@ -972,13 +966,13 @@ pub struct PerformanceTargets {
 pub struct PerformanceMonitoring {
     /// Enable monitoring
     pub enabled: bool,
-    
+
     /// Monitoring frequency
     pub frequency: MonitoringFrequency,
-    
+
     /// Metrics to monitor
     pub metrics: Vec<PerformanceMetric>,
-    
+
     /// Alert configuration
     pub alerting: AlertConfiguration,
 }
@@ -1012,13 +1006,13 @@ pub enum PerformanceMetric {
 pub struct AlertConfiguration {
     /// Enable alerting
     pub enabled: bool,
-    
+
     /// Alert thresholds
     pub thresholds: HashMap<String, f64>,
-    
+
     /// Alert destinations
     pub destinations: Vec<AlertDestination>,
-    
+
     /// Alert cooldown period
     pub cooldown_ms: u64,
 }
@@ -1038,13 +1032,13 @@ pub enum AlertDestination {
 pub struct PerformanceOptimization {
     /// Enable automatic optimization
     pub auto_optimization: bool,
-    
+
     /// Optimization strategies
     pub strategies: Vec<OptimizationStrategy>,
-    
+
     /// Optimization frequency
     pub optimization_frequency: OptimizationFrequency,
-    
+
     /// Optimization constraints
     pub constraints: OptimizationConstraints,
 }
@@ -1076,13 +1070,13 @@ pub enum OptimizationFrequency {
 pub struct OptimizationConstraints {
     /// Maximum optimization time (ms)
     pub max_optimization_time_ms: u64,
-    
+
     /// Maximum performance regression allowed
     pub max_regression_percent: f32,
-    
+
     /// Minimum improvement threshold
     pub min_improvement_percent: f32,
-    
+
     /// Resource limits during optimization
     pub resource_limits: ResourceLimits,
 }
@@ -1092,10 +1086,10 @@ pub struct OptimizationConstraints {
 pub struct ResourceLimits {
     /// Maximum CPU usage during optimization (%)
     pub max_cpu_usage_percent: f32,
-    
+
     /// Maximum memory usage during optimization (MB)
     pub max_memory_usage_mb: u64,
-    
+
     /// Maximum I/O bandwidth during optimization (MB/s)
     pub max_io_bandwidth_mbps: f64,
 }
@@ -1105,13 +1099,13 @@ pub struct ResourceLimits {
 pub struct ProfilingConfig {
     /// Enable profiling
     pub enabled: bool,
-    
+
     /// Profiling mode
     pub mode: ProfilingMode,
-    
+
     /// Profiling metrics
     pub metrics: Vec<ProfilingMetric>,
-    
+
     /// Profiling output
     pub output: ProfilingOutput,
 }
@@ -1143,10 +1137,10 @@ pub enum ProfilingMetric {
 pub struct ProfilingOutput {
     /// Output format
     pub format: ProfilingFormat,
-    
+
     /// Output destination
     pub destination: ProfilingDestination,
-    
+
     /// Output frequency
     pub frequency: ProfilingFrequency,
 }
@@ -1185,13 +1179,13 @@ pub enum ProfilingFrequency {
 pub struct CompressionQualitySettings {
     /// Quality vs speed trade-off
     pub quality_speed_balance: f32, // 0.0 = speed, 1.0 = quality
-    
+
     /// Lossless compression preference
     pub prefer_lossless: bool,
-    
+
     /// Quality metrics
     pub quality_metrics: Vec<QualityMetric>,
-    
+
     /// Quality assurance
     pub quality_assurance: QualityAssurance,
 }
@@ -1200,10 +1194,10 @@ pub struct CompressionQualitySettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QualityMetric {
     CompressionRatio,
-    PSNR,          // Peak Signal-to-Noise Ratio
-    SSIM,          // Structural Similarity Index
-    MSE,           // Mean Squared Error
-    RMSE,          // Root Mean Squared Error
+    PSNR, // Peak Signal-to-Noise Ratio
+    SSIM, // Structural Similarity Index
+    MSE,  // Mean Squared Error
+    RMSE, // Root Mean Squared Error
     InformationLoss,
     BitErrorRate,
     Custom { metric_name: String },
@@ -1214,13 +1208,13 @@ pub enum QualityMetric {
 pub struct QualityAssurance {
     /// Enable quality assurance
     pub enabled: bool,
-    
+
     /// Quality testing
     pub testing: QualityTesting,
-    
+
     /// Quality validation
     pub validation: QualityValidation,
-    
+
     /// Quality monitoring
     pub monitoring: QualityMonitoring,
 }
@@ -1230,13 +1224,13 @@ pub struct QualityAssurance {
 pub struct QualityTesting {
     /// Enable testing
     pub enabled: bool,
-    
+
     /// Test data configuration
     pub test_data: TestDataConfiguration,
-    
+
     /// Test frequency
     pub frequency: TestingFrequency,
-    
+
     /// Test criteria
     pub criteria: Vec<TestCriterion>,
 }
@@ -1246,13 +1240,13 @@ pub struct QualityTesting {
 pub struct TestDataConfiguration {
     /// Use synthetic test data
     pub use_synthetic: bool,
-    
+
     /// Use real data samples
     pub use_real_samples: bool,
-    
+
     /// Test data sources
     pub data_sources: Vec<DataSource>,
-    
+
     /// Test data size
     pub test_data_size: usize,
 }
@@ -1282,13 +1276,13 @@ pub enum TestingFrequency {
 pub struct TestCriterion {
     /// Metric name
     pub metric: String,
-    
+
     /// Expected value
     pub expected_value: f64,
-    
+
     /// Tolerance
     pub tolerance: f64,
-    
+
     /// Severity
     pub severity: TestSeverity,
 }
@@ -1307,13 +1301,13 @@ pub enum TestSeverity {
 pub struct QualityValidation {
     /// Enable validation
     pub enabled: bool,
-    
+
     /// Validation rules
     pub rules: Vec<ValidationRule>,
-    
+
     /// Validation frequency
     pub frequency: ValidationFrequency,
-    
+
     /// Validation actions
     pub actions: ValidationActions,
 }
@@ -1323,10 +1317,10 @@ pub struct QualityValidation {
 pub struct ValidationRule {
     /// Rule name
     pub name: String,
-    
+
     /// Rule condition
     pub condition: ValidationCondition,
-    
+
     /// Action on violation
     pub action: ValidationAction,
 }
@@ -1379,10 +1373,10 @@ pub enum ValidationFrequency {
 pub struct ValidationActions {
     /// Action on validation failure
     pub on_failure: ValidationAction,
-    
+
     /// Action on validation warning
     pub on_warning: ValidationAction,
-    
+
     /// Action on validation success
     pub on_success: ValidationAction,
 }
@@ -1393,8 +1387,12 @@ pub enum ValidationAction {
     Continue,
     Warn,
     Fail,
-    Fallback { fallback_algorithm: CompressionAlgorithm },
-    Retry { max_retries: u32 },
+    Fallback {
+        fallback_algorithm: CompressionAlgorithm,
+    },
+    Retry {
+        max_retries: u32,
+    },
     Abort,
 }
 
@@ -1403,13 +1401,13 @@ pub enum ValidationAction {
 pub struct QualityMonitoring {
     /// Enable monitoring
     pub enabled: bool,
-    
+
     /// Monitoring frequency
     pub frequency: MonitoringFrequency,
-    
+
     /// Metrics to monitor
     pub metrics: Vec<QualityMetric>,
-    
+
     /// Monitoring thresholds
     pub thresholds: HashMap<String, f64>,
 }
@@ -1419,13 +1417,13 @@ pub struct QualityMonitoring {
 pub struct CompressionCapabilities {
     /// Supported algorithms
     pub supported_algorithms: Vec<CompressionAlgorithm>,
-    
+
     /// Hardware capabilities
     pub hardware_capabilities: HardwareCapabilities,
-    
+
     /// Performance characteristics
     pub performance_characteristics: HashMap<CompressionAlgorithm, PerformanceCharacteristics>,
-    
+
     /// Quality characteristics
     pub quality_characteristics: HashMap<CompressionAlgorithm, QualityCharacteristics>,
 }
@@ -1435,16 +1433,16 @@ pub struct CompressionCapabilities {
 pub struct PerformanceCharacteristics {
     /// Compression speed (MB/s)
     pub compression_speed: f64,
-    
+
     /// Decompression speed (MB/s)
     pub decompression_speed: f64,
-    
+
     /// Memory usage (MB)
     pub memory_usage: f64,
-    
+
     /// CPU usage (%)
     pub cpu_usage: f32,
-    
+
     /// Latency (ms)
     pub latency: f64,
 }
@@ -1454,13 +1452,13 @@ pub struct PerformanceCharacteristics {
 pub struct QualityCharacteristics {
     /// Typical compression ratio
     pub typical_compression_ratio: f32,
-    
+
     /// Maximum compression ratio
     pub max_compression_ratio: f32,
-    
+
     /// Quality retention
     pub quality_retention: f32,
-    
+
     /// Lossless capability
     pub lossless_capable: bool,
 }
@@ -1470,16 +1468,16 @@ pub struct QualityCharacteristics {
 pub struct CompressionStats {
     /// Overall statistics
     pub overall: OverallCompressionStats,
-    
+
     /// Per-algorithm statistics
     pub per_algorithm: HashMap<String, AlgorithmCompressionStats>,
-    
+
     /// Hardware utilization
     pub hardware_utilization: HardwareUtilizationStats,
-    
+
     /// Quality metrics
     pub quality_metrics: QualityStats,
-    
+
     /// Performance metrics
     pub performance_metrics: PerformanceStats,
 }
@@ -1489,19 +1487,19 @@ pub struct CompressionStats {
 pub struct OverallCompressionStats {
     /// Total bytes compressed
     pub total_bytes_compressed: u64,
-    
+
     /// Total bytes decompressed
     pub total_bytes_decompressed: u64,
-    
+
     /// Overall compression ratio
     pub overall_compression_ratio: f32,
-    
+
     /// Total compression time (ms)
     pub total_compression_time_ms: u64,
-    
+
     /// Total decompression time (ms)
     pub total_decompression_time_ms: u64,
-    
+
     /// Error count
     pub error_count: u64,
 }
@@ -1511,19 +1509,19 @@ pub struct OverallCompressionStats {
 pub struct AlgorithmCompressionStats {
     /// Bytes processed
     pub bytes_processed: u64,
-    
+
     /// Compression ratio achieved
     pub compression_ratio: f32,
-    
+
     /// Average compression time (ms)
     pub avg_compression_time_ms: f64,
-    
+
     /// Average decompression time (ms)
     pub avg_decompression_time_ms: f64,
-    
+
     /// Usage count
     pub usage_count: u64,
-    
+
     /// Error count
     pub error_count: u64,
 }
@@ -1533,13 +1531,13 @@ pub struct AlgorithmCompressionStats {
 pub struct HardwareUtilizationStats {
     /// CPU utilization (%)
     pub cpu_utilization: f32,
-    
+
     /// Memory utilization (%)
     pub memory_utilization: f32,
-    
+
     /// GPU utilization (%) - if available
     pub gpu_utilization: Option<f32>,
-    
+
     /// I/O bandwidth utilization (%)
     pub io_bandwidth_utilization: f32,
 }
@@ -1549,13 +1547,13 @@ pub struct HardwareUtilizationStats {
 pub struct QualityStats {
     /// Average quality retention
     pub avg_quality_retention: f32,
-    
+
     /// Quality variance
     pub quality_variance: f32,
-    
+
     /// Lossless operation percentage
     pub lossless_percentage: f32,
-    
+
     /// Quality test pass rate
     pub quality_test_pass_rate: f32,
 }
@@ -1565,16 +1563,16 @@ pub struct QualityStats {
 pub struct PerformanceStats {
     /// Average compression speed (MB/s)
     pub avg_compression_speed: f64,
-    
+
     /// Average decompression speed (MB/s)
     pub avg_decompression_speed: f64,
-    
+
     /// Average latency (ms)
     pub avg_latency: f64,
-    
+
     /// Throughput (ops/s)
     pub throughput: f64,
-    
+
     /// Performance target achievement rate
     pub target_achievement_rate: f32,
 }
@@ -1584,10 +1582,7 @@ impl Default for UniversalCompressionConfig {
         Self {
             enabled: true,
             primary_algorithm: CompressionAlgorithm::Zstd,
-            fallback_algorithms: vec![
-                CompressionAlgorithm::Lz4,
-                CompressionAlgorithm::Snappy,
-            ],
+            fallback_algorithms: vec![CompressionAlgorithm::Lz4, CompressionAlgorithm::Snappy],
             compression_level: 3,
             adaptive_settings: AdaptiveCompressionSettings::default(),
             context_aware: ContextAwareCompressionConfig::default(),
@@ -1602,12 +1597,10 @@ impl Default for AdaptiveCompressionSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            strategies: vec![
-                CompressionStrategy::Balanced {
-                    speed_weight: 0.6,
-                    ratio_weight: 0.4,
-                },
-            ],
+            strategies: vec![CompressionStrategy::Balanced {
+                speed_weight: 0.6,
+                ratio_weight: 0.4,
+            }],
             criteria: AdaptationCriteria {
                 data_characteristics: DataCharacteristics {
                     entropy_thresholds: EntropyThresholds {
@@ -1616,7 +1609,7 @@ impl Default for AdaptiveCompressionSettings {
                         calculation_method: EntropyCalculationMethod::Shannon,
                     },
                     size_thresholds: SizeThresholds {
-                        small_data_threshold: 1024,      // 1KB
+                        small_data_threshold: 1024,             // 1KB
                         large_data_threshold: 1024 * 1024 * 10, // 10MB
                         block_size_optimization: true,
                     },
@@ -1630,11 +1623,7 @@ impl Default for AdaptiveCompressionSettings {
                         accuracy_threshold: 0.8,
                         pattern_cache_size: 1000,
                     },
-                    data_type_hints: vec![
-                        DataHint::Vector,
-                        DataHint::Metadata,
-                        DataHint::Index,
-                    ],
+                    data_type_hints: vec![DataHint::Vector, DataHint::Metadata, DataHint::Index],
                 },
                 performance_thresholds: PerformanceThresholds {
                     max_compression_latency_ms: 100.0,
@@ -1704,15 +1693,20 @@ impl Default for ContextAwareCompressionConfig {
                     min_training_samples: 1000,
                     diversity_requirements: DiversityRequirements {
                         data_types: vec!["vector".to_string(), "metadata_info".to_string()],
-                        size_ranges: vec![(1024, 1024*1024)],
+                        size_ranges: vec![(1024, 1024 * 1024)],
                         pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
                         context_types: vec!["vector".to_string(), "metadata_info".to_string()],
                     },
-                    training_frequency: TrainingFrequency::Periodic { interval_ms: 3600000 },
+                    training_frequency: TrainingFrequency::Periodic {
+                        interval_ms: 3600000,
+                    },
                     validation_requirements: ValidationRequirements {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
-                        performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
+                        performance_metrics: vec![
+                            "accuracy".to_string(),
+                            "compression_ratio".to_string(),
+                        ],
                         min_performance_threshold: 0.8,
                     },
                 },
@@ -1875,28 +1869,24 @@ impl Default for CompressionQualitySettings {
                         test_data_size: 1000,
                     },
                     frequency: TestingFrequency::OnStartup,
-                    criteria: vec![
-                        TestCriterion {
-                            metric: "compression_ratio".to_string(),
-                            expected_value: 2.0,
-                            tolerance: 0.5,
-                            severity: TestSeverity::Warning,
-                        },
-                    ],
+                    criteria: vec![TestCriterion {
+                        metric: "compression_ratio".to_string(),
+                        expected_value: 2.0,
+                        tolerance: 0.5,
+                        severity: TestSeverity::Warning,
+                    }],
                 },
                 validation: QualityValidation {
                     enabled: true,
-                    rules: vec![
-                        ValidationRule {
-                            name: "min_compression_ratio".to_string(),
-                            condition: ValidationCondition::MetricThreshold {
-                                metric: "compression_ratio".to_string(),
-                                threshold: 1.5,
-                                operator: ComparisonOperator::GreaterThanOrEqual,
-                            },
-                            action: ValidationAction::Warn,
+                    rules: vec![ValidationRule {
+                        name: "min_compression_ratio".to_string(),
+                        condition: ValidationCondition::MetricThreshold {
+                            metric: "compression_ratio".to_string(),
+                            threshold: 1.5,
+                            operator: ComparisonOperator::GreaterThanOrEqual,
                         },
-                    ],
+                        action: ValidationAction::Warn,
+                    }],
                     frequency: ValidationFrequency::Sampling { rate: 0.01 },
                     actions: ValidationActions {
                         on_failure: ValidationAction::Fallback {
@@ -1926,47 +1916,52 @@ impl Default for CompressionQualitySettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_universal_compression_config_creation() {
         let config = UniversalCompressionConfig::default();
-        
+
         assert!(config.enabled);
         assert_eq!(config.primary_algorithm, CompressionAlgorithm::ZSTD);
         assert_eq!(config.compression_level, 3);
         assert!(config.adaptive_settings.enabled);
     }
-    
+
     #[test]
     fn test_compression_strategies() {
         let speed_strategy = CompressionStrategy::Speed {
             target_latency_ms: 10.0,
             min_compression_ratio: 2.0,
         };
-        
+
         let ratio_strategy = CompressionStrategy::Ratio {
             target_compression_ratio: 5.0,
             max_latency_ms: 100.0,
         };
-        
+
         assert!(matches!(speed_strategy, CompressionStrategy::Speed { .. }));
         assert!(matches!(ratio_strategy, CompressionStrategy::Ratio { .. }));
     }
-    
+
     #[test]
     fn test_hardware_optimization_config() {
         let hardware_config = CompressionHardwareConfig::default();
-        
+
         assert!(hardware_config.cpu_optimizations.enable_multithreading);
         assert!(!hardware_config.gpu_optimizations.enabled);
         assert!(hardware_config.simd_optimizations.enabled);
-        assert!(hardware_config.cpu_optimizations.cache_optimization.cache_friendly_algorithms);
+        assert!(
+            hardware_config
+                .cpu_optimizations
+                .cache_optimization
+                .cache_friendly_algorithms
+        );
     }
-    
+
     #[test]
     fn test_context_aware_compression() {
         let context_config = ContextAwareCompressionConfig::default();
-        
+
         assert!(context_config.enabled);
         assert_eq!(context_config.context_types.len(), 2);
         assert!(matches!(
@@ -1974,21 +1969,21 @@ mod tests {
             ContextSwitchingStrategy::Automatic { .. }
         ));
     }
-    
+
     #[test]
     fn test_performance_configuration() {
         let perf_config = CompressionPerformanceConfig::default();
-        
+
         assert_eq!(perf_config.targets.target_compression_speed, 500.0);
         assert_eq!(perf_config.targets.target_decompression_speed, 1000.0);
         assert!(perf_config.monitoring.enabled);
         assert!(perf_config.optimization.auto_optimization);
     }
-    
+
     #[test]
     fn test_quality_settings() {
         let quality_config = CompressionQualitySettings::default();
-        
+
         assert_eq!(quality_config.quality_speed_balance, 0.6);
         assert!(quality_config.prefer_lossless);
         assert!(quality_config.quality_assurance.enabled);

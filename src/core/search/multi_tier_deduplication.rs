@@ -10,11 +10,11 @@
 //! - Flushed data overrides compacted data
 //! - Records without IDs are included without deduplication
 
-use std::collections::HashMap;
+use crate::core::search::mvcc_resolution::MvccResolver;
+use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use crate::core::{VectorRecord, MetadataQuery, MetadataQueryEngine};
-use crate::core::search::mvcc_resolution::MvccResolver;
+use std::collections::HashMap;
 
 /// Vector search result with storage tier metadata
 #[derive(Debug, Clone)]
@@ -33,17 +33,17 @@ pub struct TieredSearchCandidate {
 /// Storage tier hierarchy for deduplication priority
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StorageTier {
-    Compacted = 0,    // Lowest priority - final compacted storage
-    Flushed = 1,      // Medium priority - flushed but not compacted
-    Unflushed = 2,    // Highest priority - WAL data in memtable
+    Compacted = 0, // Lowest priority - final compacted storage
+    Flushed = 1,   // Medium priority - flushed but not compacted
+    Unflushed = 2, // Highest priority - WAL data in memtable
 }
 
 /// Storage engine type for search result context (includes WAL for unflushed data)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeduplicationStorageEngine {
-    SST,    // SST files (LSM-Tree storage)
-    VIPER,  // VIPER with Parquet files  
-    WAL,    // WAL memtable (unflushed)
+    SST,   // SST files (LSM-Tree storage)
+    VIPER, // VIPER with Parquet files
+    WAL,   // WAL memtable (unflushed)
 }
 
 /// Metadata filter for client-side filtering
@@ -82,7 +82,7 @@ impl MultiTierDeduplicator {
             requires_ordering: true, // Default to true for safety
         }
     }
-    
+
     /// Create with target k for early termination optimization
     pub fn with_k(k: usize) -> Self {
         Self {
@@ -126,7 +126,10 @@ impl MultiTierDeduplicator {
     }
 
     /// Create with both simple filters and logical query (query takes precedence)
-    pub fn with_filters_and_query(metadata_filters: MetadataFilter, metadata_query: MetadataQuery) -> Self {
+    pub fn with_filters_and_query(
+        metadata_filters: MetadataFilter,
+        metadata_query: MetadataQuery,
+    ) -> Self {
         Self {
             id_to_latest: HashMap::new(),
             results_without_id: Vec::new(),
@@ -138,12 +141,12 @@ impl MultiTierDeduplicator {
             requires_ordering: true,
         }
     }
-    
+
     /// Set target k for early termination
     pub fn set_target_k(&mut self, k: usize) {
         self.target_k = Some(k);
     }
-    
+
     /// Set whether results require ordering (disables early termination)
     pub fn set_requires_ordering(&mut self, requires_ordering: bool) {
         self.requires_ordering = requires_ordering;
@@ -152,12 +155,12 @@ impl MultiTierDeduplicator {
             self.early_termination_possible = false;
         }
     }
-    
+
     /// Check if early termination is allowed
     pub fn can_terminate_early(&self) -> bool {
         !self.requires_ordering && self.target_k.is_some()
     }
-    
+
     /// Check if early termination has been triggered
     pub fn is_early_terminated(&self) -> bool {
         self.early_termination_possible
@@ -167,13 +170,18 @@ impl MultiTierDeduplicator {
     fn matches_filters(&mut self, vector_record: &VectorRecord) -> bool {
         // If we have a logical metadata query, use that (takes precedence)
         if let Some(ref query) = self.metadata_query {
-            let json_metadata = crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
+            let json_metadata =
+                crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
             match self.query_engine.evaluate(query, &json_metadata) {
                 Ok(result) => {
                     if !result {
                         tracing::debug!(
                             "🔍 Query filter: Vector {} did not match logical query",
-                            if vector_record.id.is_empty() { "<no-id>" } else { &vector_record.id }
+                            if vector_record.id.is_empty() {
+                                "<no-id>"
+                            } else {
+                                &vector_record.id
+                            }
                         );
                     }
                     return result;
@@ -181,7 +189,12 @@ impl MultiTierDeduplicator {
                 Err(e) => {
                     tracing::warn!(
                         "🚨 Query evaluation error for vector {}: {}",
-                        if vector_record.id.is_empty() { "<no-id>" } else { &vector_record.id }, e
+                        if vector_record.id.is_empty() {
+                            "<no-id>"
+                        } else {
+                            &vector_record.id
+                        },
+                        e
                     );
                     return false; // Fail safe on query evaluation error
                 }
@@ -199,26 +212,35 @@ impl MultiTierDeduplicator {
                         Some(item) => {
                             // Convert metadata value to JSON for comparison
                             let actual_json = match &item.value {
-                                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
-                                    serde_json::Number::from_f64(*n)
-                                        .map(serde_json::Value::Number)
-                                        .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
-                                },
-                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                                Some(
+                                    crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                                ) => serde_json::Value::String(s.clone()),
+                                Some(
+                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n),
+                                ) => serde_json::Number::from_f64(*n)
+                                    .map(serde_json::Value::Number)
+                                    .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
+                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(
+                                    b,
+                                )) => serde_json::Value::Bool(*b),
                                 None => serde_json::Value::Null,
                             };
                             // Compare values (strict equality for now)
                             if &actual_json != expected_value {
                                 tracing::debug!(
                                     "🔍 Simple filter mismatch: {} expected {:?}, got {:?}",
-                                    key, expected_value, actual_json
+                                    key,
+                                    expected_value,
+                                    actual_json
                                 );
                                 return false;
                             }
                         }
                         None => {
-                            tracing::debug!("🔍 Simple filter mismatch: {} not found in metadata_info", key);
+                            tracing::debug!(
+                                "🔍 Simple filter mismatch: {} not found in metadata_info",
+                                key
+                            );
                             return false; // Required metadata key missing
                         }
                     }
@@ -240,13 +262,17 @@ impl MultiTierDeduplicator {
             );
             return;
         }
-        
+
         for result in results {
             // Apply metadata filters first
             if !self.matches_filters(&result.vector_record) {
                 tracing::debug!(
                     "🚫 Filter: Skipping vector {} due to metadata filter mismatch",
-                    if result.vector_record.id.is_empty() { "<no-id>" } else { &result.vector_record.id }
+                    if result.vector_record.id.is_empty() {
+                        "<no-id>"
+                    } else {
+                        &result.vector_record.id
+                    }
                 );
                 continue;
             }
@@ -277,7 +303,8 @@ impl MultiTierDeduplicator {
                             } else {
                                 // Same sequence - use centralized MVCC resolution
                                 let resolver = MvccResolver::new();
-                                resolver.compare_records(&result.vector_record, &existing.vector_record)
+                                resolver
+                                    .compare_records(&result.vector_record, &existing.vector_record)
                             }
                         }
                     }
@@ -289,14 +316,26 @@ impl MultiTierDeduplicator {
                         tracing::debug!(
                             "🔄 Dedup: Replacing vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}) with {:?}/{:?} (seq:{}, v:{}, ts:{})",
                             vector_id,
-                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version.unwrap_or(0), existing.timestamp.timestamp_millis(),
-                            result.tier, result.engine, result.sequence, result.vector_record.version.unwrap_or(0), result.timestamp.timestamp_millis()
+                            existing.tier,
+                            existing.engine,
+                            existing.sequence,
+                            existing.vector_record.version.unwrap_or(0),
+                            existing.timestamp.timestamp_millis(),
+                            result.tier,
+                            result.engine,
+                            result.sequence,
+                            result.vector_record.version.unwrap_or(0),
+                            result.timestamp.timestamp_millis()
                         );
                     } else {
                         tracing::debug!(
                             "✅ Dedup: Adding new vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{})",
                             vector_id,
-                            result.tier, result.engine, result.sequence, result.vector_record.version.unwrap_or(0), result.timestamp.timestamp_millis()
+                            result.tier,
+                            result.engine,
+                            result.sequence,
+                            result.vector_record.version.unwrap_or(0),
+                            result.timestamp.timestamp_millis()
                         );
                     }
                     self.id_to_latest.insert(vector_id.clone(), result);
@@ -305,23 +344,33 @@ impl MultiTierDeduplicator {
                         tracing::debug!(
                             "🚫 Dedup: Skipping older vector {} from {:?}/{:?} (seq:{}, v:{}, ts:{}), keeping {:?}/{:?} (seq:{}, v:{}, ts:{})",
                             vector_id,
-                            result.tier, result.engine, result.sequence, result.vector_record.version.unwrap_or(0), result.timestamp.timestamp_millis(),
-                            existing.tier, existing.engine, existing.sequence, existing.vector_record.version.unwrap_or(0), existing.timestamp.timestamp_millis()
+                            result.tier,
+                            result.engine,
+                            result.sequence,
+                            result.vector_record.version.unwrap_or(0),
+                            result.timestamp.timestamp_millis(),
+                            existing.tier,
+                            existing.engine,
+                            existing.sequence,
+                            existing.vector_record.version.unwrap_or(0),
+                            existing.timestamp.timestamp_millis()
                         );
                     }
                 }
             }
-            
+
             // Check for early termination after each addition
             // Only terminate early if we don't require ordering
             if !self.requires_ordering {
                 if let Some(k) = self.target_k {
-                    let current_unique_count = self.id_to_latest.len() + self.results_without_id.len();
+                    let current_unique_count =
+                        self.id_to_latest.len() + self.results_without_id.len();
                     if current_unique_count >= k {
                         self.early_termination_possible = true;
                         tracing::info!(
                             "🚀 Early termination triggered: Reached {} unique results (target k={}, ordering not required)",
-                            current_unique_count, k
+                            current_unique_count,
+                            k
                         );
                         return; // Stop processing more results
                     }
@@ -333,20 +382,20 @@ impl MultiTierDeduplicator {
     /// Get final deduplicated results sorted by score
     pub fn get_final_results(self, k: usize) -> Vec<TieredSearchCandidate> {
         let mut final_results = Vec::new();
-        
+
         // Capture lengths before moving
         let unique_ids_count = self.id_to_latest.len();
         let without_id_count = self.results_without_id.len();
-        
+
         // Add latest version of each ID using into_values() to avoid clone
         final_results.extend(self.id_to_latest.into_values());
-        
+
         // Add non-ID results
         final_results.extend(self.results_without_id);
 
         // Sort by similarity (descending - higher similarity is better)
         final_results.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
-        
+
         // Limit to k results
         final_results.truncate(k);
 
@@ -387,15 +436,14 @@ impl Default for MultiTierDeduplicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
-    
+    use tracing::{debug, error, info, warn};
 
     #[test]
     fn test_multi_tier_deduplication() {
         let mut deduplicator = MultiTierDeduplicator::new();
-        
+
         let now = chrono::Utc::now();
-        
+
         // Add compacted result
         let compacted_result = TieredSearchCandidate {
             vector_record: VectorRecord {
@@ -409,8 +457,7 @@ use tracing::{debug, error, info, warn};
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             similarity: 0.5,
             tier: StorageTier::Compacted,
             engine: DeduplicationStorageEngine::VIPER,
@@ -418,7 +465,7 @@ use tracing::{debug, error, info, warn};
             sequence: 100,
             file_path: Some("/data/compacted.parquet".to_string()),
         };
-        
+
         // Add flushed result (should override compacted)
         let flushed_result = TieredSearchCandidate {
             vector_record: VectorRecord {
@@ -432,8 +479,7 @@ use tracing::{debug, error, info, warn};
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             similarity: 0.4,
             tier: StorageTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
@@ -441,7 +487,7 @@ use tracing::{debug, error, info, warn};
             sequence: 200,
             file_path: Some("/data/flushed.sstable".to_string()),
         };
-        
+
         // Add unflushed result (should override flushed)
         let unflushed_result = TieredSearchCandidate {
             vector_record: VectorRecord {
@@ -455,8 +501,7 @@ use tracing::{debug, error, info, warn};
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             similarity: 0.3,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
@@ -464,13 +509,13 @@ use tracing::{debug, error, info, warn};
             sequence: 300,
             file_path: None, // WAL data not in files
         };
-        
+
         deduplicator.add_tier_results(vec![compacted_result]);
         deduplicator.add_tier_results(vec![flushed_result]);
         deduplicator.add_tier_results(vec![unflushed_result]);
-        
+
         let final_results = deduplicator.get_final_results(10);
-        
+
         assert_eq!(final_results.len(), 1);
         assert_eq!(final_results[0].tier, StorageTier::Unflushed);
         assert_eq!(final_results[0].vector_record.version, Some(3));
@@ -481,7 +526,7 @@ use tracing::{debug, error, info, warn};
     fn test_same_tier_ordering() {
         let mut deduplicator = MultiTierDeduplicator::new();
         let now = chrono::Utc::now();
-        
+
         // Add two unflushed results with same sequence but different versions
         let unflushed_v1 = TieredSearchCandidate {
             vector_record: VectorRecord {
@@ -495,8 +540,7 @@ use tracing::{debug, error, info, warn};
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             similarity: 0.5,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
@@ -504,7 +548,7 @@ use tracing::{debug, error, info, warn};
             sequence: 100,
             file_path: None,
         };
-        
+
         let unflushed_v2 = TieredSearchCandidate {
             vector_record: VectorRecord {
                 id: Some("vector_1".to_string()),
@@ -517,8 +561,7 @@ use tracing::{debug, error, info, warn};
                 // rank removed -  None,
                 similarity: None,
                 similarity: None,
-            
-        },
+            },
             similarity: 0.4,
             tier: StorageTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
@@ -526,25 +569,25 @@ use tracing::{debug, error, info, warn};
             sequence: 100, // Same sequence
             file_path: None,
         };
-        
+
         // Add v1 first, then v2 - v2 should win due to higher version
         deduplicator.add_tier_results(vec![unflushed_v1]);
         deduplicator.add_tier_results(vec![unflushed_v2]);
-        
+
         let final_results = deduplicator.get_final_results(10);
-        
+
         assert_eq!(final_results.len(), 1);
         assert_eq!(final_results[0].vector_record.version, Some(2)); // v2 should win
         assert_eq!(final_results[0].score, 0.4);
     }
-    
+
     #[test]
     fn test_early_termination_without_ordering() {
         let mut deduplicator = MultiTierDeduplicator::with_k(2);
         deduplicator.set_requires_ordering(false); // No ordering required - can terminate early
-        
+
         let now = chrono::Utc::now();
-        
+
         // Create 5 candidates but we only need 2
         let mut candidates = Vec::new();
         for i in 0..5 {
@@ -569,27 +612,27 @@ use tracing::{debug, error, info, warn};
                 file_path: None,
             });
         }
-        
+
         // Add first 2 results
         deduplicator.add_tier_results(candidates[0..2].to_vec());
         assert_eq!(deduplicator.early_termination_possible, true);
-        
+
         // Try to add more - should be skipped due to early termination
         deduplicator.add_tier_results(candidates[2..5].to_vec());
-        
+
         let final_results = deduplicator.get_final_results(2);
-        
+
         // Should only have 2 results due to early termination
         assert_eq!(final_results.len(), 2);
     }
-    
+
     #[test]
     fn test_no_early_termination_with_ordering() {
         let mut deduplicator = MultiTierDeduplicator::with_k(2);
         deduplicator.set_requires_ordering(true); // Ordering required - must process all
-        
+
         let now = chrono::Utc::now();
-        
+
         // Create 5 candidates
         let mut candidates = Vec::new();
         for i in 0..5 {
@@ -614,15 +657,15 @@ use tracing::{debug, error, info, warn};
                 file_path: None,
             });
         }
-        
+
         // Add all results - early termination should NOT occur
         deduplicator.add_tier_results(candidates[0..2].to_vec());
         assert_eq!(deduplicator.early_termination_possible, false); // Should not terminate
-        
+
         deduplicator.add_tier_results(candidates[2..5].to_vec());
-        
+
         let final_results = deduplicator.get_final_results(2);
-        
+
         // Should have best 2 results (highest scores with descending sort)
         assert_eq!(final_results.len(), 2);
         assert_eq!(final_results[0].score, 5.0); // vector_0 has score 5

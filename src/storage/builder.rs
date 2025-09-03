@@ -617,8 +617,9 @@ impl StorageSystemBuilder {
         let write_buffer_manager = WriteAheadLogManager::create_with_batch_factory(
             self.config.wal_system.strategy_type.clone(),
             self.config.wal_system.clone(),
-            filesystem.clone()
-        ).await?;
+            filesystem.clone(),
+        )
+        .await?;
         tracing::info!(
             "✅ Write Buffer system initialized with {:?} strategy",
             self.config.wal_system.strategy_type
@@ -715,7 +716,7 @@ impl std::fmt::Debug for StorageSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_storage_system_builder() {

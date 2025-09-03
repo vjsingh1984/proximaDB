@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // Bytemuck imports removed - using manual serialization for flexibility
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::core::error::ProximaDBError;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::io::zero_copy::traits::{
-    MetadataSerializer, EngineMetadata, QueryContext, DataRange, QueryType
+    DataRange, EngineMetadata, MetadataSerializer, QueryContext, QueryType,
 };
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// NOVA file footer information (bytemuck compatible)
 #[repr(C)]
@@ -184,11 +184,15 @@ impl EngineMetadata for NovaMetadata {
     }
 
     fn memory_footprint(&self) -> usize {
-        std::mem::size_of::<NovaFooterHeader>() +
-        self.column_groups.len() * std::mem::size_of::<NovaColumnGroupHeader>() +
-        self.columns.iter().map(|cols| cols.len() * std::mem::size_of::<NovaColumnHeader>()).sum::<usize>() +
-        self.variable_data.len() +
-        std::mem::size_of::<Self>()
+        std::mem::size_of::<NovaFooterHeader>()
+            + self.column_groups.len() * std::mem::size_of::<NovaColumnGroupHeader>()
+            + self
+                .columns
+                .iter()
+                .map(|cols| cols.len() * std::mem::size_of::<NovaColumnHeader>())
+                .sum::<usize>()
+            + self.variable_data.len()
+            + std::mem::size_of::<Self>()
     }
 
     fn creation_timestamp(&self) -> Option<u64> {
@@ -199,7 +203,7 @@ impl EngineMetadata for NovaMetadata {
         // Calculate overall compression ratio from column groups
         let total_compressed: u64 = self.column_groups.iter().map(|g| g.compressed_size).sum();
         let total_uncompressed: u64 = self.column_groups.iter().map(|g| g.uncompressed_size).sum();
-        
+
         if total_uncompressed > 0 {
             Some(total_compressed as f32 / total_uncompressed as f32)
         } else {
@@ -209,12 +213,12 @@ impl EngineMetadata for NovaMetadata {
 
     fn supports_query_type(&self, query_type: &QueryType) -> bool {
         match query_type {
-            QueryType::IdLookup => true,        // Good for ID lookups with column groups
+            QueryType::IdLookup => true, // Good for ID lookups with column groups
             QueryType::SimilaritySearch => true, // Excellent for similarity search
-            QueryType::MetadataFilter => true,   // Excellent for metadata filtering
-            QueryType::Batch => true,           // Supports batch operations
-            QueryType::VectorSearch => true,    // Supports vector search
-            QueryType::FullScan => true,        // Supports full scan
+            QueryType::MetadataFilter => true, // Excellent for metadata filtering
+            QueryType::Batch => true,    // Supports batch operations
+            QueryType::VectorSearch => true, // Supports vector search
+            QueryType::FullScan => true, // Supports full scan
         }
     }
 
@@ -239,7 +243,7 @@ impl NovaMetadata {
     fn hash_id(&self, id: &str) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         id.hash(&mut hasher);
         hasher.finish()
@@ -278,7 +282,7 @@ impl NovaMetadata {
                 // Conservative: need all groups
                 (0..self.column_groups.len() as u32).collect()
             }
-            
+
             QueryType::VectorSearch | QueryType::FullScan => {
                 // Vector search and full scan need all groups
                 (0..self.column_groups.len() as u32).collect()
@@ -312,7 +316,9 @@ impl NovaMetadata {
                     let mut cols = Vec::new();
                     for (col_idx, col) in columns.iter().enumerate() {
                         if col.column_type == 0 || // Vector columns
-                           (!query_context.metadata_filters.is_empty() && col.column_type == 1) { // Metadata if filtered
+                           (!query_context.metadata_filters.is_empty() && col.column_type == 1)
+                        {
+                            // Metadata if filtered
                             cols.push(col_idx as u32);
                         }
                     }
@@ -327,7 +333,8 @@ impl NovaMetadata {
                 for (group_idx, columns) in self.columns.iter().enumerate() {
                     let mut cols = Vec::new();
                     for (col_idx, col) in columns.iter().enumerate() {
-                        if col.column_type == 1 || col.column_type == 2 { // Metadata or ID columns
+                        if col.column_type == 1 || col.column_type == 2 {
+                            // Metadata or ID columns
                             cols.push(col_idx as u32);
                         }
                     }
@@ -344,7 +351,7 @@ impl NovaMetadata {
                     required_columns.insert(group_idx as u32, all_cols);
                 }
             }
-            
+
             QueryType::VectorSearch | QueryType::FullScan => {
                 // Need all columns for vector search and full scan
                 for (group_idx, columns) in self.columns.iter().enumerate() {
@@ -358,9 +365,10 @@ impl NovaMetadata {
     }
 
     /// Convert column group and column requirements to data ranges
-    pub fn requirements_to_ranges(&self, 
-        group_indices: Vec<u32>, 
-        column_requirements: HashMap<u32, Vec<u32>>
+    pub fn requirements_to_ranges(
+        &self,
+        group_indices: Vec<u32>,
+        column_requirements: HashMap<u32, Vec<u32>>,
     ) -> Vec<DataRange> {
         let mut ranges = Vec::new();
 
@@ -414,7 +422,11 @@ impl NovaMetadataSerializer {
     }
 
     /// Extract metadata from NOVA file
-    async fn extract_metadata(&self, file_path: &str, _collection_id: &str) -> Result<NovaMetadata, ProximaDBError> {
+    async fn extract_metadata(
+        &self,
+        file_path: &str,
+        _collection_id: &str,
+    ) -> Result<NovaMetadata, ProximaDBError> {
         // In a real implementation, this would:
         // 1. Read NOVA file footer to get column group locations
         // 2. Parse footer header
@@ -434,13 +446,13 @@ impl NovaMetadataSerializer {
             num_columns: 4, // vector, metadata, id, timestamp
             format_version: 1,
             created_timestamp: 1640995200, // 2022-01-01
-            compression_type: 1, // ZSTD
+            compression_type: 1,           // ZSTD
             reserved: [0; 7],
         };
 
         let mut column_groups = Vec::new();
         let mut columns = Vec::new();
-        
+
         for i in 0..footer.num_column_groups {
             let group = NovaColumnGroupHeader {
                 offset: i as u64 * 240000,
@@ -503,7 +515,11 @@ impl MetadataSerializer for NovaMetadataSerializer {
         "NOVA"
     }
 
-    fn serialize_metadata(&self, file_path: &str, collection_id: &str) -> Result<Vec<u8>, ProximaDBError> {
+    fn serialize_metadata(
+        &self,
+        file_path: &str,
+        collection_id: &str,
+    ) -> Result<Vec<u8>, ProximaDBError> {
         // Extract metadata (would be async in real implementation)
         let runtime = tokio::runtime::Handle::current();
         let metadata = runtime.block_on(self.extract_metadata(file_path, collection_id))?;
@@ -581,7 +597,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
     fn deserialize_metadata(&self, data: &[u8]) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
         if data.len() < std::mem::size_of::<NovaFooterHeader>() + 4 {
             return Err(ProximaDBError::InvalidInput(
-                "NOVA metadata too small".into()
+                "NOVA metadata too small".into(),
             ));
         }
 
@@ -590,64 +606,205 @@ impl MetadataSerializer for NovaMetadataSerializer {
         // 1. Deserialize footer header manually
         let footer_size = 8 + 4 + 4 + 4 + 4 + 4 + 8 + 4 + 8 + 1 + 7; // 64 bytes total
         if data.len() < footer_size {
-            return Err(ProximaDBError::InvalidInput("Invalid Nova footer size".into()));
+            return Err(ProximaDBError::InvalidInput(
+                "Invalid Nova footer size".into(),
+            ));
         }
         let footer = NovaFooterHeader {
-            file_size: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3], 
-                                          data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
-            num_column_groups: u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]]),
-            footer_offset: u32::from_le_bytes([data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
-            footer_size: u32::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19]]),
-            schema_offset: u32::from_le_bytes([data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
-            schema_size: u32::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27]]),
-            total_vectors: u64::from_le_bytes([data[offset+28], data[offset+29], data[offset+30], data[offset+31],
-                                              data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
-            num_columns: u32::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39]]),
-            format_version: u32::from_le_bytes([data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
-            created_timestamp: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
-                                                  data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
-            compression_type: data[offset+52],
-            reserved: [data[offset+53], data[offset+54], data[offset+55], data[offset+56], 
-                      data[offset+57], data[offset+58], data[offset+59]],
+            file_size: u64::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]),
+            num_column_groups: u32::from_le_bytes([
+                data[offset + 8],
+                data[offset + 9],
+                data[offset + 10],
+                data[offset + 11],
+            ]),
+            footer_offset: u32::from_le_bytes([
+                data[offset + 12],
+                data[offset + 13],
+                data[offset + 14],
+                data[offset + 15],
+            ]),
+            footer_size: u32::from_le_bytes([
+                data[offset + 16],
+                data[offset + 17],
+                data[offset + 18],
+                data[offset + 19],
+            ]),
+            schema_offset: u32::from_le_bytes([
+                data[offset + 20],
+                data[offset + 21],
+                data[offset + 22],
+                data[offset + 23],
+            ]),
+            schema_size: u32::from_le_bytes([
+                data[offset + 24],
+                data[offset + 25],
+                data[offset + 26],
+                data[offset + 27],
+            ]),
+            total_vectors: u64::from_le_bytes([
+                data[offset + 28],
+                data[offset + 29],
+                data[offset + 30],
+                data[offset + 31],
+                data[offset + 32],
+                data[offset + 33],
+                data[offset + 34],
+                data[offset + 35],
+            ]),
+            num_columns: u32::from_le_bytes([
+                data[offset + 36],
+                data[offset + 37],
+                data[offset + 38],
+                data[offset + 39],
+            ]),
+            format_version: u32::from_le_bytes([
+                data[offset + 40],
+                data[offset + 41],
+                data[offset + 42],
+                data[offset + 43],
+            ]),
+            created_timestamp: u64::from_le_bytes([
+                data[offset + 44],
+                data[offset + 45],
+                data[offset + 46],
+                data[offset + 47],
+                data[offset + 48],
+                data[offset + 49],
+                data[offset + 50],
+                data[offset + 51],
+            ]),
+            compression_type: data[offset + 52],
+            reserved: [
+                data[offset + 53],
+                data[offset + 54],
+                data[offset + 55],
+                data[offset + 56],
+                data[offset + 57],
+                data[offset + 58],
+                data[offset + 59],
+            ],
         };
         offset += footer_size;
 
         // 2. Read number of column groups
         let num_groups = u32::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]);
         offset += 4;
 
         // 3. Deserialize column group headers manually
         let group_size = 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 1 + 7; // 68 bytes per group
         let mut column_groups = Vec::with_capacity(num_groups as usize);
-        
+
         for _ in 0..num_groups {
             if offset + group_size > data.len() {
                 return Err(ProximaDBError::InvalidInput(
-                    "Insufficient data for NOVA column group headers".into()
+                    "Insufficient data for NOVA column group headers".into(),
                 ));
             }
-            
+
             let group = NovaColumnGroupHeader {
-                offset: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3],
-                                           data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
-                compressed_size: u64::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11],
-                                                    data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
-                uncompressed_size: u64::from_le_bytes([data[offset+16], data[offset+17], data[offset+18], data[offset+19],
-                                                      data[offset+20], data[offset+21], data[offset+22], data[offset+23]]),
-                num_vectors: u64::from_le_bytes([data[offset+24], data[offset+25], data[offset+26], data[offset+27],
-                                                data[offset+28], data[offset+29], data[offset+30], data[offset+31]]),
-                num_columns: u32::from_le_bytes([data[offset+32], data[offset+33], data[offset+34], data[offset+35]]),
-                statistics_offset: u32::from_le_bytes([data[offset+36], data[offset+37], data[offset+38], data[offset+39]]),
-                statistics_size: u32::from_le_bytes([data[offset+40], data[offset+41], data[offset+42], data[offset+43]]),
-                min_id_hash: u64::from_le_bytes([data[offset+44], data[offset+45], data[offset+46], data[offset+47],
-                                                data[offset+48], data[offset+49], data[offset+50], data[offset+51]]),
-                max_id_hash: u64::from_le_bytes([data[offset+52], data[offset+53], data[offset+54], data[offset+55],
-                                                data[offset+56], data[offset+57], data[offset+58], data[offset+59]]),
-                priority: data[offset+60],
-                reserved: [data[offset+61], data[offset+62], data[offset+63], data[offset+64],
-                          data[offset+65], data[offset+66], data[offset+67]],
+                offset: u64::from_le_bytes([
+                    data[offset],
+                    data[offset + 1],
+                    data[offset + 2],
+                    data[offset + 3],
+                    data[offset + 4],
+                    data[offset + 5],
+                    data[offset + 6],
+                    data[offset + 7],
+                ]),
+                compressed_size: u64::from_le_bytes([
+                    data[offset + 8],
+                    data[offset + 9],
+                    data[offset + 10],
+                    data[offset + 11],
+                    data[offset + 12],
+                    data[offset + 13],
+                    data[offset + 14],
+                    data[offset + 15],
+                ]),
+                uncompressed_size: u64::from_le_bytes([
+                    data[offset + 16],
+                    data[offset + 17],
+                    data[offset + 18],
+                    data[offset + 19],
+                    data[offset + 20],
+                    data[offset + 21],
+                    data[offset + 22],
+                    data[offset + 23],
+                ]),
+                num_vectors: u64::from_le_bytes([
+                    data[offset + 24],
+                    data[offset + 25],
+                    data[offset + 26],
+                    data[offset + 27],
+                    data[offset + 28],
+                    data[offset + 29],
+                    data[offset + 30],
+                    data[offset + 31],
+                ]),
+                num_columns: u32::from_le_bytes([
+                    data[offset + 32],
+                    data[offset + 33],
+                    data[offset + 34],
+                    data[offset + 35],
+                ]),
+                statistics_offset: u32::from_le_bytes([
+                    data[offset + 36],
+                    data[offset + 37],
+                    data[offset + 38],
+                    data[offset + 39],
+                ]),
+                statistics_size: u32::from_le_bytes([
+                    data[offset + 40],
+                    data[offset + 41],
+                    data[offset + 42],
+                    data[offset + 43],
+                ]),
+                min_id_hash: u64::from_le_bytes([
+                    data[offset + 44],
+                    data[offset + 45],
+                    data[offset + 46],
+                    data[offset + 47],
+                    data[offset + 48],
+                    data[offset + 49],
+                    data[offset + 50],
+                    data[offset + 51],
+                ]),
+                max_id_hash: u64::from_le_bytes([
+                    data[offset + 52],
+                    data[offset + 53],
+                    data[offset + 54],
+                    data[offset + 55],
+                    data[offset + 56],
+                    data[offset + 57],
+                    data[offset + 58],
+                    data[offset + 59],
+                ]),
+                priority: data[offset + 60],
+                reserved: [
+                    data[offset + 61],
+                    data[offset + 62],
+                    data[offset + 63],
+                    data[offset + 64],
+                    data[offset + 65],
+                    data[offset + 66],
+                    data[offset + 67],
+                ],
             };
             column_groups.push(group);
             offset += group_size;
@@ -656,16 +813,19 @@ impl MetadataSerializer for NovaMetadataSerializer {
         // 4. Deserialize columns for each group manually
         let column_size = 8 + 4 + 4 + 1 + 1 + 4 + 4 + 6; // 32 bytes per column (8+4+4+1+1+4+4+6)
         let mut columns = Vec::with_capacity(num_groups as usize);
-        
+
         for _ in 0..num_groups {
             if offset + 4 > data.len() {
                 return Err(ProximaDBError::InvalidInput(
-                    "Insufficient data for NOVA column count".into()
+                    "Insufficient data for NOVA column count".into(),
                 ));
             }
 
             let num_columns = u32::from_le_bytes([
-                data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
             ]);
             offset += 4;
 
@@ -673,23 +833,51 @@ impl MetadataSerializer for NovaMetadataSerializer {
             for _ in 0..num_columns {
                 if offset + column_size > data.len() {
                     return Err(ProximaDBError::InvalidInput(
-                        "Insufficient data for NOVA column headers".into()
+                        "Insufficient data for NOVA column headers".into(),
                     ));
                 }
-                
+
                 let column = NovaColumnHeader {
-                    offset: u64::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3],
-                                               data[offset+4], data[offset+5], data[offset+6], data[offset+7]]),
-                    compressed_size: u32::from_le_bytes([data[offset+8], data[offset+9], data[offset+10], data[offset+11]]),
-                    uncompressed_size: u32::from_le_bytes([data[offset+12], data[offset+13], data[offset+14], data[offset+15]]),
-                    column_type: data[offset+16],
-                    compression_algorithm: data[offset+17],
-                    null_count: u32::from_le_bytes([data[offset+18], data[offset+19], data[offset+20], data[offset+21]]),
-                    stats_offset: u32::from_le_bytes([data[offset+22], data[offset+23], data[offset+24], data[offset+25]]),
+                    offset: u64::from_le_bytes([
+                        data[offset],
+                        data[offset + 1],
+                        data[offset + 2],
+                        data[offset + 3],
+                        data[offset + 4],
+                        data[offset + 5],
+                        data[offset + 6],
+                        data[offset + 7],
+                    ]),
+                    compressed_size: u32::from_le_bytes([
+                        data[offset + 8],
+                        data[offset + 9],
+                        data[offset + 10],
+                        data[offset + 11],
+                    ]),
+                    uncompressed_size: u32::from_le_bytes([
+                        data[offset + 12],
+                        data[offset + 13],
+                        data[offset + 14],
+                        data[offset + 15],
+                    ]),
+                    column_type: data[offset + 16],
+                    compression_algorithm: data[offset + 17],
+                    null_count: u32::from_le_bytes([
+                        data[offset + 18],
+                        data[offset + 19],
+                        data[offset + 20],
+                        data[offset + 21],
+                    ]),
+                    stats_offset: u32::from_le_bytes([
+                        data[offset + 22],
+                        data[offset + 23],
+                        data[offset + 24],
+                        data[offset + 25],
+                    ]),
                     reserved: [
-                        u16::from_le_bytes([data[offset+26], data[offset+27]]),
-                        u16::from_le_bytes([data[offset+28], data[offset+29]]),
-                        u16::from_le_bytes([data[offset+30], data[offset+31]]),
+                        u16::from_le_bytes([data[offset + 26], data[offset + 27]]),
+                        u16::from_le_bytes([data[offset + 28], data[offset + 29]]),
+                        u16::from_le_bytes([data[offset + 30], data[offset + 31]]),
                     ],
                 };
                 group_columns.push(column);
@@ -701,18 +889,21 @@ impl MetadataSerializer for NovaMetadataSerializer {
         // 5. Read variable data
         if offset + 4 > data.len() {
             return Err(ProximaDBError::InvalidInput(
-                "Insufficient data for NOVA variable data size".into()
+                "Insufficient data for NOVA variable data size".into(),
             ));
         }
 
         let variable_data_size = u32::from_le_bytes([
-            data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
         ]) as usize;
         offset += 4;
 
         if offset + variable_data_size > data.len() {
             return Err(ProximaDBError::InvalidInput(
-                "Insufficient data for NOVA variable data".into()
+                "Insufficient data for NOVA variable data".into(),
             ));
         }
 
@@ -729,15 +920,15 @@ impl MetadataSerializer for NovaMetadataSerializer {
 
         trace!(
             column_groups = metadata.column_groups.len(),
-            variable_data_size,
-            "Deserialized NOVA metadata"
+            variable_data_size, "Deserialized NOVA metadata"
         );
 
         Ok(Box::new(metadata))
     }
 
     fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
-        let nova_metadata = metadata.as_any()
+        let nova_metadata = metadata
+            .as_any()
             .downcast_ref::<NovaMetadata>()
             .expect("Invalid metadata type for NOVA serializer");
 
@@ -771,7 +962,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
                 // Conservative approach for batch queries
                 false
             }
-            
+
             QueryType::VectorSearch | QueryType::FullScan => {
                 // Cannot skip file for vector search or full scan
                 false
@@ -779,16 +970,24 @@ impl MetadataSerializer for NovaMetadataSerializer {
         }
     }
 
-    fn get_required_ranges(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> Option<Vec<DataRange>> {
-        let nova_metadata = metadata.as_any()
+    fn get_required_ranges(
+        &self,
+        metadata: &dyn EngineMetadata,
+        query_context: &QueryContext,
+    ) -> Option<Vec<DataRange>> {
+        let nova_metadata = metadata
+            .as_any()
             .downcast_ref::<NovaMetadata>()
             .expect("Invalid metadata type for NOVA serializer");
 
         let required_groups = nova_metadata.get_required_column_groups(query_context);
         let column_requirements = nova_metadata.get_required_columns(query_context);
-        
-        if required_groups.len() == nova_metadata.column_groups.len() && 
-           column_requirements.values().all(|cols| cols.len() == nova_metadata.footer.num_columns as usize) {
+
+        if required_groups.len() == nova_metadata.column_groups.len()
+            && column_requirements
+                .values()
+                .all(|cols| cols.len() == nova_metadata.footer.num_columns as usize)
+        {
             // Need all groups and all columns - return None to indicate full file read
             None
         } else {
@@ -797,7 +996,11 @@ impl MetadataSerializer for NovaMetadataSerializer {
         }
     }
 
-    fn estimate_selectivity(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> f32 {
+    fn estimate_selectivity(
+        &self,
+        metadata: &dyn EngineMetadata,
+        query_context: &QueryContext,
+    ) -> f32 {
         metadata.estimated_selectivity(query_context)
     }
 }
@@ -815,7 +1018,9 @@ mod tests {
         let serializer = NovaMetadataSerializer::new(filesystem);
 
         // Test serialization
-        let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection").unwrap();
+        let serialized = serializer
+            .serialize_metadata("/test/file.nova", "test_collection")
+            .unwrap();
         assert!(!serialized.is_none());
 
         // Test deserialization
@@ -830,13 +1035,17 @@ mod tests {
         let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
         let serializer = NovaMetadataSerializer::new(filesystem);
 
-        let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection").unwrap();
+        let serialized = serializer
+            .serialize_metadata("/test/file.nova", "test_collection")
+            .unwrap();
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
 
         // Test metadata filtering - should be very selective
         let mut query_context = QueryContext::default();
         query_context.query_type = QueryType::MetadataFilter;
-        query_context.metadata_filters.insert("category".to_string(), "electronics".to_string());
+        query_context
+            .metadata_filters
+            .insert("category".to_string(), "electronics".to_string());
 
         let selectivity = serializer.estimate_selectivity(metadata.as_ref(), &query_context);
         assert!(selectivity < 0.5); // Should be quite selective
@@ -856,7 +1065,9 @@ mod tests {
         let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
         let serializer = NovaMetadataSerializer::new(filesystem);
 
-        let serialized = serializer.serialize_metadata("/test/file.nova", "test_collection").unwrap();
+        let serialized = serializer
+            .serialize_metadata("/test/file.nova", "test_collection")
+            .unwrap();
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
 
         // Test similarity search with vector

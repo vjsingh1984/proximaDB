@@ -15,22 +15,22 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
+use super::enhanced_flush_result::EnhancedFlushResult;
 use crate::core::VectorRecord;
 use crate::storage::traits::FlushResult;
-use super::enhanced_flush_result::EnhancedFlushResult;
 
 /// Optimized flush result that minimizes memory allocations
 #[derive(Debug)]
 pub struct OptimizedFlushResult {
     /// Base flush result
     pub base: FlushResult,
-    
+
     /// Reference to vectors (avoids cloning large datasets)
     pub vector_refs: Arc<Vec<Arc<VectorRecord>>>,
-    
+
     /// Deleted vector IDs (if any)
     pub deleted_vector_ids: Vec<String>,
-    
+
     /// Memory pool for reuse
     pub memory_pool: Option<Arc<VectorMemoryPool>>,
 }
@@ -40,10 +40,10 @@ pub struct OptimizedFlushResult {
 pub struct VectorMemoryPool {
     /// Pre-allocated vector buffers
     buffers: tokio::sync::Mutex<Vec<Vec<f32>>>,
-    
+
     /// Maximum pool size
     max_size: usize,
-    
+
     /// Buffer dimension
     dimension: usize,
 }
@@ -57,13 +57,13 @@ impl VectorMemoryPool {
             dimension,
         }
     }
-    
+
     /// Get a buffer from the pool or allocate new
     pub async fn acquire(&self) -> Vec<f32> {
         let mut buffers = self.buffers.lock().await;
         buffers.pop().unwrap_or_else(|| vec![0.0; self.dimension])
     }
-    
+
     /// Return a buffer to the pool
     pub async fn release(&self, mut buffer: Vec<f32>) {
         let mut buffers = self.buffers.lock().await;
@@ -79,10 +79,10 @@ impl VectorMemoryPool {
 pub struct StreamingFlushResult {
     /// Base flush metadata
     pub base: FlushResult,
-    
+
     /// Channel for streaming vectors
     pub vector_stream: mpsc::Receiver<Arc<VectorRecord>>,
-    
+
     /// Total expected vectors
     pub expected_count: usize,
 }
@@ -91,10 +91,10 @@ pub struct StreamingFlushResult {
 pub struct BatchFlushProcessor {
     /// Batch size for processing
     batch_size: usize,
-    
+
     /// Number of parallel workers
     worker_count: usize,
-    
+
     /// Memory pool for vector buffers
     memory_pool: Arc<VectorMemoryPool>,
 }
@@ -108,7 +108,7 @@ impl BatchFlushProcessor {
             memory_pool: Arc::new(VectorMemoryPool::new(batch_size * 2, dimension)),
         }
     }
-    
+
     /// Process vectors in optimized batches
     pub async fn process_batch(
         &self,
@@ -119,9 +119,9 @@ impl BatchFlushProcessor {
             .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
-        
+
         let mut handles = Vec::new();
-        
+
         for chunk in chunks {
             let pool = self.memory_pool.clone();
             let handle = tokio::spawn(async move {
@@ -135,13 +135,13 @@ impl BatchFlushProcessor {
             });
             handles.push(handle);
         }
-        
+
         let mut all_processed = Vec::with_capacity(vectors.len());
         for handle in handles {
             let batch_result = handle.await?;
             all_processed.extend(batch_result);
         }
-        
+
         Ok(all_processed)
     }
 }
@@ -150,10 +150,10 @@ impl BatchFlushProcessor {
 pub struct ZeroCopyFlushResult {
     /// Base flush metadata
     pub base: FlushResult,
-    
+
     /// Memory-mapped file path containing vectors
     pub mmap_path: String,
-    
+
     /// Offset and length for each vector in the file
     pub vector_offsets: Vec<(u64, u64)>,
 }
@@ -162,7 +162,7 @@ pub struct ZeroCopyFlushResult {
 pub struct FlushResultCache {
     /// LRU cache of recent flush results
     cache: moka::future::Cache<String, Arc<FlushResult>>,
-    
+
     /// Maximum cache size
     max_entries: u64,
 }
@@ -173,15 +173,15 @@ impl FlushResultCache {
         let cache = moka::future::Cache::builder()
             .max_capacity(max_entries)
             .build();
-        
+
         Self { cache, max_entries }
     }
-    
+
     /// Check if a flush result is cached
     pub async fn get(&self, key: &str) -> Option<Arc<FlushResult>> {
         self.cache.get(key).await
     }
-    
+
     /// Cache a flush result
     pub async fn insert(&self, key: String, result: Arc<FlushResult>) {
         self.cache.insert(key, result).await;
@@ -192,13 +192,13 @@ impl FlushResultCache {
 pub struct OptimizedFlushCoordinator {
     /// Batch processor for vectors
     batch_processor: BatchFlushProcessor,
-    
+
     /// Result cache for deduplication
     result_cache: FlushResultCache,
-    
+
     /// Memory pool for allocations
     memory_pool: Arc<VectorMemoryPool>,
-    
+
     /// Metrics for monitoring
     metrics: FlushMetrics,
 }
@@ -208,13 +208,13 @@ pub struct OptimizedFlushCoordinator {
 struct FlushMetrics {
     /// Total vectors flushed
     total_vectors: std::sync::atomic::AtomicU64,
-    
+
     /// Total bytes processed
     total_bytes: std::sync::atomic::AtomicU64,
-    
+
     /// Cache hits
     cache_hits: std::sync::atomic::AtomicU64,
-    
+
     /// Cache misses
     cache_misses: std::sync::atomic::AtomicU64,
 }
@@ -229,7 +229,7 @@ impl OptimizedFlushCoordinator {
             metrics: FlushMetrics::default(),
         }
     }
-    
+
     /// Execute optimized flush
     pub async fn execute_optimized_flush(
         &self,
@@ -241,13 +241,15 @@ impl OptimizedFlushCoordinator {
             collection_id,
             vectors.len()
         );
-        
+
         // Check cache first
         let cache_key = format!("{}:{}", collection_id, vectors.len());
         if let Some(cached) = self.result_cache.get(&collection_id).await {
-            self.metrics.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.metrics
+                .cache_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             debug!("✅ Cache hit for flush result");
-            
+
             return Ok(OptimizedFlushResult {
                 base: (*cached).clone(),
                 vector_refs: Arc::new(vec![]),
@@ -255,18 +257,20 @@ impl OptimizedFlushCoordinator {
                 memory_pool: Some(self.memory_pool.clone()),
             });
         }
-        
-        self.metrics.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
+
+        self.metrics
+            .cache_misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         // Process vectors in optimized batches
         let processed_vectors = self.batch_processor.process_batch(vectors).await?;
-        
+
         // Update metrics
         self.metrics.total_vectors.fetch_add(
             processed_vectors.len() as u64,
-            std::sync::atomic::Ordering::Relaxed
+            std::sync::atomic::Ordering::Relaxed,
         );
-        
+
         // Create optimized result
         let base_result = FlushResult {
             success: true,
@@ -280,13 +284,12 @@ impl OptimizedFlushCoordinator {
             compaction_triggered: false,
             flushed_batch_ids: vec![],
         };
-        
+
         // Cache the result
-        self.result_cache.insert(
-            cache_key,
-            Arc::new(base_result.clone())
-        ).await;
-        
+        self.result_cache
+            .insert(cache_key, Arc::new(base_result.clone()))
+            .await;
+
         Ok(OptimizedFlushResult {
             base: base_result,
             vector_refs: Arc::new(processed_vectors),
@@ -294,14 +297,22 @@ impl OptimizedFlushCoordinator {
             memory_pool: Some(self.memory_pool.clone()),
         })
     }
-    
+
     /// Get current metrics
     pub fn get_metrics(&self) -> (u64, u64, u64, u64) {
         (
-            self.metrics.total_vectors.load(std::sync::atomic::Ordering::Relaxed),
-            self.metrics.total_bytes.load(std::sync::atomic::Ordering::Relaxed),
-            self.metrics.cache_hits.load(std::sync::atomic::Ordering::Relaxed),
-            self.metrics.cache_misses.load(std::sync::atomic::Ordering::Relaxed),
+            self.metrics
+                .total_vectors
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.metrics
+                .total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.metrics
+                .cache_hits
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.metrics
+                .cache_misses
+                .load(std::sync::atomic::Ordering::Relaxed),
         )
     }
 }
@@ -310,11 +321,12 @@ impl OptimizedFlushCoordinator {
 impl From<OptimizedFlushResult> for EnhancedFlushResult {
     fn from(optimized: OptimizedFlushResult) -> Self {
         // Convert Arc<VectorRecord> refs to owned VectorRecord
-        let vector_records: Vec<VectorRecord> = optimized.vector_refs
+        let vector_records: Vec<VectorRecord> = optimized
+            .vector_refs
             .iter()
             .map(|arc_vec| (**arc_vec).clone())
             .collect();
-        
+
         EnhancedFlushResult::with_deletions(
             optimized.base,
             vector_records,
@@ -326,31 +338,34 @@ impl From<OptimizedFlushResult> for EnhancedFlushResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_memory_pool() {
         let pool = VectorMemoryPool::new(10, 128);
-        
+
         // Acquire buffers
-        let buf1 = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
-        let buf2 = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
-        
+        let buf1 = pool /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await;
+        let buf2 = pool /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await;
+
         assert_eq!(buf1.len(), 128);
         assert_eq!(buf2.len(), 128);
-        
+
         // Release buffers
         pool.release(buf1).await;
         pool.release(buf2).await;
-        
+
         // Verify reuse
-        let buf3 = pool/* TODO: Fix VectorMemoryPool::acquire() method */.await;
+        let buf3 = pool /* TODO: Fix VectorMemoryPool::acquire() method */
+            .await;
         assert_eq!(buf3.len(), 128);
     }
-    
+
     #[tokio::test]
     async fn test_batch_processor() {
         let processor = BatchFlushProcessor::new(100, 4, 128);
-        
+
         let vectors: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
                 id: Some(format!("vec_{}", i)),
@@ -365,15 +380,15 @@ mod tests {
                 similarity: None,
             })
             .collect();
-        
+
         let processed = processor.process_batch(vectors).await.unwrap();
         assert_eq!(processed.len(), 100);
     }
-    
+
     #[tokio::test]
     async fn test_optimized_coordinator() {
         let coordinator = OptimizedFlushCoordinator::new(50, 2, 128);
-        
+
         let vectors: Vec<VectorRecord> = (0..50)
             .map(|i| VectorRecord {
                 id: Some(format!("vec_{}", i)),
@@ -388,21 +403,21 @@ mod tests {
                 similarity: None,
             })
             .collect();
-        
+
         let result = coordinator
             .execute_optimized_flush("test_collection", vectors.clone())
             .await
             .unwrap();
-        
+
         assert_eq!(result.vector_refs.len(), 50);
         assert!(result.base.success);
-        
+
         // Test cache hit
         let result2 = coordinator
             .execute_optimized_flush("test_collection", vectors)
             .await
             .unwrap();
-        
+
         let (_, _, hits, misses) = coordinator.metrics();
         assert_eq!(hits, 1);
         assert_eq!(misses, 1);

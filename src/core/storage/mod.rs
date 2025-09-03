@@ -3,13 +3,13 @@
 //! This module provides all storage-related types including compression,
 //! engines, configuration, and compaction settings.
 
-pub mod compression;
-pub mod engines;
-pub mod configuration;
 pub mod compaction;
+pub mod compression;
+pub mod configuration;
+pub mod engines;
 
 // Re-export all storage types
-pub use compression::*;
-pub use engines::*;
-pub use configuration::*;
 pub use compaction::*;
+pub use compression::*;
+pub use configuration::*;
+pub use engines::*;

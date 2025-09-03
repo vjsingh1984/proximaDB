@@ -1,23 +1,18 @@
 // Storage Engine Factory
 // Creates the appropriate storage engine based on configuration
 
-use anyhow::{anyhow, Result};
-use crate::storage::engines::impls::{raptor, prism};use std::sync::Arc;
+use crate::storage::engines::impls::{prism, raptor};
+use anyhow::{Result, anyhow};
+use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
-use crate::storage::traits::{
-    UnifiedStorageEngine, StorageEngineStrategy,
-};
 use crate::metrics::collectors::EngineMetricsCollector;
+use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
+use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{
-    sst::SstStorage,
-    viper::ViperEngine,
-    swift::SwiftEngine,
-    nova::NovaEngine,
-    prism::PrismEngine,
-    raptor::RaptorEngine,
+    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
+    swift::SwiftEngine, viper::ViperEngine,
 };
 
 /// Storage engine factory for creating engine instances
@@ -52,7 +47,7 @@ impl StorageEngineFactory {
             }
         }
     }
-    
+
     /// Create a storage engine from strategy enum
     pub fn create_from_strategy(
         strategy: StorageEngineStrategy,
@@ -80,27 +75,34 @@ impl StorageEngineFactory {
             }
         }
     }
-    
+
     /// Create VIPER engine
     fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         // VIPER needs async initialization, block on it for now
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-            let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?);
+            let filesystem_config =
+                crate::storage::persistence::filesystem::FilesystemConfig::default();
+            let filesystem = Arc::new(
+                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+                    .await?,
+            );
             let viper_config = crate::core::config::ViperConfig::default();
-            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            let distance_compute = Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+            );
             ViperEngine::new(
-                "default".to_string(),  // Default collection ID
+                "default".to_string(), // Default collection ID
                 viper_config,
                 filesystem,
                 distance_compute,
-            ).await
+            )
+            .await
         })?;
         Ok(Arc::new(engine))
     }
-    
+
     /// Create SST engine
     fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
@@ -108,25 +110,33 @@ impl StorageEngineFactory {
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
             let sst_config = crate::core::config::SstConfig::default();
-            let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-            let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?);
-            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            let filesystem_config =
+                crate::storage::persistence::filesystem::FilesystemConfig::default();
+            let filesystem = Arc::new(
+                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
+                    .await?,
+            );
+            let distance_compute = Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+            );
             SstStorage::new(sst_config, filesystem, distance_compute).await
         })?;
         Ok(Arc::new(engine))
     }
-    
+
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
     fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            let distance_compute = Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+            );
             SwiftEngine::new(distance_compute, None).await
         })?;
         Ok(Arc::new(engine))
     }
-    
+
     /// Create NOVA engine (Next-gen Optimized Vector Analytics)
     fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
@@ -134,22 +144,24 @@ impl StorageEngineFactory {
         let engine = runtime.block_on(NovaEngine::new())?;
         Ok(Arc::new(engine))
     }
-    
+
     /// Create RAPTOR engine (Row-Aligned Predicated Tensor Optimized Repository)
     fn create_raptor_default() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("RAPTOR engine requires async initialization with collection info");
         // For now, return SST as fallback
         Self::create_sst()
     }
-    
+
     /// Create RAPTOR engine with specific configuration (async)
     pub async fn create_raptor(
         collection_id: String,
         base_path: String,
         config: Option<raptor::RaptorConfig>,
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {
-        info!("Creating RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) storage engine");
-        
+        info!(
+            "Creating RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) storage engine"
+        );
+
         let config = config.unwrap_or_else(raptor::RaptorConfig::default);
         // Create shared cache for RAPTOR
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
@@ -157,38 +169,44 @@ impl StorageEngineFactory {
         let engine = RaptorEngine::new(collection_id, base_path, config, cache).await?;
         Ok(Arc::new(engine))
     }
-    
+
     /// Create PRISM engine (Progressive Retrieval through Indexed Storage Management)
     fn create_prism() -> Result<Arc<dyn UnifiedStorageEngine>> {
-        info!("Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine");
-        
+        info!(
+            "Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine"
+        );
+
         // Use default configuration for now
         let config = prism::engine::Config::default();
-        
+
         // TODO: This needs to be updated when the PRISM engine constructor is fixed
         // For now, return an error indicating PRISM needs additional setup
-        Err(anyhow!("PRISM engine requires async initialization - use create_prism_async()"))
+        Err(anyhow!(
+            "PRISM engine requires async initialization - use create_prism_async()"
+        ))
     }
-    
+
     /// Create PRISM engine (async version)
     pub async fn create_prism_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
-        info!("Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine");
-        
+        info!(
+            "Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine"
+        );
+
         // Use default configuration
         let config = prism::engine::Config::default();
-        
+
         // Create PRISM engine with async initialization
         let engine = PrismEngine::new(config).await?;
         Ok(Arc::new(engine))
     }
-    
+
     /// Create a storage engine with metrics integration
     pub fn create_with_metrics(
         engine_type: ProtoStorageEngine,
         metrics_collector: Arc<EngineMetricsCollector>,
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {
         let engine = Self::create_from_proto(engine_type)?;
-        
+
         // Set up metrics for SWIFT and NOVA engines
         match engine_type {
             ProtoStorageEngine::Swift => {
@@ -209,7 +227,9 @@ impl StorageEngineFactory {
                 let weak_ref = Arc::downgrade(&engine);
                 let collector = metrics_collector.clone();
                 tokio::spawn(async move {
-                    collector.register_engine("NOVA".to_string(), weak_ref).await;
+                    collector
+                        .register_engine("NOVA".to_string(), weak_ref)
+                        .await;
                 });
             }
             _ => {
@@ -217,14 +237,16 @@ impl StorageEngineFactory {
                 let weak_ref = Arc::downgrade(&engine);
                 let engine_name = format!("{:?}", engine_type);
                 tokio::spawn(async move {
-                    metrics_collector.register_engine(engine_name, weak_ref).await;
+                    metrics_collector
+                        .register_engine(engine_name, weak_ref)
+                        .await;
                 });
             }
         }
-        
+
         Ok(engine)
     }
-    
+
     /// Create the best engine for a given workload
     pub fn create_for_workload(workload: WorkloadType) -> Result<Arc<dyn UnifiedStorageEngine>> {
         match workload {
@@ -246,7 +268,7 @@ impl StorageEngineFactory {
             }
         }
     }
-    
+
     /// Get engine recommendations based on requirements
     pub fn recommend_engine(requirements: &EngineRequirements) -> ProtoStorageEngine {
         // Score each engine based on requirements
@@ -256,62 +278,92 @@ impl StorageEngineFactory {
             (ProtoStorageEngine::Swift, 0),
             (ProtoStorageEngine::Nova, 0),
         ];
-        
+
         for (engine, score) in &mut scores {
             *score = Self::score_engine(*engine, requirements);
         }
-        
+
         // Sort by score (highest first)
         scores.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
-        
+
         let (best_engine, best_score) = scores[0];
         info!(
             "Recommended engine: {:?} (similarity: {})",
             best_engine, best_score
         );
-        
+
         best_engine
     }
-    
+
     /// Score an engine based on requirements
     fn score_engine(engine: ProtoStorageEngine, req: &EngineRequirements) -> i32 {
         let mut score = 0;
-        
+
         match engine {
             ProtoStorageEngine::Viper => {
                 // VIPER: Good for general use, columnar storage
-                if req.needs_columnar { score += 20; }
-                if req.needs_compression { score += 15; }
-                if req.needs_batch_operations { score += 10; }
+                if req.needs_columnar {
+                    score += 20;
+                }
+                if req.needs_compression {
+                    score += 15;
+                }
+                if req.needs_batch_operations {
+                    score += 10;
+                }
                 score += 10; // Base score for maturity
             }
             ProtoStorageEngine::Sst => {
                 // SST: Good for write-heavy, row-based
-                if req.needs_fast_writes { score += 20; }
-                if req.needs_transactions { score += 15; }
-                if req.needs_id_lookup { score += 10; }
+                if req.needs_fast_writes {
+                    score += 20;
+                }
+                if req.needs_transactions {
+                    score += 15;
+                }
+                if req.needs_id_lookup {
+                    score += 10;
+                }
                 score += 10; // Base score for maturity
             }
             ProtoStorageEngine::Swift => {
                 // SWIFT: Storage With Instant Fast Traversal - optimized for AXIS integration
-                if req.needs_id_lookup { score += 25; }
-                if req.needs_progressive_search { score += 20; }
-                if req.needs_quantization { score += 15; }
-                if req.needs_zero_overhead { score += 20; }
+                if req.needs_id_lookup {
+                    score += 25;
+                }
+                if req.needs_progressive_search {
+                    score += 20;
+                }
+                if req.needs_quantization {
+                    score += 15;
+                }
+                if req.needs_zero_overhead {
+                    score += 20;
+                }
                 score += 5; // Lower base score (newer)
             }
             ProtoStorageEngine::Nova => {
                 // NOVA: Next-gen Optimized Vector Analytics - advanced columnar with dual-mode
-                if req.needs_columnar { score += 25; }
-                if req.needs_predicate_pushdown { score += 20; }
-                if req.needs_projection { score += 15; }
-                if req.needs_progressive_search { score += 15; }
-                if req.needs_zero_overhead { score += 20; }
+                if req.needs_columnar {
+                    score += 25;
+                }
+                if req.needs_predicate_pushdown {
+                    score += 20;
+                }
+                if req.needs_projection {
+                    score += 15;
+                }
+                if req.needs_progressive_search {
+                    score += 15;
+                }
+                if req.needs_zero_overhead {
+                    score += 20;
+                }
                 score += 5; // Lower base score (newer)
             }
             _ => {}
         }
-        
+
         score
     }
 }
@@ -461,7 +513,7 @@ impl StorageEngineFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_engine_recommendation() {
         // Test for analytics workload
@@ -472,10 +524,10 @@ mod tests {
             needs_projection: true,
             ..Default::default()
         };
-        
+
         let engine = StorageEngineFactory::recommend_engine(&req);
         assert_eq!(engine, ProtoStorageEngine::Nova);
-        
+
         // Test for transactional workload
         let req = EngineRequirements {
             needs_fast_writes: true,
@@ -483,43 +535,41 @@ mod tests {
             needs_id_lookup: true,
             ..Default::default()
         };
-        
+
         let engine = StorageEngineFactory::recommend_engine(&req);
         assert!(matches!(
-            engine, 
+            engine,
             ProtoStorageEngine::Sst | ProtoStorageEngine::Swift
         ));
     }
-    
+
     #[test]
     fn test_workload_based_selection() {
         // Analytics should prefer NOVA
-        let engine = StorageEngineFactory::create_for_workload(
-            WorkloadType::Analytics
-        );
+        let engine = StorageEngineFactory::create_for_workload(WorkloadType::Analytics);
         assert!(engine.is_ok());
-        
+
         // Transactional should prefer SWIFT
-        let engine = StorageEngineFactory::create_for_workload(
-            WorkloadType::Transactional
-        );
+        let engine = StorageEngineFactory::create_for_workload(WorkloadType::Transactional);
         assert!(engine.is_ok());
     }
-    
+
     #[test]
     fn test_engine_comparison() {
         let comparisons = StorageEngineFactory::compare_engines();
-        
+
         assert_eq!(comparisons.len(), 4);
-        
+
         // NOVA should have highest performance score
-        let nova = comparisons.iter()
+        let nova = comparisons
+            .iter()
             .find(|c| c.engine_name == "NOVA")
             .unwrap();
         assert_eq!(nova.performance_score, 90);
-        
+
         // VIPER and SST should have highest maturity
-        let viper = comparisons.iter()
+        let viper = comparisons
+            .iter()
             .find(|c| c.engine_name == "VIPER")
             .unwrap();
         assert_eq!(viper.maturity_score, 90);

@@ -26,7 +26,6 @@ pub mod write_ahead_log;
 #[cfg(test)]
 mod atomic_tests;
 
-
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -34,13 +33,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Re-exports
-pub use transaction_coordinator::TransactionId;
 pub use store::{MetadataStore, MetadataStoreConfig};
-pub use write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog, SystemMetadata, VersionedCollectionMetadata};
+pub use transaction_coordinator::TransactionId;
+pub use write_ahead_log::{
+    MetadataWALConfig, MetadataWriteAheadLog, SystemMetadata, VersionedCollectionMetadata,
+};
 
 // No conversion implementations needed - StorageEngineType is now a type alias for proto enum
-
-
 
 /// Operations that can be performed on metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +88,8 @@ pub struct MetadataFilter {
     pub max_age_days: Option<u32>,
 
     /// Custom filter function
-    pub custom_filter: Option<Box<dyn Fn(&crate::proto::proximadb::Collection) -> bool + Send + Sync>>,
+    pub custom_filter:
+        Option<Box<dyn Fn(&crate::proto::proximadb::Collection) -> bool + Send + Sync>>,
 }
 
 impl std::fmt::Debug for MetadataFilter {
@@ -213,7 +213,3 @@ pub struct MetadataStorageStats {
     pub wal_entries: u64,
     pub wal_size_bytes: u64,
 }
-
-
-
-

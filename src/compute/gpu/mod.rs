@@ -10,4 +10,4 @@ pub mod distance;
 pub use similarity::*;
 
 #[cfg(feature = "gpu")]
-pub use crate::core::hardware_capabilities::{GpuDevice, GpuBackend};
+pub use crate::core::hardware_capabilities::{GpuBackend, GpuDevice};

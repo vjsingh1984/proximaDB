@@ -10,37 +10,19 @@
 
 pub mod event_log;
 pub mod event_log_manager;
-pub mod service_interface;
 pub mod service_adapter;
+pub mod service_interface;
 
 pub use event_log::{
-    EventLogQueue,
-    IndexEvent,
-    IndexEventBuilder,
-    FileIndexingStatus,
-    StorageEngineType,
-    OperationType,
-    EventType,
-    ExtractionMode,
+    EventLogQueue, EventType, ExtractionMode, FileIndexingStatus, IndexEvent, IndexEventBuilder,
+    OperationType, StorageEngineType,
 };
 
-pub use event_log_manager::{
-    EventLogManager,
-    EventLogConfig,
-};
+pub use event_log_manager::{EventLogConfig, EventLogManager};
 
 pub use service_interface::{
-    EventLogService,
-    EventLogQuery,
-    EventLogCommand,
-    EventLogClient,
-    ServiceMode,
-    ServiceHealth,
-    EventFilter,
-    EventStatus,
+    EventFilter, EventLogClient, EventLogCommand, EventLogQuery, EventLogService, EventStatus,
+    ServiceHealth, ServiceMode,
 };
 
-pub use service_adapter::{
-    EventLogServiceAdapter,
-    EventLogServiceFactory,
-};
+pub use service_adapter::{EventLogServiceAdapter, EventLogServiceFactory};

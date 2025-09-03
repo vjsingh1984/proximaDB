@@ -101,21 +101,21 @@
 //! [memory]
 //! # Global memory limit
 //! max_memory_gb = 32
-//! 
+//!
 //! # Vector pool configuration
 //! [memory.vector_pool]
 //! enabled = true
 //! initial_capacity = 1000
 //! max_capacity = 100000
 //! dimensions = [128, 256, 384, 512, 768, 1024]
-//! 
+//!
 //! # Buffer pools
 //! [memory.buffer_pools]
 //! small_size = 4096      # 4KB
 //! medium_size = 65536    # 64KB
 //! large_size = 1048576   # 1MB
 //! huge_size = 16777216   # 16MB
-//! 
+//!
 //! # Arena settings
 //! [memory.arena]
 //! chunk_size = 67108864  # 64MB chunks
@@ -127,31 +127,31 @@
 //! ### Vector Pool Usage
 //! ```rust
 //! use proximadb::memory::VectorMemoryPool;
-//! 
+//!
 //! let pool = VectorMemoryPool::new(768, 1000);
-//! 
+//!
 //! // Acquire vector buffer
 //! let mut vector = pool.acquire_vector();
 //! vector.extend_from_slice(&data);
-//! 
+//!
 //! // Process vector...
 //! let result = compute_similarity(&vector);
-//! 
+//!
 //! // Automatically returned to pool on drop
 //! ```
 //!
 //! ### Generic Pool Usage
 //! ```rust
 //! use proximadb::memory::Pool;
-//! 
+//!
 //! #[derive(Default)]
 //! struct QueryContext {
 //!     buffer: Vec<u8>,
 //!     results: Vec<SearchResult>,
 //! }
-//! 
+//!
 //! let pool = Pool::<QueryContext>::new(100);
-//! 
+//!
 //! let mut ctx = pool.acquire();
 //! ctx.buffer.clear();
 //! ctx.results.clear();
@@ -196,7 +196,4 @@
 
 pub mod pool;
 
-pub use pool::{
-    Pool, PoolConfig, PoolStats, PooledItem,
-    VectorMemoryPool, VectorPoolStats,
-};
+pub use pool::{Pool, PoolConfig, PoolStats, PooledItem, VectorMemoryPool, VectorPoolStats};

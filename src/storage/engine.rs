@@ -1,11 +1,10 @@
-use crate::core::{String, SstConfig, StorageConfig, VectorId, VectorRecord};
+use crate::core::{SstConfig, StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
     engines::impls::sst::{Compaction, SstStorage},
     persistence::disk_manager::DiskManager,
     traits::CollectionMetadataProvider,
-    
 };
 // Import CollectionMetadata from the appropriate location
 use crate::storage::engines::core::formats::fastlanes_blocks::header_metadata::CollectionMetadata;
@@ -96,15 +95,16 @@ impl StorageEngine {
     ) -> crate::storage::Result<Self> {
         Self::new_internal(config, None).await
     }
-    
-    
+
     /// Internal constructor used by both public constructors
     async fn new_internal(
         config: StorageConfig,
         metadata_provider: Option<Arc<dyn CollectionMetadataProvider>>,
     ) -> crate::storage::Result<Self> {
         // Extract data directories from storage locations
-        let data_dirs: Vec<PathBuf> = config.storage_locations.iter()
+        let data_dirs: Vec<PathBuf> = config
+            .storage_locations
+            .iter()
             .filter_map(|loc| {
                 if loc.url.starts_with("file://") {
                     loc.url.strip_prefix("file://").map(PathBuf::from)
@@ -113,12 +113,14 @@ impl StorageEngine {
                 }
             })
             .collect();
-        
+
         let disk_manager = Arc::new(DiskManager::new(data_dirs.clone())?);
 
         // Initialize WAL configuration from storage locations
         let mut wal_config = WALConfig::default();
-        wal_config.multi_disk.data_directories = config.storage_locations.iter()
+        wal_config.multi_disk.data_directories = config
+            .storage_locations
+            .iter()
             .map(|loc| {
                 // Ensure proper file:// URL format
                 let url = if loc.url.starts_with("file://") {
@@ -171,26 +173,39 @@ impl StorageEngine {
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Initialize compaction manager with default config if not provided
-        let sst_config = config.sst_config.clone().unwrap_or_else(|| SstConfig::default());
+        let sst_config = config
+            .sst_config
+            .clone()
+            .unwrap_or_else(|| SstConfig::default());
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
-        
+
         // Create singleton SST storage instance
-        let sst_config_for_storage = config.sst_config.clone().unwrap_or_else(|| SstConfig::default());
-        let _sst_storage = Arc::new(SstStorage::new(
-            sst_config_for_storage,
-            filesystem.clone(),
-            Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
-        ).await?);
+        let sst_config_for_storage = config
+            .sst_config
+            .clone()
+            .unwrap_or_else(|| SstConfig::default());
+        let _sst_storage = Arc::new(
+            SstStorage::new(
+                sst_config_for_storage,
+                filesystem.clone(),
+                Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                ),
+            )
+            .await?,
+        );
 
         Ok(Self {
             config,
-            sst_storages: Arc::new(DashMap::new()),  // Now uses DashMap for per-collection storages
+            sst_storages: Arc::new(DashMap::new()), // Now uses DashMap for per-collection storages
             disk_manager,
             write_ahead_log_manager,
             axis_index_manager,
             compaction_manager,
             filesystem,
-            distance_compute: Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
+            distance_compute: Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+            ),
             metadata_provider: Arc::new(RwLock::new(metadata_provider)),
         })
     }
@@ -201,7 +216,7 @@ impl StorageEngine {
         *lock = Some(provider);
         info!("✅ Metadata provider injected into StorageEngine");
     }
-    
+
     /// Get metadata provider - returns None if not yet injected
     async fn get_metadata_provider(&self) -> Option<Arc<dyn CollectionMetadataProvider>> {
         self.metadata_provider.read().await.clone()
@@ -209,7 +224,7 @@ impl StorageEngine {
 
     pub async fn start(&mut self) -> crate::storage::Result<()> {
         tracing::info!("🚀 STORAGE_ENGINE: Starting storage engine");
-        
+
         // Replay WAL to recover state
         tracing::info!("📊 STORAGE_ENGINE: About to call recover_from_wal()");
         self.recover_from_wal().await?;
@@ -222,7 +237,11 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let sst_config = self.config.sst_config.clone().unwrap_or_else(|| SstConfig::default());
+        let sst_config = self
+            .config
+            .sst_config
+            .clone()
+            .unwrap_or_else(|| SstConfig::default());
         let mut temp_manager = Compaction::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
@@ -255,15 +274,24 @@ impl StorageEngine {
     }
 
     /// Write a vector to storage through WAL → memtable → flush pipeline
-    pub async fn write(&self, collection_id: &str, record: &VectorRecord) -> crate::storage::Result<()> {
+    pub async fn write(
+        &self,
+        collection_id: &str,
+        record: &VectorRecord,
+    ) -> crate::storage::Result<()> {
         // Direct field access - no function call overhead, no match expressions
         let vector_ref = &record.vector[..];
         let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
         let start = std::time::Instant::now();
         let vector_id = &record.id;
-        
-        tracing::debug!("🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}", 
-                       vector_id, collection_id, vector_ref.len(), vector_size);
+
+        tracing::debug!(
+            "🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}",
+            vector_id,
+            collection_id,
+            vector_ref.len(),
+            vector_size
+        );
 
         // Note: SST storage is now a singleton - no per-collection initialization needed
 
@@ -273,14 +301,18 @@ impl StorageEngine {
             vector_id,
             collection_id
         );
-        
+
         // Use modern WAL API with Arc for zero-copy
         let vectors = Arc::new(vec![record.clone()]);
-        
+
         // Write to WAL (which handles memtable insertion)
-        self.write_ahead_log_manager.write_vector_batch_native_arc(collection_id, vectors).await
-            .map_err(|e| crate::core::StorageError::WalError(format!("Failed to write to WAL: {}", e)))?;
-        
+        self.write_ahead_log_manager
+            .write_vector_batch_native_arc(collection_id, vectors)
+            .await
+            .map_err(|e| {
+                crate::core::StorageError::WalError(format!("Failed to write to WAL: {}", e))
+            })?;
+
         tracing::debug!(
             "✅ Successfully wrote vector {} to WAL for collection {}",
             vector_id,
@@ -290,21 +322,21 @@ impl StorageEngine {
         // No need to release lock with DashMap - operations are atomic
 
         // REMOVED: Synchronous AXIS indexing moved to async queue-based approach
-        // 
+        //
         // Previously, AXIS indexing happened synchronously on every write, blocking the write path.
         // Now, vectors are indexed asynchronously via queue during flush operations:
-        // 1. Write → WAL → Memtable (fast, non-blocking) 
+        // 1. Write → WAL → Memtable (fast, non-blocking)
         // 2. Flush → Storage + Queue for AXIS (async indexing)
         //
         // Benefits:
-        // - 40-60% lower write latency 
+        // - 40-60% lower write latency
         // - Better throughput under load
         // - Fault tolerance (index failures don't block writes)
         // - Batching and backpressure control
         //
         // Note: AXIS indexing still happens, just asynchronously during flush operations
         // via FlushAxisUpdater.queue_flush_updates() in SST and VIPER engines.
-        
+
         tracing::debug!(
             "✅ Vector {} written to WAL for collection {} (AXIS indexing will happen async during flush)",
             vector_id,
@@ -318,9 +350,14 @@ impl StorageEngine {
             vector_size
         );
         if let Some(provider) = self.get_metadata_provider().await {
-            provider.update_stats(collection_id, 1, vector_size as i64).await?;
+            provider
+                .update_stats(collection_id, 1, vector_size as i64)
+                .await?;
         } else {
-            tracing::warn!("⚠️ No metadata provider available, cannot update stats for collection {}", collection_id);
+            tracing::warn!(
+                "⚠️ No metadata provider available, cannot update stats for collection {}",
+                collection_id
+            );
         }
         tracing::debug!(
             "✅ Completed metadata stats update for collection {}",
@@ -328,26 +365,32 @@ impl StorageEngine {
         );
 
         let elapsed = start.elapsed();
-        tracing::debug!("🎉 Successfully completed write operation for vector {} in collection {}, total_time={:?}", 
-                       vector_id, collection_id, elapsed);
+        tracing::debug!(
+            "🎉 Successfully completed write operation for vector {} in collection {}, total_time={:?}",
+            vector_id,
+            collection_id,
+            elapsed
+        );
         Ok(())
     }
 
-
     /// Check if a vector exists in the storage engine
-    pub async fn exists(
-        &self,
-        collection_id: &str,
-        id: &VectorId,
-    ) -> crate::storage::Result<bool> {
+    pub async fn exists(&self, collection_id: &str, id: &VectorId) -> crate::storage::Result<bool> {
         // Check WAL for unflushed vectors first
-        if let Some(_) = self.write_ahead_log_manager.search_vector_by_id(collection_id, id).await? {
+        if let Some(_) = self
+            .write_ahead_log_manager
+            .search_vector_by_id(collection_id, id)
+            .await?
+        {
             return Ok(true);
         }
 
         // Check SST storage for vector existence
         // TODO: Implement SST-based existence check in SstStorage
-        tracing::warn!("⚠️ SST-based existence check not yet implemented for collection {}", collection_id);
+        tracing::warn!(
+            "⚠️ SST-based existence check not yet implemented for collection {}",
+            collection_id
+        );
         Ok(false)
     }
 
@@ -375,7 +418,10 @@ impl StorageEngine {
             if let Some(provider) = self.get_metadata_provider().await {
                 provider.update_stats(collection_id, -1, 0).await?;
             } else {
-                tracing::warn!("⚠️ No metadata provider available, cannot update stats for collection {}", collection_id);
+                tracing::warn!(
+                    "⚠️ No metadata provider available, cannot update stats for collection {}",
+                    collection_id
+                );
             }
         }
 
@@ -383,26 +429,32 @@ impl StorageEngine {
         if exists {
             // SST is pure SSTable storage - no direct delete operation
             // Deletes should be handled through WAL tombstones
-            return Err(anyhow::anyhow!("Direct deletes from SST not supported. Use WAL tombstones.").into());
+            return Err(anyhow::anyhow!(
+                "Direct deletes from SST not supported. Use WAL tombstones."
+            )
+            .into());
         }
 
         Ok(exists)
     }
 
-    pub async fn create_collection(
-        &self,
-        collection_id: String,
-    ) -> crate::storage::Result<()> {
+    pub async fn create_collection(&self, collection_id: String) -> crate::storage::Result<()> {
         // Use default storage location - pick randomly from configured locations
-        let base_location = self.config.storage_locations
+        let base_location = self
+            .config
+            .storage_locations
             .choose(&mut rand::thread_rng())
-            .ok_or_else(|| crate::core::StorageError::DiskIO(
-                std::io::Error::new(std::io::ErrorKind::Other, "No storage locations configured")
-            ))?
+            .ok_or_else(|| {
+                crate::core::StorageError::DiskIO(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "No storage locations configured",
+                ))
+            })?
             .url
             .clone();
-        
-        self.create_collection_with_storage(collection_id, base_location).await
+
+        self.create_collection_with_storage(collection_id, base_location)
+            .await
     }
 
     pub async fn create_collection_with_storage(
@@ -418,7 +470,7 @@ impl StorageEngine {
         let data_url = format!("{}/{}/data", base_location, collection_id);
         let write_buffer_url = format!("{}/{}/write_buffer", base_location, collection_id);
         let index_url = format!("{}/{}/indexes", base_location, collection_id);
-        
+
         // Create all required directories for the collection
         // This ensures directories exist before any writes occur
         for url in &[&write_buffer_url, &data_url, &index_url] {
@@ -427,19 +479,17 @@ impl StorageEngine {
             } else {
                 format!("{}/", url)
             };
-            
+
             if let Ok(fs) = self.filesystem.get_filesystem(&dir_url) {
                 match fs.create_dir_all(&dir_url).await {
                     Ok(_) => tracing::debug!("Created directory: {}", dir_url),
                     Err(e) => {
                         // Check if already exists
                         if !fs.exists(&dir_url).await.unwrap_or(false) {
-                            return Err(crate::core::StorageError::DiskIO(
-                                std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    format!("Failed to create directory {}: {}", dir_url, e)
-                                )
-                            ));
+                            return Err(crate::core::StorageError::DiskIO(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("Failed to create directory {}: {}", dir_url, e),
+                            )));
                         }
                     }
                 }
@@ -447,7 +497,9 @@ impl StorageEngine {
         }
 
         // Don't eagerly create SST tree and MMAP reader - they will be created on first access
-        tracing::debug!("📁 Collection directories created, SST tree will be initialized on first access");
+        tracing::debug!(
+            "📁 Collection directories created, SST tree will be initialized on first access"
+        );
 
         // Create search index
         self.axis_index_manager
@@ -455,80 +507,100 @@ impl StorageEngine {
             .await
             .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))?;
 
-        tracing::info!("✅ Created collection: {} with directories at {}", collection_id, base_location);
+        tracing::info!(
+            "✅ Created collection: {} with directories at {}",
+            collection_id,
+            base_location
+        );
         Ok(())
     }
 
     async fn load_collections(&self) -> crate::storage::Result<()> {
         tracing::info!("🔍 STORAGE_ENGINE: Loading collections from metadata provider");
-        
+
         // Get collections from metadata provider which has access to the filestore backend
         let collections = if let Some(provider) = self.get_metadata_provider().await {
             match provider.list_collections().await {
                 Ok(collections) => {
-                    tracing::info!("📋 Found {} collections in metadata store", collections.len());
+                    tracing::info!(
+                        "📋 Found {} collections in metadata store",
+                        collections.len()
+                    );
                     collections
                 }
                 Err(e) => {
                     tracing::error!("❌ Failed to get collections from metadata: {}", e);
-                    return Err(crate::core::StorageError::SstStorage(
-                        format!("Failed to load collections from metadata: {}", e)
-                    ));
+                    return Err(crate::core::StorageError::SstStorage(format!(
+                        "Failed to load collections from metadata: {}",
+                        e
+                    )));
                 }
             }
         } else {
             tracing::warn!("⚠️ No metadata provider available, cannot load collections");
             return Ok(());
         };
-        
+
         if collections.is_empty() {
             tracing::info!("📋 No collections to load");
             return Ok(());
         }
-        
+
         // Storage locations are now part of collection metadata
         // No need to rebuild assignments - they're stored with collections
-        
+
         for collection in &collections {
             let collection_id = &collection.id;
-            let collection_name = collection.config.as_ref()
+            let collection_name = collection
+                .config
+                .as_ref()
                 .map(|c| c.name.as_str())
                 .unwrap_or("unknown");
-            
+
             // Storage assignment is now part of collection metadata
             if let Some(ref assignment) = collection.storage_assignment {
-                tracing::debug!("📋 Collection {} has storage at: {}", 
-                    collection_name, assignment.base_location);
+                tracing::debug!(
+                    "📋 Collection {} has storage at: {}",
+                    collection_name,
+                    assignment.base_location
+                );
             } else {
-                tracing::warn!("⚠️ Collection {} has no storage assignment", collection_name);
+                tracing::warn!(
+                    "⚠️ Collection {} has no storage assignment",
+                    collection_name
+                );
             }
         }
-        
+
         // Extract collection IDs for parallel loading
-        let collection_ids: Vec<String> = collections.into_iter()
-            .map(|c| c.id)
-            .collect();
-        
+        let collection_ids: Vec<String> = collections.into_iter().map(|c| c.id).collect();
+
         let total_collections = collection_ids.len();
         tracing::info!("📊 Found {} collections to load", total_collections);
-        
+
         if total_collections == 0 {
             return Ok(());
         }
-        
+
         // Determine optimal parallelism based on CPU cores
         let num_cpus = num_cpus::get();
         let chunk_size = (total_collections + num_cpus - 1) / num_cpus;
         let chunk_size = chunk_size.max(1).min(10); // Between 1 and 10 collections per task
-        
-        tracing::info!("🚀 Loading collections in parallel with chunk size: {}", chunk_size);
-        
+
+        tracing::info!(
+            "🚀 Loading collections in parallel with chunk size: {}",
+            chunk_size
+        );
+
         // With singleton SST storage, no per-collection initialization needed
         // Just log collection information for debugging
         for collection_id in &collection_ids {
-            tracing::debug!("✅ Collection {} ready for storage operations", collection_id);
+            tracing::debug!(
+                "✅ Collection {} ready for storage operations",
+                collection_id
+            );
         }
-        
+
         tracing::info!(
             "✅ STORAGE_ENGINE: Parallel loading complete. Loaded {} collections",
             total_collections
@@ -542,7 +614,9 @@ impl StorageEngine {
         // First, get all existing collections from the metadata provider
         tracing::info!("📋 STORAGE_ENGINE: Getting collection list from metadata provider");
         let existing_collections = if let Some(provider) = self.get_metadata_provider().await {
-            tracing::info!("📋 STORAGE_ENGINE: Metadata provider available, calling list_collections()");
+            tracing::info!(
+                "📋 STORAGE_ENGINE: Metadata provider available, calling list_collections()"
+            );
             match provider.list_collections().await {
                 Ok(collections) => {
                     tracing::info!(
@@ -579,7 +653,10 @@ impl StorageEngine {
 
                 // Add debug info about which collections had WAL entries vs those that didn't
                 if existing_collections.len() > 0 && recovered_entries == 0 {
-                    tracing::warn!("🔍 STORAGE_ENGINE: Found {} existing collections but recovered 0 WAL entries. This might indicate:", existing_collections.len());
+                    tracing::warn!(
+                        "🔍 STORAGE_ENGINE: Found {} existing collections but recovered 0 WAL entries. This might indicate:",
+                        existing_collections.len()
+                    );
                     tracing::warn!(
                         "   - Collections were created but no vectors were inserted yet"
                     );
@@ -645,23 +722,32 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
-                                    let mut collection = crate::proto::proximadb::Collection::default();
+                                    let mut collection =
+                                        crate::proto::proximadb::Collection::default();
                                     collection.id = collection_id.to_string();
-                                    collection.config = Some(crate::proto::proximadb::CollectionConfig {
-                                        name: collection_id.to_string(),
-                                        dimension: record.vector.len() as u32,
-                                        distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
-                                        ..Default::default()
-                                    });
-                                    collection.stats = Some(crate::proto::proximadb::CollectionStats {
-                                        vector_count: entries.len() as i64,
-                                        data_size_bytes: (entries.len() * record.vector.len() * 4) as i64,
-                                        ..Default::default()
-                                    });
+                                    collection.config =
+                                        Some(crate::proto::proximadb::CollectionConfig {
+                                            name: collection_id.to_string(),
+                                            dimension: record.vector.len() as u32,
+                                            distance_metric:
+                                                crate::proto::proximadb::DistanceMetric::Cosine
+                                                    as i32,
+                                            ..Default::default()
+                                        });
+                                    collection.stats =
+                                        Some(crate::proto::proximadb::CollectionStats {
+                                            vector_count: entries.len() as i64,
+                                            data_size_bytes: (entries.len()
+                                                * record.vector.len()
+                                                * 4)
+                                                as i64,
+                                            ..Default::default()
+                                        });
                                     collection.created_at = chrono::Utc::now().timestamp_micros();
                                     collection.updated_at = chrono::Utc::now().timestamp_micros();
-                                        
-                                        collections_metadata.push((collection_id.to_string(), collection));
+
+                                    collections_metadata
+                                        .push((collection_id.to_string(), collection));
                                 }
                             }
                         }
@@ -691,10 +777,7 @@ impl StorageEngine {
     // Storage layer focuses only on data persistence, not metadata management.
 
     /// Delete collection and all its data
-    pub async fn delete_collection(
-        &self,
-        collection_id: &str,
-    ) -> crate::storage::Result<bool> {
+    pub async fn delete_collection(&self, collection_id: &str) -> crate::storage::Result<bool> {
         // Remove from in-memory structures using DashMap
         // Note: SST storage is now singleton - no per-collection removal needed
         let collection_exists = self.sst_storages.contains_key(collection_id);
@@ -707,7 +790,11 @@ impl StorageEngine {
                 collection_id
             );
             // Note: WAL no longer handles collection operations - handled by CollectionService
-            if let Err(e) = self.write_ahead_log_manager.flush(Some(&collection_id.to_string())).await {
+            if let Err(e) = self
+                .write_ahead_log_manager
+                .flush(Some(&collection_id.to_string()))
+                .await
+            {
                 tracing::warn!(
                     "Failed to cleanup WAL entries for collection {}: {}",
                     collection_id,
@@ -729,7 +816,9 @@ impl StorageEngine {
     }
 
     /// Get the shared distance computation engine
-    pub fn distance_compute(&self) -> &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
+    pub fn distance_compute(
+        &self,
+    ) -> &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
         &self.distance_compute
     }
 
@@ -741,13 +830,15 @@ impl StorageEngine {
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> crate::storage::Result<f32> {
         // Use shared unified distance computation engine
-        let result = self.distance_compute.calculate_distance(query, vector, distance_metric);
+        let result = self
+            .distance_compute
+            .calculate_distance(query, vector, distance_metric);
         Ok(result.rank_value)
     }
 
     // REMOVED: search_vectors method (duplicate WAL scanning, no bloom filter optimization)
     // Use VectorOperationsService::search_vectors() instead which provides:
-    // - Single WAL scan with bloom filter optimization  
+    // - Single WAL scan with bloom filter optimization
     // - Proper search orchestration (indexes → WAL → storage)
     // - Better performance (10-20x improvement for filtered queries)
 
@@ -857,7 +948,11 @@ impl StorageEngine {
             );
             for collection_id in &collection_ids {
                 // Note: WAL no longer handles collection operations - handled by CollectionService
-                if let Err(e) = self.write_ahead_log_manager.flush(Some(collection_id)).await {
+                if let Err(e) = self
+                    .write_ahead_log_manager
+                    .flush(Some(collection_id))
+                    .await
+                {
                     tracing::warn!(
                         "Failed to cleanup WAL entries for collection {}: {}",
                         collection_id,

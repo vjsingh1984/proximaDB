@@ -7,17 +7,18 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use super::config::WriteBufferStrategyType;
-use super::{WALConfig, WALBatchStrategy, ProtoSerializationStrategy, BincodeSerializationStrategy, AvroSerializationStrategy};
+use super::{
+    AvroSerializationStrategy, BincodeSerializationStrategy, ProtoSerializationStrategy,
+    WALBatchStrategy, WALConfig,
+};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Modern factory for creating WAL batch strategies
 pub struct WALBatchFactory;
 
 impl WALBatchFactory {
-
-    
     /// Create a batch serialization strategy (HIGHLY RECOMMENDED - best separation of concerns)
-    /// 
+    ///
     /// This creates strategies using the new clean architecture with:
     /// - Separated serialization, memtable, and disk components
     /// - Direct recovery to storage engines
@@ -39,25 +40,31 @@ impl WALBatchFactory {
                 Ok(Box::new(strategy))
             }
             WriteBufferStrategyType::BincodeBatch => {
-                tracing::info!("🎯 Creating BincodeSerializationStrategy with separated components");
+                tracing::info!(
+                    "🎯 Creating BincodeSerializationStrategy with separated components"
+                );
                 let strategy = BincodeSerializationStrategy::new(config, filesystem).await?;
                 Ok(Box::new(strategy))
             }
         }
     }
 
-
     /// Create strategy with automatic type detection from config
     pub async fn create_from_config(
         config: &WALConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Box<dyn WALBatchStrategy>> {
-        Self::create_batch_serialization_strategy(config.strategy_type.clone(), config, filesystem).await
+        Self::create_batch_serialization_strategy(config.strategy_type.clone(), config, filesystem)
+            .await
     }
 
     /// List available strategy types
     pub fn available_strategies() -> Vec<WriteBufferStrategyType> {
-        vec![WriteBufferStrategyType::AvroBatch, WriteBufferStrategyType::BincodeBatch, WriteBufferStrategyType::ProtoBatch]
+        vec![
+            WriteBufferStrategyType::AvroBatch,
+            WriteBufferStrategyType::BincodeBatch,
+            WriteBufferStrategyType::ProtoBatch,
+        ]
     }
 
     /// Get strategy information for debugging and monitoring
@@ -104,7 +111,6 @@ impl WALBatchFactory {
             }
         }
     }
-
 
     /// Compare strategies for selection guidance
     pub fn compare_strategies() -> StrategyComparison {
@@ -157,7 +163,7 @@ pub struct StrategyComparison {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info, warn};
 
     #[test]
     fn test_available_strategies() {
@@ -175,7 +181,8 @@ use tracing::{debug, error, info, warn};
         assert!(avro_info.schema_evolution);
         assert!(avro_info.batch_native);
 
-        let bincode_info = WALBatchFactory::get_strategy_info(&WriteBufferStrategyType::BincodeBatch);
+        let bincode_info =
+            WALBatchFactory::get_strategy_info(&WriteBufferStrategyType::BincodeBatch);
         assert_eq!(bincode_info.name, "BincodeBatch");
         assert!(!bincode_info.schema_evolution);
         assert!(bincode_info.batch_native);

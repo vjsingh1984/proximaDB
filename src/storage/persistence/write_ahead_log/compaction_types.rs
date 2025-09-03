@@ -25,13 +25,13 @@ pub struct EnhancedEngineCompactionResult {
     /// Basic compaction metrics
     pub files_processed: u64,
     pub bytes_processed: u64,
-    
+
     /// Vector IDs that were deleted during compaction
     pub deleted_vector_ids: Vec<String>,
-    
+
     /// Vectors that were merged/updated during compaction
     pub merged_vectors: Vec<VectorRecord>,
-    
+
     /// Whether full index rebuild is recommended
     pub recommend_full_rebuild: bool,
 }

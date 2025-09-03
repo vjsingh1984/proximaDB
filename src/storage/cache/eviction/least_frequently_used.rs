@@ -20,15 +20,15 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
             stats: RwLock::new(EvictionStats::default()),
         }
     }
-    
+
     fn update_frequency(&self, key: &K, increment: bool) {
         let mut freq_map = self.frequency_map.write().unwrap();
         let mut freq_lists = self.frequency_lists.write().unwrap();
         let mut min_freq = self.min_frequency.write().unwrap();
-        
+
         let old_freq = freq_map.get(key).copied().unwrap_or(0);
         let new_freq = if increment { old_freq + 1 } else { 1 };
-        
+
         // Remove from old frequency list
         if old_freq > 0 {
             if let Some(keys) = freq_lists.get_mut(&old_freq) {
@@ -41,15 +41,15 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
                 }
             }
         }
-        
+
         // Add to new frequency list
         freq_lists
             .entry(new_freq)
             .or_insert_with(HashSet::new)
             .insert(key.clone());
-        
+
         freq_map.insert(key.clone(), new_freq);
-        
+
         // Update minimum frequency (min_freq is now usize not K)
         if new_freq < *min_freq || *min_freq == 0 {
             *min_freq = new_freq;
@@ -59,32 +59,32 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
 
 impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for LFUStrategy<K> {
     type Key = K;
-    
+
     fn select_victim(&self, _cache_state: &CacheState) -> Option<Self::Key> {
         let freq_lists = self.frequency_lists.read().unwrap();
-        
+
         // Find the list with minimum frequency
         freq_lists
             .iter()
             .next()
             .and_then(|(_, keys)| keys.iter().next().cloned())
     }
-    
+
     fn update_on_access(&mut self, key: &Self::Key) {
         self.update_frequency(key, true);
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.total_accesses += 1;
     }
-    
+
     fn update_on_insert(&mut self, key: &Self::Key, _size: usize) {
         self.update_frequency(key, false);
     }
-    
+
     fn update_on_evict(&mut self, key: &Self::Key) {
         let mut freq_map = self.frequency_map.write().unwrap();
         let mut freq_lists = self.frequency_lists.write().unwrap();
-        
+
         if let Some(&freq) = freq_map.get(key) {
             if let Some(keys) = freq_lists.get_mut(&freq) {
                 keys.remove(key);
@@ -94,11 +94,11 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for LFUStrategy<K> {
             }
             freq_map.remove(key);
         }
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.total_evictions += 1;
     }
-    
+
     fn stats(&self) -> EvictionStats {
         self.stats.read().unwrap().clone()
     }

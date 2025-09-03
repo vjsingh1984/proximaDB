@@ -155,7 +155,7 @@
 //!     timestamp: now(),
 //!     ..Default::default()
 //! };
-//! 
+//!
 //! // Direct field access without getters/setters
 //! println!("Vector ID: {}", record.id);
 //! ```
@@ -164,7 +164,7 @@
 //! ```rust
 //! // Write proto directly to storage
 //! storage.write_proto(&record)?;
-//! 
+//!
 //! // Read proto without conversion
 //! let record: VectorRecord = storage.read_proto(id)?;
 //! ```
@@ -191,7 +191,7 @@
 //! ```bash
 //! # Generate Rust code from .proto files
 //! protoc --rust_out=src/proto proximadb.proto
-//! 
+//!
 //! # With gRPC support
 //! protoc --rust_out=src/proto \\
 //!        --grpc_out=src/proto \\

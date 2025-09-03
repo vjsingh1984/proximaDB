@@ -74,100 +74,142 @@
 //! 4. Atomically switch and cleanup old index
 
 // Core modules
-pub mod indexes;      // Index implementations (HNSW, IVF, LSH, Annoy)
-pub mod management;   // Management and orchestration
-pub mod storage;      // Storage and serialization
-pub mod integration;  // Integration with other systems
+pub mod indexes; // Index implementations (HNSW, IVF, LSH, Annoy)
+pub mod integration;
+pub mod management; // Management and orchestration
+pub mod storage; // Storage and serialization // Integration with other systems
 
 // Shared utilities and types
-pub mod types;
-pub mod utils;
-pub mod clustering;
-pub mod cluster_manager;
-pub mod zero_overhead_vector;
-pub mod compact_vector;
 pub mod avro_analysis;
-pub mod pattern_analyzer;
-pub mod index_factory;
+pub mod cluster_manager;
+pub mod clustering;
+pub mod compact_vector;
 pub mod eventlog;
 pub mod flush_integration_simple;
+pub mod index_factory;
+pub mod pattern_analyzer;
+pub mod types;
+pub mod utils;
+pub mod zero_overhead_vector;
 
 // Test modules
 #[cfg(test)]
-pub mod types_tests;
-#[cfg(test)]
-pub mod strategy_tests;
-#[cfg(test)]
 pub mod annoy_index_tests;
-#[cfg(test)]
-pub mod pq_index_tests;
 #[cfg(test)]
 pub mod flat_index_tests;
 #[cfg(test)]
 pub mod hybrid_index_tests;
+#[cfg(test)]
+pub mod pq_index_tests;
+#[cfg(test)]
+pub mod strategy_tests;
+#[cfg(test)]
+pub mod types_tests;
 
 // Re-exports for convenience
 pub use management::{
     // From adaptive_engine
-    AccessFrequencyMetrics, AdaptiveIndexEngine, CollectionCharacteristics, MetadataComplexity,
-    PerformanceMetrics, QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
+    AccessFrequencyMetrics,
+    AdaptiveIndexEngine,
+    // From manager
+    AxisManager,
     // From analyzer
     CollectionAnalyzer,
-    // From manager
-    AxisManager, FilterOperator, HybridQuery, MetadataFilter, MigrationStatus, QueryResult,
-    ScoredResult, VectorQuery,
+    CollectionCharacteristics,
+    FilterOperator,
+    HybridQuery,
+    MetadataComplexity,
+    MetadataFilter,
+    MigrationStatus,
+    PerformanceMetrics,
+    QueryDistribution,
+    QueryPatternAnalysis,
+    QueryPatternType,
+    QueryResult,
+    ScoredResult,
+    TemporalPattern,
+    VectorQuery,
 };
 
 pub use indexes::{
-    // HNSW
-    AxisHnswConfig, AxisHnswIndex, create_hnsw_index,
+    AnnoyStats,
     // Annoy
-    AxisAnnoyConfig, AxisAnnoyIndex, AnnoyStats,
-    // IVF
-    UnifiedIvfConfig, UnifiedIvfIndex, IvfStats, CentroidConfig, PostingListConfig,
+    AxisAnnoyConfig,
+    AxisAnnoyIndex,
+    // HNSW
+    AxisHnswConfig,
+    AxisHnswIndex,
     // LSH
-    AxisLshConfig, AxisLshIndex, LshStats,
+    AxisLshConfig,
+    AxisLshIndex,
+    CentroidConfig,
+    IvfStats,
+    LshStats,
+    PostingListConfig,
+    // IVF
+    UnifiedIvfConfig,
+    UnifiedIvfIndex,
+    create_hnsw_index,
 };
 
 // Compatibility aliases for IVF (will remove after migration)
 pub use indexes::{UnifiedIvfConfig as AxisIvfConfig, UnifiedIvfIndex as AxisIvfIndex};
 
 pub use storage::{
-    // Serialization
-    IndexSerializer, IndexMetadata, IndexCheckpoint, IndexDelta, DeltaManager,
-    Index as SerializedIndex, DeltaOperation, SerializableIndex,
+    DeltaManager,
+    DeltaOperation,
+    FormatMigration,
+    FormatRecommender,
+    Index as SerializedIndex,
+    IndexCheckpoint,
+    IndexDelta,
     // Format strategy
-    IndexFormatStrategy, IndexSerializationFormat, FormatMigration, FormatRecommender,
+    IndexFormatStrategy,
+    IndexMetadata,
     // Recovery
-    IndexRecoveryManager, RecoveryResult, RecoveryStrategy,
+    IndexRecoveryManager,
+    IndexSerializationFormat,
+    // Serialization
+    IndexSerializer,
+    RecoveryResult,
+    RecoveryStrategy,
+    SerializableIndex,
 };
 
 pub use integration::{
-    // Memory tracker
-    IndexMemoryTracker, IndexMemoryStatus, Index as MemTrackerIndex,
-    MemoryState, EvictionReason, MemoryStats,
-    // Collection state
-    CollectionStateManager, CollectionTierState, TierLevel, CloudStorageType,
+    AxisTieringConfig,
     // Tiering manager
-    AxisTieringManager, AxisTieringConfig, TieringStats,
+    AxisTieringManager,
+    CloudStorageType,
+    // Collection state
+    CollectionStateManager,
+    CollectionTierState,
+    EvictionReason,
+    Index as MemTrackerIndex,
+    IndexMemoryStatus,
+    // Memory tracker
+    IndexMemoryTracker,
+    MemoryState,
+    MemoryStats,
+    TierLevel,
+    TieringStats,
 };
 
 pub use types::{
-    AxisConfig, PerformanceThresholds, IndexAlgorithm, Data, 
-    IndexSpecification, QueryCondition, ResultCombination,
-    MigrationDecision, MigrationReason, MigrationPriority,
-    AlertThresholds, MonitoringConfig,
+    AlertThresholds, AxisConfig, Data, IndexAlgorithm, IndexSpecification, MigrationDecision,
+    MigrationPriority, MigrationReason, MonitoringConfig, PerformanceThresholds, QueryCondition,
+    ResultCombination,
 };
 
-pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
 pub use clustering::{
     AxisClusteringEngine, ClusterAssignment, ClusteringAlgorithm, ClusteringConfig,
-    ClusteringMetrics, ClusteringModel, DBSCANConfig, HierarchicalConfig, KMeansConfig,
-    KMeansInit, LinkageCriterion,
+    ClusteringMetrics, ClusteringModel, DBSCANConfig, HierarchicalConfig, KMeansConfig, KMeansInit,
+    LinkageCriterion,
 };
+pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
 
 // Migration helpers and monitor exports
-pub use management::migration_engine::{MigrationEngine, MigrationPlan, MigrationPhase};
-pub use management::monitor::{AxisMonitor, MonitoringMetrics};
 pub use crate::query::unified_query_optimizer::IndexCapabilities;
-pub use management::strategy::{IndexStrategy, StrategySelector, StrategyRecommendation};
+pub use management::migration_engine::{MigrationEngine, MigrationPhase, MigrationPlan};
+pub use management::monitor::{AxisMonitor, MonitoringMetrics};
+pub use management::strategy::{IndexStrategy, StrategyRecommendation, StrategySelector};

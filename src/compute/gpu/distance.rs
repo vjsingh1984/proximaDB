@@ -16,7 +16,7 @@
 //! The module automatically detects available GPU backends and selects
 //! the most appropriate one for optimal performance.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -58,27 +58,29 @@ impl GpuAccelerator for GpuDistanceCompute {
             GpuBackend::None => HardwareBackend::Scalar,
         }
     }
-    
+
     fn is_available(&self) -> bool {
         self.backend != GpuBackend::None && !self.devices.is_none()
     }
-    
+
     async fn calculate_distance_gpu(
         &self,
         vec_a: &[f32],
         vec_b: &[f32],
         metric: DistanceMetric,
     ) -> Result<f32> {
-        self.calculate_distance_gpu_internal(vec_a, vec_b, metric).await
+        self.calculate_distance_gpu_internal(vec_a, vec_b, metric)
+            .await
     }
-    
+
     async fn calculate_batch_gpu(
         &self,
         query: &[f32],
         vectors: &[Vec<f32>],
         metric: DistanceMetric,
     ) -> Result<Vec<f32>> {
-        self.calculate_batch_gpu_internal(query, vectors, metric).await
+        self.calculate_batch_gpu_internal(query, vectors, metric)
+            .await
     }
 }
 
@@ -86,7 +88,7 @@ impl GpuDistanceCompute {
     /// Create a new GPU distance compute manager
     pub fn new() -> Result<Self> {
         let (backend, devices) = Self::detect_gpu_backend()?;
-        
+
         info!("🚀 GPU backend detected: {}", backend);
         for (idx, device) in devices.iter().enumerate() {
             info!(
@@ -214,14 +216,14 @@ impl GpuDistanceCompute {
 impl GpuDistanceCompute {
     fn detect_cuda_devices() -> Result<Vec<GpuDevice>> {
         use cudarc::driver::{CudaDevice, CudaDeviceBuilder};
-        
+
         let device_count = CudaDevice::count()?;
         let mut devices = Vec::new();
 
         for i in 0..device_count {
             let cuda_device = CudaDeviceBuilder::new(i as i32).build()?;
             let props = cuda_device.get_properties()?;
-            
+
             devices.push(GpuDevice {
                 id: i,
                 name: props.name.clone(),
@@ -242,14 +244,14 @@ impl GpuDistanceCompute {
         metric: DistanceMetric,
     ) -> Result<f32> {
         use cudarc::driver::{CudaDevice, CudaSlice, LaunchConfig};
-        
+
         let device = CudaDevice::new(self.selected_device as i32)?;
-        
+
         // Allocate GPU memory
         let gpu_a = device.htod_copy(vec_a)?;
         let gpu_b = device.htod_copy(vec_b)?;
         let mut gpu_result = device.alloc_zeros::<f32>(1)?;
-        
+
         // Select kernel based on metric
         let kernel_name = match metric {
             DistanceMetric::Cosine => "cosine_distance_kernel",
@@ -257,14 +259,14 @@ impl GpuDistanceCompute {
             DistanceMetric::DotProduct => "dot_product_kernel",
             _ => return Err(anyhow!("Unsupported metric for CUDA: {:?}", metric)),
         };
-        
+
         // Load and launch kernel
         let module = device.load_ptx(include_str!("kernels/distance.ptx"))?;
         let kernel = module.get_function(kernel_name)?;
-        
+
         let block_size = 256;
         let grid_size = (vec_a.len() + block_size - 1) / block_size;
-        
+
         kernel.launch(
             LaunchConfig {
                 grid_dim: (grid_size as u32, 1, 1),
@@ -273,7 +275,7 @@ impl GpuDistanceCompute {
             },
             (&gpu_a, &gpu_b, vec_a.len() as i32, &mut gpu_result),
         )?;
-        
+
         // Copy result back
         let result = device.dtoh_copy(&gpu_result)?;
         Ok(result[0])
@@ -286,19 +288,19 @@ impl GpuDistanceCompute {
         metric: DistanceMetric,
     ) -> Result<Vec<f32>> {
         use cudarc::driver::{CudaDevice, LaunchConfig};
-        
+
         let device = CudaDevice::new(self.selected_device as i32)?;
         let num_vectors = vectors.len();
         let dimension = query.len();
-        
+
         // Flatten vectors for GPU transfer
         let flattened: Vec<f32> = vectors.iter().flatten().cloned().collect();
-        
+
         // Allocate GPU memory
         let gpu_query = device.htod_copy(query)?;
         let gpu_vectors = device.htod_copy(&flattened)?;
         let mut gpu_results = device.alloc_zeros::<f32>(num_vectors)?;
-        
+
         // Select batch kernel
         let kernel_name = match metric {
             DistanceMetric::Cosine => "cosine_distance_batch_kernel",
@@ -306,13 +308,13 @@ impl GpuDistanceCompute {
             DistanceMetric::DotProduct => "dot_product_batch_kernel",
             _ => return Err(anyhow!("Unsupported metric for CUDA: {:?}", metric)),
         };
-        
+
         let module = device.load_ptx(include_str!("kernels/distance.ptx"))?;
         let kernel = module.get_function(kernel_name)?;
-        
+
         let block_size = 256;
         let grid_size = (num_vectors + block_size - 1) / block_size;
-        
+
         kernel.launch(
             LaunchConfig {
                 grid_dim: (grid_size as u32, 1, 1),
@@ -327,7 +329,7 @@ impl GpuDistanceCompute {
                 &mut gpu_results,
             ),
         )?;
-        
+
         // Copy results back
         device.dtoh_copy(&gpu_results)
     }
@@ -367,12 +369,12 @@ impl GpuDistanceCompute {
 impl GpuDistanceCompute {
     fn detect_mps_devices() -> Result<Vec<GpuDevice>> {
         use metal::{Device, DeviceLocation};
-        
+
         let mut devices = Vec::new();
-        
+
         // Get all Metal devices
         let metal_devices = Device::all();
-        
+
         for (idx, device) in metal_devices.iter().enumerate() {
             // Check if device supports MPS
             if device.supports_family(metal::MTLGPUFamily::Mac1) {
@@ -386,7 +388,7 @@ impl GpuDistanceCompute {
                 });
             }
         }
-        
+
         Ok(devices)
     }
 
@@ -396,16 +398,15 @@ impl GpuDistanceCompute {
         vec_b: &[f32],
         metric: DistanceMetric,
     ) -> Result<f32> {
-        use metal::{Device, Library, Function, ComputePipelineState};
         use metal::{Buffer, MTLResourceOptions};
-        
-        let device = Device::system_default()
-            .ok_or_else(|| anyhow!("No Metal device found"))?;
-        
+        use metal::{ComputePipelineState, Device, Function, Library};
+
+        let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
+
         // Load Metal shader library
         let library_data = include_bytes!("shaders/distance.metallib");
         let library = device.new_library_with_data(library_data)?;
-        
+
         // Select function based on metric
         let function_name = match metric {
             DistanceMetric::Cosine => "cosine_distance",
@@ -413,58 +414,70 @@ impl GpuDistanceCompute {
             DistanceMetric::DotProduct => "dot_product",
             _ => return Err(anyhow!("Unsupported metric for MPS: {:?}", metric)),
         };
-        
+
         let function = library.get_function(function_name, None)?;
         let pipeline = device.new_compute_pipeline_state_with_function(&function)?;
-        
+
         // Create buffers
         let vec_a_buffer = device.new_buffer_with_data(
             vec_a.as_ptr() as *const _,
             (vec_a.len() * std::mem::size_of::<f32>()) as u64,
             MTLResourceOptions::CPUCacheModeDefaultCache,
         );
-        
+
         let vec_b_buffer = device.new_buffer_with_data(
             vec_b.as_ptr() as *const _,
             (vec_b.len() * std::mem::size_of::<f32>()) as u64,
             MTLResourceOptions::CPUCacheModeDefaultCache,
         );
-        
+
         let result_buffer = device.new_buffer(
             std::mem::size_of::<f32>() as u64,
             MTLResourceOptions::CPUCacheModeDefaultCache,
         );
-        
+
         // Create command buffer and encoder
         let command_queue = device.new_command_queue();
         let command_buffer = command_queue.new_command_buffer();
         let compute_encoder = command_buffer.new_compute_command_encoder();
-        
+
         compute_encoder.set_compute_pipeline_state(&pipeline);
         compute_encoder.set_buffer(0, Some(&vec_a_buffer), 0);
         compute_encoder.set_buffer(1, Some(&vec_b_buffer), 0);
         compute_encoder.set_buffer(2, Some(&result_buffer), 0);
-        
+
         let length = vec_a.len() as u32;
-        compute_encoder.set_bytes(3, std::mem::size_of::<u32>() as u64, &length as *const _ as *const _);
-        
+        compute_encoder.set_bytes(
+            3,
+            std::mem::size_of::<u32>() as u64,
+            &length as *const _ as *const _,
+        );
+
         // Dispatch threads
         let thread_group_size = pipeline.thread_execution_width();
         let thread_groups = (vec_a.len() + thread_group_size - 1) / thread_group_size;
-        
+
         compute_encoder.dispatch_thread_groups(
-            metal::MTLSize { width: thread_groups as u64, height: 1, depth: 1 },
-            metal::MTLSize { width: thread_group_size as u64, height: 1, depth: 1 },
+            metal::MTLSize {
+                width: thread_groups as u64,
+                height: 1,
+                depth: 1,
+            },
+            metal::MTLSize {
+                width: thread_group_size as u64,
+                height: 1,
+                depth: 1,
+            },
         );
-        
+
         compute_encoder.end_encoding();
         command_buffer.commit();
         command_buffer.wait_until_completed();
-        
+
         // Read result
         let result_ptr = result_buffer.contents() as *const f32;
         let result = unsafe { *result_ptr };
-        
+
         Ok(result)
     }
 
@@ -483,26 +496,22 @@ impl GpuDistanceCompute {
 #[cfg(feature = "opencl")]
 impl GpuDistanceCompute {
     fn detect_opencl_devices() -> Result<Vec<GpuDevice>> {
+        use opencl3::device::{CL_DEVICE_TYPE_GPU, Device};
         use opencl3::platform::Platform;
-        use opencl3::device::{Device, CL_DEVICE_TYPE_GPU};
-        
+
         let mut devices = Vec::new();
-        
+
         // Get all platforms
         let platforms = Platform::list();
-        
+
         for platform in platforms {
             // Get GPU devices for this platform
-            let platform_devices = platform
-                .get_devices(CL_DEVICE_TYPE_GPU)
-                .clone();
-            
+            let platform_devices = platform.get_devices(CL_DEVICE_TYPE_GPU).clone();
+
             for (idx, device) in platform_devices.iter().enumerate() {
                 let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-                let total_memory = device
-                    .global_mem_size()
-                    ;
-                
+                let total_memory = device.global_mem_size();
+
                 devices.push(GpuDevice {
                     id: idx as u32,
                     name,
@@ -513,7 +522,7 @@ impl GpuDistanceCompute {
                 });
             }
         }
-        
+
         Ok(devices)
     }
 
@@ -523,24 +532,24 @@ impl GpuDistanceCompute {
         vec_b: &[f32],
         metric: DistanceMetric,
     ) -> Result<f32> {
+        use opencl3::command_queue::{CL_QUEUE_PROFILING_ENABLE, CommandQueue};
         use opencl3::context::Context;
-        use opencl3::command_queue::{CommandQueue, CL_QUEUE_PROFILING_ENABLE};
-        use opencl3::program::Program;
         use opencl3::kernel::Kernel;
         use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY};
-        
+        use opencl3::program::Program;
+
         // Get device
         let device_idx = self.selected_device;
         let device = &self.devices[device_idx];
-        
+
         // Create OpenCL context
         let context = Context::from_device(&device)?;
         let queue = CommandQueue::create(&context, &device, CL_QUEUE_PROFILING_ENABLE)?;
-        
+
         // Load kernel source
         let kernel_source = include_str!("kernels/distance.cl");
         let program = Program::create_and_build_from_source(&context, kernel_source, "")?;
-        
+
         // Select kernel based on metric
         let kernel_name = match metric {
             DistanceMetric::Cosine => "cosine_distance",
@@ -548,45 +557,30 @@ impl GpuDistanceCompute {
             DistanceMetric::DotProduct => "dot_product",
             _ => return Err(anyhow!("Unsupported metric for OpenCL: {:?}", metric)),
         };
-        
+
         let kernel = Kernel::create(&program, kernel_name)?;
-        
+
         // Create buffers
-        let vec_a_buffer = Buffer::<f32>::create(
-            &context,
-            CL_MEM_READ_ONLY,
-            vec_a.len(),
-            None,
-        )?;
-        
-        let vec_b_buffer = Buffer::<f32>::create(
-            &context,
-            CL_MEM_READ_ONLY,
-            vec_b.len(),
-            None,
-        )?;
-        
-        let result_buffer = Buffer::<f32>::create(
-            &context,
-            CL_MEM_WRITE_ONLY,
-            1,
-            None,
-        )?;
-        
+        let vec_a_buffer = Buffer::<f32>::create(&context, CL_MEM_READ_ONLY, vec_a.len(), None)?;
+
+        let vec_b_buffer = Buffer::<f32>::create(&context, CL_MEM_READ_ONLY, vec_b.len(), None)?;
+
+        let result_buffer = Buffer::<f32>::create(&context, CL_MEM_WRITE_ONLY, 1, None)?;
+
         // Write data to buffers
         queue.enqueue_write_buffer(&vec_a_buffer, true, 0, vec_a, &[])?;
         queue.enqueue_write_buffer(&vec_b_buffer, true, 0, vec_b, &[])?;
-        
+
         // Set kernel arguments
         kernel.set_arg(0, &vec_a_buffer)?;
         kernel.set_arg(1, &vec_b_buffer)?;
         kernel.set_arg(2, &result_buffer)?;
         kernel.set_arg(3, &(vec_a.len() as i32))?;
-        
+
         // Execute kernel
         let global_work_size = vec_a.len();
         let local_work_size = 64; // Typical work group size
-        
+
         queue.enqueue_nd_range_kernel(
             &kernel,
             1,
@@ -595,11 +589,11 @@ impl GpuDistanceCompute {
             &[local_work_size],
             &[],
         )?;
-        
+
         // Read result
         let mut result = vec![0.0f32];
         queue.enqueue_read_buffer(&result_buffer, true, 0, &mut result, &[])?;
-        
+
         Ok(result[0])
     }
 
@@ -609,7 +603,9 @@ impl GpuDistanceCompute {
         _vectors: &[Vec<f32>],
         _metric: DistanceMetric,
     ) -> Result<Vec<f32>> {
-        Err(anyhow!("OpenCL batch calculation not fully implemented yet"))
+        Err(anyhow!(
+            "OpenCL batch calculation not fully implemented yet"
+        ))
     }
 }
 
@@ -619,7 +615,7 @@ impl GpuDistanceCompute {
     fn detect_cuda_devices() -> Result<Vec<GpuDevice>> {
         Ok(vec![])
     }
-    
+
     async fn calculate_distance_cuda(
         &self,
         _vec_a: &[f32],
@@ -628,7 +624,7 @@ impl GpuDistanceCompute {
     ) -> Result<f32> {
         Err(anyhow!("CUDA support not compiled in"))
     }
-    
+
     async fn calculate_batch_cuda(
         &self,
         _query: &[f32],
@@ -644,7 +640,7 @@ impl GpuDistanceCompute {
     fn detect_rocm_devices() -> Result<Vec<GpuDevice>> {
         Ok(vec![])
     }
-    
+
     async fn calculate_distance_rocm(
         &self,
         _vec_a: &[f32],
@@ -653,7 +649,7 @@ impl GpuDistanceCompute {
     ) -> Result<f32> {
         Err(anyhow!("ROCm support not compiled in"))
     }
-    
+
     async fn calculate_batch_rocm(
         &self,
         _query: &[f32],
@@ -669,23 +665,27 @@ impl GpuDistanceCompute {
     fn detect_mps_devices() -> Result<Vec<GpuDevice>> {
         Ok(vec![])
     }
-    
+
     async fn calculate_distance_mps(
         &self,
         _vec_a: &[f32],
         _vec_b: &[f32],
         _metric: DistanceMetric,
     ) -> Result<f32> {
-        Err(anyhow!("Metal Performance Shaders not available on this platform"))
+        Err(anyhow!(
+            "Metal Performance Shaders not available on this platform"
+        ))
     }
-    
+
     async fn calculate_batch_mps(
         &self,
         _query: &[f32],
         _vectors: &[Vec<f32>],
         _metric: DistanceMetric,
     ) -> Result<Vec<f32>> {
-        Err(anyhow!("Metal Performance Shaders not available on this platform"))
+        Err(anyhow!(
+            "Metal Performance Shaders not available on this platform"
+        ))
     }
 }
 
@@ -694,7 +694,7 @@ impl GpuDistanceCompute {
     fn detect_opencl_devices() -> Result<Vec<GpuDevice>> {
         Ok(vec![])
     }
-    
+
     async fn calculate_distance_opencl(
         &self,
         _vec_a: &[f32],
@@ -703,7 +703,7 @@ impl GpuDistanceCompute {
     ) -> Result<f32> {
         Err(anyhow!("OpenCL support not compiled in"))
     }
-    
+
     async fn calculate_batch_opencl(
         &self,
         _query: &[f32],
@@ -723,7 +723,10 @@ pub struct GpuDistanceCalculator {
 impl GpuDistanceCalculator {
     pub fn new(metric: DistanceMetric) -> Result<Self> {
         let gpu_compute = Arc::new(GpuDistanceCompute::new()?);
-        Ok(Self { gpu_compute, metric })
+        Ok(Self {
+            gpu_compute,
+            metric,
+        })
     }
 }
 
@@ -738,7 +741,10 @@ impl DistanceCompute for GpuDistanceCalculator {
                     .await
             })
             .unwrap_or_else(|e| {
-                warn!("GPU distance calculation failed: {}, falling back to CPU", e);
+                warn!(
+                    "GPU distance calculation failed: {}, falling back to CPU",
+                    e
+                );
                 // Fallback to CPU implementation
                 use super::similarity::create_distance_calculator;
                 let cpu_calc = create_distance_calculator(self.metric.clone());
@@ -749,7 +755,7 @@ impl DistanceCompute for GpuDistanceCalculator {
     fn distance_batch(&self, query: &[f32], vectors: &[&[f32]]) -> Vec<f32> {
         // Convert to owned vectors for GPU transfer
         let owned_vectors: Vec<Vec<f32>> = vectors.iter().map(|v| v.to_vec()).collect();
-        
+
         tokio::runtime::Handle::current()
             .block_on(async {
                 self.gpu_compute

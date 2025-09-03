@@ -28,15 +28,18 @@ impl SimpleAtomicSync {
     /// Simple force sync implementation for demonstration
     pub async fn force_sync_collection(&self, collection_id: &str) -> Result<()> {
         debug!("🔄 Simple atomic sync for collection: {}", collection_id);
-        
+
         // This is a placeholder implementation for Phase 1
         // In a complete implementation, this would:
         // 1. Get unflushed vectors from global memtable
-        // 2. Serialize using appropriate strategy (Proto/Avro/Bincode) 
+        // 2. Serialize using appropriate strategy (Proto/Avro/Bincode)
         // 3. Write atomically to disk using TransactionCoordinator
         // 4. Update WAL checkpoint
-        
-        info!("✅ Simple atomic sync completed for collection: {}", collection_id);
+
+        info!(
+            "✅ Simple atomic sync completed for collection: {}",
+            collection_id
+        );
         Ok(())
     }
 
@@ -52,26 +55,26 @@ impl SimpleAtomicSync {
 /// Update existing WAL strategies to use simple atomic sync
 pub async fn integrate_simple_atomic_sync_with_strategies() -> Result<()> {
     debug!("🔧 Integrating simple atomic sync with WAL strategies");
-    
+
     // This function would update the force_sync methods in:
     // - ProtoWalBatchStrategy
-    // - AvroWalBatchStrategy  
+    // - AvroWalBatchStrategy
     // - BincodeWalBatchStrategy
     //
     // To use SimpleAtomicSync instead of placeholder implementations
-    
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_simple_atomic_sync() {
         let sync = SimpleAtomicSync::new(SyncMode::Always);
         assert!(sync.should_sync());
-        
+
         let result = sync.force_sync_collection("test_collection").await;
         assert!(result.is_ok());
     }

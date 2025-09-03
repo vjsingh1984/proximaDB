@@ -4,21 +4,21 @@
 //! (SST, VIPER, NOVA, SWIFT, etc.) to implement multi-stage quantization-aware search.
 //!
 //! ## FLEXIBLE QUANTIZATION ARCHITECTURE (2025-08-21):
-//! 
+//!
 //! **Two supported paths based on use case:**
-//! 
+//!
 //! 1. **HIGH PERFORMANCE PATH** (Write-once, Read-many):
 //!    - Collection config has quantization enabled
 //!    - Write Path: FP32 → [Binary + INT8 + PQ8] → Store ALL quantized versions
 //!    - Read Path: Query → Search pre-stored quantized → Fast response
 //!    - Use case: Static datasets with frequent searches
-//! 
+//!
 //! 2. **STORAGE OPTIMIZED PATH** (Continuous writes, Infrequent reads):
 //!    - Collection config has quantization disabled
 //!    - Write Path: FP32 → Store only FP32 (save storage)
 //!    - Read Path: Query → Runtime quantization → Slower but acceptable
 //!    - Use case: Streaming data where storage cost matters more than latency
-//! 
+//!
 //! The unified query optimizer and search hints determine which path to use.
 
 use anyhow::{Context, Result};
@@ -26,18 +26,18 @@ use std::sync::Arc;
 use tracing::{debug, info, trace};
 
 // Note: SearchResult is proto type, not in core::search anymore
-use crate::proto::proximadb::VectorRecord;
-use crate::storage::traits::{StorageQueryContext, QuantizationType, QuantizationLevel};
-use crate::compute::quantization::storage_engine::StorageQuantizedData;
-use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::storage_engine::StorageQuantizedData;
+use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
+use crate::proto::proximadb::VectorRecord;
+use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
 
 /// Progressive search executor that can be used by any storage engine
 pub struct ProgressiveSearchExecutor {
     /// Quantization engine for vector operations
     quantization_engine: Arc<UnifiedQuantizationEngine>,
-    
+
     /// Distance computation engine
     distance_compute: Arc<UnifiedDistanceCompute>,
 }
@@ -47,19 +47,19 @@ pub struct ProgressiveSearchExecutor {
 pub struct SearchCandidate {
     /// Vector ID
     pub id: String,
-    
+
     /// Full precision vector (loaded on demand)
     pub vector: Option<Vec<f32>>,
-    
+
     /// Quantized representations at different levels
     pub quantized_vectors: Vec<QuantizedRepresentation>,
-    
+
     /// Current score/distance
     pub score: f32,
-    
+
     /// Stage where this candidate was added
     pub stage: SearchStage,
-    
+
     /// Metadata (optional)
     pub metadata: Option<Vec<u8>>,
 }
@@ -69,10 +69,10 @@ pub struct SearchCandidate {
 pub struct QuantizedRepresentation {
     /// Level identifier
     pub level_id: String,
-    
+
     /// Quantized data
     pub data: Vec<u8>,
-    
+
     /// Quantization type
     pub quant_type: QuantizationType,
 }
@@ -97,7 +97,7 @@ impl ProgressiveSearchExecutor {
             distance_compute,
         }
     }
-    
+
     /// Execute progressive search with the given context and candidates
     pub async fn execute_progressive_search(
         &self,
@@ -108,57 +108,72 @@ impl ProgressiveSearchExecutor {
         // Check if progressive search is enabled
         if !ctx.is_progressive_search_enabled() {
             debug!("Progressive search not enabled, falling back to full precision search");
-            return self.full_precision_search(ctx, initial_candidates, query_vector).await;
+            return self
+                .full_precision_search(ctx, initial_candidates, query_vector)
+                .await;
         }
-        
+
         // Get progressive levels
-        let levels = ctx.get_progressive_levels()
+        let levels = ctx
+            .get_progressive_levels()
             .ok_or_else(|| anyhow::anyhow!("No progressive levels configured"))?;
-        
+
         if levels.is_empty() {
             debug!("No progressive levels defined, using full precision");
-            return self.full_precision_search(ctx, initial_candidates, query_vector).await;
+            return self
+                .full_precision_search(ctx, initial_candidates, query_vector)
+                .await;
         }
-        
-        info!("🔄 Starting progressive search with {} levels for {} candidates", 
-            levels.len(), initial_candidates.len());
-        
+
+        info!(
+            "🔄 Starting progressive search with {} levels for {} candidates",
+            levels.len(),
+            initial_candidates.len()
+        );
+
         // Convert to search candidates
         let mut candidates = self.prepare_candidates(ctx, initial_candidates, levels)?;
-        
+
         // Execute progressive stages
         for (stage_idx, level) in levels.iter().enumerate() {
             let stage = self.get_search_stage(&level.quantization_type);
-            
-            debug!("📊 Stage {}: {} ({:?}) - {} candidates", 
-                stage_idx, level.level_id, level.quantization_type, candidates.len());
-            
+
+            debug!(
+                "📊 Stage {}: {} ({:?}) - {} candidates",
+                stage_idx,
+                level.level_id,
+                level.quantization_type,
+                candidates.len()
+            );
+
             // Apply progressive filter/ranking
-            candidates = self.apply_progressive_stage(
-                ctx,
-                candidates,
-                query_vector,
-                level,
-                stage,
-            ).await?;
-            
+            candidates = self
+                .apply_progressive_stage(ctx, candidates, query_vector, level, stage)
+                .await?;
+
             // Check if we have enough candidates
             if candidates.len() <= ctx.top_k() {
-                debug!("Early termination: candidates ({}) <= top_k ({})", 
-                    candidates.len(), ctx.top_k());
+                debug!(
+                    "Early termination: candidates ({}) <= top_k ({})",
+                    candidates.len(),
+                    ctx.top_k()
+                );
                 break;
             }
         }
-        
+
         // Final reranking with full precision if needed
-        if candidates.iter().any(|c| c.stage != SearchStage::FullPrecision) {
+        if candidates
+            .iter()
+            .any(|c| c.stage != SearchStage::FullPrecision)
+        {
             candidates = self.final_rerank(ctx, candidates, query_vector).await?;
         }
-        
+
         // Convert to search results
         self.convert_to_results(candidates, ctx.top_k())
     }
-    
+
     /// Prepare candidates using PRE-STORED quantized representations (no re-quantization!)
     fn prepare_candidates(
         &self,
@@ -167,7 +182,7 @@ impl ProgressiveSearchExecutor {
         levels: &[QuantizationLevel],
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::with_capacity(records.len());
-        
+
         for record in records {
             let quantized_vectors = if let Some(quant_data) = &record.quantized_vector {
                 // FAST PATH: Use pre-stored quantized vectors (write-time quantization)
@@ -177,18 +192,24 @@ impl ProgressiveSearchExecutor {
                 // 1. Collection configuration
                 // 2. Search hints
                 // 3. Unified query optimizer recommendations
-                
+
                 let should_runtime_quantize = self.should_allow_runtime_quantization(ctx)?;
-                
+
                 if should_runtime_quantize {
                     // SLOW PATH: Runtime quantization for storage-optimized collections
-                    debug!("⚠️ Vector {} using runtime quantization (storage-optimized path)", 
-                           &record.id);
+                    debug!(
+                        "⚠️ Vector {} using runtime quantization (storage-optimized path)",
+                        &record.id
+                    );
                     // Perform quantization based on the first level requested
-                    let first_level = levels.get(0).ok_or_else(|| anyhow::anyhow!("No quantization levels provided"))?;
+                    let first_level = levels
+                        .get(0)
+                        .ok_or_else(|| anyhow::anyhow!("No quantization levels provided"))?;
                     match first_level.quantization_type {
                         QuantizationType::Binary => {
-                            let binary_data = self.quantization_engine.quantize_to_binary(&record.vector)?;
+                            let binary_data = self
+                                .quantization_engine
+                                .quantize_to_binary(&record.vector)?;
                             StorageQuantizedData {
                                 id: record.id.clone(),
                                 primary: None,
@@ -201,9 +222,10 @@ impl ProgressiveSearchExecutor {
                                 dimension: record.vector.len(),
                                 metadata: crate::compute::quantization::QuantizationMetadata::default(),
                             }
-                        },
+                        }
                         QuantizationType::Scalar => {
-                            let int8_data = self.quantization_engine.quantize_to_int8(&record.vector)?;
+                            let int8_data =
+                                self.quantization_engine.quantize_to_int8(&record.vector)?;
                             StorageQuantizedData {
                                 id: record.id.clone(),
                                 primary: None,
@@ -216,10 +238,14 @@ impl ProgressiveSearchExecutor {
                                 dimension: record.vector.len(),
                                 metadata: crate::compute::quantization::QuantizationMetadata::default(),
                             }
-                        },
+                        }
                         QuantizationType::Product => {
                             let num_subvectors = first_level.num_subvectors.unwrap_or(8) as usize;
-                            let pq_result = self.quantization_engine.quantize_to_pq(&record.vector, num_subvectors, 8)?;
+                            let pq_result = self.quantization_engine.quantize_to_pq(
+                                &record.vector,
+                                num_subvectors,
+                                8,
+                            )?;
                             StorageQuantizedData {
                                 id: record.id.clone(),
                                 primary: Some(QuantizedVector {
@@ -241,22 +267,26 @@ impl ProgressiveSearchExecutor {
                                 dimension: record.vector.len(),
                                 metadata: crate::compute::quantization::QuantizationMetadata::default(),
                             }
-                        },
+                        }
                         _ => {
-                            return Err(anyhow::anyhow!("Unsupported quantization type for runtime quantization"));
+                            return Err(anyhow::anyhow!(
+                                "Unsupported quantization type for runtime quantization"
+                            ));
                         }
                     }
                 } else {
                     // ERROR: Runtime quantization not allowed for this collection/query
-                    debug!("❌ Vector {} missing pre-quantized data (collection expects pre-quantization)", 
-                           record.id.as_ref().unwrap_or(&String::from("unknown")));
+                    debug!(
+                        "❌ Vector {} missing pre-quantized data (collection expects pre-quantization)",
+                        record.id.as_ref().unwrap_or(&String::from("unknown"))
+                    );
                     return Err(anyhow::anyhow!(
                         "Missing pre-quantized data for vector {}. Collection config expects pre-quantization.",
                         record.id.as_ref().unwrap_or(&String::from("unknown"))
                     ));
                 }
             };
-            
+
             candidates.push(SearchCandidate {
                 id: record.id.clone(),
                 vector: Some(record.vector.clone()),
@@ -266,10 +296,10 @@ impl ProgressiveSearchExecutor {
                 metadata: None,
             });
         }
-        
+
         Ok(candidates)
     }
-    
+
     /// Apply a progressive search stage
     async fn apply_progressive_stage(
         &self,
@@ -282,58 +312,73 @@ impl ProgressiveSearchExecutor {
         // Get selectivity for this stage
         let selectivity = match stage {
             SearchStage::BinaryFilter => ctx.binary_filter_selectivity(),
-            SearchStage::Int8Ranking => ctx.metadata.quantization_config
+            SearchStage::Int8Ranking => ctx
+                .metadata
+                .quantization_config
                 .as_ref()
                 .map(|qc| qc.int8_ranking_selectivity)
-                .unwrap_or(0.5),  // Default selectivity
-            SearchStage::PqRanking => ctx.metadata.quantization_config
+                .unwrap_or(0.5), // Default selectivity
+            SearchStage::PqRanking => ctx
+                .metadata
+                .quantization_config
                 .as_ref()
                 .map(|qc| qc.pq_ranking_selectivity)
-                .unwrap_or(0.2)
-                ,
+                .unwrap_or(0.2),
             SearchStage::FullPrecision => 1.0,
         };
-        
+
         // Calculate how many candidates to keep
         let keep_count = ((candidates.len() as f32) * selectivity).ceil() as usize;
         let keep_count = keep_count.max(ctx.top_k()).min(candidates.len());
-        
-        trace!("Stage {:?}: keeping {} of {} candidates (selectivity: {})",
-            stage, keep_count, candidates.len(), selectivity);
-        
+
+        trace!(
+            "Stage {:?}: keeping {} of {} candidates (selectivity: {})",
+            stage,
+            keep_count,
+            candidates.len(),
+            selectivity
+        );
+
         // Score candidates based on quantization level
         match level.quantization_type {
             QuantizationType::Binary => {
-                self.score_binary(&mut candidates, query_vector, level).await?;
-            },
+                self.score_binary(&mut candidates, query_vector, level)
+                    .await?;
+            }
             QuantizationType::Scalar => {
-                self.score_scalar(&mut candidates, query_vector, level).await?;
-            },
+                self.score_scalar(&mut candidates, query_vector, level)
+                    .await?;
+            }
             QuantizationType::Product => {
-                self.score_product(&mut candidates, query_vector, level).await?;
-            },
+                self.score_product(&mut candidates, query_vector, level)
+                    .await?;
+            }
             QuantizationType::None => {
-                self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric()).await?;
-            },
+                self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())
+                    .await?;
+            }
             _ => {
-                debug!("Unsupported quantization type: {:?}", level.quantization_type);
+                debug!(
+                    "Unsupported quantization type: {:?}",
+                    level.quantization_type
+                );
             }
         }
-        
+
         // Sort by score (ascending for distance, descending for similarity)
         candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
-        
+
         // Keep top candidates
         candidates.truncate(keep_count);
-        
+
         // Update stage for kept candidates
         for candidate in &mut candidates {
             candidate.stage = stage;
         }
-        
+
         Ok(candidates)
     }
-    
+
     /// Score candidates using binary quantization (delegates to unified quantization)
     async fn score_binary(
         &self,
@@ -344,29 +389,29 @@ impl ProgressiveSearchExecutor {
         // Quantize query vector to binary for fast Hamming distance comparison
         // This is the most performant approach for binary search stage
         let query_binary = self.quantization_engine.quantize_to_binary(query_vector)?;
-        
+
         for candidate in candidates {
-            if let Some(binary_repr) = candidate.quantized_vectors
+            if let Some(binary_repr) = candidate
+                .quantized_vectors
                 .iter()
-                .find(|qv| qv.level_id == level.level_id) 
+                .find(|qv| qv.level_id == level.level_id)
             {
                 // Use SIMD-optimized Hamming distance for binary vectors
                 // This is much faster than generic distance computation
-                let hamming_distance = self.quantization_engine.calculate_hamming_distance(
-                    &query_binary,
-                    &binary_repr.data
-                );
-                
+                let hamming_distance = self
+                    .quantization_engine
+                    .calculate_hamming_distance(&query_binary, &binary_repr.data);
+
                 // Convert Hamming distance to normalized score (0-1 range)
                 // Lower Hamming distance = higher similarity
                 let vector_bits = query_binary.len() * 8;
                 candidate.score = 1.0 - (hamming_distance as f32 / vector_bits as f32);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Score candidates using scalar quantization (INT8) - delegates to unified quantization
     async fn score_scalar(
         &self,
@@ -376,28 +421,31 @@ impl ProgressiveSearchExecutor {
     ) -> Result<()> {
         // Delegate all quantization and distance calculation to unified modules
         for candidate in candidates {
-            if let Some(int8_repr) = candidate.quantized_vectors
+            if let Some(int8_repr) = candidate
+                .quantized_vectors
                 .iter()
                 .find(|qv| qv.level_id == level.level_id)
             {
                 // For INT8, convert back to f32 and use optimized distance computation
                 // INT8 quantization preserves relative distances well
-                let int8_as_f32: Vec<f32> = int8_repr.data.iter()
-                    .map(|&x| x as f32 / 127.0)  // Normalize INT8 to [-1, 1] range
+                let int8_as_f32: Vec<f32> = int8_repr
+                    .data
+                    .iter()
+                    .map(|&x| x as f32 / 127.0) // Normalize INT8 to [-1, 1] range
                     .collect();
-                
+
                 let similarity = self.distance_compute.calculate_distance(
                     query_vector,
                     &int8_as_f32,
-                    &DistanceMetric::Cosine  // Default to cosine for now
+                    &DistanceMetric::Cosine, // Default to cosine for now
                 );
                 candidate.score = similarity.raw_value;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Score candidates using product quantization - delegates to unified quantization
     async fn score_product(
         &self,
@@ -406,13 +454,13 @@ impl ProgressiveSearchExecutor {
         level: &QuantizationLevel,
     ) -> Result<()> {
         // PQ requires num_subvectors to be specified
-        let num_subvectors = level.num_subvectors
-            .unwrap_or(8) as usize;  // Default to 8 subvectors if not specified
-        
+        let num_subvectors = level.num_subvectors.unwrap_or(8) as usize; // Default to 8 subvectors if not specified
+
         // For PQ, we need to use asymmetric distance computation
         // This is a simplified version - real PQ would use lookup tables
         for candidate in candidates {
-            if let Some(pq_repr) = candidate.quantized_vectors
+            if let Some(pq_repr) = candidate
+                .quantized_vectors
                 .iter()
                 .find(|qv| qv.level_id == level.level_id)
             {
@@ -421,12 +469,12 @@ impl ProgressiveSearchExecutor {
                 // For now, approximate with direct distance calculation
                 let subvector_dim = query_vector.len() / num_subvectors;
                 let mut total_distance = 0.0f32;
-                
+
                 for i in 0..num_subvectors {
                     let start = i * subvector_dim;
                     let end = ((i + 1) * subvector_dim).min(query_vector.len());
                     let query_sub = &query_vector[start..end];
-                    
+
                     // Each byte in PQ data represents a codebook index
                     if i < pq_repr.data.len() {
                         let codebook_idx = pq_repr.data[i] as usize;
@@ -434,14 +482,14 @@ impl ProgressiveSearchExecutor {
                         total_distance += (codebook_idx as f32) / 255.0;
                     }
                 }
-                
+
                 candidate.score = total_distance / num_subvectors as f32;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Score candidates using full precision
     async fn score_full_precision(
         &self,
@@ -460,10 +508,10 @@ impl ProgressiveSearchExecutor {
                 candidate.score = distance;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Final reranking with full precision
     async fn final_rerank(
         &self,
@@ -471,22 +519,26 @@ impl ProgressiveSearchExecutor {
         mut candidates: Vec<SearchCandidate>,
         query_vector: &[f32],
     ) -> Result<Vec<SearchCandidate>> {
-        debug!("🎯 Final reranking {} candidates with full precision", candidates.len());
-        
-        self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric()).await?;
-        
+        debug!(
+            "🎯 Final reranking {} candidates with full precision",
+            candidates.len()
+        );
+
+        self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())
+            .await?;
+
         // Sort and truncate to top_k
         candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
         candidates.truncate(ctx.top_k());
-        
+
         // Mark as full precision
         for candidate in &mut candidates {
             candidate.stage = SearchStage::FullPrecision;
         }
-        
+
         Ok(candidates)
     }
-    
+
     /// Fallback to full precision search
     async fn full_precision_search(
         &self,
@@ -495,7 +547,7 @@ impl ProgressiveSearchExecutor {
         query_vector: &[f32],
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results = Vec::with_capacity(records.len());
-        
+
         for record in records {
             let result = self.distance_compute.calculate_distance(
                 query_vector,
@@ -503,23 +555,28 @@ impl ProgressiveSearchExecutor {
                 &ctx.distance_metric(),
             );
             let distance = result.rank_value;
-            
+
             results.push(crate::core::search::InternalSearchResult {
                 id: record.id.clone(),
                 score: distance,
                 vector: Some(record.vector),
-                metadata: record.metadata.into_iter()
+                metadata: record
+                    .metadata
+                    .into_iter()
                     .map(|item| {
                         let value = match item.value {
                             Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
                                 serde_json::Value::String(s)
-                            },
+                            }
                             Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
-                                serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0)))
-                            },
+                                serde_json::Value::Number(
+                                    serde_json::Number::from_f64(n)
+                                        .unwrap_or(serde_json::Number::from(0)),
+                                )
+                            }
                             Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
                                 serde_json::Value::Bool(b)
-                            },
+                            }
                             None => serde_json::Value::Null,
                         };
                         (item.key, value)
@@ -528,14 +585,14 @@ impl ProgressiveSearchExecutor {
                 ..Default::default()
             });
         }
-        
+
         // Sort and truncate
         results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
         results.truncate(ctx.top_k());
-        
+
         Ok(results)
     }
-    
+
     /// Convert candidates to search results
     fn convert_to_results(
         &self,
@@ -543,7 +600,7 @@ impl ProgressiveSearchExecutor {
         top_k: usize,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         let mut results = Vec::with_capacity(top_k.min(candidates.len()));
-        
+
         for candidate in candidates.into_iter().take(top_k) {
             results.push(crate::core::search::InternalSearchResult {
                 id: candidate.id,
@@ -553,17 +610,17 @@ impl ProgressiveSearchExecutor {
                 ..Default::default()
             });
         }
-        
+
         Ok(results)
     }
-    
+
     /// Determine if runtime quantization should be allowed based on multiple factors
     fn should_allow_runtime_quantization(&self, ctx: &StorageQueryContext) -> Result<bool> {
         // TODO: Implement proper collection config and search hints checking
         // For now, always allow runtime quantization to make it compile
         Ok(true)
     }
-    
+
     /// Helper: Parse pre-computed quantized data
     fn parse_quantized_data(
         &self,
@@ -574,7 +631,7 @@ impl ProgressiveSearchExecutor {
         // For now, return empty vec
         Ok(Vec::new())
     }
-    
+
     /// Helper: Quantize vector on-the-fly (for storage-optimized path)
     fn quantize_vector(
         &self,
@@ -584,35 +641,29 @@ impl ProgressiveSearchExecutor {
         // This is used for the storage-optimized path where we trade latency for storage savings
         trace!("Runtime quantization for storage-optimized path");
         let mut representations = Vec::new();
-        
+
         for level in levels {
             let data = match level.quantization_type {
-                QuantizationType::Binary => {
-                    self.quantization_engine.quantize_to_binary(vector)?
-                },
-                QuantizationType::Scalar => {
-                    self.quantization_engine.quantize_to_int8(vector)?
-                },
-                QuantizationType::Product => {
-                    self.quantization_engine.quantize_to_pq(
-                        vector,
-                        level.num_subvectors.unwrap_or(8) as usize,
-                        level.bits.unwrap_or(8),
-                    )?
-                },
+                QuantizationType::Binary => self.quantization_engine.quantize_to_binary(vector)?,
+                QuantizationType::Scalar => self.quantization_engine.quantize_to_int8(vector)?,
+                QuantizationType::Product => self.quantization_engine.quantize_to_pq(
+                    vector,
+                    level.num_subvectors.unwrap_or(8) as usize,
+                    level.bits.unwrap_or(8),
+                )?,
                 _ => Vec::new(),
             };
-            
+
             representations.push(QuantizedRepresentation {
                 level_id: level.level_id.clone(),
                 data,
                 quant_type: level.quantization_type.clone(),
             });
         }
-        
+
         Ok(representations)
     }
-    
+
     /// Helper: Get search stage from quantization type
     fn get_search_stage(&self, quant_type: &QuantizationType) -> SearchStage {
         match quant_type {
@@ -623,12 +674,11 @@ impl ProgressiveSearchExecutor {
             _ => SearchStage::FullPrecision,
         }
     }
-    
+
     // NOTE: All distance computations are delegated to UnifiedQuantizationEngine
     // which internally uses UnifiedDistanceCompute with SIMD optimizations.
     // No manual distance calculations should be done here to maintain
     // proper separation of concerns and leverage hardware-optimized implementations.
-    
 }
 
 /// Builder pattern for configuring progressive search
@@ -644,17 +694,17 @@ impl ProgressiveSearchBuilder {
             distance_compute: None,
         }
     }
-    
+
     pub fn with_quantization_engine(mut self, engine: Arc<UnifiedQuantizationEngine>) -> Self {
         self.quantization_engine = Some(engine);
         self
     }
-    
+
     pub fn with_distance_compute(mut self, compute: Arc<UnifiedDistanceCompute>) -> Self {
         self.distance_compute = Some(compute);
         self
     }
-    
+
     pub fn build(self) -> Result<ProgressiveSearchExecutor> {
         Ok(ProgressiveSearchExecutor::new(
             self.quantization_engine

@@ -18,21 +18,19 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace, warn};
 
-use crate::core::VectorRecord;
-use crate::storage::persistence::filesystem::FilesystemFactory;
-use super::{
-    ColumnarConfig, ColumnarFileMetadata, ColumnarSearchMode, MetadataFilter,
-    QuantizationConfig, CompressionMetadata,
-};
 use super::schema::{ColumnarSchemaBuilder, ColumnarSchemaConfig};
 use super::serialization::{
-    ColumnarSerializer, ColumnarSerializationConfig, SerializationResult,
-    FormatPreference,
+    ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
+use super::{
+    ColumnarConfig, ColumnarFileMetadata, ColumnarSearchMode, CompressionMetadata, MetadataFilter,
+    QuantizationConfig,
+};
+use crate::core::VectorRecord;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 // Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
 use crate::compute::distance_computation::{
-    engine::UnifiedDistanceCompute,
-    DistanceMetric, SimilarityResult,
+    DistanceMetric, SimilarityResult, engine::UnifiedDistanceCompute,
 };
 use crate::core::compression::CompressionAlgorithm;
 
@@ -41,19 +39,19 @@ use crate::core::compression::CompressionAlgorithm;
 pub struct CommonColumnarConfig {
     /// Base columnar configuration
     pub base_config: ColumnarConfig,
-    
+
     /// Schema generation configuration
     pub schema_config: SchemaGenerationConfig,
-    
+
     /// Serialization and compression settings
     pub serialization_config: SerializationOptimizationConfig,
-    
+
     /// Distance computation settings
     // distance_config removed - engines use compute module directly
-    
+
     /// Engine-specific optimizations
     pub engine_optimizations: EngineOptimizations,
-    
+
     /// Performance monitoring settings
     pub monitoring_config: MonitoringConfig,
 }
@@ -63,13 +61,13 @@ pub struct CommonColumnarConfig {
 pub struct SchemaGenerationConfig {
     /// Auto-detect quantization from collection metadata
     pub auto_detect_quantization: bool,
-    
+
     /// Default compression strategy
     pub default_compression_strategy: CompressionStrategy,
-    
+
     /// Schema caching TTL in seconds
     pub schema_cache_ttl_seconds: u64,
-    
+
     /// Maximum cached schemas per collection
     pub max_cached_schemas: usize,
 }
@@ -79,10 +77,10 @@ pub struct SchemaGenerationConfig {
 pub struct CompressionStrategy {
     /// Compression algorithm selection
     pub algorithm_selection: CompressionAlgorithmSelection,
-    
+
     /// Compression levels per data type
     pub compression_levels: CompressionLevels,
-    
+
     /// Enable adaptive compression based on data characteristics
     pub enable_adaptive_compression: bool,
 }
@@ -114,13 +112,13 @@ pub struct CompressionLevels {
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
     pub memory_pools: MemoryPoolConfig,
-    
+
     /// SIMD optimization settings
     pub simd_settings: SIMDOptimizationSettings,
-    
+
     /// Batch processing configuration
     pub batch_processing: BatchProcessingConfig,
-    
+
     /// Zero-copy optimization settings
     pub zero_copy_optimization: ZeroCopyConfig,
 }
@@ -130,13 +128,13 @@ pub struct SerializationOptimizationConfig {
 pub struct MemoryPoolConfig {
     /// Enable memory pooling
     pub enable_pooling: bool,
-    
+
     /// Pool size limits
     pub pool_size_limits: PoolSizeLimits,
-    
+
     /// Pool cleanup interval in seconds
     pub cleanup_interval_seconds: u64,
-    
+
     /// Enable pool statistics collection
     pub enable_statistics: bool,
 }
@@ -156,13 +154,13 @@ pub struct PoolSizeLimits {
 pub struct SIMDOptimizationSettings {
     /// Enable SIMD acceleration
     pub enable_simd: bool,
-    
+
     /// Minimum batch size for SIMD
     pub min_batch_size: usize,
-    
+
     /// Target instruction set
     pub target_instruction_set: String,
-    
+
     /// Enable auto-vectorization
     pub enable_auto_vectorization: bool,
 }
@@ -172,10 +170,10 @@ pub struct SIMDOptimizationSettings {
 pub struct BatchProcessingConfig {
     /// Optimal batch size for different operations
     pub optimal_batch_sizes: OptimalBatchSizes,
-    
+
     /// Enable adaptive batch sizing
     pub enable_adaptive_batching: bool,
-    
+
     /// Memory budget for batch processing
     pub memory_budget_mb: usize,
 }
@@ -194,13 +192,13 @@ pub struct OptimalBatchSizes {
 pub struct ZeroCopyConfig {
     /// Enable zero-copy for fixed-size data
     pub enable_zero_copy_fixed_size: bool,
-    
+
     /// Enable memory mapping for large files
     pub enable_memory_mapping: bool,
-    
+
     /// Memory mapping threshold in MB
     pub mmap_threshold_mb: usize,
-    
+
     /// Page alignment requirements
     pub page_alignment_bytes: usize,
 }
@@ -210,13 +208,13 @@ pub struct ZeroCopyConfig {
 pub struct DistanceComputationConfig {
     /// Default distance metric
     pub default_distance_metric: crate::compute::distance_computation::DistanceMetric,
-    
+
     /// Progressive search configuration
     pub progressive_search: ProgressiveSearchConfig,
-    
+
     /// Distance caching settings
     pub distance_caching: DistanceCachingConfig,
-    
+
     /// Hardware acceleration preferences
     pub hardware_acceleration: HardwareAccelerationConfig,
 }
@@ -226,10 +224,10 @@ pub struct DistanceComputationConfig {
 pub struct ProgressiveSearchConfig {
     /// Enable progressive search
     pub enable_progressive: bool,
-    
+
     /// Quality thresholds for each stage
     pub quality_thresholds: QualityThresholds,
-    
+
     /// Early termination settings
     pub early_termination: EarlyTerminationConfig,
 }
@@ -248,10 +246,10 @@ pub struct QualityThresholds {
 pub struct EarlyTerminationConfig {
     /// Enable early termination based on quality
     pub enable_quality_based: bool,
-    
+
     /// Enable early termination based on result count
     pub enable_count_based: bool,
-    
+
     /// Confidence threshold for early termination
     pub confidence_threshold: f32,
 }
@@ -261,13 +259,13 @@ pub struct EarlyTerminationConfig {
 pub struct DistanceCachingConfig {
     /// Enable PQ distance table caching
     pub enable_pq_caching: bool,
-    
+
     /// Cache size in MB
     pub cache_size_mb: usize,
-    
+
     /// Cache eviction policy
     pub eviction_policy: String,
-    
+
     /// Precompute tables on collection load
     pub precompute_on_load: bool,
 }
@@ -277,13 +275,13 @@ pub struct DistanceCachingConfig {
 pub struct HardwareAccelerationConfig {
     /// Prefer GPU for large computations
     pub prefer_gpu: bool,
-    
+
     /// GPU threshold (number of vectors)
     pub gpu_threshold: usize,
-    
+
     /// Enable CPU SIMD acceleration
     pub enable_cpu_simd: bool,
-    
+
     /// Enable custom instruction optimization
     pub enable_custom_instructions: bool,
 }
@@ -293,10 +291,10 @@ pub struct HardwareAccelerationConfig {
 pub struct EngineOptimizations {
     /// VIPER-specific optimizations
     pub viper_optimizations: ViperOptimizations,
-    
+
     /// NOVA-specific optimizations
     pub nova_optimizations: NovaOptimizations,
-    
+
     /// Shared optimizations
     pub shared_optimizations: SharedOptimizations,
 }
@@ -306,13 +304,13 @@ pub struct EngineOptimizations {
 pub struct ViperOptimizations {
     /// Optimize for append-heavy workloads
     pub optimize_for_append: bool,
-    
+
     /// Enable columnar compression
     pub enable_columnar_compression: bool,
-    
+
     /// Row group size optimization
     pub row_group_size_optimization: RowGroupSizeOptimization,
-    
+
     /// Enable predicate pushdown
     pub enable_predicate_pushdown: bool,
 }
@@ -322,13 +320,13 @@ pub struct ViperOptimizations {
 pub struct NovaOptimizations {
     /// Enable hierarchical statistics
     pub enable_hierarchical_stats: bool,
-    
+
     /// Zone map configuration
     pub zone_map_config: ZoneMapOptimization,
-    
+
     /// Streaming processing settings
     pub streaming_processing: StreamingProcessingConfig,
-    
+
     /// Advanced caching strategies
     pub advanced_caching: AdvancedCachingConfig,
 }
@@ -338,13 +336,13 @@ pub struct NovaOptimizations {
 pub struct SharedOptimizations {
     /// Enable bloom filters for ID lookups
     pub enable_bloom_filters: bool,
-    
+
     /// Dictionary encoding for low-cardinality columns
     pub enable_dictionary_encoding: bool,
-    
+
     /// Run-length encoding for repetitive data
     pub enable_rle_encoding: bool,
-    
+
     /// Column statistics collection
     pub enable_column_statistics: bool,
 }
@@ -387,13 +385,13 @@ pub struct AdvancedCachingConfig {
 pub struct MonitoringConfig {
     /// Enable performance metrics collection
     pub enable_metrics: bool,
-    
+
     /// Metrics collection interval in seconds
     pub metrics_interval_seconds: u64,
-    
+
     /// Enable detailed tracing
     pub enable_detailed_tracing: bool,
-    
+
     /// Resource usage monitoring
     pub resource_monitoring: ResourceMonitoringConfig,
 }
@@ -403,13 +401,13 @@ pub struct MonitoringConfig {
 pub struct ResourceMonitoringConfig {
     /// Monitor memory usage
     pub monitor_memory: bool,
-    
+
     /// Monitor CPU usage
     pub monitor_cpu: bool,
-    
+
     /// Monitor I/O operations
     pub monitor_io: bool,
-    
+
     /// Enable alerting on resource thresholds
     pub enable_alerting: bool,
 }
@@ -418,21 +416,20 @@ pub struct ResourceMonitoringConfig {
 pub struct CommonColumnarOperations {
     /// Configuration
     config: CommonColumnarConfig,
-    
+
     /// Schema builder for dynamic schema generation
     schema_builder: Arc<ColumnarSchemaBuilder>,
-    
+
     /// Serializer for transparent format conversion
     serializer: Arc<ColumnarSerializer>,
-    
+
     // Distance computation removed - engines should use compute module directly
-    
     /// Filesystem factory for I/O operations
     filesystem_factory: Arc<FilesystemFactory>,
-    
+
     /// Metadata cache
     metadata_cache: Arc<RwLock<MetadataCache>>,
-    
+
     /// Performance monitor
     performance_monitor: Arc<PerformanceMonitor>,
 }
@@ -442,11 +439,11 @@ pub struct CommonColumnarOperations {
 struct MetadataCache {
     /// Cached file metadata
     file_metadata: HashMap<String, CachedFileMetadata>,
-    
+
     /// Cache statistics
     hits: usize,
     misses: usize,
-    
+
     /// Memory usage tracking
     memory_usage_bytes: usize,
 }
@@ -467,10 +464,10 @@ struct CachedFileMetadata {
 pub struct PerformanceMonitor {
     /// Operation metrics
     operation_metrics: Arc<RwLock<OperationMetrics>>,
-    
+
     /// Resource usage metrics
     resource_metrics: Arc<RwLock<ResourceMetrics>>,
-    
+
     /// Configuration
     config: MonitoringConfig,
 }
@@ -482,17 +479,17 @@ pub struct OperationMetrics {
     serialization_ops: usize,
     serialization_total_time_ms: f64,
     serialization_bytes_processed: usize,
-    
+
     /// Distance computation metrics
     distance_ops: usize,
     distance_total_time_ms: f64,
     distance_vectors_processed: usize,
-    
+
     /// Schema generation metrics
     schema_generations: usize,
     schema_cache_hits: usize,
     schema_cache_misses: usize,
-    
+
     /// I/O metrics
     read_ops: usize,
     write_ops: usize,
@@ -506,14 +503,14 @@ pub struct ResourceMetrics {
     /// Memory usage
     memory_usage_bytes: usize,
     peak_memory_usage_bytes: usize,
-    
+
     /// CPU usage
     cpu_usage_percent: f32,
-    
+
     /// I/O metrics
     disk_read_mb_s: f32,
     disk_write_mb_s: f32,
-    
+
     /// Cache metrics
     cache_hit_ratio: f32,
     cache_memory_usage_bytes: usize,
@@ -525,11 +522,14 @@ impl CommonColumnarOperations {
         config: CommonColumnarConfig,
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
-        info!("Initializing common columnar operations with config: {:?}", config.base_config);
-        
+        info!(
+            "Initializing common columnar operations with config: {:?}",
+            config.base_config
+        );
+
         // Initialize schema builder
         let schema_builder = Arc::new(ColumnarSchemaBuilder::new());
-        
+
         // Initialize serializer
         let serialization_config = ColumnarSerializationConfig {
             dimension: 768, // TODO: Make configurable
@@ -539,9 +539,9 @@ impl CommonColumnarOperations {
             simd_config: config.serialization_config.to_simd_config(),
         };
         let serializer = Arc::new(ColumnarSerializer::new(serialization_config)?);
-        
+
         // Distance computation removed - use compute module directly in engines
-        
+
         // Initialize metadata cache
         let metadata_cache = Arc::new(RwLock::new(MetadataCache {
             file_metadata: HashMap::new(),
@@ -549,12 +549,13 @@ impl CommonColumnarOperations {
             misses: 0,
             memory_usage_bytes: 0,
         }));
-        
+
         // Initialize performance monitor
-        let performance_monitor = Arc::new(PerformanceMonitor::new(config.monitoring_config.clone()));
-        
+        let performance_monitor =
+            Arc::new(PerformanceMonitor::new(config.monitoring_config.clone()));
+
         info!("Common columnar operations initialized successfully");
-        
+
         Ok(Self {
             config,
             schema_builder,
@@ -565,7 +566,7 @@ impl CommonColumnarOperations {
             performance_monitor,
         })
     }
-    
+
     /// Generate optimized schema for collection
     pub async fn generate_schema(
         &self,
@@ -575,30 +576,46 @@ impl CommonColumnarOperations {
         filterable_columns: &[super::schema::FilterableColumnSpec],
     ) -> Result<(Arc<Schema>, CompressionMetadata)> {
         let start_time = std::time::Instant::now();
-        
-        debug!("Generating schema for collection: {} (dim: {})", collection_id, dimension);
-        
+
+        debug!(
+            "Generating schema for collection: {} (dim: {})",
+            collection_id, dimension
+        );
+
         let schema_config = ColumnarSchemaConfig {
             dimension,
             quantization: quantization.cloned(),
             filterable_columns: filterable_columns.to_vec(),
             optimization: self.config.schema_config.to_schema_optimization(),
-            compression_strategy: self.config.schema_config.default_compression_strategy.to_columnar_compression(),
+            compression_strategy: self
+                .config
+                .schema_config
+                .default_compression_strategy
+                .to_columnar_compression(),
         };
-        
-        let (schema, compression_metadata) = self.schema_builder.build_schema(collection_id, &schema_config).await?;
-        
+
+        let (schema, compression_metadata) = self
+            .schema_builder
+            .build_schema(collection_id, &schema_config)
+            .await?;
+
         let generation_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
+
         // Update metrics
-        self.performance_monitor.record_schema_generation(generation_time).await;
-        
-        info!("Schema generated for collection {} in {:.2}ms ({} fields)", 
-              collection_id, generation_time, schema.fields().len());
-        
+        self.performance_monitor
+            .record_schema_generation(generation_time)
+            .await;
+
+        info!(
+            "Schema generated for collection {} in {:.2}ms ({} fields)",
+            collection_id,
+            generation_time,
+            schema.fields().len()
+        );
+
         Ok((schema, compression_metadata))
     }
-    
+
     /// Serialize vector records with transparent quantization
     pub async fn serialize_records(
         &self,
@@ -606,28 +623,35 @@ impl CommonColumnarOperations {
         schema: &Schema,
     ) -> Result<SerializationResult> {
         let start_time = std::time::Instant::now();
-        
-        debug!("Serializing {} records with transparent quantization", records.len());
-        
+
+        debug!(
+            "Serializing {} records with transparent quantization",
+            records.len()
+        );
+
         let result = self.serializer.serialize_vectors(records, schema).await?;
-        
+
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let bytes_processed = records.first()
+        let bytes_processed = records
+            .first()
             .map(|r| records.len() * r.vector.len() * 4)
             .unwrap_or(0);
-        
+
         // Update metrics
-        self.performance_monitor.record_serialization(
+        self.performance_monitor
+            .record_serialization(serialization_time, bytes_processed)
+            .await;
+
+        info!(
+            "Serialized {} records in {:.2}ms (compression ratio: {:.2}x)",
+            records.len(),
             serialization_time,
-            bytes_processed,
-        ).await;
-        
-        info!("Serialized {} records in {:.2}ms (compression ratio: {:.2}x)", 
-              records.len(), serialization_time, result.metadata.compression_stats.compression_ratio);
-        
+            result.metadata.compression_stats.compression_ratio
+        );
+
         Ok(result)
     }
-    
+
     /// Deserialize records with format preference
     pub async fn deserialize_records(
         &self,
@@ -636,41 +660,50 @@ impl CommonColumnarOperations {
         format_preference: FormatPreference,
     ) -> Result<Vec<VectorRecord>> {
         let start_time = std::time::Instant::now();
-        
-        debug!("Deserializing records with format preference: {:?}", format_preference);
-        
-        let records = self.serializer.deserialize_vectors(arrays, schema, format_preference).await?;
-        
+
+        debug!(
+            "Deserializing records with format preference: {:?}",
+            format_preference
+        );
+
+        let records = self
+            .serializer
+            .deserialize_vectors(arrays, schema, format_preference)
+            .await?;
+
         let deserialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
+
         // Update metrics
-        self.performance_monitor.record_deserialization(
-            deserialization_time,
+        self.performance_monitor
+            .record_deserialization(deserialization_time, records.len())
+            .await;
+
+        info!(
+            "Deserialized {} records in {:.2}ms",
             records.len(),
-        ).await;
-        
-        info!("Deserialized {} records in {:.2}ms", records.len(), deserialization_time);
-        
+            deserialization_time
+        );
+
         Ok(records)
     }
-    
+
     /// Compute distance with quantized optimization
     // Distance computation methods removed - use compute module directly
     // Engines (NOVA, VIPER) should use:
     // - crate::compute::distance_computation::engine::UnifiedDistanceCompute
     // - crate::compute::quantization::storage_engine::StorageQuantizationEngine
-    
+
     // Batch distance computation removed - use compute module directly
-    
+
     // Progressive distance computation removed - use compute module directly
-    
+
     /// Load file metadata with caching
     pub async fn load_file_metadata<P: AsRef<Path>>(
         &self,
         file_path: P,
     ) -> Result<(ColumnarFileMetadata, Arc<Schema>, CompressionMetadata)> {
         let path_str = file_path.as_ref().to_string_lossy().to_string();
-        
+
         // Check cache first
         {
             let mut cache = self.metadata_cache.write().await;
@@ -678,24 +711,25 @@ impl CommonColumnarOperations {
                 if !self.is_cache_expired(cached) {
                     cached.last_accessed = std::time::Instant::now();
                     cached.access_count += 1;
-                    
+
                     let metadata = cached.metadata.clone();
                     let schema = cached.schema.clone();
                     let compression_metadata = cached.compression_metadata.clone();
-                    
+
                     cache.hits += 1;
-                    
+
                     debug!("File metadata cache hit for: {}", path_str);
                     return Ok((metadata, schema, compression_metadata));
                 }
             }
         }
-        
+
         // Load metadata from file
         let start_time = std::time::Instant::now();
-        let (metadata, schema, compression_metadata) = self.load_file_metadata_from_disk(&file_path).await?;
+        let (metadata, schema, compression_metadata) =
+            self.load_file_metadata_from_disk(&file_path).await?;
         let load_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        
+
         // Cache the result
         {
             let mut cache = self.metadata_cache.write().await;
@@ -707,20 +741,23 @@ impl CommonColumnarOperations {
                 last_accessed: std::time::Instant::now(),
                 access_count: 1,
             };
-            
+
             cache.file_metadata.insert(path_str.clone(), cached);
             cache.misses += 1;
             cache.memory_usage_bytes += self.estimate_metadata_size(&metadata);
-            
+
             // Evict old entries if cache is too large
             self.evict_metadata_cache_if_needed(&mut cache).await;
         }
-        
-        debug!("File metadata loaded from disk in {:.2}ms: {}", load_time, path_str);
-        
+
+        debug!(
+            "File metadata loaded from disk in {:.2}ms: {}",
+            load_time, path_str
+        );
+
         Ok((metadata, schema, compression_metadata))
     }
-    
+
     /// Get performance metrics
     pub async fn get_performance_metrics(&self) -> Result<(OperationMetrics, ResourceMetrics)> {
         let operation_metrics = {
@@ -731,10 +768,10 @@ impl CommonColumnarOperations {
             let guard = self.performance_monitor.resource_metrics.read().await;
             (*guard).clone()
         };
-        
+
         Ok((operation_metrics, resource_metrics))
     }
-    
+
     /// Clear caches and reset metrics
     pub async fn reset_caches_and_metrics(&self) -> Result<()> {
         // Clear metadata cache
@@ -745,18 +782,18 @@ impl CommonColumnarOperations {
             cache.misses = 0;
             cache.memory_usage_bytes = 0;
         }
-        
+
         // Clear schema cache
         // Note: ColumnarSchemaBuilder doesn't expose clear method, would need to add
-        
+
         // Reset performance metrics
         self.performance_monitor.reset_metrics().await;
-        
+
         info!("Caches and metrics reset successfully");
-        
+
         Ok(())
     }
-    
+
     // Helper methods
     async fn load_file_metadata_from_disk<P: AsRef<Path>>(
         &self,
@@ -765,10 +802,10 @@ impl CommonColumnarOperations {
         // This would implement actual file metadata loading
         // For now, return placeholder data
         warn!("File metadata loading from disk not fully implemented");
-        
-        use crate::compute::distance_computation::DistanceMetric;
+
         use super::ColumnStatistics;
-        
+        use crate::compute::distance_computation::DistanceMetric;
+
         let metadata = ColumnarFileMetadata {
             collection_id: "placeholder".to_string(),
             num_vectors: 0,
@@ -780,41 +817,50 @@ impl CommonColumnarOperations {
             timestamp: chrono::Utc::now(),
             modified_at: chrono::Utc::now(),
         };
-        
+
         let schema = Arc::new(arrow_schema::Schema::empty());
         let compression_metadata = CompressionMetadata {
             column_compression: HashMap::new(),
             compression_ratios: HashMap::new(),
             writer_properties: super::schema::WriterPropertiesConfig::default(),
         };
-        
+
         Ok((metadata, schema, compression_metadata))
     }
-    
+
     fn is_cache_expired(&self, cached: &CachedFileMetadata) -> bool {
-        let ttl = std::time::Duration::from_secs(self.config.schema_config.schema_cache_ttl_seconds);
+        let ttl =
+            std::time::Duration::from_secs(self.config.schema_config.schema_cache_ttl_seconds);
         cached.timestamp.elapsed() > ttl
     }
-    
+
     fn estimate_metadata_size(&self, _metadata: &ColumnarFileMetadata) -> usize {
         // Rough estimate of metadata memory usage
         1024 // 1KB per metadata entry
     }
-    
+
     async fn evict_metadata_cache_if_needed(&self, cache: &mut MetadataCache) {
         let max_entries = self.config.schema_config.max_cached_schemas;
-        
+
         if cache.file_metadata.len() > max_entries {
             // Simple LRU eviction - remove oldest accessed entries
-            let mut entries: Vec<_> = cache.file_metadata.iter().map(|(k, v)| (k.clone(), v.last_accessed)).collect();
+            let mut entries: Vec<_> = cache
+                .file_metadata
+                .iter()
+                .map(|(k, v)| (k.clone(), v.last_accessed))
+                .collect();
             entries.sort_by_key(|(_, last_accessed)| *last_accessed);
-            
+
             let to_remove = entries.len() - max_entries;
-            let paths_to_remove: Vec<_> = entries.iter().take(to_remove).map(|(path, _)| path.clone()).collect();
+            let paths_to_remove: Vec<_> = entries
+                .iter()
+                .take(to_remove)
+                .map(|(path, _)| path.clone())
+                .collect();
             for path in paths_to_remove {
                 cache.file_metadata.remove(&path);
             }
-            
+
             debug!("Evicted {} metadata cache entries", to_remove);
         }
     }
@@ -828,14 +874,14 @@ impl PerformanceMonitor {
             config,
         }
     }
-    
+
     async fn record_schema_generation(&self, duration_ms: f64) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
             metrics.schema_generations += 1;
         }
     }
-    
+
     async fn record_serialization(&self, duration_ms: f64, bytes_processed: usize) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
@@ -844,14 +890,14 @@ impl PerformanceMonitor {
             metrics.serialization_bytes_processed += bytes_processed;
         }
     }
-    
+
     async fn record_deserialization(&self, duration_ms: f64, record_count: usize) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
             // Deserialization metrics would be tracked separately if needed
         }
     }
-    
+
     async fn record_distance_computation(&self, duration_ms: f64, vector_count: usize) {
         if self.config.enable_metrics {
             let mut metrics = self.operation_metrics.write().await;
@@ -860,11 +906,11 @@ impl PerformanceMonitor {
             metrics.distance_vectors_processed += vector_count;
         }
     }
-    
+
     async fn reset_metrics(&self) {
         let mut op_metrics = self.operation_metrics.write().await;
         *op_metrics = OperationMetrics::default();
-        
+
         let mut res_metrics = self.resource_metrics.write().await;
         *res_metrics = ResourceMetrics::default();
     }
@@ -878,30 +924,38 @@ impl SerializationOptimizationConfig {
     fn to_serialization_compression(&self) -> super::serialization::SerializationCompressionConfig {
         super::serialization::SerializationCompressionConfig::default()
     }
-    
+
     fn to_memory_optimization(&self) -> super::serialization::MemoryOptimizationConfig {
         super::serialization::MemoryOptimizationConfig::default()
     }
-    
+
     fn to_simd_config(&self) -> super::serialization::SIMDConfig {
         super::serialization::SIMDConfig::default()
     }
 }
 
 impl DistanceComputationConfig {
-    fn to_simd_optimization(&self) -> crate::compute::distance_computation::quantized::SIMDOptimization {
+    fn to_simd_optimization(
+        &self,
+    ) -> crate::compute::distance_computation::quantized::SIMDOptimization {
         crate::compute::distance_computation::quantized::SIMDOptimization::default()
     }
-    
-    fn to_cache_config(&self) -> crate::compute::distance_computation::quantized::DistanceCacheConfig {
+
+    fn to_cache_config(
+        &self,
+    ) -> crate::compute::distance_computation::quantized::DistanceCacheConfig {
         crate::compute::distance_computation::quantized::DistanceCacheConfig::default()
     }
-    
-    fn to_approximation_config(&self) -> crate::compute::distance_computation::quantized::ApproximationConfig {
+
+    fn to_approximation_config(
+        &self,
+    ) -> crate::compute::distance_computation::quantized::ApproximationConfig {
         crate::compute::distance_computation::quantized::ApproximationConfig::default()
     }
-    
-    fn to_hardware_preferences(&self) -> crate::compute::distance_computation::quantized::HardwarePreferences {
+
+    fn to_hardware_preferences(
+        &self,
+    ) -> crate::compute::distance_computation::quantized::HardwarePreferences {
         crate::compute::distance_computation::quantized::HardwarePreferences::default()
     }
 }
@@ -957,9 +1011,9 @@ impl Default for CompressionStrategy {
 impl Default for CompressionLevels {
     fn default() -> Self {
         Self {
-            fp32_vectors: Some(6), // ZSTD level 6
+            fp32_vectors: Some(6),      // ZSTD level 6
             quantized_vectors: Some(3), // LZ4 level 3
-            metadata_columns: Some(9), // High compression for metadata
+            metadata_columns: Some(9),  // High compression for metadata
             id_columns: Some(6),
         }
     }
@@ -1218,53 +1272,68 @@ impl Default for ResourceMonitoringConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_config_defaults() {
         let config = CommonColumnarConfig::default();
-        
+
         // Test basic configuration
         assert!(config.schema_config.auto_detect_quantization);
         assert_eq!(config.schema_config.schema_cache_ttl_seconds, 3600);
-        
+
         // Test serialization config
         assert!(config.serialization_config.memory_pools.enable_pooling);
         assert!(config.serialization_config.simd_settings.enable_simd);
-        
+
         // Test distance config
         assert!(config.distance_config.progressive_search.enable_progressive);
         assert!(config.distance_config.distance_caching.enable_pq_caching);
-        
+
         // Test engine optimizations
-        assert!(config.engine_optimizations.viper_optimizations.optimize_for_append);
-        assert!(config.engine_optimizations.nova_optimizations.enable_hierarchical_stats);
-        assert!(config.engine_optimizations.shared_optimizations.enable_bloom_filters);
+        assert!(
+            config
+                .engine_optimizations
+                .viper_optimizations
+                .optimize_for_append
+        );
+        assert!(
+            config
+                .engine_optimizations
+                .nova_optimizations
+                .enable_hierarchical_stats
+        );
+        assert!(
+            config
+                .engine_optimizations
+                .shared_optimizations
+                .enable_bloom_filters
+        );
     }
-    
+
     #[test]
     fn test_compression_levels() {
         let levels = CompressionLevels::default();
-        
+
         assert_eq!(levels.fp32_vectors, Some(6));
         assert_eq!(levels.quantized_vectors, Some(3));
         assert_eq!(levels.metadata_columns, Some(9));
         assert_eq!(levels.id_columns, Some(6));
     }
-    
+
     #[test]
     fn test_quality_thresholds() {
         let thresholds = QualityThresholds::default();
-        
+
         assert_eq!(thresholds.binary_threshold, 0.7);
         assert_eq!(thresholds.int8_threshold, 0.9);
         assert_eq!(thresholds.pq_threshold, 0.85);
         assert_eq!(thresholds.fp32_threshold, 1.0);
     }
-    
+
     #[test]
     fn test_pool_size_limits() {
         let limits = PoolSizeLimits::default();
-        
+
         assert_eq!(limits.fp32_pool_max_vectors, 1000);
         assert_eq!(limits.int8_pool_max_vectors, 2000);
         assert_eq!(limits.binary_pool_max_vectors, 5000);
@@ -1280,7 +1349,7 @@ pub fn map_core_to_parquet_compression(
     level: Option<i32>,
 ) -> Result<parquet::basic::Compression> {
     use parquet::basic::Compression;
-    
+
     let compression = match algorithm {
         CompressionAlgorithm::None => Compression::UNCOMPRESSED,
         CompressionAlgorithm::Zstd => {
@@ -1338,6 +1407,6 @@ pub fn map_core_to_parquet_compression(
             Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
         }
     };
-    
+
     Ok(compression)
 }

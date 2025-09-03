@@ -1,5 +1,5 @@
 //! Unified Columnar I/O Module - Consolidated Parquet and Arrow IPC operations
-//! 
+//!
 //! This module consolidates all columnar I/O operations for VIPER and NOVA engines,
 //! ensuring maximum code reuse and consistent optimizations.
 //!
@@ -21,22 +21,22 @@
 //!    - Automatic selection based on workload
 
 use anyhow::{Context, Result};
-use arrow_array::{RecordBatch, ArrayRef};
-use arrow_schema::{Schema, Field, DataType};
+use arrow_array::{ArrayRef, RecordBatch};
 use arrow_ipc::{reader::FileReader as IpcFileReader, writer::FileWriter as IpcFileWriter};
 use arrow_ipc::{reader::StreamReader as IpcStreamReader, writer::StreamWriter as IpcStreamWriter};
-use parquet::arrow::{ArrowWriter, arrow_reader::ArrowReaderBuilder, ProjectionMask};
-use parquet::file::properties::{WriterProperties, WriterPropertiesBuilder, BloomFilterProperties};
+use arrow_schema::{DataType, Field, Schema};
+use parquet::arrow::{ArrowWriter, ProjectionMask, arrow_reader::ArrowReaderBuilder};
 use parquet::basic::{Compression, Encoding, ZstdLevel};
 use parquet::bloom_filter::Sbbf;
-use std::sync::Arc;
+use parquet::file::properties::{BloomFilterProperties, WriterProperties, WriterPropertiesBuilder};
 use std::fs::File;
+use std::io::{Read, Seek, Write};
 use std::path::Path;
-use std::io::{Read, Write, Seek};
+use std::sync::Arc;
 use tracing::{debug, info, trace};
 
 use crate::core::VectorRecord;
-use crate::storage::unified_scan_strategy::{ScanStrategy, ScanIterator};
+use crate::storage::unified_scan_strategy::{ScanIterator, ScanStrategy};
 
 /// Unified columnar I/O configuration
 #[derive(Debug, Clone)]
@@ -50,7 +50,7 @@ pub struct UnifiedColumnarConfig {
     pub write_batch_size: usize,
     /// Memory budget for operations
     pub memory_budget_bytes: usize,
-    
+
     // === Parquet-specific (for filtered queries) ===
     /// Enable bloom filters for ID and metadata columns
     pub enable_bloom_filters: bool,
@@ -72,7 +72,7 @@ pub struct UnifiedColumnarConfig {
     pub enable_delta_encoding: bool,
     /// Enable byte stream split for floats
     pub enable_byte_stream_split: bool,
-    
+
     // === Arrow IPC-specific (for full scans) ===
     /// Use IPC streaming format (vs file format)
     pub use_ipc_streaming: bool,
@@ -80,7 +80,7 @@ pub struct UnifiedColumnarConfig {
     pub enable_zero_copy: bool,
     /// IPC compression (usually disabled for speed)
     pub ipc_compression: Option<arrow_ipc::CompressionType>,
-    
+
     // === Engine-specific Features ===
     /// VIPER: Enable predicate pushdown
     pub viper_predicate_pushdown: bool,
@@ -90,7 +90,7 @@ pub struct UnifiedColumnarConfig {
     pub nova_progressive_search: bool,
     /// NOVA: Enable zone maps
     pub nova_zone_maps: bool,
-    
+
     // === Optimization Flags ===
     /// Automatically select best format based on operation
     pub auto_format_selection: bool,
@@ -108,7 +108,7 @@ impl Default for UnifiedColumnarConfig {
             page_size: 1024 * 1024, // 1MB
             write_batch_size: 1000,
             memory_budget_bytes: 512 * 1024 * 1024, // 512MB
-            
+
             // Parquet (optimized for queries)
             enable_bloom_filters: true,
             bloom_filter_fpp: 0.01,
@@ -120,18 +120,18 @@ impl Default for UnifiedColumnarConfig {
             enable_dictionary: true,
             enable_delta_encoding: true,
             enable_byte_stream_split: true,
-            
+
             // Arrow IPC (optimized for throughput)
             use_ipc_streaming: true,
             enable_zero_copy: true,
             ipc_compression: None, // No compression for maximum speed
-            
+
             // Engine features
             viper_predicate_pushdown: true,
             viper_parallel_columns: true,
             nova_progressive_search: true,
             nova_zone_maps: true,
-            
+
             // Optimizations
             auto_format_selection: true,
             adaptive_compression: true,
@@ -144,7 +144,9 @@ impl Default for UnifiedColumnarConfig {
 pub struct UnifiedColumnarReader {
     config: UnifiedColumnarConfig,
     /// Cached Parquet metadata for query optimization
-    parquet_metadata_cache: std::sync::RwLock<std::collections::HashMap<String, Arc<parquet::file::metadata::ParquetMetaData>>>,
+    parquet_metadata_cache: std::sync::RwLock<
+        std::collections::HashMap<String, Arc<parquet::file::metadata::ParquetMetaData>>,
+    >,
     /// Statistics collector
     stats: std::sync::RwLock<IoStatistics>,
 }
@@ -157,7 +159,7 @@ impl UnifiedColumnarReader {
             stats: std::sync::RwLock::new(IoStatistics::default()),
         }
     }
-    
+
     /// Read using appropriate format based on scan strategy
     pub async fn read_with_strategy(
         &self,
@@ -169,9 +171,14 @@ impl UnifiedColumnarReader {
                 debug!("Using Arrow IPC for full scan of {}", file_path);
                 self.read_ipc_full_scan(file_path).await
             }
-            ScanStrategy::FilteredScan { predicates, enable_pushdown, .. } if *enable_pushdown => {
+            ScanStrategy::FilteredScan {
+                predicates,
+                enable_pushdown,
+                ..
+            } if *enable_pushdown => {
                 debug!("Using Parquet with predicate pushdown for filtered scan");
-                self.read_parquet_filtered(file_path, predicates.as_ref()).await
+                self.read_parquet_filtered(file_path, predicates.as_ref())
+                    .await
             }
             _ => {
                 debug!("Using Parquet for standard scan");
@@ -179,16 +186,16 @@ impl UnifiedColumnarReader {
             }
         }
     }
-    
+
     /// Read using Arrow IPC for maximum throughput (compaction/maintenance)
     async fn read_ipc_full_scan(&self, file_path: &str) -> Result<Box<dyn ScanIterator>> {
         let ipc_path = self.get_ipc_cache_path(file_path);
-        
+
         // Check if IPC cache exists, otherwise convert from Parquet
         if !Path::new(&ipc_path).exists() {
             self.convert_parquet_to_ipc(file_path, &ipc_path).await?;
         }
-        
+
         let file = File::open(&ipc_path)?;
         let reader: Box<dyn ScanIterator> = if self.config.use_ipc_streaming {
             // Streaming format for lower memory usage
@@ -199,10 +206,10 @@ impl UnifiedColumnarReader {
             let file_reader = IpcFileReader::try_new(file, None)?;
             Box::new(IpcFileIterator::new(file_reader))
         };
-        
+
         Ok(reader)
     }
-    
+
     /// Read Parquet with predicate pushdown and bloom filters
     async fn read_parquet_filtered(
         &self,
@@ -210,24 +217,28 @@ impl UnifiedColumnarReader {
         predicates: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Box<dyn ScanIterator>> {
         let metadata = self.get_or_load_parquet_metadata(file_path).await?;
-        
+
         // Apply predicate pushdown optimizations
         let qualified_row_groups = if let Some(pred) = predicates {
             self.apply_predicate_pushdown(&metadata, pred)?
         } else {
             (0..metadata.num_row_groups()).collect()
         };
-        
+
         // Check bloom filters for further pruning
         let filtered_row_groups = if self.config.enable_bloom_filters {
-            self.apply_bloom_filter_pruning(file_path, &metadata, qualified_row_groups, predicates).await?
+            self.apply_bloom_filter_pruning(file_path, &metadata, qualified_row_groups, predicates)
+                .await?
         } else {
             qualified_row_groups
         };
-        
-        info!("Parquet filtered scan: {} of {} row groups after pruning", 
-              filtered_row_groups.len(), metadata.num_row_groups());
-        
+
+        info!(
+            "Parquet filtered scan: {} of {} row groups after pruning",
+            filtered_row_groups.len(),
+            metadata.num_row_groups()
+        );
+
         // Create iterator with optimized row group list
         Ok(Box::new(ParquetFilteredIterator::new(
             file_path.to_string(),
@@ -235,7 +246,7 @@ impl UnifiedColumnarReader {
             self.config.clone(),
         )?))
     }
-    
+
     /// Standard Parquet read without optimizations
     async fn read_parquet_standard(&self, file_path: &str) -> Result<Box<dyn ScanIterator>> {
         Ok(Box::new(ParquetStandardIterator::new(
@@ -243,7 +254,7 @@ impl UnifiedColumnarReader {
             self.config.clone(),
         )?))
     }
-    
+
     /// Apply predicate pushdown using Parquet statistics
     fn apply_predicate_pushdown(
         &self,
@@ -251,10 +262,10 @@ impl UnifiedColumnarReader {
         predicate: &crate::core::search::FilterExpression,
     ) -> Result<Vec<usize>> {
         let mut qualified = Vec::new();
-        
+
         for (idx, rg) in metadata.row_groups().iter().enumerate() {
             let stats = rg.column(0).statistics();
-            
+
             // Use column statistics for pruning
             if let Some(stats) = stats {
                 // TODO: Implement actual predicate evaluation against statistics
@@ -265,10 +276,10 @@ impl UnifiedColumnarReader {
                 qualified.push(idx);
             }
         }
-        
+
         Ok(qualified)
     }
-    
+
     /// Apply bloom filter pruning for ID and metadata columns
     async fn apply_bloom_filter_pruning(
         &self,
@@ -281,45 +292,56 @@ impl UnifiedColumnarReader {
         // For now, return all row groups
         Ok(row_groups)
     }
-    
+
     /// Convert Parquet to Arrow IPC for faster full scans
     async fn convert_parquet_to_ipc(&self, parquet_path: &str, ipc_path: &str) -> Result<()> {
-        info!("Converting {} to Arrow IPC format for faster full scans", parquet_path);
-        
+        info!(
+            "Converting {} to Arrow IPC format for faster full scans",
+            parquet_path
+        );
+
         let parquet_file = File::open(parquet_path)?;
         let arrow_reader = ArrowReaderBuilder::try_new(parquet_file)?;
         let schema = arrow_reader.schema().clone();
-        
+
         let ipc_file = File::create(ipc_path)?;
         let mut ipc_writer: Box<dyn IpcWriter> = if self.config.use_ipc_streaming {
-            Box::new(IpcStreamWriterWrapper(IpcStreamWriter::try_new(Box::new(ipc_file), &schema)?))
+            Box::new(IpcStreamWriterWrapper(IpcStreamWriter::try_new(
+                Box::new(ipc_file),
+                &schema,
+            )?))
         } else {
-            Box::new(IpcFileWriterWrapper(IpcFileWriter::try_new(Box::new(ipc_file), &schema)?))
+            Box::new(IpcFileWriterWrapper(IpcFileWriter::try_new(
+                Box::new(ipc_file),
+                &schema,
+            )?))
         };
-        
+
         // Stream batches from Parquet to IPC
-        let mut batch_reader = arrow_reader.with_batch_size(self.config.write_batch_size).build()?;
+        let mut batch_reader = arrow_reader
+            .with_batch_size(self.config.write_batch_size)
+            .build()?;
         for batch in &mut batch_reader {
             let batch = batch?;
             ipc_writer.write(&batch)?;
         }
-        
+
         ipc_writer.finish()?;
         info!("IPC conversion complete: {}", ipc_path);
         Ok(())
     }
-    
+
     /// Determine if IPC should be used based on file characteristics
     fn should_use_ipc_for_scan(&self, file_path: &str) -> bool {
         if !self.config.auto_format_selection {
             return false;
         }
-        
+
         // Use IPC for:
         // 1. Files accessed repeatedly (compaction)
         // 2. Large files where throughput matters
         // 3. When no filtering is needed
-        
+
         // Simple heuristic: check file size
         if let Ok(metadata) = std::fs::metadata(file_path) {
             metadata.len() > 100 * 1024 * 1024 // > 100MB
@@ -327,9 +349,12 @@ impl UnifiedColumnarReader {
             false
         }
     }
-    
+
     /// Get or load Parquet metadata with caching
-    async fn get_or_load_parquet_metadata(&self, file_path: &str) -> Result<Arc<parquet::file::metadata::ParquetMetaData>> {
+    async fn get_or_load_parquet_metadata(
+        &self,
+        file_path: &str,
+    ) -> Result<Arc<parquet::file::metadata::ParquetMetaData>> {
         // Check cache first
         {
             let cache = self.parquet_metadata_cache.read().unwrap();
@@ -337,20 +362,20 @@ impl UnifiedColumnarReader {
                 return Ok(Arc::clone(metadata));
             }
         }
-        
+
         // Load and cache
         let file = File::open(file_path)?;
         let metadata = parquet::file::footer::parse_metadata(&file)?;
         let metadata = Arc::new(metadata);
-        
+
         {
             let mut cache = self.parquet_metadata_cache.write().unwrap();
             cache.insert(file_path.to_string(), Arc::clone(&metadata));
         }
-        
+
         Ok(metadata)
     }
-    
+
     fn get_ipc_cache_path(&self, parquet_path: &str) -> String {
         // Store IPC files in a cache directory
         format!("{}.ipc", parquet_path)
@@ -362,7 +387,6 @@ pub struct UnifiedColumnarWriter {
     config: UnifiedColumnarConfig,
     stats: IoStatistics,
 }
-
 
 // Wrapper trait for IPC writers
 trait IpcWriter: Send {
@@ -378,7 +402,7 @@ impl<W: Write + Send> IpcWriter for IpcStreamWriterWrapper<W> {
         self.0.write(batch)?;
         Ok(())
     }
-    
+
     fn finish(&mut self) -> Result<()> {
         self.0.finish()?;
         Ok(())
@@ -390,7 +414,7 @@ impl<W: Write + Send> IpcWriter for IpcFileWriterWrapper<W> {
         self.0.write(batch)?;
         Ok(())
     }
-    
+
     fn finish(&mut self) -> Result<()> {
         self.0.finish()?;
         Ok(())
@@ -404,7 +428,7 @@ impl UnifiedColumnarWriter {
             stats: IoStatistics::default(),
         }
     }
-    
+
     /// Write records using appropriate format
     pub async fn write_records(
         &mut self,
@@ -420,52 +444,77 @@ impl UnifiedColumnarWriter {
             self.write_parquet(records, output_path).await
         }
     }
-    
+
     /// Write Parquet with all optimizations
-    async fn write_parquet(&mut self, records: Vec<VectorRecord>, output_path: &str) -> Result<WriteResult> {
+    async fn write_parquet(
+        &mut self,
+        records: Vec<VectorRecord>,
+        output_path: &str,
+    ) -> Result<WriteResult> {
         let schema = self.create_parquet_schema(&records)?;
         let props = self.create_writer_properties()?;
-        
+
         let file = File::create(output_path)?;
         let mut writer = ArrowWriter::try_new(file, Arc::new(schema), Some(props))?;
-        
+
         // Write in batches
         for chunk in records.chunks(self.config.write_batch_size) {
             let batch = self.records_to_batch(chunk)?;
             writer.write(&batch)?;
         }
-        
+
         let metadata = writer.close()?;
-        
+
         Ok(WriteResult {
             path: output_path.to_string(),
             format: FormatType::Parquet,
             records_written: records.len(),
-            bytes_written: metadata.row_groups.iter().map(|rg| rg.total_byte_size).sum::<i64>() as usize,
-            compression_ratio: self.calculate_compression_ratio(&records, metadata.row_groups.iter().map(|rg| rg.total_byte_size).sum::<i64>() as usize),
+            bytes_written: metadata
+                .row_groups
+                .iter()
+                .map(|rg| rg.total_byte_size)
+                .sum::<i64>() as usize,
+            compression_ratio: self.calculate_compression_ratio(
+                &records,
+                metadata
+                    .row_groups
+                    .iter()
+                    .map(|rg| rg.total_byte_size)
+                    .sum::<i64>() as usize,
+            ),
         })
     }
-    
+
     /// Write Arrow IPC for maximum speed
-    async fn write_ipc(&mut self, records: Vec<VectorRecord>, output_path: &str) -> Result<WriteResult> {
+    async fn write_ipc(
+        &mut self,
+        records: Vec<VectorRecord>,
+        output_path: &str,
+    ) -> Result<WriteResult> {
         let schema = self.create_arrow_schema(&records)?;
-        
+
         let file = File::create(output_path)?;
         let mut writer: Box<dyn IpcWriter> = if self.config.use_ipc_streaming {
-            Box::new(IpcStreamWriterWrapper(IpcStreamWriter::try_new(Box::new(file), &schema)?))
+            Box::new(IpcStreamWriterWrapper(IpcStreamWriter::try_new(
+                Box::new(file),
+                &schema,
+            )?))
         } else {
-            Box::new(IpcFileWriterWrapper(IpcFileWriter::try_new(Box::new(file), &schema)?))
+            Box::new(IpcFileWriterWrapper(IpcFileWriter::try_new(
+                Box::new(file),
+                &schema,
+            )?))
         };
-        
+
         let mut bytes_written = 0;
         for chunk in records.chunks(self.config.write_batch_size) {
             let batch = self.records_to_batch(chunk)?;
             bytes_written += batch.get_array_memory_size();
             writer.write(&batch)?;
         }
-        
+
         writer.finish()?;
-        
+
         Ok(WriteResult {
             path: output_path.to_string(),
             format: FormatType::ArrowIPC,
@@ -474,7 +523,7 @@ impl UnifiedColumnarWriter {
             compression_ratio: 1.0, // No compression in IPC
         })
     }
-    
+
     /// Create optimized Parquet writer properties
     fn create_writer_properties(&self) -> Result<WriterProperties> {
         let mut builder = WriterProperties::builder()
@@ -483,7 +532,7 @@ impl UnifiedColumnarWriter {
             .set_statistics_enabled(self.config.enable_column_statistics)
             .set_max_row_group_size(self.config.row_group_size)
             .set_data_page_size_limit(self.config.page_size);
-        
+
         // Configure bloom filters
         if self.config.enable_bloom_filters {
             for column in &self.config.bloom_filter_columns {
@@ -491,15 +540,15 @@ impl UnifiedColumnarWriter {
                 builder = builder.set_bloom_filter_fpp(self.config.bloom_filter_fpp);
             }
         }
-        
+
         // Enable advanced encodings
         if self.config.enable_delta_encoding {
             builder = builder.set_encoding(Encoding::DELTA_BINARY_PACKED);
         }
-        
+
         Ok(builder.build())
     }
-    
+
     /// Create schema for Parquet
     fn create_parquet_schema(&self, records: &[VectorRecord]) -> Result<Schema> {
         // TODO: Implement schema creation based on records
@@ -509,21 +558,24 @@ impl UnifiedColumnarWriter {
             Field::new("metadata", DataType::Utf8, true),
         ]))
     }
-    
+
     /// Create schema for Arrow
     fn create_arrow_schema(&self, records: &[VectorRecord]) -> Result<Schema> {
         // Similar to Parquet but potentially with different types
         self.create_parquet_schema(records)
     }
-    
+
     /// Convert records to Arrow RecordBatch
     fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
         // TODO: Implement conversion
-        Err(anyhow::anyhow!("Record to batch conversion not implemented"))
+        Err(anyhow::anyhow!(
+            "Record to batch conversion not implemented"
+        ))
     }
-    
+
     fn calculate_compression_ratio(&self, records: &[VectorRecord], compressed_size: usize) -> f64 {
-        let uncompressed_size: usize = records.iter()
+        let uncompressed_size: usize = records
+            .iter()
             .map(|r| r.vector.len() * 4 + r.id.len() + 100) // Rough estimate
             .sum();
         uncompressed_size as f64 / compressed_size as f64
@@ -547,11 +599,11 @@ impl ScanIterator for IpcStreamIterator {
         // TODO: Implement IPC to VectorRecord conversion
         Ok(None)
     }
-    
+
     fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
         Default::default()
     }
-    
+
     fn cancel(&mut self) {
         // No-op for now
     }
@@ -564,7 +616,10 @@ struct IpcFileIterator {
 
 impl IpcFileIterator {
     fn new(reader: IpcFileReader<File>) -> Self {
-        Self { reader, current_batch: 0 }
+        Self {
+            reader,
+            current_batch: 0,
+        }
     }
 }
 
@@ -574,11 +629,11 @@ impl ScanIterator for IpcFileIterator {
         // TODO: Implement
         Ok(None)
     }
-    
+
     fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
         Default::default()
     }
-    
+
     fn cancel(&mut self) {
         // No-op
     }
@@ -592,7 +647,11 @@ struct ParquetFilteredIterator {
 }
 
 impl ParquetFilteredIterator {
-    fn new(file_path: String, row_groups: Vec<usize>, config: UnifiedColumnarConfig) -> Result<Self> {
+    fn new(
+        file_path: String,
+        row_groups: Vec<usize>,
+        config: UnifiedColumnarConfig,
+    ) -> Result<Self> {
         Ok(Self {
             file_path,
             row_groups,
@@ -608,11 +667,11 @@ impl ScanIterator for ParquetFilteredIterator {
         // TODO: Implement filtered Parquet reading
         Ok(None)
     }
-    
+
     fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
         Default::default()
     }
-    
+
     fn cancel(&mut self) {
         // No-op
     }
@@ -635,11 +694,11 @@ impl ScanIterator for ParquetStandardIterator {
         // TODO: Implement standard Parquet reading
         Ok(None)
     }
-    
+
     fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
         Default::default()
     }
-    
+
     fn cancel(&mut self) {
         // No-op
     }
@@ -679,7 +738,7 @@ pub enum FormatType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_config_defaults() {
         let config = UnifiedColumnarConfig::default();
@@ -687,12 +746,12 @@ mod tests {
         assert!(config.enable_zero_copy);
         assert!(config.auto_format_selection);
     }
-    
+
     #[tokio::test]
     async fn test_format_selection() {
         let config = UnifiedColumnarConfig::default();
         let reader = UnifiedColumnarReader::new(config);
-        
+
         // Large file should use IPC
         assert!(reader.should_use_ipc_for_scan("/large_file.parquet"));
     }

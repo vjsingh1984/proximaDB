@@ -23,7 +23,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::proto::proximadb::Collection as Collection;
+use crate::proto::proximadb::Collection;
 
 /// Performance metrics for monitoring and optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,7 +77,9 @@ impl UnifiedCollectionIndex {
     pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref()
+        let name = record
+            .config
+            .as_ref()
             .map(|c| c.name.clone())
             .unwrap_or_else(|| "unnamed".to_string());
 
@@ -234,7 +236,7 @@ impl UnifiedCollectionIndex {
     pub fn get_metrics(&self) -> IndexPerformanceMetrics {
         self.metrics.read().clone()
     }
-    
+
     /// Get metrics (alias for get_metrics)
     pub fn metrics(&self) -> IndexPerformanceMetrics {
         self.get_metrics()

@@ -4,7 +4,7 @@
 //! This module provides a single source of truth for version information.
 
 /// The current version of ProximaDB
-/// 
+///
 /// This version should match the version in Cargo.toml and be used consistently
 /// across all modules, health checks, and API responses.
 pub const PROXIMADB_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -21,17 +21,17 @@ impl VersionInfo {
     pub fn version() -> &'static str {
         PROXIMADB_VERSION
     }
-    
+
     /// Get the application name
     pub fn name() -> &'static str {
         PROXIMADB_NAME
     }
-    
+
     /// Get the application description
     pub fn description() -> &'static str {
         PROXIMADB_DESCRIPTION
     }
-    
+
     /// Get version info as a formatted string
     pub fn version_string() -> String {
         format!("{} v{}", PROXIMADB_NAME, PROXIMADB_VERSION)

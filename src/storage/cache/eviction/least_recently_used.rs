@@ -18,15 +18,15 @@ impl<K: Hash + Eq + Clone> LRUStrategy<K> {
             stats: RwLock::new(EvictionStats::default()),
         }
     }
-    
+
     fn move_to_front(&self, key: &K) {
         let mut order = self.access_order.write().unwrap();
         let mut positions = self.key_positions.write().unwrap();
-        
+
         // Remove from current position if exists
         if let Some(&pos) = positions.get(key) {
             order.remove(pos);
-            
+
             // Update positions for all keys after the removed one
             for (_k, p) in positions.iter_mut() {
                 if *p > pos {
@@ -34,11 +34,11 @@ impl<K: Hash + Eq + Clone> LRUStrategy<K> {
                 }
             }
         }
-        
+
         // Add to front
         order.push_front(key.clone());
         positions.insert(key.clone(), 0);
-        
+
         // Update positions for all other keys
         for (k, p) in positions.iter_mut() {
             if k != key {
@@ -50,31 +50,31 @@ impl<K: Hash + Eq + Clone> LRUStrategy<K> {
 
 impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for LRUStrategy<K> {
     type Key = K;
-    
+
     fn select_victim(&self, _cache_state: &CacheState) -> Option<Self::Key> {
         let order = self.access_order.read().unwrap();
         order.back().cloned()
     }
-    
+
     fn update_on_access(&mut self, key: &Self::Key) {
         self.move_to_front(key);
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.total_accesses += 1;
     }
-    
+
     fn update_on_insert(&mut self, key: &Self::Key, _size: usize) {
         self.move_to_front(key);
     }
-    
+
     fn update_on_evict(&mut self, key: &Self::Key) {
         let mut order = self.access_order.write().unwrap();
         let mut positions = self.key_positions.write().unwrap();
-        
+
         if let Some(&pos) = positions.get(key) {
             order.remove(pos);
             positions.remove(key);
-            
+
             // Update positions for remaining keys
             for (_, p) in positions.iter_mut() {
                 if *p > pos {
@@ -82,11 +82,11 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for LRUStrategy<K> {
                 }
             }
         }
-        
+
         let mut stats = self.stats.write().unwrap();
         stats.total_evictions += 1;
     }
-    
+
     fn stats(&self) -> EvictionStats {
         self.stats.read().unwrap().clone()
     }

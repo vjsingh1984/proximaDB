@@ -85,13 +85,13 @@
 //!
 //! ```rust
 //! use proximadb::storage::engines::{StorageEngineFactory, WorkloadType};
-//! 
+//!
 //! // Automatic engine selection
 //! let engine = StorageEngineFactory::create_optimal_engine(
 //!     WorkloadType::OLTP,
 //!     &collection_config
 //! )?;
-//! 
+//!
 //! // Direct engine selection
 //! let viper = StorageEngineFactory::create_engine(
 //!     "viper",
@@ -104,42 +104,34 @@ pub mod core;
 pub mod impls;
 
 // Keep these at the top level for now (will be moved/refactored later)
+pub mod event_log_integration;
 pub mod factory;
 pub mod migration;
-pub mod universal;
 pub mod progressive_search_trait;
-pub mod event_log_integration;
+pub mod universal;
 
 // Re-export traits
 pub use crate::storage::traits::{
-    UnifiedStorageEngine, StorageEngineStrategy,
-    FlushParameters, FlushResult,
-    CompactionParameters, CompactionResult,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    UnifiedStorageEngine,
 };
 
 // Re-export main engine types
 pub use impls::{
-    sst::SstStorage,
-    viper::ViperEngine,
-    swift::SwiftEngine,
-    nova::NovaEngine,
-    prism::PrismEngine,
-    raptor::RaptorEngine,
+    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
+    swift::SwiftEngine, viper::ViperEngine,
 };
 
 // Re-export constants
 pub use constants::*;
 
 // Re-export factory
-pub use factory::{
-    StorageEngineFactory, WorkloadType, 
-    EngineRequirements, EngineComparison,
-};
+pub use factory::{EngineComparison, EngineRequirements, StorageEngineFactory, WorkloadType};
 
 // Re-export universal adapter
 pub use universal::{
-    UniversalDistanceAdapter, DistanceComputationRequest,
-    DistanceComputationResult, CandidateVector,
+    CandidateVector, DistanceComputationRequest, DistanceComputationResult,
+    UniversalDistanceAdapter,
 };
 
 // InsertResult structure

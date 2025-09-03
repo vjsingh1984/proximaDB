@@ -52,7 +52,7 @@
 //! ## Integration Points
 //!
 //! - **Upstream**: Called by `UnifiedHandlers` for all collection operations
-//! - **Downstream**: 
+//! - **Downstream**:
 //!   - `FilestoreMetadataBackend` for metadata persistence
 //!   - `FilesystemFactory` for storage access
 //!   - Storage engines via `CollectionMetadataProvider` trait
@@ -66,14 +66,14 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::sync::Arc;
-use std::collections::HashMap;
 use parking_lot::RwLock;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
-use crate::proto::proximadb::{CollectionConfig, Collection};
 use crate::core::config::StorageConfig;
+use crate::proto::proximadb::{Collection, CollectionConfig};
 use crate::storage::metadata::backends::filestore_backend::FilestoreMetadataBackend;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::CollectionMetadataProvider;
@@ -124,20 +124,23 @@ impl CollectionService {
         &self,
         config: &crate::proto::proximadb::CollectionConfig,
     ) -> Result<CollectionServiceResponse> {
-        debug!("🆕 Creating collection: {} with distance_metric={}", config.name, config.distance_metric);
+        debug!(
+            "🆕 Creating collection: {} with distance_metric={}",
+            config.name, config.distance_metric
+        );
         let start_time = std::time::Instant::now();
-        
+
         // Resolve compression and storage configuration
         let mut enriched_config = config.clone();
-        
+
         // Ensure storage_config exists and set compression within it
         if enriched_config.storage_config.is_none() {
             enriched_config.storage_config = Some(crate::proto::proximadb::StorageConfig {
-                enable_all_optimizations: Some(true),  // All optimizations on by default
+                enable_all_optimizations: Some(true), // All optimizations on by default
                 ..Default::default()
             });
         }
-        
+
         // Resolve compression within storage_config
         if let Some(ref mut storage_cfg) = enriched_config.storage_config {
             let resolved_compression = self.resolve_compression_config(
@@ -146,20 +149,25 @@ impl CollectionService {
             );
             storage_cfg.compression = resolved_compression;
         }
-        
+
         // Add default quantization configuration if not provided
         // Use smart defaults based on vector dimension for optimal performance
         if enriched_config.quantization.is_none() {
             use crate::compute::quantization::QuantizationSmartDefaults;
-            
+
             match QuantizationSmartDefaults::generate_for_dimension(config.dimension as u32) {
                 Ok(smart_config) => {
                     enriched_config.quantization = Some(smart_config);
-                    info!("🧠 Generated smart quantization defaults for collection '{}' (dimension: {})", 
-                        config.name, config.dimension);
-                },
+                    info!(
+                        "🧠 Generated smart quantization defaults for collection '{}' (dimension: {})",
+                        config.name, config.dimension
+                    );
+                }
                 Err(e) => {
-                    warn!("⚠️ Failed to generate smart defaults, using fallback: {}", e);
+                    warn!(
+                        "⚠️ Failed to generate smart defaults, using fallback: {}",
+                        e
+                    );
                     // Fallback to simple default
                     enriched_config.quantization = Some(crate::proto::proximadb::QuantizationConfig {
                         enabled: true,
@@ -196,33 +204,35 @@ impl CollectionService {
         // SDK defines compression config in collection metadata and it drives datablock compression
         if let Some(ref storage_cfg) = enriched_config.storage_config {
             if let Some(ref compression) = storage_cfg.compression {
-            use crate::storage::engine_capabilities::EngineCapabilities;
-            use crate::proto::proximadb::CompressionAlgorithm;
-            
-            // Convert engine type to enum
-            let engine = EngineCapabilities::engine_from_int(config.storage_engine);
-            
-            // Try to convert compression algorithm from i32
-            if let Ok(algorithm) = CompressionAlgorithm::try_from(compression.algorithm) {
-                if !EngineCapabilities::is_compression_supported(engine, algorithm) {
-                    let engine_name = EngineCapabilities::get_engine_name(engine);
-                    let unsupported = EngineCapabilities::get_unsupported_compression_algorithms(engine);
+                use crate::proto::proximadb::CompressionAlgorithm;
+                use crate::storage::engine_capabilities::EngineCapabilities;
+
+                // Convert engine type to enum
+                let engine = EngineCapabilities::engine_from_int(config.storage_engine);
+
+                // Try to convert compression algorithm from i32
+                if let Ok(algorithm) = CompressionAlgorithm::try_from(compression.algorithm) {
+                    if !EngineCapabilities::is_compression_supported(engine, algorithm) {
+                        let engine_name = EngineCapabilities::get_engine_name(engine);
+                        let unsupported =
+                            EngineCapabilities::get_unsupported_compression_algorithms(engine);
+                        return Ok(CollectionServiceResponse::error(
+                            format!(
+                                "UNSUPPORTED_COMPRESSION: Compression algorithm {:?} is not supported by {} engine. Unsupported algorithms: {:?}",
+                                algorithm, engine_name, unsupported
+                            ),
+                            start_time.elapsed().as_micros() as i64,
+                        ));
+                    }
+                } else {
                     return Ok(CollectionServiceResponse::error(
                         format!(
-                            "UNSUPPORTED_COMPRESSION: Compression algorithm {:?} is not supported by {} engine. Unsupported algorithms: {:?}",
-                            algorithm,
-                            engine_name,
-                            unsupported
+                            "INVALID_COMPRESSION: Invalid compression algorithm: {}",
+                            compression.algorithm
                         ),
                         start_time.elapsed().as_micros() as i64,
                     ));
                 }
-            } else {
-                return Ok(CollectionServiceResponse::error(
-                    format!("INVALID_COMPRESSION: Invalid compression algorithm: {}", compression.algorithm),
-                    start_time.elapsed().as_micros() as i64,
-                ));
-            }
             }
         }
 
@@ -233,22 +243,23 @@ impl CollectionService {
                 start_time.elapsed().as_micros() as i64,
             ));
         }
-        
+
         // Validate collection name length to prevent collision with IDs
         if config.name.len() < 8 {
             return Ok(CollectionServiceResponse::error(
-                "INVALID_NAME_LENGTH: Collection name must be at least 8 characters long".to_string(),
+                "INVALID_NAME_LENGTH: Collection name must be at least 8 characters long"
+                    .to_string(),
                 start_time.elapsed().as_micros() as i64,
             ));
         }
-        
+
         if config.dimension == 0 || config.dimension > 1_000_000 {
             return Ok(CollectionServiceResponse::error(
                 "INVALID_DIMENSION: Invalid dimension: must be between 1 and 1,000,000".to_string(),
                 start_time.elapsed().as_micros() as i64,
             ));
         }
-        
+
         // Validate quantization configuration
         if let Some(quant_config) = &enriched_config.quantization {
             if quant_config.enabled {
@@ -264,10 +275,7 @@ impl CollectionService {
         // Check if collection already exists
         // Check if collection already exists
         // Check if collection already exists
-        if let Some(_) = self
-            .metadata_backend
-            .get_collection(&config.name).await?
-        {
+        if let Some(_) = self.metadata_backend.get_collection(&config.name).await? {
             return Ok(CollectionServiceResponse {
                 success: false,
                 collection: None,
@@ -281,7 +289,7 @@ impl CollectionService {
         // Generate base62 ID from microsecond timestamp with collision detection
         let uuid = self.generate_unique_collection_id().await?;
         let now = chrono::Utc::now().timestamp_micros();
-        
+
         // Get storage location - use provided or pick randomly from config
         let base_location = if let Some(ref storage_config) = enriched_config.storage_config {
             if let Some(ref location) = storage_config.storage_location {
@@ -290,7 +298,8 @@ impl CollectionService {
             } else {
                 // Pick randomly from configured locations
                 use rand::seq::SliceRandom;
-                self.storage_config.storage_locations
+                self.storage_config
+                    .storage_locations
                     .choose(&mut rand::thread_rng())
                     .ok_or_else(|| anyhow::anyhow!("No storage locations configured"))?
                     .url
@@ -299,13 +308,14 @@ impl CollectionService {
         } else {
             // Pick randomly from configured locations
             use rand::seq::SliceRandom;
-            self.storage_config.storage_locations
+            self.storage_config
+                .storage_locations
                 .choose(&mut rand::thread_rng())
                 .ok_or_else(|| anyhow::anyhow!("No storage locations configured"))?
                 .url
                 .clone()
         };
-        
+
         // Create storage directories
         let _storage_created = self
             .create_storage_directories(&base_location, &enriched_config.name, &uuid)
@@ -315,7 +325,7 @@ impl CollectionService {
         // Create proto collection with stats and storage assignment
         let proto_collection = Collection {
             id: uuid.clone(),
-            config: Some(enriched_config.clone()),  // Use enriched config with compression
+            config: Some(enriched_config.clone()), // Use enriched config with compression
             stats: Some(crate::proto::proximadb::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
@@ -344,13 +354,13 @@ impl CollectionService {
         );
 
         // Use proto collection directly - no conversion needed in proto-first architecture
-        
+
         // Generate storage path template
         let storage_path = format!("${{base_path}}/collections/{}", uuid);
-        
+
         Ok(CollectionServiceResponse {
             success: true,
-            collection: Some(proto_collection),  // Direct proto usage - no conversion!
+            collection: Some(proto_collection), // Direct proto usage - no conversion!
             storage_path: Some(storage_path),
             // error_message removed -  None,
             error_code: None,
@@ -362,13 +372,13 @@ impl CollectionService {
     pub async fn collection(&self, identifier: &str) -> Result<Option<Collection>> {
         self.get_native_proto(identifier).await
     }
-    
+
     /// Get Collection by name or UUID
     async fn get_native_proto(&self, identifier: &str) -> Result<Option<Collection>> {
         // Use the metadata backend's collection_metadata which handles both name and UUID
         self.metadata_backend.collection_metadata(identifier).await
     }
-    
+
     /// ✅ RESOLVE COLLECTION NAME/ID TO COLLECTION ID
     /// This is the key method for collection identifier resolution
     /// - Input: Collection name OR collection ID
@@ -376,20 +386,25 @@ impl CollectionService {
     /// - Used by WAL, storage, and index path resolution
     pub async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>> {
         tracing::debug!("🔍 Resolving collection identifier: '{}'", identifier);
-        
+
         // Check if this looks like a base62 collection ID (short alphanumeric)
-        let _is_likely_id = identifier.len() <= 12 && identifier.chars().all(|c| c.is_alphanumeric());
-        
+        let _is_likely_id =
+            identifier.len() <= 12 && identifier.chars().all(|c| c.is_alphanumeric());
+
         if let Some(collection) = self.collection(identifier).await? {
             let collection_id = collection.id;
-            tracing::debug!("✅ Resolved '{}' -> collection_id: '{}'", identifier, collection_id);
+            tracing::debug!(
+                "✅ Resolved '{}' -> collection_id: '{}'",
+                identifier,
+                collection_id
+            );
             Ok(Some(collection_id))
         } else {
             tracing::debug!("❌ Collection not found: '{}'", identifier);
             Ok(None)
         }
     }
-    
+
     /// ✅ RESOLVE COLLECTION ID TO COLLECTION NAME  
     /// Reverse resolution for user-friendly displays
     pub async fn resolve_collection_name(&self, collection_id: &str) -> Result<Option<String>> {
@@ -400,26 +415,34 @@ impl CollectionService {
         }
         Ok(None)
     }
-    
+
     /// Convert Collection to core Collection - direct proto to core mapping
 
     /// Get IndexConfig for a collection by name or UUID with caching
-    pub async fn native_index_config(&self, identifier: &str) -> Result<Option<crate::index::config::IndexConfig>> {
+    pub async fn native_index_config(
+        &self,
+        identifier: &str,
+    ) -> Result<Option<crate::index::config::IndexConfig>> {
         debug!("🔍 Getting IndexConfig for collection: {}", identifier);
 
         // Check cache first
         if let Some(cached_config) = self.index_config_cache.get(identifier) {
-            debug!("📋 Retrieved IndexConfig from cache for collection: {}", identifier);
+            debug!(
+                "📋 Retrieved IndexConfig from cache for collection: {}",
+                identifier
+            );
             return Ok(Some(cached_config.value().clone()));
         }
 
         if let Some(proto_collection) = self.get_native_proto(identifier).await? {
             let index_config = self.parse_index_config_from_proto(&proto_collection)?;
-            
+
             // Cache the result
-            self.index_config_cache.insert(identifier.to_string(), index_config.clone());
-            self.index_config_cache.insert(proto_collection.id.clone(), index_config.clone()); // Cache by UUID too
-            
+            self.index_config_cache
+                .insert(identifier.to_string(), index_config.clone());
+            self.index_config_cache
+                .insert(proto_collection.id.clone(), index_config.clone()); // Cache by UUID too
+
             debug!("📋 Cached IndexConfig for collection: {}", identifier);
             Ok(Some(index_config))
         } else {
@@ -428,23 +451,29 @@ impl CollectionService {
     }
 
     /// Convert proto IndexConfig to internal IndexConfig
-    fn convert_proto_index_config(&self, _proto_config: &crate::proto::proximadb::IndexConfig) -> Result<crate::index::config::IndexConfig> {
+    fn convert_proto_index_config(
+        &self,
+        _proto_config: &crate::proto::proximadb::IndexConfig,
+    ) -> Result<crate::index::config::IndexConfig> {
         // Extract algorithm name from proto config
         let _algorithm_name = match _proto_config.algorithm {
             1 => "HNSW",
-            2 => "IVF", 
+            2 => "IVF",
             3 => "PQ",
             4 => "FLAT",
             5 => "ANNOY",
             _ => "HNSW", // Default to HNSW
         };
-        
+
         // Use the from_proto method that handles all the config extraction
         crate::index::config::IndexConfig::from_proto(_proto_config)
     }
 
     /// Parse IndexConfig from Collection
-    fn parse_index_config_from_proto(&self, proto: &Collection) -> Result<crate::index::config::IndexConfig> {
+    fn parse_index_config_from_proto(
+        &self,
+        proto: &Collection,
+    ) -> Result<crate::index::config::IndexConfig> {
         // Check if proto has index_config field
         if let Some(config) = proto.config.as_ref() {
             if !config.index_configs.is_empty() {
@@ -455,9 +484,12 @@ impl CollectionService {
                 }
             }
         }
-        
+
         // No IndexConfig found, create smart defaults based on algorithm
-        let config = proto.config.as_ref().ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
+        let config = proto
+            .config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
         let indexing_algorithm = match config.primary_index.as_deref() {
             Some("hnsw") => crate::core::IndexingAlgorithm::Hnsw,
             Some("ivf") => crate::core::IndexingAlgorithm::Ivf,
@@ -467,7 +499,7 @@ impl CollectionService {
             Some("lsh") => crate::core::IndexingAlgorithm::Lsh,
             _ => crate::core::IndexingAlgorithm::Hnsw,
         };
-        
+
         let algorithm_str = match indexing_algorithm {
             crate::core::IndexingAlgorithm::Hnsw => "HNSW",
             crate::core::IndexingAlgorithm::Ivf => "IVF",
@@ -477,34 +509,43 @@ impl CollectionService {
             crate::core::IndexingAlgorithm::Lsh => "LSH",
             crate::core::IndexingAlgorithm::Unspecified => "HNSW", // Default to HNSW
         };
-        
+
         let smart_config = crate::index::config::IndexConfig::create_smart_default(
             algorithm_str,
             config.dimension as usize,
             None, // Collection size hint not available
         );
-        
-        debug!("📋 Created smart default IndexConfig for collection: {}", config.name);
+
+        debug!(
+            "📋 Created smart default IndexConfig for collection: {}",
+            config.name
+        );
         Ok(smart_config)
     }
 
     // Configuration parsing helper methods
-    
+
     /// Get quantization configuration for a collection
-    pub async fn native_quantization_config(&self, identifier: &str) -> Result<Option<crate::proto::proximadb::QuantizationConfig>> {
-        debug!("🔍 Getting quantization config for collection: {}", identifier);
-        
+    pub async fn native_quantization_config(
+        &self,
+        identifier: &str,
+    ) -> Result<Option<crate::proto::proximadb::QuantizationConfig>> {
+        debug!(
+            "🔍 Getting quantization config for collection: {}",
+            identifier
+        );
+
         if let Some(proto) = self.get_native_proto(identifier).await? {
             Ok(proto.config.and_then(|c| c.quantization))
         } else {
             Ok(None)
         }
     }
-    
+
     /// Get search hints for a collection  
     pub async fn native_search_hints(&self, identifier: &str) -> Result<Option<serde_json::Value>> {
         debug!("🔍 Getting search hints for collection: {}", identifier);
-        
+
         if let Some(_proto) = self.get_native_proto(identifier).await? {
             // Extract search hints from proto config
             if let Some(config) = _proto.config.as_ref() {
@@ -515,7 +556,7 @@ impl CollectionService {
                     "use_quantized": config.quantization.is_some(),
                     "enable_reranking": true
                 });
-                
+
                 // Extract hints from index configs
                 if let Some(first_index) = config.index_configs.first() {
                     // Override with algorithm-specific parameters
@@ -528,14 +569,14 @@ impl CollectionService {
                         hints["max_candidates"] = serde_json::json!(ivf_config.n_probe * 100);
                     }
                 }
-                
+
                 // Add storage engine specific hints
                 hints["storage_engine"] = match config.storage_engine {
                     1 => serde_json::json!("VIPER"),
                     2 => serde_json::json!("LSM"),
                     _ => serde_json::json!("LSM"),
                 };
-                
+
                 Ok(Some(hints))
             } else {
                 // Return default hints if no config
@@ -550,11 +591,11 @@ impl CollectionService {
             Ok(None)
         }
     }
-    
+
     /// Get index parameters for a collection
     pub async fn native_index_params(&self, identifier: &str) -> Result<Option<serde_json::Value>> {
         debug!("🔍 Getting index params for collection: {}", identifier);
-        
+
         if let Some(proto) = self.get_native_proto(identifier).await? {
             if let Some(config) = proto.config {
                 // Proto uses index_configs (plural) which is a vector of IndexConfig
@@ -566,11 +607,14 @@ impl CollectionService {
             Ok(None)
         }
     }
-    
+
     /// Get storage configuration for a collection
-    pub async fn native_storage_config(&self, identifier: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn native_storage_config(
+        &self,
+        identifier: &str,
+    ) -> Result<Option<serde_json::Value>> {
         debug!("🔍 Getting storage config for collection: {}", identifier);
-        
+
         if let Some(_proto) = self.get_native_proto(identifier).await? {
             if let Some(config) = _proto.config.as_ref() {
                 // Build storage config from proto
@@ -579,14 +623,14 @@ impl CollectionService {
                     2 => "LSM",
                     _ => "LSM", // Default
                 };
-                
+
                 let mut storage_config = serde_json::json!({
                     "engine": engine_name,
                     "enable_compression": true,
                     "enable_deduplication": false, // Not exposed in proto yet
                     "enable_multi_tenancy": false,  // Not exposed in proto yet
                 });
-                
+
                 // Add engine-specific configurations
                 if engine_name == "VIPER" {
                     storage_config["parquet_config"] = serde_json::json!({
@@ -595,14 +639,14 @@ impl CollectionService {
                         "enable_statistics": true,
                         "enable_bloom_filter": true,
                     });
-                    
+
                     // Add quantization config if present
                     if let Some(quant_config) = &config.quantization {
                         storage_config["quantization_enabled"] = serde_json::json!(true);
                         storage_config["quantization_level"] = serde_json::json!(quant_config);
                     }
                 }
-                
+
                 Ok(Some(storage_config))
             } else {
                 // Return default storage config
@@ -635,34 +679,39 @@ impl CollectionService {
         // Get collection record first to retrieve UUID and other details
         let collection_record = self
             .metadata_backend
-            .get_collection(collection_identifier).await?;
+            .get_collection(collection_identifier)
+            .await?;
 
         if let Some(record) = collection_record {
             let collection_uuid = record.id.clone();
-            let collection_name = record.config.as_ref()
-                .map(|c| c.name.clone())
-                .clone();
+            let collection_name = record.config.as_ref().map(|c| c.name.clone()).clone();
 
             info!(
                 "🔍 Found collection to delete: {} (UUID: {})",
-                collection_name.as_deref().unwrap_or("<unnamed>"), collection_uuid
+                collection_name.as_deref().unwrap_or("<unnamed>"),
+                collection_uuid
             );
 
             // Step 1: Clean up all storage directories and files
             let cleanup_results = self
-                .cleanup_storage_directories(collection_name.as_deref().unwrap_or(collection_identifier), &collection_uuid)
+                .cleanup_storage_directories(
+                    collection_name.as_deref().unwrap_or(collection_identifier),
+                    &collection_uuid,
+                )
                 .await;
             match cleanup_results {
                 Ok(cleaned_components) => {
                     info!(
                         "🧹 Cleaned up {} storage components for collection {}",
-                        cleaned_components, collection_name.as_deref().unwrap_or("<unnamed>")
+                        cleaned_components,
+                        collection_name.as_deref().unwrap_or("<unnamed>")
                     );
                 }
                 Err(e) => {
                     warn!(
                         "⚠️ Some storage cleanup failed for collection {}: {}",
-                        collection_name.as_deref().unwrap_or("<unnamed>"), e
+                        collection_name.as_deref().unwrap_or("<unnamed>"),
+                        e
                     );
                     // Continue with metadata deletion even if storage cleanup partially fails
                 }
@@ -728,7 +777,8 @@ impl CollectionService {
         // Get current record, update stats, and save back
         if let Some(mut record) = self
             .metadata_backend
-            .get_collection(collection_name).await?
+            .get_collection(collection_name)
+            .await?
         {
             // Update stats manually for Collection
             if let Some(stats) = record.stats.as_mut() {
@@ -736,7 +786,7 @@ impl CollectionService {
                 stats.data_size_bytes += size_delta;
             }
             record.updated_at = chrono::Utc::now().timestamp_millis();
-            
+
             self.metadata_backend
                 .upsert_collection_proto(&record)
                 .await?;
@@ -753,7 +803,7 @@ impl CollectionService {
     /// Get collection UUID by name or UUID
     pub async fn uuid(&self, collection_id: &str) -> Result<Option<String>> {
         debug!("🔍 Getting UUID for collection: {}", collection_id);
-        
+
         // First check if it's already a UUID
         if uuid::Uuid::parse_str(collection_id).is_ok() {
             // Verify it exists
@@ -762,7 +812,7 @@ impl CollectionService {
             }
             return Ok(None);
         }
-        
+
         // Otherwise look up by name
         if let Some(collection) = self.collection(collection_id).await? {
             Ok(Some(collection.id))
@@ -770,7 +820,7 @@ impl CollectionService {
             Ok(None)
         }
     }
-    
+
     /// Update collection - type-safe method with native parameters
     pub async fn update_collection(
         &self,
@@ -782,10 +832,7 @@ impl CollectionService {
 
         // Get current record (supports both names and UUIDs)
         // Get current record (supports both names and UUIDs)
-        let mut record = match self
-            .metadata_backend
-            .get_collection(identifier).await?
-        {
+        let mut record = match self.metadata_backend.get_collection(identifier).await? {
             Some(record) => record,
             None => {
                 return Ok(CollectionServiceResponse {
@@ -851,7 +898,7 @@ impl CollectionService {
 
         // Record is already a proto Collection, no conversion needed
         let collection = record;
-        
+
         Ok(CollectionServiceResponse {
             success: true,
             collection: Some(collection),
@@ -866,7 +913,7 @@ impl CollectionService {
     pub fn metadata_backend(&self) -> &Arc<FilestoreMetadataBackend> {
         &self.metadata_backend
     }
-    
+
     /// Resolve compression configuration based on SDK request and server defaults
     fn resolve_compression_config(
         &self,
@@ -874,7 +921,7 @@ impl CollectionService {
         _storage_engine: i32,
     ) -> Option<crate::proto::proximadb::CompressionConfig> {
         use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig};
-        
+
         // If compression explicitly requested, validate and use it
         if let Some(config) = requested {
             // Validate compression level if specified
@@ -901,16 +948,16 @@ impl CollectionService {
             }
             return Some(config.clone());
         }
-        
+
         // SDK-DRIVEN COMPRESSION (2025-08-06): No server defaults!
         // Compression must be specified by the SDK/client
         // Return None to indicate no compression if not specified by SDK
         None
-        
+
         // SDK-DRIVEN: All compression config removed from server.
         // Compression is 100% controlled by SDK/client through collection metadata.
     }
-    
+
     /// Update collection compression configuration
     pub async fn update_collection_compression(
         &self,
@@ -918,18 +965,21 @@ impl CollectionService {
         compression: &crate::proto::proximadb::CompressionConfig,
     ) -> Result<CollectionServiceResponse> {
         let start_time = std::time::Instant::now();
-        
+
         // Get existing collection
         let collection = match self.collection(identifier).await? {
             Some(c) => c,
             None => {
                 return Ok(CollectionServiceResponse::error(
-                    format!("COLLECTION_NOT_FOUND: Collection '{}' not found", identifier),
+                    format!(
+                        "COLLECTION_NOT_FOUND: Collection '{}' not found",
+                        identifier
+                    ),
                     start_time.elapsed().as_micros() as i64,
                 ));
             }
         };
-        
+
         // Update compression config (now in storage_config)
         let mut updated_collection = collection.clone();
         if let Some(ref mut config) = updated_collection.config {
@@ -942,18 +992,18 @@ impl CollectionService {
                 storage_config.compression = Some(compression.clone());
             }
         }
-        
+
         // Store updated collection
         self.metadata_backend
             .upsert_collection_proto(&updated_collection)
             .await
             .context("Failed to update collection metadata_info")?;
-        
+
         info!(
             "✅ Updated compression for collection {}: algorithm={}, level={:?}",
             identifier, compression.algorithm, compression.level
         );
-        
+
         Ok(CollectionServiceResponse {
             success: true,
             collection: Some(updated_collection),
@@ -1011,7 +1061,7 @@ impl CollectionService {
         );
 
         let mut created_components = Vec::new();
-        
+
         // Build paths under base location
         let collection_dir = format!("{}/{}", base_location, collection_uuid);
         let write_buffer_dir = format!("{}/write_buffer", collection_dir);
@@ -1022,7 +1072,10 @@ impl CollectionService {
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(base_location) {
             // Create WAL directory and subdirectories
             if let Err(e) = filesystem.create_dir_all(&write_buffer_dir).await {
-                warn!("⚠️ Failed to create WAL directory {}: {}", write_buffer_dir, e);
+                warn!(
+                    "⚠️ Failed to create WAL directory {}: {}",
+                    write_buffer_dir, e
+                );
             } else {
                 for subdir in &["logs", "checkpoints"] {
                     let full_path = format!("{}/{}", write_buffer_dir, subdir);
@@ -1048,14 +1101,17 @@ impl CollectionService {
                 created_components.push(StorageComponentType::Storage);
             }
 
-            // Create index directories  
+            // Create index directories
             if let Err(e) = filesystem.create_dir_all(&indexes_dir).await {
                 warn!("⚠️ Failed to create index directory {}: {}", indexes_dir, e);
             } else {
                 for subdir in &["axis", "hnsw", "ivf"] {
                     let full_path = format!("{}/{}", indexes_dir, subdir);
                     if let Err(e) = filesystem.create_dir_all(&full_path).await {
-                        warn!("⚠️ Failed to create index subdirectory {}: {}", full_path, e);
+                        warn!(
+                            "⚠️ Failed to create index subdirectory {}: {}",
+                            full_path, e
+                        );
                     }
                 }
                 info!("✅ Created index storage directory: {}", indexes_dir);
@@ -1091,7 +1147,11 @@ impl CollectionService {
         let mut cleaned_components = 0;
 
         // Get collection to find storage assignment
-        let collection = match self.metadata_backend.get_collection(collection_uuid).await? {
+        let collection = match self
+            .metadata_backend
+            .get_collection(collection_uuid)
+            .await?
+        {
             Some(col) => col,
             None => {
                 warn!("Collection {} not found in metadata_info", collection_uuid);
@@ -1101,61 +1161,59 @@ impl CollectionService {
 
         if let Some(ref assignment) = collection.storage_assignment {
             let base_location = &assignment.base_location;
-            
+
             // Delete the entire collection directory (includes write_buffer/, data/, indexes/)
-            let collection_dir = format!("{}/{}", 
-                base_location.trim_end_matches('/'), 
+            let collection_dir = format!(
+                "{}/{}",
+                base_location.trim_end_matches('/'),
                 collection_uuid
             );
 
-            match self
-                .filesystem_factory
-                .get_filesystem(base_location)
-                    {
-                        Ok(filesystem) => {
-                            // Check if directory exists before attempting to delete
-                            match filesystem.exists(&collection_dir).await {
-                                Ok(true) => {
-                                    // Recursively delete the entire collection directory
-                                    match filesystem.remove_dir_all(&collection_dir).await {
-                                        Ok(_) => {
-                                            info!(
-                                                "✅ Deleted entire collection directory: {}",
-                                                collection_dir
-                                            );
-                                            cleaned_components = 3; // All components deleted
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                "❌ Failed to delete collection directory {}: {}",
-                                                collection_dir, e
-                                            );
-                                            return Err(anyhow::anyhow!("Failed to delete collection directory: {}", e));
-                                        }
-                                    }
-                                }
-                                Ok(false) => {
-                                    debug!(
-                                        "📂 Collection directory {} does not exist (already cleaned up)",
+            match self.filesystem_factory.get_filesystem(base_location) {
+                Ok(filesystem) => {
+                    // Check if directory exists before attempting to delete
+                    match filesystem.exists(&collection_dir).await {
+                        Ok(true) => {
+                            // Recursively delete the entire collection directory
+                            match filesystem.remove_dir_all(&collection_dir).await {
+                                Ok(_) => {
+                                    info!(
+                                        "✅ Deleted entire collection directory: {}",
                                         collection_dir
                                     );
-                                    cleaned_components = 3; // Count as all cleaned
+                                    cleaned_components = 3; // All components deleted
                                 }
                                 Err(e) => {
-                                    warn!(
-                                        "⚠️ Failed to check existence of collection directory {}: {}",
+                                    error!(
+                                        "❌ Failed to delete collection directory {}: {}",
                                         collection_dir, e
                                     );
+                                    return Err(anyhow::anyhow!(
+                                        "Failed to delete collection directory: {}",
+                                        e
+                                    ));
                                 }
                             }
                         }
+                        Ok(false) => {
+                            debug!(
+                                "📂 Collection directory {} does not exist (already cleaned up)",
+                                collection_dir
+                            );
+                            cleaned_components = 3; // Count as all cleaned
+                        }
                         Err(e) => {
                             warn!(
-                                "⚠️ Failed to get filesystem for {}: {}",
-                                base_location, e
+                                "⚠️ Failed to check existence of collection directory {}: {}",
+                                collection_dir, e
                             );
                         }
                     }
+                }
+                Err(e) => {
+                    warn!("⚠️ Failed to get filesystem for {}: {}", base_location, e);
+                }
+            }
         } else {
             debug!(
                 "📂 No storage assignment found for collection {} (may not have been created)",
@@ -1174,21 +1232,22 @@ impl CollectionService {
     /// Format: {base62(seconds)}{random_base62_char}
     async fn generate_unique_collection_id(&self) -> Result<String> {
         use crate::core::base62;
-        
-        const BASE62_CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+        const BASE62_CHARS: &[u8] =
+            b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
         let base_timestamp = chrono::Utc::now().timestamp() as u64;
         let base_id = base62::encode(base_timestamp);
-        
+
         // Generate initial ID with random padding using rand::random which is Send
         let random_index: u8 = rand::random::<u8>() % 62;
         let random_char = BASE62_CHARS[random_index as usize] as char;
         let id = format!("{}{}", base_id, random_char);
-        
+
         // Check if ID is available
         if !self.metadata_backend.collection_id_exists(&id).await? {
             return Ok(id);
         }
-        
+
         // If collision detected, try different random paddings
         for _ in 0..62 {
             let random_index: u8 = rand::random::<u8>() % 62;
@@ -1198,10 +1257,10 @@ impl CollectionService {
                 return Ok(try_id);
             }
         }
-        
+
         // If still colliding (very unlikely), try bidirectional search with padding
         const MAX_ATTEMPTS: u64 = 100;
-        
+
         for offset in 1..=MAX_ATTEMPTS {
             // Try incrementing seconds
             let inc_timestamp = base_timestamp + offset;
@@ -1212,7 +1271,7 @@ impl CollectionService {
             if !self.metadata_backend.collection_id_exists(&inc_id).await? {
                 return Ok(inc_id);
             }
-            
+
             // Try decrementing seconds (if not underflow)
             if base_timestamp > offset {
                 let dec_timestamp = base_timestamp - offset;
@@ -1225,13 +1284,12 @@ impl CollectionService {
                 }
             }
         }
-        
+
         // Extremely unlikely case: append another random character
         let random_index: u8 = rand::random::<u8>() % 62;
         let random_suffix = BASE62_CHARS[random_index as usize] as char;
         Ok(format!("{}{}{}", base_id, random_char, random_suffix))
     }
-    
 }
 
 impl std::fmt::Debug for CollectionService {
@@ -1249,16 +1307,19 @@ impl std::fmt::Debug for CollectionService {
 #[derive(Debug, Clone)]
 pub struct CollectionServiceResponse {
     pub success: bool,
-    pub collection: Option<Collection>,  // Proto-first architecture
+    pub collection: Option<Collection>, // Proto-first architecture
     pub storage_path: Option<String>,
     pub error_code: Option<String>,
     pub processing_time_us: i64,
 }
 
 impl CollectionServiceResponse {
-
     /// Create success response
-    pub fn success(_collection_uuid: String, storage_path: String, processing_time_us: i64) -> Self {
+    pub fn success(
+        _collection_uuid: String,
+        storage_path: String,
+        processing_time_us: i64,
+    ) -> Self {
         Self {
             success: true,
             collection: None, // Collection should be passed in if needed
@@ -1267,9 +1328,13 @@ impl CollectionServiceResponse {
             processing_time_us,
         }
     }
-    
+
     /// Create success response with collection
-    pub fn success_with_collection(collection: Collection, storage_path: String, processing_time_us: i64) -> Self {
+    pub fn success_with_collection(
+        collection: Collection,
+        storage_path: String,
+        processing_time_us: i64,
+    ) -> Self {
         Self {
             success: true,
             collection: Some(collection),
@@ -1362,7 +1427,9 @@ mod tests {
         );
 
         let storage_config = StorageConfig::default();
-        let service = CollectionService::new(backend, storage_config).await.unwrap();
+        let service = CollectionService::new(backend, storage_config)
+            .await
+            .unwrap();
 
         // Valid config
         let valid_config = CollectionConfig {
@@ -1379,12 +1446,12 @@ mod tests {
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test".to_string()),
-            };
+        };
 
         // Test create with valid config
         let result = service.create_collection(&valid_config).await.unwrap();
         assert!(result.success);
-        
+
         // Test empty name
         let empty_name = CollectionConfig {
             name: "".to_string(),
@@ -1396,7 +1463,7 @@ mod tests {
         let result = service.create_collection(&empty_name).await.unwrap();
         assert!(!result.success);
         assert_eq!(result.error_code, Some("INVALID_NAME".to_string()));
-        
+
         // Test short name (less than 8 characters)
         let short_name = CollectionConfig {
             name: "short".to_string(),
@@ -1408,8 +1475,13 @@ mod tests {
         let result = service.create_collection(&short_name).await.unwrap();
         assert!(!result.success);
         assert_eq!(result.error_code, Some("INVALID_NAME_LENGTH".to_string()));
-        assert!(result.error_message.unwrap().contains_hash("at least 8 characters"));
-        
+        assert!(
+            result
+                .error_message
+                .unwrap()
+                .contains_hash("at least 8 characters")
+        );
+
         // Test exactly 8 characters (should pass)
         let eight_chars = CollectionConfig {
             name: "exactly8".to_string(),
@@ -1420,7 +1492,7 @@ mod tests {
         };
         let result = service.create_collection(&eight_chars).await.unwrap();
         assert!(result.success);
-        
+
         // Test invalid dimension
         let invalid_dimension = CollectionConfig {
             name: "valid_dimension_test".to_string(),
@@ -1443,10 +1515,10 @@ mod tests {
         };
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
-        
+
         let temp_dir = TempDir::new().unwrap();
         let temp_path = format!("file://{}", temp_dir.path().display());
-        
+
         let filestore_config = FilestoreMetadataConfig {
             storage_url: temp_path.clone(),
             compression: false,
@@ -1456,37 +1528,39 @@ mod tests {
             backup_url: None,
             temp_dir: None,
         };
-        
+
         let filesystem_config = FilesystemConfig::default();
         let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
-        
+
         let backend = Arc::new(
             FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
                 .unwrap(),
         );
-        
+
         let storage_config = StorageConfig::default();
-        let service = CollectionService::new(backend, storage_config).await.unwrap();
-        
+        let service = CollectionService::new(backend, storage_config)
+            .await
+            .unwrap();
+
         // Test cases for collection name length
         let test_cases = vec![
-            ("", false, "INVALID_NAME"),                    // Empty name
-            ("a", false, "INVALID_NAME_LENGTH"),           // 1 char
-            ("abc", false, "INVALID_NAME_LENGTH"),         // 3 chars
-            ("seven77", false, "INVALID_NAME_LENGTH"),     // 7 chars
-            ("exactly8", true, ""),                        // 8 chars (valid)
-            ("ninechars", true, ""),                       // 9 chars (valid)
-            ("this_is_a_long_collection_name", true, ""),  // Long name (valid)
+            ("", false, "INVALID_NAME"),                  // Empty name
+            ("a", false, "INVALID_NAME_LENGTH"),          // 1 char
+            ("abc", false, "INVALID_NAME_LENGTH"),        // 3 chars
+            ("seven77", false, "INVALID_NAME_LENGTH"),    // 7 chars
+            ("exactly8", true, ""),                       // 8 chars (valid)
+            ("ninechars", true, ""),                      // 9 chars (valid)
+            ("this_is_a_long_collection_name", true, ""), // Long name (valid)
         ];
-        
+
         for (name, should_succeed, expected_error_code) in test_cases {
             let config = CollectionConfig {
                 name: name.to_string(),
                 dimension: 128,
                 distance_metric: 1,
                 storage_engine: 1,
-                    filterable_columns: vec![],
+                filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
                 primary_index: "default".to_string(),
@@ -1495,24 +1569,30 @@ mod tests {
                 tags: vec![],
                 owner: Some("test".to_string()),
             };
-            
+
             let result = service.create_collection(&config).await.unwrap();
-            
+
             assert_eq!(
                 result.success, should_succeed,
                 "Name '{}' validation failed: expected success={}, got success={}",
                 name, should_succeed, result.success
             );
-            
+
             if !should_succeed {
                 assert_eq!(
-                    result.error_code.as_deref(), Some(expected_error_code),
-                    "Name '{}' error code mismatch", name
+                    result.error_code.as_deref(),
+                    Some(expected_error_code),
+                    "Name '{}' error code mismatch",
+                    name
                 );
-                
+
                 if expected_error_code == "INVALID_NAME_LENGTH" {
                     assert!(
-                        result.error_message.as_ref().unwrap().contains_hash("at least 8 characters"),
+                        result
+                            .error_message
+                            .as_ref()
+                            .unwrap()
+                            .contains_hash("at least 8 characters"),
                         "Error message should mention 8 character requirement"
                     );
                 }
@@ -1537,19 +1617,19 @@ mod tests {
 #[async_trait]
 impl CollectionMetadataProvider for CollectionService {
     async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>> {
-        // Call the actual implementation method to avoid recursion  
+        // Call the actual implementation method to avoid recursion
         self.uuid(collection_id).await
     }
-    
+
     async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
         self.get_native_proto(collection_id).await
     }
-    
+
     async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
         // Call the actual implementation method to avoid recursion
         self.collection(collection_id).await
     }
-    
+
     async fn list_collections(&self) -> Result<Vec<Collection>> {
         self.metadata_backend.list_collections().await
     }

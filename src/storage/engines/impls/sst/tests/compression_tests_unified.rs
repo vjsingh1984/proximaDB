@@ -7,24 +7,22 @@
 
 //! Comprehensive tests for SST compression using unified compression module
 
-use crate::storage::engines::impls::sst::{
-    DataBlock, DataBlockCompressionConfig, SstRecord,
+use crate::core::compression::{
+    CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext,
 };
-use crate::core::compression::{CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext};
-use crate::proto::proximadb::{CompressionConfig, CompressionAlgorithm, MetadataItem};
+use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig, MetadataItem};
+use crate::storage::engines::impls::sst::{DataBlock, DataBlockCompressionConfig, SstRecord};
 
 fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
     SstRecord {
         id: id.to_string(),
         vector: vec![1.0; vector_dim],
-        metadata: vec![
-            MetadataItem {
-                key: "test_key".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                    "test_value".to_string()
-                )),
-            }
-        ],
+        metadata: vec![MetadataItem {
+            key: "test_key".to_string(),
+            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                "test_value".to_string(),
+            )),
+        }],
         timestamp: 1000,
         updated_at: Some(1000),
         expires_at: None,
@@ -41,10 +39,10 @@ fn test_unified_compression_roundtrip() {
         create_test_record("test1", 128),
         create_test_record("test2", 128),
     ];
-    
+
     // Test all supported compression algorithms using centralized markers
     use crate::core::compression::markers::*;
-    
+
     let algorithms_and_markers = vec![
         (UnifiedCompressionAlgorithm::None, MARKER_UNCOMPRESSED),
         (UnifiedCompressionAlgorithm::Zstd, MARKER_ZSTD),
@@ -60,7 +58,7 @@ fn test_unified_compression_roundtrip() {
         (UnifiedCompressionAlgorithm::Lzma, MARKER_LZMA),
         (UnifiedCompressionAlgorithm::Lzo, MARKER_LZO),
     ];
-    
+
     for (algorithm, expected_marker) in algorithms_and_markers {
         let block = DataBlock::new(1, records.clone());
         let config = DataBlockCompressionConfig {
@@ -71,16 +69,16 @@ fn test_unified_compression_roundtrip() {
             // vector_config removed -  Default::default(),
             collection_compression: None,
         };
-        
+
         let serialized = block.serialize_with_config(&config).unwrap();
-        
+
         // Check compression marker
         assert_eq!(
             serialized[0], expected_marker,
             "Algorithm {:?} should have marker 0x{:02x} but got 0x{:02x}",
             algorithm, expected_marker, serialized[0]
         );
-        
+
         // Deserialize and verify data integrity
         let deserialized = DataBlock::deserialize(&serialized).unwrap();
         assert_eq!(deserialized.block_id, 1);
@@ -88,7 +86,7 @@ fn test_unified_compression_roundtrip() {
         assert_eq!(deserialized.records[0].id, "test1");
         assert_eq!(deserialized.records[1].id, "test2");
         assert_eq!(deserialized.compression_algorithm, algorithm);
-        
+
         // Verify vector data integrity
         assert_eq!(deserialized.records[0].vector, records[0].vector);
         assert_eq!(deserialized.records[1].vector, records[1].vector);
@@ -100,9 +98,9 @@ fn test_unified_compression_efficiency() {
     // Create highly compressible data
     let mut record = create_test_record("compress_test", 1000);
     record.vector = vec![42.0; 1000]; // Highly compressible repeated values
-    
+
     let block = DataBlock::new(1, vec![record]);
-    
+
     // Test uncompressed
     let uncompressed_config = DataBlockCompressionConfig {
         compression: false,
@@ -113,14 +111,14 @@ fn test_unified_compression_efficiency() {
         collection_compression: None,
     };
     let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
-    
+
     // Test with various compression algorithms
     let compression_algorithms = vec![
         UnifiedCompressionAlgorithm::Zstd,
         UnifiedCompressionAlgorithm::Lz4,
         UnifiedCompressionAlgorithm::Brotli,
     ];
-    
+
     for algorithm in compression_algorithms {
         let config = DataBlockCompressionConfig {
             compression: true,
@@ -130,16 +128,18 @@ fn test_unified_compression_efficiency() {
             // vector_config removed -  Default::default(),
             collection_compression: None,
         };
-        
+
         let compressed = block.serialize_with_config(&config).unwrap();
-        
+
         // Compressed should be significantly smaller
         assert!(
             compressed.len() < uncompressed.len() / 2,
             "Algorithm {:?}: compressed size {} should be much less than uncompressed {}",
-            algorithm, compressed.len(), uncompressed.len()
+            algorithm,
+            compressed.len(),
+            uncompressed.len()
         );
-        
+
         // Verify decompression integrity
         let deserialized = DataBlock::deserialize(&compressed).unwrap();
         assert_eq!(deserialized.records[0].vector.len(), 1000);
@@ -150,7 +150,7 @@ fn test_unified_compression_efficiency() {
 #[test]
 fn test_unified_compression_threshold() {
     let records = vec![create_test_record("small", 4)]; // Very small record
-    
+
     let block = DataBlock::new(1, records);
     let config = DataBlockCompressionConfig {
         compression: true,
@@ -160,9 +160,9 @@ fn test_unified_compression_threshold() {
         // vector_config removed -  Default::default(),
         collection_compression: None,
     };
-    
+
     let serialized = block.serialize_with_config(&config).unwrap();
-    
+
     // Should not compress due to threshold - should use uncompressed marker
     assert_eq!(serialized[0], MARKER_UNCOMPRESSED);
 }
@@ -171,24 +171,26 @@ fn test_unified_compression_threshold() {
 fn test_unified_compression_context_integration() {
     // Test that SST context is properly used with unified compression
     use crate::core::compression;
-    
+
     let test_data = b"Test data for compression context verification".repeat(100);
-    
+
     // Compress using unified module with SST context
     let compressed = compression::compress(
         &test_data,
         UnifiedCompressionAlgorithm::Zstd,
         3,
-        CompressionContext::Block
-    ).unwrap();
-    
+        CompressionContext::Block,
+    )
+    .unwrap();
+
     // Decompress using unified module
     let decompressed = compression::decompress(
         &compressed,
         UnifiedCompressionAlgorithm::Zstd,
-        CompressionContext::Block
-    ).unwrap();
-    
+        CompressionContext::Block,
+    )
+    .unwrap();
+
     assert_eq!(test_data, decompressed.as_slice());
 }
 
@@ -201,13 +203,13 @@ fn test_unified_compression_mixed_deserialization() {
         UnifiedCompressionAlgorithm::Lz4,
         UnifiedCompressionAlgorithm::Snappy,
     ];
-    
+
     let mut serialized_blocks = Vec::new();
-    
+
     for (i, algorithm) in algorithms.iter().enumerate() {
         let records = vec![create_test_record(&format!("test_{}", i), 128)];
         let block = DataBlock::new(i as u32, records);
-        
+
         let config = DataBlockCompressionConfig {
             compression: *algorithm != UnifiedCompressionAlgorithm::None,
             compression_threshold: 100,
@@ -216,11 +218,11 @@ fn test_unified_compression_mixed_deserialization() {
             // vector_config removed -  Default::default(),
             collection_compression: None,
         };
-        
+
         let serialized = block.serialize_with_config(&config).unwrap();
         serialized_blocks.push((serialized, algorithm.clone()));
     }
-    
+
     // Deserialize all blocks and verify
     for (i, (serialized, original_algorithm)) in serialized_blocks.iter().enumerate() {
         let deserialized = DataBlock::deserialize(serialized).unwrap();

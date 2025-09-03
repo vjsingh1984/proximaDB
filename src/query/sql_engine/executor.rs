@@ -15,17 +15,17 @@
  */
 
 //! SQL Query Executor
-//! 
+//!
 //! Executes query plans using the VectorOperationsService.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::planner::ExecutionPlan;
-use crate::services::VectorOperationsService;
 use crate::proto::proximadb::DistanceMetric;
+use crate::services::VectorOperationsService;
 
 /// SQL execution result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,11 +66,11 @@ impl SqlExecutor {
     pub fn new(vector_service: Arc<VectorOperationsService>) -> Self {
         Self { vector_service }
     }
-    
+
     /// Execute query plan
     pub async fn execute_plan(&self, plan: ExecutionPlan) -> Result<SqlExecutionResult> {
         let start_time = std::time::Instant::now();
-        
+
         let results = if let Some(vector_search) = &plan.vector_search {
             // Execute vector search
             self.execute_vector_search(&plan, vector_search).await?
@@ -78,9 +78,9 @@ impl SqlExecutor {
             // Execute metadata-only query
             self.execute_metadata_query(&plan).await?
         };
-        
+
         let rows_scanned = results.len();
-        
+
         // Apply offset and limit
         let mut final_results = results;
         if plan.offset > 0 {
@@ -89,10 +89,10 @@ impl SqlExecutor {
         if final_results.len() > plan.limit {
             final_results.truncate(plan.limit);
         }
-        
+
         let rows_returned = final_results.len();
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
-        
+
         Ok(SqlExecutionResult {
             rows: final_results,
             stats: ExecutionStats {
@@ -102,7 +102,7 @@ impl SqlExecutor {
             },
         })
     }
-    
+
     /// Execute vector similarity search
     async fn execute_vector_search(
         &self,
@@ -117,7 +117,7 @@ impl SqlExecutor {
             "dot" | "dotproduct" => DistanceMetric::DotProduct,
             _ => DistanceMetric::Cosine, // Default
         };
-        
+
         // Build metadata filter using FilterExpression
         let search_params_obj = if let Some(filter) = &plan.metadata_filter {
             let mut params = crate::core::search::SearchParams::default();
@@ -129,93 +129,112 @@ impl SqlExecutor {
             params.requires_ordering = Some(plan.has_order_by);
             Some(params)
         };
-        
+
         // Execute search using unified_search
-        let search_results = self.vector_service.unified_search(
-            &plan.collection,
-            search_params.query_vector.clone(),
-            search_params.top_k,
-            None, // No filter for basic SQL search
-            None, // Use default config
-        ).await?;
-        
+        let search_results = self
+            .vector_service
+            .unified_search(
+                &plan.collection,
+                search_params.query_vector.clone(),
+                search_params.top_k,
+                None, // No filter for basic SQL search
+                None, // Use default config
+            )
+            .await?;
+
         // Convert to result rows
         let mut rows = Vec::new();
         // search_results is Vec<SearchResult>, each containing results: Vec<SearchVectorRecord>
         for search_result in search_results {
             for result in search_result.results {
                 let mut data = HashMap::new();
-                
+
                 // Add requested fields
                 for field in &plan.select_fields {
                     match field.as_str() {
                         "id" => {
-                            data.insert("id".to_string(), serde_json::Value::String(result.id.clone()));
+                            data.insert(
+                                "id".to_string(),
+                                serde_json::Value::String(result.id.clone()),
+                            );
                         }
                         "vector" => {
                             if !result.vector.is_empty() {
-                                let vec_json: Vec<serde_json::Value> = result.vector
+                                let vec_json: Vec<serde_json::Value> = result
+                                    .vector
                                     .iter()
-                                    .map(|&v| serde_json::Value::Number(
-                                        serde_json::Number::from_f64(v as f64).unwrap()
-                                    ))
+                                    .map(|&v| {
+                                        serde_json::Value::Number(
+                                            serde_json::Number::from_f64(v as f64).unwrap(),
+                                        )
+                                    })
                                     .collect();
-                                data.insert("vector".to_string(), serde_json::Value::Array(vec_json));
+                                data.insert(
+                                    "vector".to_string(),
+                                    serde_json::Value::Array(vec_json),
+                                );
                             }
                         }
-                    "metadata_info" => {
-                        // Convert metadata Vec<MetadataItem> to JSON
-                        let mut metadata_map = serde_json::Map::new();
-                        for item in &result.metadata {
-                            if let Some(ref value) = item.value {
-                                use crate::proto::proximadb::metadata_item::Value;
-                                let json_value = match value {
-                                    Value::StringValue(s) => serde_json::Value::String(s.clone()),
-                                    Value::NumberValue(n) => serde_json::json!(n),
-                                    Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                                };
-                                metadata_map.insert(item.key.clone(), json_value);
-                            }
-                        }
-                        data.insert("metadata_info".to_string(), serde_json::Value::Object(metadata_map));
-                    }
-                    field if field.starts_with("metadata.") => {
-                        // Extract specific metadata field
-                        let key = &field[9..]; // Skip "metadata."
-                        for item in &result.metadata {
-                            if item.key == key {
+                        "metadata_info" => {
+                            // Convert metadata Vec<MetadataItem> to JSON
+                            let mut metadata_map = serde_json::Map::new();
+                            for item in &result.metadata {
                                 if let Some(ref value) = item.value {
                                     use crate::proto::proximadb::metadata_item::Value;
                                     let json_value = match value {
-                                        Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                                        Value::StringValue(s) => {
+                                            serde_json::Value::String(s.clone())
+                                        }
                                         Value::NumberValue(n) => serde_json::json!(n),
                                         Value::BoolValue(b) => serde_json::Value::Bool(*b),
                                     };
-                                    data.insert(field.to_string(), json_value);
-                                    break;
+                                    metadata_map.insert(item.key.clone(), json_value);
+                                }
+                            }
+                            data.insert(
+                                "metadata_info".to_string(),
+                                serde_json::Value::Object(metadata_map),
+                            );
+                        }
+                        field if field.starts_with("metadata.") => {
+                            // Extract specific metadata field
+                            let key = &field[9..]; // Skip "metadata."
+                            for item in &result.metadata {
+                                if item.key == key {
+                                    if let Some(ref value) = item.value {
+                                        use crate::proto::proximadb::metadata_item::Value;
+                                        let json_value = match value {
+                                            Value::StringValue(s) => {
+                                                serde_json::Value::String(s.clone())
+                                            }
+                                            Value::NumberValue(n) => serde_json::json!(n),
+                                            Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                                        };
+                                        data.insert(field.to_string(), json_value);
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    }
                         _ => {} // Ignore unknown fields
                     }
                 }
-                
+
                 rows.push(ResultRow {
                     data,
                     similarity: Some(result.score), // Use actual score from search result
                 });
             }
         }
-        
+
         Ok(rows)
     }
-    
+
     /// Execute metadata-only query (without vector search)
     async fn execute_metadata_query(&self, _plan: &ExecutionPlan) -> Result<Vec<ResultRow>> {
         // For now, we don't support metadata-only queries without vector search
         // This would require a different API or scanning all vectors
-        
+
         // Return empty result set
         Ok(Vec::new())
     }
@@ -224,20 +243,24 @@ impl SqlExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_result_row_serialization() {
         let mut data = HashMap::new();
-        data.insert("id".to_string(), serde_json::Value::String("vec_1".to_string()));
-        data.insert("score".to_string(), serde_json::Value::Number(
-            serde_json::Number::from_f64(0.95).unwrap()
-        ));
-        
+        data.insert(
+            "id".to_string(),
+            serde_json::Value::String("vec_1".to_string()),
+        );
+        data.insert(
+            "score".to_string(),
+            serde_json::Value::Number(serde_json::Number::from_f64(0.95).unwrap()),
+        );
+
         let row = ResultRow {
             data,
             similarity: Some(0.95),
         };
-        
+
         let json = serde_json::to_string(&row).unwrap();
         assert!(json.contains("vec_1"));
         assert!(json.contains("0.95"));

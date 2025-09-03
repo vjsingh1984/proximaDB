@@ -7,17 +7,17 @@
 //! - Efficient per-collection flush isolation
 
 use anyhow::Result;
-use tracing::debug;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
+use tracing::debug;
 
 use super::super::core::MemtableMetrics;
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::compute::distance_computation::engine::{
-    DistanceComputeProvider, UnifiedDistanceCompute, SimilarityResult,
+    DistanceComputeProvider, SimilarityResult, UnifiedDistanceCompute,
 };
 use crate::core::VectorRecord;
 
@@ -25,7 +25,8 @@ use crate::core::VectorRecord;
 #[derive(Debug)]
 struct CollectionPartition {
     /// WAL Batches stored as native deserialized batches (PRIMARY STORAGE)
-    wal_batches: HashMap<String, crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
+    wal_batches:
+        HashMap<String, crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
 
     /// Vector ID to batch lookup index for fast get operations
     vector_id_index: HashMap<String, String>, // vector_id -> batch_id
@@ -56,7 +57,10 @@ impl CollectionPartition {
     /// Add WAL batch to this collection partition
     /// Add batch to collection partition - CRITICAL HOT PATH
     #[inline(always)]
-    fn add_batch(&mut self, mut batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch) -> Result<()> {
+    fn add_batch(
+        &mut self,
+        mut batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
@@ -65,10 +69,18 @@ impl CollectionPartition {
         if batch.metadata_bloom_filter.is_none() {
             match batch.create_bloom_filter() {
                 Ok(_) => {
-                    tracing::debug!("✅ Created bloom filter for batch {} with {} vectors", batch_id, vector_count);
+                    tracing::debug!(
+                        "✅ Created bloom filter for batch {} with {} vectors",
+                        batch_id,
+                        vector_count
+                    );
                 }
                 Err(e) => {
-                    tracing::warn!("⚠️ Failed to create bloom filter for batch {}: {}", batch_id, e);
+                    tracing::warn!(
+                        "⚠️ Failed to create bloom filter for batch {}: {}",
+                        batch_id,
+                        e
+                    );
                 }
             }
         }
@@ -76,7 +88,8 @@ impl CollectionPartition {
         // Update vector ID index for fast lookups
         for vector_record in batch.vector_records.iter() {
             if !vector_record.id.is_empty() {
-                self.vector_id_index.insert(vector_record.id.clone(), batch_id.clone());
+                self.vector_id_index
+                    .insert(vector_record.id.clone(), batch_id.clone());
             }
         }
 
@@ -97,23 +110,29 @@ impl CollectionPartition {
         if vector_id.is_empty() {
             return None;
         }
-        
+
         let current_time = chrono::Utc::now().timestamp_micros();
         let mut latest_record: Option<(VectorRecord, u64, Option<u32>)> = None; // (record, sequence, version)
-        
+
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
                 if !vector_record.id.is_empty() && vector_record.id == vector_id {
-                    let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                    let sequence = batch
+                        .timestamp
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
                     let version = vector_record.version;
-                    
+
                     // Check if this is a newer version (prioritize version number over timestamp)
                     let is_newer = match &latest_record {
                         Some((_, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
-                                (Some(v), Some(ev)) => v > *ev || (v == *ev && sequence > *existing_seq),
+                                (Some(v), Some(ev)) => {
+                                    v > *ev || (v == *ev && sequence > *existing_seq)
+                                }
                                 (Some(_), None) => true, // Some version beats None
                                 (None, Some(_)) => false, // None loses to Some version
                                 (None, None) => sequence > *existing_seq, // Both None, use sequence
@@ -121,30 +140,28 @@ impl CollectionPartition {
                         }
                         None => true, // First occurrence
                     };
-                    
+
                     if is_newer {
                         latest_record = Some((vector_record.clone(), sequence, version));
                     }
                 }
             }
         }
-        
+
         // Check the latest record we found
         if let Some((record, _, _)) = latest_record {
             // Check if it's expired (logical delete) - convert current_time to seconds
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-            let is_expired = record.expires_at
-                .map(|expires| expires < current_time_secs)
-                ;
-            
+            let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
+
             if is_expired.unwrap_or(false) {
                 tracing::debug!("🗑️ Vector {} found but expired (tombstone)", vector_id);
                 return None; // Logically deleted
             }
-            
+
             return Some(record);
         }
-        
+
         None
     }
 
@@ -154,12 +171,13 @@ impl CollectionPartition {
         let mut removed_size = 0;
 
         // Find batches to remove that are marked as flushed
-        let batch_ids_to_remove: Vec<String> = self.wal_batches
+        let batch_ids_to_remove: Vec<String> = self
+            .wal_batches
             .iter()
             .filter(|(_, batch)| batch.is_flushed)
             .map(|(id, _)| id.clone())
             .collect();
-        
+
         for batch_id in batch_ids_to_remove {
             if let Some(batch) = self.wal_batches.remove(&batch_id) {
                 // Remove vector IDs from index
@@ -168,7 +186,7 @@ impl CollectionPartition {
                         self.vector_id_index.remove(&vector_record.id);
                     }
                 }
-                
+
                 cleared_count += batch.vector_records.len();
                 removed_size += batch.total_size_bytes;
                 self.batch_count = self.batch_count.saturating_sub(1);
@@ -190,17 +208,21 @@ impl CollectionPartition {
     /// Get all vectors for iteration or flush operations with MVCC + logical delete support
     fn get_all_vectors(&self) -> Vec<VectorRecord> {
         use std::collections::HashMap;
-        
+
         let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<u32>)> = HashMap::new(); // (record, sequence, version)
         let mut vectors_without_id = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
-        
+
         // Collect latest versions for each ID
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
-                let sequence = batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                let sequence = batch
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
                 let version = vector_record.version;
-                
+
                 if !vector_record.id.is_empty() {
                     let vector_id = &vector_record.id;
                     // Check if this is the latest version (prioritize version number over timestamp)
@@ -208,7 +230,9 @@ impl CollectionPartition {
                         Some((_, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
-                                (Some(v), Some(ev)) => v > *ev || (v == *ev && sequence > *existing_seq),
+                                (Some(v), Some(ev)) => {
+                                    v > *ev || (v == *ev && sequence > *existing_seq)
+                                }
                                 (Some(_), None) => true, // Some version beats None
                                 (None, Some(_)) => false, // None loses to Some version
                                 (None, None) => sequence > *existing_seq, // Both None, use sequence
@@ -216,41 +240,39 @@ impl CollectionPartition {
                         }
                         None => true,
                     };
-                    
+
                     if is_newer {
                         id_to_latest.insert(
                             vector_record.id.clone(),
-                            (vector_record.clone(), sequence, version)
+                            (vector_record.clone(), sequence, version),
                         );
                     }
                 } else {
                     // No ID - include directly if not expired
                     let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-                    let is_expired = vector_record.expires_at
-                        .map(|expires| expires < current_time_secs)
-                        ;
-                    
+                    let is_expired = vector_record
+                        .expires_at
+                        .map(|expires| expires < current_time_secs);
+
                     if !is_expired.unwrap_or(false) {
                         vectors_without_id.push(vector_record.clone());
                     }
                 }
             }
         }
-        
+
         // Collect final results, filtering out expired records
         let mut vectors = Vec::new();
-        
+
         for (_, (record, _, _)) in id_to_latest {
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-            let is_expired = record.expires_at
-                .map(|expires| expires < current_time_secs)
-                ;
-            
+            let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
+
             if !is_expired.unwrap_or(false) {
                 vectors.push(record);
             }
         }
-        
+
         vectors.extend(vectors_without_id);
         vectors
     }
@@ -264,7 +286,7 @@ impl CollectionPartition {
     ) -> Vec<(SimilarityResult, VectorRecord)> {
         self.search_vectors_with_filter(query_vector, distance_metric, distance_compute, None)
     }
-    
+
     /// Search for similar vectors with optional metadata filter
     fn search_vectors_with_filter(
         &self,
@@ -274,42 +296,54 @@ impl CollectionPartition {
         metadata_filter: Option<&HashMap<String, String>>,
     ) -> Vec<(SimilarityResult, VectorRecord)> {
         use std::collections::HashMap;
-        
-        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> = HashMap::new(); // (score, record, sequence, version)
+
+        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> =
+            HashMap::new(); // (score, record, sequence, version)
         let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
-        
+
         let mut batches_checked = 0;
         let mut batches_skipped = 0;
 
         // First pass: Find latest version of each ID by sequence and version (MVCC)
         for (batch_id, wal_batch) in &self.wal_batches {
             batches_checked += 1;
-            
+
             // Use bloom filter to quickly skip irrelevant batches
             if let Some(filter) = metadata_filter {
                 let mut might_contain = false;
-                
+
                 for (key, value) in filter {
                     if wal_batch.might_contain_metadata_value(key, value) {
                         might_contain = true;
                         break;
                     }
                 }
-                
+
                 if !might_contain {
                     batches_skipped += 1;
-                    tracing::debug!("⚡ Bloom filter: Skipping batch {} (no matching metadata)", batch_id);
+                    tracing::debug!(
+                        "⚡ Bloom filter: Skipping batch {} (no matching metadata)",
+                        batch_id
+                    );
                     continue;
                 }
             }
-            
-            tracing::debug!("🔍 Processing WAL batch {} with {} vectors", batch_id, wal_batch.vector_records.len());
-            
+
+            tracing::debug!(
+                "🔍 Processing WAL batch {} with {} vectors",
+                batch_id,
+                wal_batch.vector_records.len()
+            );
+
             for vector_record in wal_batch.vector_records.iter() {
-                let sequence = wal_batch.timestamp.duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                let sequence = wal_batch
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
                 let version = vector_record.version;
-                
+
                 if !vector_record.id.is_empty() {
                     let vector_id = &vector_record.id;
                     // Check if this is the latest version (prioritize version number over timestamp)
@@ -317,7 +351,9 @@ impl CollectionPartition {
                         Some((_, _, existing_seq, existing_version)) => {
                             // Primary: Compare by version number (higher version wins)
                             match (version, existing_version) {
-                                (Some(v), Some(ev)) => v > *ev || (v == *ev && sequence > *existing_seq),
+                                (Some(v), Some(ev)) => {
+                                    v > *ev || (v == *ev && sequence > *existing_seq)
+                                }
                                 (Some(_), None) => true, // Some version beats None
                                 (None, Some(_)) => false, // None loses to Some version
                                 (None, None) => sequence > *existing_seq, // Both None, use sequence
@@ -325,26 +361,38 @@ impl CollectionPartition {
                         }
                         None => true,
                     };
-                    
+
                     if is_newer {
-                        let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
+                        let score = distance_compute.calculate_distance(
+                            query_vector,
+                            &vector_record.vector,
+                            distance_metric,
+                        );
                         id_to_latest.insert(
                             vector_record.id.clone(),
-                            (score, vector_record.clone(), sequence, version)
+                            (score, vector_record.clone(), sequence, version),
                         );
-                        
-                        tracing::debug!("📝 Updated latest version for ID {}: seq={}, version={:?}", 
-                                       &vector_record.id, sequence, version);
+
+                        tracing::debug!(
+                            "📝 Updated latest version for ID {}: seq={}, version={:?}",
+                            &vector_record.id,
+                            sequence,
+                            version
+                        );
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
                     let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-                    let is_expired = vector_record.expires_at
-                        .map(|expires| expires < current_time_secs)
-                        ;
-                    
+                    let is_expired = vector_record
+                        .expires_at
+                        .map(|expires| expires < current_time_secs);
+
                     if !is_expired.unwrap_or(false) {
-                        let score = distance_compute.calculate_distance(query_vector, &vector_record.vector, distance_metric);
+                        let score = distance_compute.calculate_distance(
+                            query_vector,
+                            &vector_record.vector,
+                            distance_metric,
+                        );
                         results_without_id.push((score, vector_record.clone()));
                     }
                 }
@@ -355,13 +403,13 @@ impl CollectionPartition {
         let mut final_results: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let mut filtered_count = 0;
         let latest_versions_count = id_to_latest.len();
-        
+
         for (id, (score, vector_record, _, _)) in id_to_latest {
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-            let is_expired = vector_record.expires_at
-                .map(|expires| expires < current_time_secs)
-                ;
-            
+            let is_expired = vector_record
+                .expires_at
+                .map(|expires| expires < current_time_secs);
+
             if is_expired.unwrap_or(false) {
                 tracing::debug!("🗑️ Filtering out expired latest version for ID {}", id);
                 filtered_count += 1;
@@ -369,7 +417,7 @@ impl CollectionPartition {
                 final_results.push((score, vector_record));
             }
         }
-        
+
         // Add non-ID results
         let results_without_id_count = results_without_id.len();
         final_results.extend(results_without_id);
@@ -383,7 +431,7 @@ impl CollectionPartition {
                 skip_percentage
             );
         }
-        
+
         tracing::debug!(
             "🔍 Search results: {} batches searched, {} latest versions found, {} expired filtered, {} without ID, {} final results",
             batches_checked - batches_skipped,
@@ -395,7 +443,6 @@ impl CollectionPartition {
 
         final_results
     }
-
 }
 
 /// Global partitioned memtable implementation for WAL operations
@@ -432,11 +479,15 @@ impl GlobalPartitionedMemtable {
     /// Add native WAL batch to the appropriate collection partition - CRITICAL HOT PATH
     /// STREAMLINED ARCHITECTURE with optimized atomic operations
     #[inline(always)]
-    pub async fn add_wal_batch(&self, collection_id: &str, wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch) -> Result<Vec<u64>> {
+    pub async fn add_wal_batch(
+        &self,
+        collection_id: &str,
+        wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<Vec<u64>> {
         let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();
         let batch_size = wal_batch.total_size_bytes;
-        
+
         tracing::debug!(
             "🚀 NATIVE_BATCH_ADD: Adding WAL batch {} to collection {} ({} vectors, {} bytes)",
             batch_id,
@@ -448,7 +499,8 @@ impl GlobalPartitionedMemtable {
         // Generate global sequences for the batch
         let start_seq = self.global_sequence.load(Ordering::SeqCst);
         let sequences: Vec<u64> = (start_seq..start_seq + vector_count as u64).collect();
-        self.global_sequence.store(start_seq + vector_count as u64, Ordering::SeqCst);
+        self.global_sequence
+            .store(start_seq + vector_count as u64, Ordering::SeqCst);
 
         // Get or create collection partition
         let mut collections = self.collections.write().await;
@@ -465,13 +517,13 @@ impl GlobalPartitionedMemtable {
 
         // Store the batch natively in the partition
         partition.add_batch(wal_batch)?;
-        
+
         tracing::debug!(
             "🚀 GLOBAL_PARTITIONED_DEBUG: Updated partition stats - vector_count: {}, total_size: {}",
             partition.vector_count,
             partition.total_size
         );
-        
+
         drop(collections);
 
         // Update global metrics
@@ -491,7 +543,6 @@ impl GlobalPartitionedMemtable {
 
         Ok(sequences)
     }
-
 
     /// Get any vector from the memtable (useful for testing/debugging)
     pub async fn get_any_vector(&self) -> Result<Option<VectorRecord>> {
@@ -513,7 +564,6 @@ impl GlobalPartitionedMemtable {
         Ok(None)
     }
 
-
     /// Search for similar vectors within a specific collection using configurable distance metric
     pub async fn search_vectors(
         &self,
@@ -523,25 +573,38 @@ impl GlobalPartitionedMemtable {
         distance_metric: CoreDistanceMetric,
     ) -> Result<Vec<(SimilarityResult, VectorRecord)>> {
         let collections = self.collections.read().await;
-        
-        debug!("🔍 GLOBAL_PARTITIONED_SEARCH: Searching for collection_id '{}' in {} collections", collection_id, collections.len());
+
+        debug!(
+            "🔍 GLOBAL_PARTITIONED_SEARCH: Searching for collection_id '{}' in {} collections",
+            collection_id,
+            collections.len()
+        );
         for (id, partition) in collections.iter() {
-            debug!("🔍 Available collection: '{}' with {} vectors", id, partition.vector_count);
+            debug!(
+                "🔍 Available collection: '{}' with {} vectors",
+                id, partition.vector_count
+            );
         }
 
         if let Some(partition) = collections.get(collection_id) {
-            let mut results = partition.search_vectors(
-                query_vector,
-                &distance_metric,
-                &self.distance_compute,
-            );
+            let mut results =
+                partition.search_vectors(query_vector, &distance_metric, &self.distance_compute);
 
             // Sort by rank_value (lower = better) and limit to k
-            results.sort_by(|a, b| a.0.rank_value.partial_cmp(&b.0.rank_value).unwrap_or(std::cmp::Ordering::Equal));
+            results.sort_by(|a, b| {
+                a.0.rank_value
+                    .partial_cmp(&b.0.rank_value)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             results.truncate(k);
 
-            tracing::debug!("📊 GLOBAL_PARTITIONED_SEARCH: Found {} results in collection {} (partition has {} vectors) using {:?}", 
-                           results.len(), collection_id, partition.vector_count, distance_metric);
+            tracing::debug!(
+                "📊 GLOBAL_PARTITIONED_SEARCH: Found {} results in collection {} (partition has {} vectors) using {:?}",
+                results.len(),
+                collection_id,
+                partition.vector_count,
+                distance_metric
+            );
             Ok(results)
         } else {
             tracing::debug!(
@@ -553,7 +616,11 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Get vector by ID within a specific collection (MODERN - no deserialization)
-    pub async fn vector_by_id(&self, collection_id: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
+    pub async fn vector_by_id(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+    ) -> Result<Option<VectorRecord>> {
         let collections = self.collections.read().await;
 
         if let Some(partition) = collections.get(collection_id) {
@@ -569,13 +636,13 @@ impl GlobalPartitionedMemtable {
 
         if let Some(partition) = collections.get(collection_id) {
             let vectors = partition.get_all_vectors();
-            
+
             tracing::debug!(
                 "🚀 COLLECTION_VECTORS: Returning {} vectors from {} native batches",
                 vectors.len(),
                 partition.wal_batches.len()
             );
-            
+
             Ok(vectors)
         } else {
             Ok(Vec::new())
@@ -594,10 +661,7 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Clear entries for a specific collection up to sequence number
-    pub async fn clear_flushed_batches(
-        &self,
-        collection_id: &str,
-    ) -> Result<usize> {
+    pub async fn clear_flushed_batches(&self, collection_id: &str) -> Result<usize> {
         let mut collections = self.collections.write().await;
 
         if let Some(partition) = collections.get_mut(collection_id) {
@@ -659,7 +723,7 @@ impl GlobalPartitionedMemtable {
     ) -> Result<Vec<CollectionFlushInfo>> {
         let collections = self.collections.read().await;
         let current_total_size = collections.values().map(|p| p.total_size).sum::<usize>();
-        
+
         // If we're under global threshold, no flush needed
         if current_total_size <= global_threshold {
             return Ok(Vec::new());
@@ -668,10 +732,13 @@ impl GlobalPartitionedMemtable {
         // Calculate target size after shrinking
         let target_size = (global_threshold as f64 * shrink_factor) as usize;
         let reduction_needed = current_total_size.saturating_sub(target_size);
-        
+
         tracing::info!(
             "🧠 INTELLIGENT_FLUSH: Current={} bytes, Global threshold={} bytes, Target={} bytes, Reduction needed={} bytes",
-            current_total_size, global_threshold, target_size, reduction_needed
+            current_total_size,
+            global_threshold,
+            target_size,
+            reduction_needed
         );
 
         // Create collection info with flush priority
@@ -683,7 +750,7 @@ impl GlobalPartitionedMemtable {
                     partition.vector_count,
                     partition.batch_count,
                 );
-                
+
                 CollectionFlushInfo {
                     collection_id: collection_id.clone(),
                     total_size: partition.total_size,
@@ -702,18 +769,19 @@ impl GlobalPartitionedMemtable {
             if size_cmp != std::cmp::Ordering::Equal {
                 return size_cmp;
             }
-            
+
             // Secondary: Efficiency score (highest first)
-            let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score)
-                ;
+            let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score);
             if let Some(cmp) = efficiency_cmp {
                 if cmp != std::cmp::Ordering::Equal {
                     return cmp;
                 }
             }
-            
+
             // Tertiary: Age score (oldest first)
-            a.age_score.partial_cmp(&b.age_score).unwrap_or(std::cmp::Ordering::Equal)
+            a.age_score
+                .partial_cmp(&b.age_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         // Select collections until we meet reduction target or max_collections limit
@@ -721,17 +789,20 @@ impl GlobalPartitionedMemtable {
         let mut total_reduction = 0;
         let max_to_select = max_collections;
 
-        for collection_info in collection_infos.into_iter().take(max_to_select.unwrap_or(usize::MAX)) {
+        for collection_info in collection_infos
+            .into_iter()
+            .take(max_to_select.unwrap_or(usize::MAX))
+        {
             selected_collections.push(collection_info.clone());
             total_reduction += collection_info.total_size;
-            
+
             tracing::debug!(
                 "🎯 INTELLIGENT_FLUSH: Selected collection {} ({} bytes, efficiency={:.2})",
                 collection_info.collection_id,
                 collection_info.total_size,
                 collection_info.efficiency_score
             );
-            
+
             // Stop if we've achieved sufficient reduction
             if total_reduction >= reduction_needed {
                 break;
@@ -756,7 +827,7 @@ impl GlobalPartitionedMemtable {
     ) -> Result<Vec<CollectionFlushInfo>> {
         let collections = self.collections.read().await;
         let current_total_size = collections.values().map(|p| p.total_size).sum::<usize>();
-        
+
         // Only handle emergency case when global threshold is exceeded
         if current_total_size <= global_threshold {
             return Ok(Vec::new());
@@ -768,29 +839,30 @@ impl GlobalPartitionedMemtable {
             .filter(|(_, partition)| {
                 partition.total_size < small_collection_threshold && partition.total_size > 0
             })
-            .map(|(collection_id, partition)| {
-                CollectionFlushInfo {
-                    collection_id: collection_id.clone(),
-                    total_size: partition.total_size,
-                    vector_count: partition.vector_count,
-                    batch_count: partition.batch_count,
-                    efficiency_score: calculate_flush_efficiency_score(
-                        partition.total_size,
-                        partition.vector_count,
-                        partition.batch_count,
-                    ),
-                    age_score: calculate_age_score(partition.created_at),
-                }
+            .map(|(collection_id, partition)| CollectionFlushInfo {
+                collection_id: collection_id.clone(),
+                total_size: partition.total_size,
+                vector_count: partition.vector_count,
+                batch_count: partition.batch_count,
+                efficiency_score: calculate_flush_efficiency_score(
+                    partition.total_size,
+                    partition.vector_count,
+                    partition.batch_count,
+                ),
+                age_score: calculate_age_score(partition.created_at),
             })
             .collect();
 
         // Sort small collections by age (oldest first) to handle long-lived small collections
         small_collections.sort_by(|a, b| {
-            a.age_score.partial_cmp(&b.age_score).unwrap_or(std::cmp::Ordering::Equal)
+            a.age_score
+                .partial_cmp(&b.age_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let small_collections_count = small_collections.len();
-        let small_collections_total_size: usize = small_collections.iter().map(|c| c.total_size).sum();
+        let small_collections_total_size: usize =
+            small_collections.iter().map(|c| c.total_size).sum();
 
         tracing::warn!(
             "🚨 EMERGENCY_FLUSH: {} small collections ({} bytes total) contributing to global threshold exceeded",
@@ -800,7 +872,10 @@ impl GlobalPartitionedMemtable {
 
         // In emergency case, select up to 25% of small collections for flush
         let max_emergency_flush = (small_collections_count / 4).max(1);
-        let selected_emergency: Vec<CollectionFlushInfo> = small_collections.into_iter().take(max_emergency_flush).collect();
+        let selected_emergency: Vec<CollectionFlushInfo> = small_collections
+            .into_iter()
+            .take(max_emergency_flush)
+            .collect();
 
         tracing::info!(
             "🚨 EMERGENCY_FLUSH: Selected {} small collections for emergency flush",
@@ -826,10 +901,7 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Get vectors from sequence number onwards (for recovery) - MODERN
-    pub async fn get_all_vectors(
-        &self,
-        limit: Option<usize>,
-    ) -> Result<Vec<(u64, VectorRecord)>> {
+    pub async fn get_all_vectors(&self, limit: Option<usize>) -> Result<Vec<(u64, VectorRecord)>> {
         let collections = self.collections.read().await;
         let mut all_vectors = Vec::new();
 
@@ -870,7 +942,7 @@ impl GlobalPartitionedMemtable {
 
         Ok(total_cleared)
     }
-    
+
     /// Mark all batches as flushed (for flush operations)
     pub async fn mark_all_batches_as_flushed(&self) -> Result<()> {
         let mut collections = self.collections.write().await;
@@ -881,39 +953,45 @@ impl GlobalPartitionedMemtable {
         }
         Ok(())
     }
-    
+
     /// Remove a specific batch from a collection (for atomic rollback)
     pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
         let mut collections = self.collections.write().await;
         if let Some(partition) = collections.get_mut(collection_id) {
             if let Some(removed_batch) = partition.wal_batches.remove(batch_id) {
                 // Update partition stats
-                partition.vector_count = partition.vector_count.saturating_sub(removed_batch.vector_records.len());
-                partition.total_size = partition.total_size.saturating_sub(removed_batch.total_size_bytes);
+                partition.vector_count = partition
+                    .vector_count
+                    .saturating_sub(removed_batch.vector_records.len());
+                partition.total_size = partition
+                    .total_size
+                    .saturating_sub(removed_batch.total_size_bytes);
                 partition.batch_count = partition.batch_count.saturating_sub(1);
-                
+
                 // Remove from vector index
                 for vector_record in removed_batch.vector_records.iter() {
                     if !vector_record.id.is_empty() {
                         partition.vector_id_index.remove(&vector_record.id);
                     }
                 }
-                
+
                 // Update global metrics
                 let mut metrics = self.metrics.write().await;
-                metrics.entry_count = metrics.entry_count.saturating_sub(removed_batch.vector_records.len());
-                
+                metrics.entry_count = metrics
+                    .entry_count
+                    .saturating_sub(removed_batch.vector_records.len());
+
                 tracing::debug!(
                     "🗑️ Removed batch {} from collection {} ({} vectors)",
                     batch_id,
                     collection_id,
                     removed_batch.vector_records.len()
                 );
-                
+
                 return Ok(());
             }
         }
-        
+
         Err(anyhow::anyhow!(
             "Batch {} not found in collection {}",
             batch_id,
@@ -966,7 +1044,8 @@ impl GlobalPartitionedMemtable {
     /// Get stats for a specific collection
     pub async fn stats(&self, collection_id: &str) -> (usize, usize) {
         let collections = self.collections.read().await;
-        collections.get(collection_id)
+        collections
+            .get(collection_id)
             .map(|partition| (partition.vector_count, partition.total_size))
             .unwrap_or((0, 0))
     }
@@ -978,12 +1057,14 @@ impl GlobalPartitionedMemtable {
     }
 }
 
-
 impl GlobalPartitionedMemtable {
     /// Get all vectors without sequences (for flush operations) - MODERN
     pub async fn get_all_vectors_flat(&self) -> Result<Vec<VectorRecord>> {
         let vectors_with_sequences = self.get_all_vectors(None).await?;
-        Ok(vectors_with_sequences.into_iter().map(|(_, vector)| vector).collect())
+        Ok(vectors_with_sequences
+            .into_iter()
+            .map(|(_, vector)| vector)
+            .collect())
     }
 }
 
@@ -1006,19 +1087,23 @@ pub struct CollectionFlushInfo {
 
 /// Calculate flush efficiency score based on collection characteristics
 /// Higher score = more efficient to flush (larger size, fewer batches)
-fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batch_count: usize) -> f64 {
+fn calculate_flush_efficiency_score(
+    size_bytes: usize,
+    vector_count: usize,
+    batch_count: usize,
+) -> f64 {
     // Efficiency factors:
     // 1. Size factor (larger is better for flush efficiency)
     // 2. Batch consolidation factor (fewer batches = more efficient)
     // 3. Vector density factor (more vectors per batch = better)
-    
+
     let size_factor = (size_bytes as f64) / (1024.0 * 1024.0); // Convert to MB
     let batch_factor = if batch_count > 0 {
         (vector_count as f64) / (batch_count as f64)
     } else {
         0.0
     };
-    
+
     // Weighted similarity: size matters more than batch consolidation
     let efficiency_score = (size_factor * 0.7) + (batch_factor * 0.3);
     efficiency_score.max(0.1) // Minimum score to avoid division by zero
@@ -1028,11 +1113,13 @@ fn calculate_flush_efficiency_score(size_bytes: usize, vector_count: usize, batc
 /// Higher score = older collection (should be flushed sooner)
 fn calculate_age_score(timestamp: std::time::SystemTime) -> f64 {
     let now = std::time::SystemTime::now();
-    let age_duration = now.duration_since(timestamp).unwrap_or_else(|_| std::time::Duration::from_secs(0));
-    
+    let age_duration = now
+        .duration_since(timestamp)
+        .unwrap_or_else(|_| std::time::Duration::from_secs(0));
+
     // Age in minutes (higher = older)
     let age_minutes = age_duration.as_secs() as f64 / 60.0;
-    
+
     // Score increases with age, but caps at reasonable limit
     age_minutes.min(1440.0) // Cap at 24 hours
 }

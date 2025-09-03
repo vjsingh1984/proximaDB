@@ -20,11 +20,11 @@
 use anyhow::Result;
 // StorageEngineCompatibility removed - engines handle this internally
 use axum::{
-    extract::{Json, Path, State, Query},
-    http::StatusCode,
-    response::{Json as JsonResponse, IntoResponse, Response},
-    routing::{delete, get, post},
     Router,
+    extract::{Json, Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Json as JsonResponse, Response},
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -36,15 +36,13 @@ use crate::core::conversions;
 use crate::proto::proximadb::SearchVectorRecord;
 
 use crate::proto::proximadb::{
-    OperationMetrics, IndexConfig, QuantizationConfig, CompressionConfig,
-    CollectionConfig, IndexingAlgorithm, IndexUpdateMode, StorageEngine,
-    DistanceMetric, FilterableDataType, StorageConfig,
-    ParquetWriterSettings, FooterCacheSettings, HybridWriterSettings,
-    SstEngineSettings, ViperEngineSettings, NovaEngineSettings,
-    HnswConfig, IvfConfig, FlatConfig, PqConfig, AnnoyConfig, LshConfig,
-    FilterableColumnSpec, AccessPattern, DataDensity,
-    CollectionRequest, CollectionOperation, VectorRecord, VectorBatchRequest,
-    Collection as ProtoCollection, RandomProjectionType
+    AccessPattern, AnnoyConfig, Collection as ProtoCollection, CollectionConfig,
+    CollectionOperation, CollectionRequest, CompressionConfig, DataDensity, DistanceMetric,
+    FilterableColumnSpec, FilterableDataType, FlatConfig, FooterCacheSettings, HnswConfig,
+    HybridWriterSettings, IndexConfig, IndexUpdateMode, IndexingAlgorithm, IvfConfig, LshConfig,
+    NovaEngineSettings, OperationMetrics, ParquetWriterSettings, PqConfig, QuantizationConfig,
+    RandomProjectionType, SstEngineSettings, StorageConfig, StorageEngine, VectorBatchRequest,
+    VectorRecord, ViperEngineSettings,
 };
 
 /// Shared application state for REST handlers
@@ -67,8 +65,12 @@ impl IntoResponse for ErrorResponse {
             "error": self.message,
             "error_code": self.error_code
         }));
-        
-        (StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body).into_response()
+
+        (
+            StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            body,
+        )
+            .into_response()
     }
 }
 
@@ -82,9 +84,9 @@ pub struct CollectionOperationRequest {
     pub operation: String, // "create", "update" (get/list/delete now use dedicated HTTP verbs)
     pub collection_id: Option<String>,
     pub collection_name: Option<String>,
-    pub config: Option<CollectionConfigJson>,  // JSON-friendly wrapper around proto CollectionConfig
+    pub config: Option<CollectionConfigJson>, // JSON-friendly wrapper around proto CollectionConfig
     pub query_params: Option<HashMap<String, String>>, // limit, offset, filters
-    pub options: Option<HashMap<String, bool>>,        // force, include_stats
+    pub options: Option<HashMap<String, bool>>, // force, include_stats
 }
 
 /// JSON-serializable wrapper for proto CollectionConfig
@@ -94,14 +96,14 @@ pub struct CollectionOperationRequest {
 pub struct CollectionConfigJson {
     pub name: String,
     pub dimension: i32,
-    pub distance_metric: Option<String>,            // "cosine", "euclidean", "dot_product" - defaults to "cosine"
-    pub storage_engine: Option<String>,             // "viper", "sst" - defaults to "viper"
+    pub distance_metric: Option<String>, // "cosine", "euclidean", "dot_product" - defaults to "cosine"
+    pub storage_engine: Option<String>,  // "viper", "sst" - defaults to "viper"
     pub filterable_columns: Option<Vec<FilterableColumnSpec>>,
     pub index_configs: Option<Vec<IndexConfig>>,
-    pub quantization: Option<QuantizationConfig>,   // Renamed from quantization
-    pub storage_config: Option<StorageConfig>,      // Renamed from storage_engine_config and using StorageConfig
-    pub primary_index: Option<String>,              // Renamed from primary_index_name
-    pub auto_index_selection: Option<bool>,         // Renamed from enable_automatic_index_selection
+    pub quantization: Option<QuantizationConfig>, // Renamed from quantization
+    pub storage_config: Option<StorageConfig>, // Renamed from storage_engine_config and using StorageConfig
+    pub primary_index: Option<String>,         // Renamed from primary_index_name
+    pub auto_index_selection: Option<bool>,    // Renamed from enable_automatic_index_selection
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
     pub owner: Option<String>,
@@ -114,12 +116,18 @@ impl CollectionConfigJson {
         let mut config = CollectionConfig {
             name: self.name.clone(),
             dimension: self.dimension as u32,
-            distance_metric: self.distance_metric.as_deref()
+            distance_metric: self
+                .distance_metric
+                .as_deref()
                 .and_then(|s| conversions::parse_distance_metric(s).ok())
-                .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine) as i32,
-            storage_engine: self.storage_engine.as_deref()
+                .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine)
+                as i32,
+            storage_engine: self
+                .storage_engine
+                .as_deref()
                 .and_then(|s| conversions::parse_storage_engine(s).ok())
-                .unwrap_or(crate::proto::proximadb::StorageEngine::Viper) as i32,
+                .unwrap_or(crate::proto::proximadb::StorageEngine::Viper)
+                as i32,
             filterable_columns: self.filterable_columns.clone().unwrap_or_default(),
             index_configs: self.index_configs.clone().unwrap_or_default(),
             quantization: self.quantization.clone(),
@@ -129,26 +137,42 @@ impl CollectionConfigJson {
             description: self.description.clone(),
             tags: self.tags.clone().unwrap_or_default(),
             owner: self.owner.clone(),
-            embedding_models: None,  // Default to None for embedding models
+            embedding_models: None, // Default to None for embedding models
         };
         config
     }
-    
+
     /// Create from proto CollectionConfig
     pub fn from_proto(proto: &CollectionConfig) -> Self {
         Self {
             name: proto.name.clone(),
             dimension: proto.dimension as i32,
-            distance_metric: Some(conversions::distance_metric_to_string(proto.distance_metric).to_owned()),
-            storage_engine: Some(conversions::storage_engine_to_string(proto.storage_engine).to_owned()),
-            filterable_columns: if proto.filterable_columns.is_empty() { None } else { Some(proto.filterable_columns.clone()) },
-            index_configs: if proto.index_configs.is_empty() { None } else { Some(proto.index_configs.clone()) },
+            distance_metric: Some(
+                conversions::distance_metric_to_string(proto.distance_metric).to_owned(),
+            ),
+            storage_engine: Some(
+                conversions::storage_engine_to_string(proto.storage_engine).to_owned(),
+            ),
+            filterable_columns: if proto.filterable_columns.is_empty() {
+                None
+            } else {
+                Some(proto.filterable_columns.clone())
+            },
+            index_configs: if proto.index_configs.is_empty() {
+                None
+            } else {
+                Some(proto.index_configs.clone())
+            },
             quantization: proto.quantization.clone(),
             storage_config: proto.storage_config.clone(),
             primary_index: proto.primary_index.clone(),
             auto_index_selection: proto.auto_index_selection,
             description: proto.description.clone(),
-            tags: if proto.tags.is_empty() { None } else { Some(proto.tags.clone()) },
+            tags: if proto.tags.is_empty() {
+                None
+            } else {
+                Some(proto.tags.clone())
+            },
             owner: proto.owner.clone(),
         }
     }
@@ -330,23 +354,23 @@ pub struct QuantizationValidation {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestStorageEngineConfig {
     // Optimization hints
-    pub access_pattern: Option<String>,         // "write_heavy", "read_heavy", "balanced", "archive"
-    pub data_density: Option<String>,           // "dense", "sparse", "mixed"
+    pub access_pattern: Option<String>, // "write_heavy", "read_heavy", "balanced", "archive"
+    pub data_density: Option<String>,   // "dense", "sparse", "mixed"
     pub frequent_updates: Option<bool>,
     pub expected_size_gb: Option<i64>,
     pub read_write_ratio: Option<f32>,
-    
+
     // Quick presets
-    pub preset: Option<String>,                 // "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time"
-    
+    pub preset: Option<String>, // "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time"
+
     // Master optimization control
     pub enable_all_optimizations: Option<bool>,
-    
+
     // Specific configuration overrides
     pub parquet_writer: Option<RestParquetWriterSettings>,
     pub footer_cache: Option<RestFooterCacheSettings>,
     pub hybrid_writer: Option<RestHybridWriterSettings>,
-    
+
     // Engine-specific settings
     pub sst_settings: Option<RestSstEngineSettings>,
     pub viper_settings: Option<RestViperEngineSettings>,
@@ -689,7 +713,7 @@ impl<T> ApiResponse<T> {
 pub struct SqlQueryRequest {
     pub query: String,
     pub parameters: Option<Vec<serde_json::Value>>,
-    pub collection: Option<String>,  // Optional if specified in FROM clause
+    pub collection: Option<String>, // Optional if specified in FROM clause
 }
 
 /// SQL query response - aligned with proto SqlQueryResponse
@@ -720,22 +744,31 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metrics/:collection_id", get(collection_metrics))
         .route("/metrics/query-hints/:collection_id", get(query_hints))
         // Collection endpoints with proper REST verbs
-        .route("/api/v1/collection", post(collection_operation))  // create/update operations
-        .route("/api/v1/collections", get(list_collections))       // list all collections
-        .route("/api/v1/collection/:collection_id", get(collection).delete(delete_collection))  // get/delete single collection
+        .route("/api/v1/collection", post(collection_operation)) // create/update operations
+        .route("/api/v1/collections", get(list_collections)) // list all collections
+        .route(
+            "/api/v1/collection/:collection_id",
+            get(collection).delete(delete_collection),
+        ) // get/delete single collection
         // Vector endpoints with proper REST verbs
-        .route("/api/v1/vector/batch", post(vector_batch))        // insert/update operations
-        .route("/api/v1/vector/search", post(vector_search))      // search operations
-        .route("/api/v1/vector/get/:collection_id/:vector_id", get(vector))  // get single vector
-        .route("/api/v1/vectors/:collection_id", delete(delete_vectors))         // delete vectors
+        .route("/api/v1/vector/batch", post(vector_batch)) // insert/update operations
+        .route("/api/v1/vector/search", post(vector_search)) // search operations
+        .route("/api/v1/vector/get/:collection_id/:vector_id", get(vector)) // get single vector
+        .route("/api/v1/vectors/:collection_id", delete(delete_vectors)) // delete vectors
         // SQL query endpoint
-        .route("/api/v1/sql/execute", post(execute_sql))          // execute SQL queries
+        .route("/api/v1/sql/execute", post(execute_sql)) // execute SQL queries
         // Convenience endpoints for common operations
         // Internal testing endpoints (WARNING: NOT FOR PRODUCTION USE)
         .route("/internal/flush", post(internal_flush_all))
-        .route("/internal/flush/:collection_id", post(internal_flush_collection))
+        .route(
+            "/internal/flush/:collection_id",
+            post(internal_flush_collection),
+        )
         // Debug endpoints (TEMPORARY - FOR DEBUGGING ONLY)
-        .route("/debug/vectors/:collection_id", get(debug_list_unflushed_vectors))
+        .route(
+            "/debug/vectors/:collection_id",
+            get(debug_list_unflushed_vectors),
+        )
         .with_state(state)
 }
 
@@ -747,14 +780,19 @@ pub fn create_router(state: AppState) -> Router {
 pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<HashMap<String, serde_json::Value>>>, StatusCode> {
-    match state.unified_handlers.vector_operations_service.health_check().await {
+    match state
+        .unified_handlers
+        .vector_operations_service
+        .health_check()
+        .await
+    {
         Ok(health_data) => {
             let mut response_data = HashMap::new();
             response_data.insert("status".to_string(), json!("healthy"));
             response_data.insert("service".to_string(), json!("proximadb-rest"));
             response_data.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
             response_data.insert("vector_service".to_string(), health_data);
-            
+
             Ok(JsonResponse(ApiResponse::success(response_data)))
         }
         Err(e) => {
@@ -763,7 +801,7 @@ pub async fn health_check(
             response_data.insert("service".to_string(), json!("proximadb-rest"));
             response_data.insert("version".to_string(), json!(env!("CARGO_PKG_VERSION")));
             response_data.insert("error".to_string(), json!(e.to_string()));
-            
+
             Ok(JsonResponse(ApiResponse::error(
                 "Service unhealthy".to_string(),
                 "SERVICE_UNHEALTHY".to_string(),
@@ -782,37 +820,50 @@ pub async fn collection_operation(
         operation: conversions::parse_collection_operation(&request.operation)
             .map_err(|_| StatusCode::BAD_REQUEST)? as i32,
         collection_id: request.collection_id.clone(),
-        collection_config: request.config.as_ref().and_then(|c| conversions::build_collection_config(
-            c.name.clone(),
-            c.dimension as u32,
-            c.distance_metric.clone(),
-            c.storage_engine.clone(),
-            None, // indexing_algorithm - removed from config
-            None, // metadata
-        ).ok()),
+        collection_config: request.config.as_ref().and_then(|c| {
+            conversions::build_collection_config(
+                c.name.clone(),
+                c.dimension as u32,
+                c.distance_metric.clone(),
+                c.storage_engine.clone(),
+                None, // indexing_algorithm - removed from config
+                None, // metadata
+            )
+            .ok()
+        }),
         query_params: std::collections::HashMap::new(),
         options: std::collections::HashMap::new(),
         migration_config: std::collections::HashMap::new(),
     };
-    
+
     // Delegate to unified handlers
-    let proto_response = state.unified_handlers
+    let proto_response = state
+        .unified_handlers
         .handle_collection_operation(proto_request)
         .await
         .map_err(|e| {
             tracing::error!("Collection operation failed: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     // Convert proto response to REST response
     let response = CollectionResponse {
         success: proto_response.success,
-        operation: conversions::collection_operation_to_string(proto_response.operation).to_string(),
-        collection: proto_response.collection.map(|c| convert_from_proto_collection(c)),
-        collections: if proto_response.collections.is_empty() { 
-            None 
-        } else { 
-            Some(proto_response.collections.into_iter().map(convert_from_proto_collection).collect()) 
+        operation: conversions::collection_operation_to_string(proto_response.operation)
+            .to_string(),
+        collection: proto_response
+            .collection
+            .map(|c| convert_from_proto_collection(c)),
+        collections: if proto_response.collections.is_empty() {
+            None
+        } else {
+            Some(
+                proto_response
+                    .collections
+                    .into_iter()
+                    .map(convert_from_proto_collection)
+                    .collect(),
+            )
         },
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
@@ -821,7 +872,7 @@ pub async fn collection_operation(
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -831,22 +882,38 @@ pub async fn vector_batch(
     Json(mut request_json): Json<serde_json::Value>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
     // Debug log the incoming request
-    tracing::debug!("vector_batch received JSON: {}", serde_json::to_string_pretty(&request_json).unwrap_or_else(|_| "invalid json".to_string()));
-    
+    tracing::debug!(
+        "vector_batch received JSON: {}",
+        serde_json::to_string_pretty(&request_json).unwrap_or_else(|_| "invalid json".to_string())
+    );
+
     // Handle flexible metadata format before conversion
-    if let Some(vectors) = request_json.get_mut("vectors").and_then(|v| v.as_array_mut()) {
+    if let Some(vectors) = request_json
+        .get_mut("vectors")
+        .and_then(|v| v.as_array_mut())
+    {
         for vector in vectors {
             if let Some(metadata) = vector.get_mut("metadata_info") {
                 // Convert object format to array format if needed
                 if let serde_json::Value::Object(obj) = metadata {
-                    let array_format: Vec<serde_json::Value> = obj.iter()
+                    let array_format: Vec<serde_json::Value> = obj
+                        .iter()
                         .map(|(key, value)| {
                             let mut item = serde_json::json!({"key": key});
                             match value {
-                                serde_json::Value::String(s) => item["string_value"] = serde_json::Value::String(s.clone()),
-                                serde_json::Value::Number(n) => item["double_value"] = serde_json::Value::Number(n.clone()),
-                                serde_json::Value::Bool(b) => item["bool_value"] = serde_json::Value::Bool(*b),
-                                _ => item["string_value"] = serde_json::Value::String(value.to_string()),
+                                serde_json::Value::String(s) => {
+                                    item["string_value"] = serde_json::Value::String(s.clone())
+                                }
+                                serde_json::Value::Number(n) => {
+                                    item["double_value"] = serde_json::Value::Number(n.clone())
+                                }
+                                serde_json::Value::Bool(b) => {
+                                    item["bool_value"] = serde_json::Value::Bool(*b)
+                                }
+                                _ => {
+                                    item["string_value"] =
+                                        serde_json::Value::String(value.to_string())
+                                }
                             }
                             item
                         })
@@ -856,44 +923,56 @@ pub async fn vector_batch(
             }
         }
     }
-    
+
     // Deserialize the modified JSON into our request type
-    let request: RestVectorBatchRequest = serde_json::from_value(request_json)
-        .map_err(|e| {
-            tracing::error!("Failed to deserialize vector batch request: {:?}", e);
-            StatusCode::BAD_REQUEST
-        })?;
-    
+    let request: RestVectorBatchRequest = serde_json::from_value(request_json).map_err(|e| {
+        tracing::error!("Failed to deserialize vector batch request: {:?}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+
     // Convert REST request to proto request directly
     let proto_request = crate::proto::proximadb::VectorBatchRequest {
         collection_id: request.collection_id.clone(),
-        vectors: request.vectors.into_iter().map(|v| {
-            crate::proto::proximadb::VectorRecord {
+        vectors: request
+            .vectors
+            .into_iter()
+            .map(|v| crate::proto::proximadb::VectorRecord {
                 expires_at: None,
                 quantized_vector: None,
                 source: None,
                 id: v.id.unwrap_or_default(),
                 vector: v.vector.clone(),
-                metadata: v.metadata.map(|m| conversions::convert_metadata_to_proto(serde_json::Map::from_iter(m.into_iter()))).unwrap_or_default(),
-                timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32,
+                metadata: v
+                    .metadata
+                    .map(|m| {
+                        conversions::convert_metadata_to_proto(serde_json::Map::from_iter(
+                            m.into_iter(),
+                        ))
+                    })
+                    .unwrap_or_default(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as u32,
                 version: None,
                 updated_at: None,
-            }
-        }).collect(),
+            })
+            .collect(),
         batch_timeout_ms: request.batch_timeout_ms,
         request_id: request.request_id,
     };
-    
+
     // Delegate to unified handlers
-    let proto_response = state.unified_handlers
+    let proto_response = state
+        .unified_handlers
         .handle_vector_batch(proto_request)
         .await
         .map_err(|e| {
             tracing::error!("Vector batch operation failed: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
-    // Convert proto response to REST response  
+
+    // Convert proto response to REST response
     let metrics = proto_response.metrics.unwrap_or(OperationMetrics {
         total_processed: 0,
         successful_count: 0,
@@ -903,7 +982,7 @@ pub async fn vector_batch(
         wal_write_time_us: 0,
         index_update_time_us: 0,
     });
-    
+
     let response = VectorOperationResponse {
         success: proto_response.success,
         operation: conversions::vector_operation_to_string(proto_response.operation).to_string(),
@@ -921,7 +1000,7 @@ pub async fn vector_batch(
         error_message: proto_response.error_message,
         error_code: proto_response.error_code,
     };
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -938,22 +1017,33 @@ pub async fn vector_search(
         first_query.map(|q| q.vector.clone()).unwrap_or_default(),
         request.top_k as u32,
         None, // TODO: Convert MetadataFilter to serde_json::Map
-        request.include_fields.as_ref().map(|f| f.vector).unwrap_or(false),
-        request.include_fields.as_ref().map(|f| f.metadata).unwrap_or(true),
+        request
+            .include_fields
+            .as_ref()
+            .map(|f| f.vector)
+            .unwrap_or(false),
+        request
+            .include_fields
+            .as_ref()
+            .map(|f| f.metadata)
+            .unwrap_or(true),
     );
-    
+
     // Delegate to unified handlers
-    let proto_response = state.unified_handlers
+    let proto_response = state
+        .unified_handlers
         .handle_vector_search(proto_request)
         .await
         .map_err(|e| {
             tracing::error!("Vector search operation failed: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     // Convert proto response to REST response
     let results = if let Some(search_result) = proto_response.results {
-        search_result.results.into_iter()
+        search_result
+            .results
+            .into_iter()
             .map(|r| SearchVectorRecord {
                 id: r.id.clone(),
                 vector: r.vector,
@@ -969,7 +1059,7 @@ pub async fn vector_search(
     } else {
         vec![]
     };
-    
+
     let metrics = proto_response.metrics.unwrap_or(OperationMetrics {
         total_processed: 0,
         successful_count: 0,
@@ -979,7 +1069,7 @@ pub async fn vector_search(
         wal_write_time_us: 0,
         index_update_time_us: 0,
     });
-    
+
     let response = VectorOperationResponse {
         success: proto_response.success,
         operation: "search".to_string(),
@@ -997,7 +1087,7 @@ pub async fn vector_search(
         error_message: proto_response.error_message,
         error_code: proto_response.error_code,
     };
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -1009,13 +1099,12 @@ pub async fn vector(
 ) -> Result<JsonResponse<VectorGetResponse>, ErrorResponse> {
     let include_vector = params.include_vector.unwrap_or(true);
     let include_metadata = params.include_metadata.unwrap_or(true);
-    
-    match state.unified_handlers.handle_vector(
-        &collection_id,
-        &vector_id,
-        include_vector,
-        include_metadata,
-    ).await {
+
+    match state
+        .unified_handlers
+        .handle_vector(&collection_id, &vector_id, include_vector, include_metadata)
+        .await
+    {
         Ok(response) => {
             if response.success {
                 // Extract the single result from search results
@@ -1024,10 +1113,18 @@ pub async fn vector(
                         let vector_response = VectorGetResponse {
                             id: result.id.clone(),
                             collection_id: collection_id.clone(),
-                            vector: if include_vector { Some(result.vector.clone()) } else { None },
-                            metadata: if include_metadata { 
-                                Some(crate::core::proto_metadata_helper::proto_metadata_to_json(&result.metadata))
-                            } else { None },
+                            vector: if include_vector {
+                                Some(result.vector.clone())
+                            } else {
+                                None
+                            },
+                            metadata: if include_metadata {
+                                Some(crate::core::proto_metadata_helper::proto_metadata_to_json(
+                                    &result.metadata,
+                                ))
+                            } else {
+                                None
+                            },
                             similarity: Some(result.score),
                             // rank removed -  Some(result.rank),
                         };
@@ -1035,35 +1132,42 @@ pub async fn vector(
                     } else {
                         Err(ErrorResponse {
                             status: StatusCode::NOT_FOUND.as_u16(),
-                            message: format!("Vector '{}' not found in collection '{}'", vector_id, collection_id),
+                            message: format!(
+                                "Vector '{}' not found in collection '{}'",
+                                vector_id, collection_id
+                            ),
                             error_code: "NOT_FOUND".to_string(),
                         })
                     }
                 } else {
                     Err(ErrorResponse {
                         status: StatusCode::NOT_FOUND.as_u16(),
-                        message: format!("Vector '{}' not found in collection '{}'", vector_id, collection_id),
+                        message: format!(
+                            "Vector '{}' not found in collection '{}'",
+                            vector_id, collection_id
+                        ),
                         error_code: "NOT_FOUND".to_string(),
                     })
                 }
             } else {
                 Err(ErrorResponse {
                     status: StatusCode::NOT_FOUND.as_u16(),
-                    message: response.error_message.unwrap_or_else(|| format!("Vector '{}' not found", vector_id)),
-                    error_code: response.error_code.unwrap_or_else(|| "NOT_FOUND".to_string()),
+                    message: response
+                        .error_message
+                        .unwrap_or_else(|| format!("Vector '{}' not found", vector_id)),
+                    error_code: response
+                        .error_code
+                        .unwrap_or_else(|| "NOT_FOUND".to_string()),
                 })
             }
         }
-        Err(e) => {
-            Err(ErrorResponse {
-                status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
-                message: format!("Failed to get vector: {}", e),
-                error_code: "INTERNAL_ERROR".to_string(),
-            })
-        }
+        Err(e) => Err(ErrorResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+            message: format!("Failed to get vector: {}", e),
+            error_code: "INTERNAL_ERROR".to_string(),
+        }),
     }
 }
-
 
 /// Execute SQL query endpoint
 pub async fn execute_sql(
@@ -1072,25 +1176,27 @@ pub async fn execute_sql(
 ) -> Result<JsonResponse<SqlQueryResponse>, ErrorResponse> {
     // Track execution time
     let start_time = std::time::Instant::now();
-    
+
     // Delegate to unified handlers
-    match state.unified_handlers.execute_sql_query(
-        request.query,
-        request.parameters,
-        request.collection,
-    ).await {
+    match state
+        .unified_handlers
+        .execute_sql_query(request.query, request.parameters, request.collection)
+        .await
+    {
         Ok(result) => {
             let elapsed_ms = start_time.elapsed().as_millis() as f64;
-            
+
             let response = SqlQueryResponse {
                 rows: result.rows,
-                columns: result.columns.into_iter().map(|(name, _data_type)| ColumnInfo {
-                    name,
-                }).collect(),
+                columns: result
+                    .columns
+                    .into_iter()
+                    .map(|(name, _data_type)| ColumnInfo { name })
+                    .collect(),
                 row_count: result.row_count,
                 execution_time_ms: elapsed_ms,
             };
-            
+
             Ok(JsonResponse(response))
         }
         Err(e) => {
@@ -1110,9 +1216,7 @@ pub async fn metrics(
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     // Delegate to unified handlers
     match state.unified_handlers.metrics().await {
-        Ok(metrics_data) => {
-            Ok(JsonResponse(ApiResponse::success(metrics_data)))
-        }
+        Ok(metrics_data) => Ok(JsonResponse(ApiResponse::success(metrics_data))),
         Err(e) => {
             tracing::error!("Get metrics failed: {:?}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1127,20 +1231,28 @@ pub async fn collection_metrics(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     // Parse query options
-    let include_hints = params.get("include_hints")
+    let include_hints = params
+        .get("include_hints")
         .and_then(|v| v.parse().ok())
         .unwrap_or(false);
-    let _include_history = params.get("include_history")
+    let _include_history = params
+        .get("include_history")
         .and_then(|v| v.parse().ok())
         .unwrap_or(false);
-    
+
     // TODO: Delegate to metrics query service when integrated
-    match state.unified_handlers.collection_metrics(&collection_id, include_hints).await {
-        Ok(metrics_data) => {
-            Ok(JsonResponse(ApiResponse::success(metrics_data)))
-        }
+    match state
+        .unified_handlers
+        .collection_metrics(&collection_id, include_hints)
+        .await
+    {
+        Ok(metrics_data) => Ok(JsonResponse(ApiResponse::success(metrics_data))),
         Err(e) => {
-            tracing::error!("Get collection metrics failed for {}: {:?}", collection_id, e);
+            tracing::error!(
+                "Get collection metrics failed for {}: {:?}",
+                collection_id,
+                e
+            );
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -1153,12 +1265,14 @@ pub async fn query_hints(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     let query_type = params.get("query_type").cloned();
-    
+
     // TODO: Delegate to metrics query service when integrated
-    match state.unified_handlers.query_hints(&collection_id, query_type).await {
-        Ok(hints_data) => {
-            Ok(JsonResponse(ApiResponse::success(hints_data)))
-        }
+    match state
+        .unified_handlers
+        .query_hints(&collection_id, query_type)
+        .await
+    {
+        Ok(hints_data) => Ok(JsonResponse(ApiResponse::success(hints_data))),
         Err(e) => {
             tracing::error!("Get query hints failed for {}: {:?}", collection_id, e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1166,19 +1280,16 @@ pub async fn query_hints(
     }
 }
 
-
 /// Internal flush all collections (testing only) - thin adapter to UnifiedHandlers
 pub async fn internal_flush_all(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
     tracing::warn!("⚠️ INTERNAL FLUSH ENDPOINT CALLED - THIS IS FOR TESTING ONLY");
-    
+
     // Delegate to unified handlers
     match state.unified_handlers.force_flush_all().await {
-        Ok(stats) => {
-            Ok(JsonResponse(ApiResponse::success(stats)))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
+        Ok(stats) => Ok(JsonResponse(ApiResponse::success(stats))),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
@@ -1187,14 +1298,19 @@ pub async fn internal_flush_collection(
     State(state): State<AppState>,
     Path(collection_id): Path<String>,
 ) -> Result<JsonResponse<ApiResponse<serde_json::Value>>, StatusCode> {
-    tracing::warn!("⚠️ INTERNAL FLUSH ENDPOINT CALLED FOR {} - THIS IS FOR TESTING ONLY", collection_id);
-    
+    tracing::warn!(
+        "⚠️ INTERNAL FLUSH ENDPOINT CALLED FOR {} - THIS IS FOR TESTING ONLY",
+        collection_id
+    );
+
     // Delegate to unified handlers
-    match state.unified_handlers.force_flush_collection(&collection_id).await {
-        Ok(stats) => {
-            Ok(JsonResponse(ApiResponse::success(stats)))
-        }
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR)
+    match state
+        .unified_handlers
+        .force_flush_collection(&collection_id)
+        .await
+    {
+        Ok(stats) => Ok(JsonResponse(ApiResponse::success(stats))),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 
@@ -1204,7 +1320,6 @@ pub async fn internal_flush_collection(
 
 /// Convert index config to proto
 fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
-    
     let algorithm = match config.algorithm.as_str() {
         "hnsw" => IndexingAlgorithm::Hnsw as i32,
         "ivf" => IndexingAlgorithm::Ivf as i32,
@@ -1214,14 +1329,14 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         "lsh" => IndexingAlgorithm::Lsh as i32,
         _ => IndexingAlgorithm::Hnsw as i32,
     };
-    
+
     let update_mode = match config.update_mode.as_str() {
         "synchronous" => IndexUpdateMode::Synchronous as i32,
         "asynchronous" => IndexUpdateMode::Asynchronous as i32,
         "hybrid_mode" => IndexUpdateMode::HybridMode as i32,
         _ => IndexUpdateMode::Synchronous as i32,
     };
-    
+
     IndexConfig {
         index_name: config.index_name,
         algorithm,
@@ -1285,8 +1400,8 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         is_primary: config.is_primary.unwrap_or(false),
         use_cases: config.use_cases.clone().unwrap_or_default(),
         selectivity_threshold: config.selectivity_threshold,
-        use_quantization: None,  // Will inherit from collection by default
-        quantization_override: None,  // No quantization override by default
+        use_quantization: None,      // Will inherit from collection by default
+        quantization_override: None, // No quantization override by default
         queue_representation: None,  // Default queue representation
     }
 }
@@ -1299,13 +1414,13 @@ fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> Quant
         match sq.level.level_type.as_str() {
             "pq" | "pq4" | "pq8" | "int8" | "scalar" | "binary" => {
                 crate::proto::proximadb::quantization_config::Strategy::CustomLevels
-            },
+            }
             _ => crate::proto::proximadb::quantization_config::Strategy::SmartDefaults,
         }
     } else {
         crate::proto::proximadb::quantization_config::Strategy::SmartDefaults
     };
-    
+
     QuantizationConfig {
         enabled: config.enabled,
         strategy: strategy as i32,
@@ -1335,7 +1450,6 @@ fn convert_quantization_config_to_proto(config: RestQuantizationConfig) -> Quant
     }
 }
 
-
 /// Convert REST config to proto config
 fn convert_to_proto_config(config: CollectionConfigJson) -> Result<CollectionConfig, StatusCode> {
     // Simply use the to_proto method we already have
@@ -1354,13 +1468,15 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
             x if x == IndexingAlgorithm::Annoy as i32 => "annoy",
             x if x == IndexingAlgorithm::Lsh as i32 => "lsh",
             _ => "hnsw",
-        }.to_string(),
+        }
+        .to_string(),
         update_mode: match config.update_mode {
             x if x == IndexUpdateMode::Synchronous as i32 => "synchronous",
             x if x == IndexUpdateMode::Asynchronous as i32 => "asynchronous",
             x if x == IndexUpdateMode::HybridMode as i32 => "hybrid_mode",
             _ => "synchronous",
-        }.to_string(),
+        }
+        .to_string(),
         async_update_timeout_ms: config.async_update_timeout_ms,
         async_update_batch_size: config.async_update_batch_size.map(|x| x as i32),
         enable_background_optimization: Some(config.enable_background_optimization),
@@ -1412,7 +1528,8 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
                 x if x == RandomProjectionType::Binary as i32 => "binary",
                 x if x == RandomProjectionType::Sparse as i32 => "sparse",
                 _ => "gaussian",
-            }.to_string(),
+            }
+            .to_string(),
         }),
         build_concurrency: config.build_concurrency,
         memory_limit_mb: config.memory_limit_mb,
@@ -1434,10 +1551,21 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
                 enabled: true,
                 level: RestQuantizationLevel {
                     level_type: match config.strategy {
-                        x if x == crate::proto::proximadb::quantization_config::Strategy::Aggressive as i32 => "pq4",
-                        x if x == crate::proto::proximadb::quantization_config::Strategy::Minimal as i32 => "int8",
+                        x if x
+                            == crate::proto::proximadb::quantization_config::Strategy::Aggressive
+                                as i32 =>
+                        {
+                            "pq4"
+                        }
+                        x if x
+                            == crate::proto::proximadb::quantization_config::Strategy::Minimal
+                                as i32 =>
+                        {
+                            "int8"
+                        }
                         _ => "pq8",
-                    }.to_string(),
+                    }
+                    .to_string(),
                     bits: None,
                     scale: None,
                     offset: None,
@@ -1499,7 +1627,7 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
 /// Convert quantization level from proto
 // TODO: Restore when QuantizationLevel and LevelType are available
 /* fn convert_quantization_level_from_proto(level: QuantizationLevel) -> RestQuantizationLevel {
-    
+
     match level.level_type {
         Some(LevelType::None(_)) => RestQuantizationLevel {
             level_type: "none".to_string(),
@@ -1619,30 +1747,36 @@ fn convert_quantization_config_from_proto(config: QuantizationConfig) -> RestQua
 /// Convert proto collection to REST collection
 fn convert_from_proto_collection(proto: ProtoCollection) -> Collection {
     let config = proto.config.clone();
-    
+
     Collection {
         id: proto.id,
-        config: config.map(|c| CollectionConfigJson::from_proto(&c)).unwrap_or_else(|| {
-            // Create a minimal default config if none exists
-            CollectionConfigJson {
-                name: String::new(),
-                dimension: 0,
-                distance_metric: None,
-                storage_engine: None,
-                filterable_columns: None,
-                index_configs: None,
-                quantization: None,
-                storage_config: None,
-                primary_index: None,
-                auto_index_selection: None,
-                description: None,
-                tags: None,
-                owner: None,
-            }
-        }),
+        config: config
+            .map(|c| CollectionConfigJson::from_proto(&c))
+            .unwrap_or_else(|| {
+                // Create a minimal default config if none exists
+                CollectionConfigJson {
+                    name: String::new(),
+                    dimension: 0,
+                    distance_metric: None,
+                    storage_engine: None,
+                    filterable_columns: None,
+                    index_configs: None,
+                    quantization: None,
+                    storage_config: None,
+                    primary_index: None,
+                    auto_index_selection: None,
+                    description: None,
+                    tags: None,
+                    owner: None,
+                }
+            }),
         stats: CollectionStats {
             vector_count: proto.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            index_size_bytes: proto.stats.as_ref().map(|s| s.index_size_bytes).unwrap_or(0),
+            index_size_bytes: proto
+                .stats
+                .as_ref()
+                .map(|s| s.index_size_bytes)
+                .unwrap_or(0),
             data_size_bytes: proto.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
         },
         timestamp: proto.created_at,
@@ -1655,8 +1789,9 @@ pub async fn list_collections(
     State(state): State<AppState>,
 ) -> Result<JsonResponse<ListCollectionsResponse>, ErrorResponse> {
     tracing::info!("📋 REST API: Listing all collections");
-    
-    let collections = state.unified_handlers
+
+    let collections = state
+        .unified_handlers
         .list_collections()
         .await
         .map_err(|e| {
@@ -1667,14 +1802,14 @@ pub async fn list_collections(
                 error_code: "LIST_FAILED".to_string(),
             }
         })?;
-    
+
     // Convert proto Collections to REST response
     let collection_responses: Vec<CollectionInfo> = collections
         .into_iter()
         .map(|c| {
             let config = c.config.as_ref();
             let stats = c.stats.as_ref();
-            
+
             CollectionInfo {
                 id: c.id,
                 name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
@@ -1684,7 +1819,8 @@ pub async fn list_collections(
                     Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
                     Some(x) if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
-                }.to_string(),
+                }
+                .to_string(),
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
@@ -1692,9 +1828,9 @@ pub async fn list_collections(
             }
         })
         .collect();
-    
+
     let total_count = collection_responses.len() as i32;
-    
+
     Ok(JsonResponse(ListCollectionsResponse {
         collections: collection_responses,
         total_count,
@@ -1707,8 +1843,9 @@ pub async fn collection(
     Path(collection_id): Path<String>,
 ) -> Result<JsonResponse<CollectionInfo>, ErrorResponse> {
     tracing::info!("🔍 REST API: Getting collection: {}", collection_id);
-    
-    let collection = state.unified_handlers
+
+    let collection = state
+        .unified_handlers
         .collection(&collection_id)
         .await
         .map_err(|e| {
@@ -1719,12 +1856,12 @@ pub async fn collection(
                 error_code: "GET_FAILED".to_string(),
             }
         })?;
-    
+
     match collection {
         Some(c) => {
             let config = c.config.as_ref();
             let stats = c.stats.as_ref();
-            
+
             let collection_info = CollectionInfo {
                 id: c.id,
                 name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
@@ -1734,7 +1871,8 @@ pub async fn collection(
                     Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
                     Some(x) if x == DistanceMetric::DotProduct as i32 => "dot_product",
                     _ => "cosine",
-                }.to_string(),
+                }
+                .to_string(),
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
                 vector_count: stats.map(|s| s.vector_count),
@@ -1742,13 +1880,11 @@ pub async fn collection(
             };
             Ok(JsonResponse(collection_info))
         }
-        None => {
-            Err(ErrorResponse {
-                status: StatusCode::NOT_FOUND.as_u16(),
-                message: format!("Collection with ID '{}' does not exist", collection_id),
-                error_code: "NOT_FOUND".to_string(),
-            })
-        }
+        None => Err(ErrorResponse {
+            status: StatusCode::NOT_FOUND.as_u16(),
+            message: format!("Collection with ID '{}' does not exist", collection_id),
+            error_code: "NOT_FOUND".to_string(),
+        }),
     }
 }
 
@@ -1758,7 +1894,7 @@ pub async fn delete_collection(
     Path(collection_id): Path<String>,
 ) -> Result<JsonResponse<CollectionResponse>, StatusCode> {
     tracing::info!("🗑️ REST API: Deleting collection: {}", collection_id);
-    
+
     // Create a proto request for delete operation
     let proto_request = CollectionRequest {
         operation: CollectionOperation::CollectionDelete as i32,
@@ -1768,21 +1904,24 @@ pub async fn delete_collection(
         query_params: std::collections::HashMap::new(),
         options: std::collections::HashMap::new(),
     };
-    
+
     // Delegate to unified handlers
-    let proto_response = state.unified_handlers
+    let proto_response = state
+        .unified_handlers
         .handle_collection_operation(proto_request)
         .await
         .map_err(|e| {
             tracing::error!("Collection deletion failed: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     // Convert proto response to REST response
     let response = CollectionResponse {
         success: proto_response.success,
         operation: "delete".to_string(),
-        collection: proto_response.collection.map(|c| convert_from_proto_collection(c)),
+        collection: proto_response
+            .collection
+            .map(|c| convert_from_proto_collection(c)),
         collections: None,
         affected_count: proto_response.affected_count,
         total_count: proto_response.total_count,
@@ -1791,7 +1930,7 @@ pub async fn delete_collection(
         error_code: proto_response.error_code,
         processing_time_us: proto_response.processing_time_us,
     };
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -1801,23 +1940,25 @@ pub async fn delete_vectors(
     Path(collection_id): Path<String>,
     Json(request): Json<serde_json::Value>,
 ) -> Result<JsonResponse<VectorOperationResponse>, StatusCode> {
-    tracing::info!("🗑️ REST API: Batch deleting vectors from collection {}", collection_id);
-    
+    tracing::info!(
+        "🗑️ REST API: Batch deleting vectors from collection {}",
+        collection_id
+    );
+
     // Extract vector IDs from request body
     let vector_ids: Vec<String> = match request.get("ids") {
         Some(ids_value) => {
-            serde_json::from_value(ids_value.clone())
-                .map_err(|_| StatusCode::BAD_REQUEST)?
+            serde_json::from_value(ids_value.clone()).map_err(|_| StatusCode::BAD_REQUEST)?
         }
         None => return Err(StatusCode::BAD_REQUEST),
     };
-    
+
     // Create tombstone vector records with expires_at set to mark for deletion
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-    
+
     let tombstone_vectors: Vec<VectorRecord> = vector_ids
         .into_iter()
         .map(|id| VectorRecord {
@@ -1829,10 +1970,10 @@ pub async fn delete_vectors(
             expires_at: Some((current_time / 1000) as u32), // Mark for deletion (convert ms to seconds)
             version: Some(1),
             quantized_vector: None,
-            source: None,  // No source for tombstone
+            source: None, // No source for tombstone
         })
         .collect();
-    
+
     // Create a proto request for batch operation with tombstone vectors
     let proto_request = VectorBatchRequest {
         collection_id: collection_id.clone(),
@@ -1840,16 +1981,17 @@ pub async fn delete_vectors(
         batch_timeout_ms: None,
         request_id: None,
     };
-    
+
     // Delegate to unified handlers
-    let proto_response = state.unified_handlers
+    let proto_response = state
+        .unified_handlers
         .handle_vector_batch(proto_request)
         .await
         .map_err(|e| {
             tracing::error!("Batch vector deletion failed: {:?}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    
+
     // Convert proto response to REST response
     let metrics = proto_response.metrics.unwrap_or(OperationMetrics {
         total_processed: 0,
@@ -1860,7 +2002,7 @@ pub async fn delete_vectors(
         wal_write_time_us: 0,
         index_update_time_us: 0,
     });
-    
+
     let response = VectorOperationResponse {
         success: proto_response.success,
         operation: "delete".to_string(),
@@ -1878,7 +2020,7 @@ pub async fn delete_vectors(
         error_message: proto_response.error_message,
         error_code: proto_response.error_code,
     };
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -1887,9 +2029,17 @@ pub async fn debug_list_unflushed_vectors(
     State(state): State<AppState>,
     Path(collection_id): Path<String>,
 ) -> Result<JsonResponse<serde_json::Value>, ErrorResponse> {
-    tracing::info!("🔍 DEBUG REST: Listing unflushed vectors for collection: {}", collection_id);
-    
-    match state.unified_handlers.vector_operations_service.debug_list_all_unflushed_vectors(&collection_id).await {
+    tracing::info!(
+        "🔍 DEBUG REST: Listing unflushed vectors for collection: {}",
+        collection_id
+    );
+
+    match state
+        .unified_handlers
+        .vector_operations_service
+        .debug_list_all_unflushed_vectors(&collection_id)
+        .await
+    {
         Ok(vectors) => {
             let debug_info = serde_json::json!({
                 "collection_id": collection_id,
@@ -1905,7 +2055,7 @@ pub async fn debug_list_unflushed_vectors(
                     })).collect::<Vec<_>>()
                 })).collect::<Vec<_>>()
             });
-            
+
             Ok(JsonResponse(debug_info))
         }
         Err(e) => {
@@ -1925,4 +2075,3 @@ mod handlers_metadata_test;
 #[cfg(test)]
 mod handlers_simple_test;
 // Note: Tests now use real UnifiedHandlers instance for integration testing
-

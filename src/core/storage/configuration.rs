@@ -1,8 +1,8 @@
 //! Storage configuration types
 
-use serde::{Deserialize, Serialize};
-use crate::core::foundation::BaseConfig;
 use super::{CompressionConfig, StorageEngine};
+use crate::core::foundation::BaseConfig;
+use serde::{Deserialize, Serialize};
 
 /// Unified storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,11 +39,11 @@ impl BaseConfig for UnifiedStorageConfig {
         if self.data_dirs.is_empty() {
             return Err("At least one data directory must be specified".to_string());
         }
-        
+
         if self.max_file_size_mb == 0 {
             return Err("Max file size must be greater than 0".to_string());
         }
-        
+
         self.compression.validate()?;
         Ok(())
     }

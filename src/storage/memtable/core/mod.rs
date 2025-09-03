@@ -100,8 +100,8 @@ pub struct MemtableConfig {
 impl Default for MemtableConfig {
     fn default() -> Self {
         Self {
-            max_size_bytes: 64 * 1024 * 1024,        // 64MB
-            flush_threshold_bytes: 2 * 1024 * 1024,  // 2MB - reduced for faster recovery as per CLAUDE.md
+            max_size_bytes: 64 * 1024 * 1024,       // 64MB
+            flush_threshold_bytes: 2 * 1024 * 1024, // 2MB - reduced for faster recovery as per CLAUDE.md
             enable_mvcc: true,
             mvcc_cleanup_interval_secs: 300, // 5 minutes
             max_versions_per_key: 10,

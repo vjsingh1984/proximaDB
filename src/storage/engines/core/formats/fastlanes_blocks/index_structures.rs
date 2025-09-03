@@ -3,35 +3,37 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::core::bloom::{SstableBloomFilter, BloomFilterConfig as SstBloomConfig, BloomFilterBuilder};
 use super::block_structures::{BlockLocation, FastLanesDataBlock};
+use crate::core::bloom::{
+    BloomFilterBuilder, BloomFilterConfig as SstBloomConfig, SstableBloomFilter,
+};
 
 /// Row-based ID indexing with multiple strategies
 pub struct RowBasedIdIndex {
     /// Index strategy
     index_type: Index,
-    
+
     /// Primary index structures
     btree_index: BTreeMap<String, BlockLocation>,
     hash_index: HashMap<String, BlockLocation>,
     dense_index: Option<DenseIndex>,
-    
+
     /// Hierarchical levels
     hierarchical_levels: Vec<HierarchicalLevel>,
-    
+
     /// Bloom filter builders for existence checks (built during construction)
     bloom_filter_builders: Vec<BloomFilterBuilder>,
     /// Final bloom filters (created after construction)
     bloom_filters: Vec<SstableBloomFilter>,
-    
+
     /// Index statistics
     statistics: IndexStatistics,
-    
+
     /// Configuration
     config: IndexConfiguration,
 }
@@ -74,13 +76,13 @@ pub struct HierarchicalConfig {
 pub struct DenseIndex {
     /// Direct array mapping ID to location
     locations: Vec<Option<BlockLocation>>,
-    
+
     /// Sparse regions tracking
     sparse_regions: HashMap<u64, SparseRegion>,
-    
+
     /// Configuration
     config: DenseIndexConfig,
-    
+
     /// Current capacity and growth
     current_capacity: u64,
     next_id: u64,
@@ -171,15 +173,15 @@ pub struct IndexConfiguration {
     pub index_type: Index,
     pub compression: bool,
     pub enable_caching: bool,
-    
+
     /// Bloom filter settings
     pub bloom_config: BloomFilterConfig,
-    
+
     /// Performance settings
     pub max_memory_usage: usize,
     pub concurrent_access_limit: usize,
     pub maintenance_interval_ms: u64,
-    
+
     /// Hierarchical settings
     pub max_levels: u8,
     pub level_switch_threshold: u64,
@@ -227,14 +229,14 @@ pub struct EntryMetadata {
 pub struct HierarchicalIndex {
     /// All levels in the hierarchy
     levels: Vec<HierarchicalLevel>,
-    
+
     /// Configuration
     config: HierarchicalConfig,
-    
+
     /// Current state
     current_height: u8,
     total_entries: u64,
-    
+
     /// Maintenance state
     last_rebalance: i64,
     needs_rebalancing: bool,
@@ -245,16 +247,16 @@ pub struct HierarchicalIndex {
 pub struct MultiLevelIndex {
     /// Primary fast index (hash)
     primary_index: HashMap<String, BlockLocation>,
-    
+
     /// Secondary sorted index (B+ tree)
     secondary_index: BTreeMap<String, BlockLocation>,
-    
+
     /// Tertiary hierarchical index for range queries
     hierarchical_index: Option<HierarchicalIndex>,
-    
+
     /// Bloom filters at each level
     bloom_filters: Vec<SstableBloomFilter>,
-    
+
     /// Index selection statistics
     access_patterns: HashMap<String, AccessPattern>,
 }
@@ -291,7 +293,7 @@ impl RowBasedIdIndex {
             };
             bloom_filter_builders.push(BloomFilterBuilder::new(bloom_config));
         }
-        
+
         let mut index = Self {
             index_type: index_type.clone(),
             btree_index: BTreeMap::new(),
@@ -303,7 +305,7 @@ impl RowBasedIdIndex {
             statistics: IndexStatistics::default(),
             config,
         };
-        
+
         // Initialize specific index structures based on type
         match index_type {
             Index::Dense(dense_config) => {
@@ -316,22 +318,22 @@ impl RowBasedIdIndex {
                 // Default initialization for other types
             }
         }
-        
+
         index
     }
-    
+
     /// Build final bloom filters from builders (call after all insertions)
     pub fn finalize_bloom_filters(&mut self) -> Result<()> {
         // Move builders out and build final filters
         let builders = std::mem::take(&mut self.bloom_filter_builders);
-        
+
         for builder in builders {
             // Build the strategy
             let strategy = builder.build();
-            
+
             // Serialize the strategy to get the data
             let serialized = strategy.serialize()?;
-            
+
             // Create SstableBloomFilter with the serialized data
             // Using default config and empty metadata filter for now
             let bloom_config = SstBloomConfig::default();
@@ -342,20 +344,20 @@ impl RowBasedIdIndex {
                 Vec::new(), // Empty metadata filter data
                 stats,
             );
-            
+
             self.bloom_filters.push(sstable_bloom);
         }
-        
+
         Ok(())
     }
-    
+
     /// Insert an entry into the index
     pub async fn insert(&mut self, key: String, location: BlockLocation) -> Result<()> {
         // Update bloom filter builders
         for builder in &mut self.bloom_filter_builders {
             builder.add(key.as_bytes());
         }
-        
+
         // Insert into appropriate index structures
         match &self.index_type {
             Index::BTree => {
@@ -377,11 +379,11 @@ impl RowBasedIdIndex {
                 self.insert_hierarchical(key, location).await?;
             }
         }
-        
+
         self.statistics.total_entries += 1;
         Ok(())
     }
-    
+
     /// Lookup an entry in the index
     pub async fn lookup(&self, key: &str) -> Option<BlockLocation> {
         // Quick bloom filter check
@@ -394,7 +396,7 @@ impl RowBasedIdIndex {
                 return None;
             }
         }
-        
+
         // Lookup in appropriate index
         match &self.index_type {
             Index::BTree => self.btree_index.get(key).cloned(),
@@ -410,12 +412,10 @@ impl RowBasedIdIndex {
                     None
                 }
             }
-            Index::Hierarchical(_) => {
-                self.lookup_hierarchical(key).await
-            }
+            Index::Hierarchical(_) => self.lookup_hierarchical(key).await,
         }
     }
-    
+
     /// Range lookup for sorted access
     pub async fn range_lookup(
         &self,
@@ -424,15 +424,15 @@ impl RowBasedIdIndex {
         limit: usize,
     ) -> Vec<(String, BlockLocation)> {
         match &self.index_type {
-            Index::BTree | Index::Hybrid => {
-                self.btree_index
-                    .range(start_key.to_string()..=end_key.to_string())
-                    .take(limit)
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect()
-            }
+            Index::BTree | Index::Hybrid => self
+                .btree_index
+                .range(start_key.to_string()..=end_key.to_string())
+                .take(limit)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             Index::Hierarchical(_) => {
-                self.range_lookup_hierarchical(start_key, end_key, limit).await
+                self.range_lookup_hierarchical(start_key, end_key, limit)
+                    .await
             }
             _ => {
                 // For non-sorted indexes, fall back to full scan
@@ -440,7 +440,7 @@ impl RowBasedIdIndex {
             }
         }
     }
-    
+
     /// Initialize hierarchical index
     fn initialize_hierarchical_index(&mut self, config: HierarchicalConfig) {
         for level in 0..config.levels {
@@ -460,7 +460,7 @@ impl RowBasedIdIndex {
                     bloom_signatures: Vec::new(),
                 }),
             };
-            
+
             let bloom_filter = if config.bloom_per_level {
                 Some(SstableBloomFilter::new(
                     crate::core::config::BloomFilterConfig::default(),
@@ -471,7 +471,7 @@ impl RowBasedIdIndex {
             } else {
                 None
             };
-            
+
             self.hierarchical_levels.push(HierarchicalLevel {
                 level,
                 index: level_index,
@@ -480,7 +480,7 @@ impl RowBasedIdIndex {
             });
         }
     }
-    
+
     /// Insert into hierarchical index
     async fn insert_hierarchical(&mut self, key: String, location: BlockLocation) -> Result<()> {
         // Insert at leaf level first
@@ -489,12 +489,12 @@ impl RowBasedIdIndex {
                 leaf.entries.insert(key.clone(), location.clone());
             }
         }
-        
+
         // Propagate up the hierarchy if needed
         // This is a simplified version - production would need proper tree balancing
         Ok(())
     }
-    
+
     /// Lookup in hierarchical index
     async fn lookup_hierarchical(&self, key: &str) -> Option<BlockLocation> {
         // Start from root and navigate down
@@ -504,7 +504,7 @@ impl RowBasedIdIndex {
                     continue;
                 }
             }
-            
+
             match &level.index {
                 HierarchicalLevelIndex::Leaf(leaf) => {
                     if let Some(location) = leaf.entries.get(key) {
@@ -520,10 +520,10 @@ impl RowBasedIdIndex {
                 }
             }
         }
-        
+
         None
     }
-    
+
     /// Range lookup in hierarchical index
     async fn range_lookup_hierarchical(
         &self,
@@ -534,7 +534,7 @@ impl RowBasedIdIndex {
         // Simplified implementation - would need proper range navigation
         Vec::new()
     }
-    
+
     /// Get index statistics
     pub fn get_statistics(&self) -> &IndexStatistics {
         &self.statistics
@@ -551,37 +551,42 @@ impl DenseIndex {
             config,
         }
     }
-    
+
     pub async fn insert(&mut self, key: &str, location: BlockLocation) -> Result<()> {
         // Try to parse key as numeric ID
         if let Ok(id) = key.parse::<u64>() {
             if id >= self.config.start_id && id < self.config.start_id + self.config.max_capacity {
                 let index = (id - self.config.start_id) as usize;
-                
+
                 // Grow array if needed
                 if index >= self.locations.len() {
                     self.locations.resize(index + 1, None);
                 }
-                
+
                 self.locations[index] = Some(location);
                 return Ok(());
             }
         }
-        
+
         // Fallback to sparse region
         if self.config.enable_sparse_regions {
             // For simplicity, use a single sparse region
-            let sparse_region = self.sparse_regions.entry(0).or_insert_with(|| SparseRegion {
-                start_id: 0,
-                end_id: u64::MAX,
-                fallback_index: BTreeMap::new(),
-            });
-            sparse_region.fallback_index.insert(key.to_string(), location);
+            let sparse_region = self
+                .sparse_regions
+                .entry(0)
+                .or_insert_with(|| SparseRegion {
+                    start_id: 0,
+                    end_id: u64::MAX,
+                    fallback_index: BTreeMap::new(),
+                });
+            sparse_region
+                .fallback_index
+                .insert(key.to_string(), location);
         }
-        
+
         Ok(())
     }
-    
+
     pub async fn lookup(&self, key: &str) -> Option<BlockLocation> {
         // Try dense lookup first
         if let Ok(id) = key.parse::<u64>() {
@@ -592,14 +597,14 @@ impl DenseIndex {
                 }
             }
         }
-        
+
         // Check sparse regions
         for sparse_region in self.sparse_regions.values() {
             if let Some(location) = sparse_region.fallback_index.get(key) {
                 return Some(location.clone());
             }
         }
-        
+
         None
     }
 }
@@ -650,7 +655,7 @@ impl Default for BloomFilterConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            false_positive_rate: 0.01, // 1%
+            false_positive_rate: 0.01,     // 1%
             max_items_per_filter: 1000000, // 1M items
             per_block_filters: true,
             hierarchical_filters: true,
@@ -662,12 +667,12 @@ impl Default for BloomFilterConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_btree_index_operations() {
         let config = IndexConfiguration::default();
         let mut index = RowBasedIdIndex::new(Index::BTree, config);
-        
+
         let location = BlockLocation {
             superblock_id: 1,
             block_id: Uuid::new_v4(),
@@ -675,14 +680,17 @@ mod tests {
             record_offset: 0,
             estimated_load_time_ms: 1.0,
         };
-        
-        index.insert("test_key".to_string(), location.clone()).await.unwrap();
-        
+
+        index
+            .insert("test_key".to_string(), location.clone())
+            .await
+            .unwrap();
+
         let result = index.lookup("test_key").await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().superblock_id, 1);
     }
-    
+
     #[tokio::test]
     async fn test_dense_index_operations() {
         let dense_config = DenseIndexConfig {
@@ -691,14 +699,14 @@ mod tests {
             growth_factor: 1.5,
             enable_sparse_regions: true,
         };
-        
+
         let config = IndexConfiguration {
             index_type: Index::Dense(dense_config),
             ..Default::default()
         };
-        
+
         let mut index = RowBasedIdIndex::new(config.index_type.clone(), config);
-        
+
         let location = BlockLocation {
             superblock_id: 1,
             block_id: Uuid::new_v4(),
@@ -706,23 +714,29 @@ mod tests {
             record_offset: 0,
             estimated_load_time_ms: 1.0,
         };
-        
+
         // Test numeric ID
-        index.insert("42".to_string(), location.clone()).await.unwrap();
+        index
+            .insert("42".to_string(), location.clone())
+            .await
+            .unwrap();
         let result = index.lookup("42").await;
         assert!(result.is_some());
-        
+
         // Test non-numeric ID (should go to sparse region)
-        index.insert("non_numeric".to_string(), location.clone()).await.unwrap();
+        index
+            .insert("non_numeric".to_string(), location.clone())
+            .await
+            .unwrap();
         let result = index.lookup("non_numeric").await;
         assert!(result.is_some());
     }
-    
+
     #[tokio::test]
     async fn test_hybrid_index_operations() {
         let config = IndexConfiguration::default();
         let mut index = RowBasedIdIndex::new(Index::Hybrid, config);
-        
+
         let location = BlockLocation {
             superblock_id: 1,
             block_id: Uuid::new_v4(),
@@ -730,15 +744,24 @@ mod tests {
             record_offset: 0,
             estimated_load_time_ms: 1.0,
         };
-        
-        index.insert("key1".to_string(), location.clone()).await.unwrap();
-        index.insert("key2".to_string(), location.clone()).await.unwrap();
-        index.insert("key3".to_string(), location.clone()).await.unwrap();
-        
+
+        index
+            .insert("key1".to_string(), location.clone())
+            .await
+            .unwrap();
+        index
+            .insert("key2".to_string(), location.clone())
+            .await
+            .unwrap();
+        index
+            .insert("key3".to_string(), location.clone())
+            .await
+            .unwrap();
+
         // Test point lookup
         let result = index.lookup("key2").await;
         assert!(result.is_some());
-        
+
         // Test range lookup
         let range_results = index.range_lookup("key1", "key3", 10).await;
         assert_eq!(range_results.len(), 3);

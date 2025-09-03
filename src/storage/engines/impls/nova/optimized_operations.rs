@@ -1,21 +1,19 @@
 // Optimized operations for VIPER dual-mode using existing infrastructure
 // Leverages columnar format, memory pools, and hardware acceleration
 
-use anyhow::{anyhow, Result};
-use arrow_array::{ArrayRef, Float32Array, BinaryArray, RecordBatch};
+use anyhow::{Result, anyhow};
+use arrow_array::{ArrayRef, BinaryArray, Float32Array, RecordBatch};
 // Arrow compute not available, would need full arrow crate
 // use arrow::compute::kernels::aggregate;
+use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
+use crate::core::{
+    VectorRecord,
+    hardware_capabilities::{HardwareBackend, HardwareCapabilities},
+    memory::pool::{Pool, PoolConfig, VectorMemoryPool},
+};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use std::sync::Arc;
 use tracing::{debug, info};
-use crate::core::{
-    hardware_capabilities::{HardwareCapabilities, HardwareBackend},
-    memory::pool::{Pool, PoolConfig, VectorMemoryPool},
-    VectorRecord,
-};
-use crate::compute::distance_computation::{
-    UnifiedDistanceCompute, DistanceMetric, DistanceMode,
-};
 // Memory-mapped Parquet operations would be imported here
 // For now, we'll use placeholder types
 struct MmapParquetReader;
@@ -32,11 +30,11 @@ impl MmapParquetReader {
     fn open(_path: &str) -> Result<Self> {
         Ok(Self)
     }
-    
+
     fn advise_sequential(&self) -> Result<()> {
         Ok(())
     }
-    
+
     fn read_row_group(&self, _idx: usize) -> Result<&[u8]> {
         Ok(&[])
     }
@@ -44,8 +42,8 @@ impl MmapParquetReader {
 
 // NovaFile type to be defined when integration is complete
 // use super::NovaFile;
-use crate::storage::engines::core::formats::columnar::SearchCandidate;
 use super::columnar_search::ColumnarSearchConfig;
+use crate::storage::engines::core::formats::columnar::SearchCandidate;
 
 /// Optimized VIPER operations using existing infrastructure
 pub struct OptimizedNovaOperations {
@@ -69,7 +67,7 @@ impl OptimizedNovaOperations {
         let distance_compute = UnifiedDistanceCompute::default();
         let vector_pool = Arc::new(VectorMemoryPool::new());
         let mmap_pool = Arc::new(MmapPool::new(50));
-        
+
         Ok(Self {
             hardware,
             distance_compute,
@@ -79,7 +77,7 @@ impl OptimizedNovaOperations {
             enable_projection: true,
         })
     }
-    
+
     /// Optimized columnar search with hardware acceleration
     pub async fn search_columnar_optimized(
         &self,
@@ -89,34 +87,34 @@ impl OptimizedNovaOperations {
         top_k: usize,
         config: ColumnarSearchConfig,
     ) -> Result<Vec<VectorRecord>> {
-        info!(
-            "Starting optimized columnar search with hardware capabilities"
-        );
-        
+        info!("Starting optimized columnar search with hardware capabilities");
+
         // TODO: Nova file integration pending
         return Err(anyhow::anyhow!("Nova file integration not yet implemented"));
-        
+
         #[allow(unreachable_code)]
         {
-        // Build projection mask for needed columns only
-        let projection = if self.enable_projection {
-            self.build_projection_mask(&config)
-        } else {
-            vec![]
-        };
-        
-        // Create placeholder nova_file until proper integration
-        let nova_file = ();  // Placeholder
-        
-        // Phase 1: Row group pruning using statistics
-        // TODO: Pass parquet metadata when available
-        let candidate_row_groups = vec![0]; // Placeholder until metadata is available
-        debug!("Pruned to {} row groups", candidate_row_groups.len());
-        // Phase 2: Columnar filtering with SIMD
-        // TODO: Pass parquet metadata when available
-        // TODO: This should use actual Parquet metadata
-        // For now, return an error since we can't create valid metadata
-        return Err(anyhow::anyhow!("Cannot create FileMetaData without proper schema"));
+            // Build projection mask for needed columns only
+            let projection = if self.enable_projection {
+                self.build_projection_mask(&config)
+            } else {
+                vec![]
+            };
+
+            // Create placeholder nova_file until proper integration
+            let nova_file = (); // Placeholder
+
+            // Phase 1: Row group pruning using statistics
+            // TODO: Pass parquet metadata when available
+            let candidate_row_groups = vec![0]; // Placeholder until metadata is available
+            debug!("Pruned to {} row groups", candidate_row_groups.len());
+            // Phase 2: Columnar filtering with SIMD
+            // TODO: Pass parquet metadata when available
+            // TODO: This should use actual Parquet metadata
+            // For now, return an error since we can't create valid metadata
+            return Err(anyhow::anyhow!(
+                "Cannot create FileMetaData without proper schema"
+            ));
         }
     }
     /// Prune row groups using Parquet statistics
@@ -129,7 +127,7 @@ impl OptimizedNovaOperations {
         let candidate_groups = vec![0]; // Placeholder
         Ok(candidate_groups)
     }
-    
+
     /// Columnar filtering using SIMD operations
     async fn columnar_filter_simd(
         &self,
@@ -149,21 +147,22 @@ impl OptimizedNovaOperations {
         for &rg_idx in row_groups {
             // Would load quantized columns and process with SIMD
             // UnifiedDistanceCompute handles the acceleration
-            
-            for row_offset in 0..100 {  // Simplified
+
+            for row_offset in 0..100 {
+                // Simplified
                 candidates.push(SearchCandidate {
                     row_group_id: rg_idx,
                     row_offset,
                     similarity: 0.0,
                     vector_id: None,
                 });
-                
+
                 if candidates.len() >= n_candidates {
                     break;
                 }
             }
         }
-        
+
         candidates.truncate(n_candidates);
         Ok(candidates)
     }
@@ -177,11 +176,12 @@ impl OptimizedNovaOperations {
         // Group by row group for efficient column reading
         let mut grouped = std::collections::HashMap::new();
         for candidate in candidates {
-            grouped.entry(candidate.row_group_id)
+            grouped
+                .entry(candidate.row_group_id)
                 .or_insert_with(Vec::new)
                 .push(candidate.row_offset);
         }
-        
+
         let mut all_results = Vec::new();
         // Process each row group
         for (rg_idx, row_offsets) in grouped {
@@ -198,27 +198,30 @@ impl OptimizedNovaOperations {
             // Create records
             for (idx, (vec, dist)) in vectors.iter().zip(distances.iter()).enumerate() {
                 if idx < row_offsets.len() {
-                    all_results.push((VectorRecord {
-                        id: format!("rg{}_row{}", rg_idx, row_offsets[idx]),
-                        vector: vec.clone(),
-                        metadata: Default::default(),
-                        timestamp: 0,
-                        updated_at: None,
-                        quantized_vector: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
-                    }, dist.rank_value));
+                    all_results.push((
+                        VectorRecord {
+                            id: format!("rg{}_row{}", rg_idx, row_offsets[idx]),
+                            vector: vec.clone(),
+                            metadata: Default::default(),
+                            timestamp: 0,
+                            updated_at: None,
+                            quantized_vector: None,
+                            expires_at: None,
+                            version: None,
+                            source: None,
+                        },
+                        dist.rank_value,
+                    ));
                 }
             }
         }
-        
+
         // Sort and take top-k
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
         Ok(all_results)
     }
-    
+
     /// Load vectors from columnar storage
     async fn load_vectors_columnar(
         &self,
@@ -244,7 +247,7 @@ impl OptimizedNovaOperations {
         // Return normalized mode for consistency
         DistanceMode::Normalized
     }
-    
+
     /// Build projection mask for column selection
     fn build_projection_mask(&self, config: &ColumnarSearchConfig) -> Vec<String> {
         let mut columns = vec!["id".to_string(), "vector".to_string()];
@@ -261,18 +264,15 @@ impl OptimizedNovaOperations {
 }
 
 /// Memory-mapped Parquet reading for efficiency
-pub async fn read_row_group_mmap(
-    parquet_path: &str,
-    row_group_idx: usize,
-) -> Result<RecordBatch> {
-        // Get memory-mapped reader from pool
-        let mmap_reader = MmapParquetReader::open(parquet_path)?;
-        // Advise kernel about access pattern
-        mmap_reader.advise_sequential()?;
-        // Read row group directly from memory
-        let rg_data = mmap_reader.read_row_group(row_group_idx)?;
-        // Parse into RecordBatch (placeholder)
-        parse_row_group(rg_data)
+pub async fn read_row_group_mmap(parquet_path: &str, row_group_idx: usize) -> Result<RecordBatch> {
+    // Get memory-mapped reader from pool
+    let mmap_reader = MmapParquetReader::open(parquet_path)?;
+    // Advise kernel about access pattern
+    mmap_reader.advise_sequential()?;
+    // Read row group directly from memory
+    let rg_data = mmap_reader.read_row_group(row_group_idx)?;
+    // Parse into RecordBatch (placeholder)
+    parse_row_group(rg_data)
 }
 
 /// Optimized batch ID lookup using columnar format
@@ -287,32 +287,29 @@ pub async fn batch_id_lookup_optimized(
     let mut grouped = std::collections::HashMap::new();
     for (id, maybe_loc) in ids.iter().zip(locations.iter()) {
         if let Some(loc) = maybe_loc {
-            grouped.entry(loc.0)  // row_group_id
+            grouped
+                .entry(loc.0) // row_group_id
                 .or_insert_with(Vec::new)
-                .push((id.clone(), loc.1));  // row_offset
+                .push((id.clone(), loc.1)); // row_offset
         }
     }
-    
+
     let mut results = Vec::new();
-        // Process each row group with projection
-        for (rg_idx, id_offsets) in grouped {
-            // Project only needed columns
-            let projection = vec!["id".to_string(), "vector".to_string()];
-            // Load row group with projection
-            let batch = load_row_group_projected(
-                _parquet_metadata,
-                rg_idx,
-                &projection,
-            ).await?;
-            // Extract specific rows
-            for (id, offset) in id_offsets {
-                if let Some(record) = extract_record(&batch, offset) {
-                    results.push(record);
-                }
+    // Process each row group with projection
+    for (rg_idx, id_offsets) in grouped {
+        // Project only needed columns
+        let projection = vec!["id".to_string(), "vector".to_string()];
+        // Load row group with projection
+        let batch = load_row_group_projected(_parquet_metadata, rg_idx, &projection).await?;
+        // Extract specific rows
+        for (id, offset) in id_offsets {
+            if let Some(record) = extract_record(&batch, offset) {
+                results.push(record);
             }
         }
-        
-        Ok(results)
+    }
+
+    Ok(results)
 }
 
 /// Load row group with column projection
@@ -352,15 +349,21 @@ impl ColumnarStats {
         if self.row_groups_scanned + self.row_groups_pruned == 0 {
             0.0
         } else {
-            self.row_groups_pruned as f64 / (self.row_groups_scanned + self.row_groups_pruned) as f64
+            self.row_groups_pruned as f64
+                / (self.row_groups_scanned + self.row_groups_pruned) as f64
         }
     }
-    
+
     pub fn print_summary(&self) {
         info!("📊 Columnar Operation Statistics:");
-        info!("   Row groups: {} scanned, {} pruned", 
-            self.row_groups_scanned, self.row_groups_pruned);
-        info!("   Pruning efficiency: {:.1}%", self.pruning_efficiency() * 100.0);
+        info!(
+            "   Row groups: {} scanned, {} pruned",
+            self.row_groups_scanned, self.row_groups_pruned
+        );
+        info!(
+            "   Pruning efficiency: {:.1}%",
+            self.pruning_efficiency() * 100.0
+        );
         info!("   Columns projected: {}", self.columns_projected);
         info!("   Predicates pushed: {}", self.predicates_pushed);
         info!("   Vectors processed: {}", self.vectors_processed);
@@ -385,7 +388,7 @@ mod tests {
         let mode = ops.select_compute_mode(&large_vectors);
         assert_eq!(mode, DistanceMode::Normalized);
     }
-    
+
     #[test]
     fn test_projection_mask() {
         let config = ColumnarSearchConfig {
@@ -394,7 +397,7 @@ mod tests {
             pq_expansion: 2,
             ..Default::default()
         };
-        
+
         let ops = OptimizedNovaOperations::new().unwrap();
         let projection = ops.build_projection_mask(&config);
         assert!(projection.contains(&"id".to_string()));

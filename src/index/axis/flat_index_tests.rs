@@ -13,7 +13,7 @@ mod tests {
     use crate::core::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
-use tracing::{debug, error, info};
+    use tracing::{debug, error, info};
 
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         VectorRecord {
@@ -32,13 +32,12 @@ use tracing::{debug, error, info};
 
     fn calculate_distance(v1: &[f32], v2: &[f32], metric: DistanceMetric) -> f32 {
         match metric {
-            DistanceMetric::Euclidean => {
-                v1.iter()
-                    .zip(v2.iter())
-                    .map(|(a, b)| (a - b).powi(2))
-                    .sum::<f32>()
-                    .sqrt()
-            }
+            DistanceMetric::Euclidean => v1
+                .iter()
+                .zip(v2.iter())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f32>()
+                .sqrt(),
             DistanceMetric::Cosine => {
                 let dot: f32 = v1.iter().zip(v2.iter()).map(|(a, b)| a * b).sum();
                 let norm1: f32 = v1.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -48,12 +47,7 @@ use tracing::{debug, error, info};
             DistanceMetric::DotProduct => {
                 -v1.iter().zip(v2.iter()).map(|(a, b)| a * b).sum::<f32>()
             }
-            DistanceMetric::Manhattan => {
-                v1.iter()
-                    .zip(v2.iter())
-                    .map(|(a, b)| (a - b).abs())
-                    .sum()
-            }
+            DistanceMetric::Manhattan => v1.iter().zip(v2.iter()).map(|(a, b)| (a - b).abs()).sum(),
             _ => panic!("Unsupported distance metric for test"),
         }
     }
@@ -94,9 +88,9 @@ use tracing::{debug, error, info};
 
         // Verify the exact nearest neighbors
         assert_eq!(top_k.len(), k);
-        assert_eq!(top_k[0].0, "vec2");  // Closest to 0.6 is 0.5
-        assert_eq!(top_k[1].0, "vec4");  // Next closest is 0.75
-        assert_eq!(top_k[2].0, "vec5");  // Then 0.25
+        assert_eq!(top_k[0].0, "vec2"); // Closest to 0.6 is 0.5
+        assert_eq!(top_k[1].0, "vec4"); // Next closest is 0.75
+        assert_eq!(top_k[2].0, "vec5"); // Then 0.25
     }
 
     #[tokio::test]
@@ -115,7 +109,7 @@ use tracing::{debug, error, info};
                 vec![1.0, 0.0, 0.0],
                 vec![0.0, 1.0, 0.0],
                 vec![0.0, 0.0, 1.0],
-                vec![0.577, 0.577, 0.577],  // Normalized [1,1,1]
+                vec![0.577, 0.577, 0.577], // Normalized [1,1,1]
             ];
 
             let query = vec![1.0, 1.0, 0.0];
@@ -132,8 +126,11 @@ use tracing::{debug, error, info};
 
             distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
-            debug!("Metric {:?}: nearest vector index = {}", metric, distances[0].0);
-            
+            debug!(
+                "Metric {:?}: nearest vector index = {}",
+                metric, distances[0].0
+            );
+
             // Different metrics should give different results
             match metric {
                 DistanceMetric::Euclidean | DistanceMetric::Manhattan => {
@@ -174,7 +171,7 @@ use tracing::{debug, error, info};
 
                 // Measure search time
                 let start = Instant::now();
-                
+
                 // Brute force search
                 let _distances: Vec<f32> = vectors
                     .iter()
@@ -183,10 +180,7 @@ use tracing::{debug, error, info};
 
                 let elapsed = start.elapsed();
 
-                debug!(
-                    "FLAT search: {} vectors, {} dim = {:?}",
-                    size, dim, elapsed
-                );
+                debug!("FLAT search: {} vectors, {} dim = {:?}", size, dim, elapsed);
 
                 // Search time should scale linearly with dataset size
                 // This is the key characteristic of FLAT index
@@ -197,13 +191,13 @@ use tracing::{debug, error, info};
     #[tokio::test]
     async fn test_flat_memory_usage() {
         // FLAT index stores all vectors without compression
-        let dimension = 768;  // Common embedding dimension
+        let dimension = 768; // Common embedding dimension
         let counts = vec![1000, 10000, 100000];
 
         for count in counts {
             // Calculate exact memory usage
-            let vector_memory = count * dimension * 4;  // 4 bytes per float
-            let index_overhead = count * 64;  // Estimated metadata per vector
+            let vector_memory = count * dimension * 4; // 4 bytes per float
+            let index_overhead = count * 64; // Estimated metadata per vector
             let total_memory = vector_memory + index_overhead;
 
             debug!(
@@ -233,11 +227,11 @@ use tracing::{debug, error, info};
 
         // Add new vector - should be immediately searchable
         let new_id = "new_vec".to_string();
-        let new_values = vec![0.545; dimension];  // Closer to query than vec_54 or vec_55
+        let new_values = vec![0.545; dimension]; // Closer to query than vec_54 or vec_55
         index.insert(new_id.clone(), new_values.clone());
 
         // Search should find the new vector
-        let query = vec![0.545; dimension];  // Query matches new vector exactly
+        let query = vec![0.545; dimension]; // Query matches new vector exactly
         let mut distances: Vec<(String, f32)> = index
             .iter()
             .map(|(id, values)| {
@@ -253,7 +247,7 @@ use tracing::{debug, error, info};
 
         // Delete vector - should be immediately removed
         index.remove(&new_id);
-        
+
         // Verify it's gone
         assert!(!index.contains_key(&new_id));
     }
@@ -262,7 +256,7 @@ use tracing::{debug, error, info};
     async fn test_flat_with_filters() {
         // FLAT index can easily support filtering
         let dimension = 64;
-        
+
         // Create vectors with metadata
         let vectors_with_metadata = vec![
             ("vec1", vec![1.0; dimension], "category_a"),
@@ -289,7 +283,7 @@ use tracing::{debug, error, info};
 
         // Should only return category_a vectors
         assert_eq!(filtered_results.len(), 3);
-        assert_eq!(filtered_results[0].0, "vec3");  // Closest in category_a
+        assert_eq!(filtered_results[0].0, "vec3"); // Closest in category_a
         assert_eq!(filtered_results[1].0, "vec1");
         assert_eq!(filtered_results[2].0, "vec5");
     }
@@ -320,7 +314,7 @@ use tracing::{debug, error, info};
             .collect();
 
         debug!("Vectors within radius {}: {:?}", radius, within_range);
-        
+
         // Should find vectors within the radius
         assert!(within_range.len() > 0);
         for (_, dist) in &within_range {
@@ -371,11 +365,11 @@ use tracing::{debug, error, info};
     #[tokio::test]
     async fn test_flat_edge_cases() {
         // Test edge cases for FLAT index
-        
+
         // Empty index
         let index: HashMap<String, Vec<f32>> = HashMap::new();
         let query = vec![0.5; 10];
-        
+
         let results: Vec<(String, f32)> = index
             .iter()
             .map(|(id, values)| {
@@ -383,13 +377,13 @@ use tracing::{debug, error, info};
                 (id.clone(), dist)
             })
             .collect();
-        
+
         assert_eq!(results.len(), 0, "Empty index should return no results");
 
         // Single vector
         let mut single_index = HashMap::new();
         single_index.insert("only_vec".to_string(), vec![1.0; 10]);
-        
+
         let single_results: Vec<(String, f32)> = single_index
             .iter()
             .map(|(id, values)| {
@@ -397,7 +391,7 @@ use tracing::{debug, error, info};
                 (id.clone(), dist)
             })
             .collect();
-        
+
         assert_eq!(single_results.len(), 1);
         assert_eq!(single_results[0].0, "only_vec");
 
@@ -406,7 +400,7 @@ use tracing::{debug, error, info};
         dup_index.insert("vec1".to_string(), vec![0.5; 10]);
         dup_index.insert("vec2".to_string(), vec![0.5; 10]);
         dup_index.insert("vec3".to_string(), vec![0.5; 10]);
-        
+
         let dup_results: Vec<(String, f32)> = dup_index
             .iter()
             .map(|(id, values)| {
@@ -414,7 +408,7 @@ use tracing::{debug, error, info};
                 (id.clone(), dist)
             })
             .collect();
-        
+
         assert_eq!(dup_results.len(), 3);
         // All should have distance 0
         for (_, dist) in &dup_results {
@@ -426,7 +420,7 @@ use tracing::{debug, error, info};
     async fn test_flat_high_dimensional() {
         // Test FLAT index with high-dimensional vectors
         let dimensions = vec![512, 768, 1024, 2048];
-        
+
         for dim in dimensions {
             let vectors = vec![
                 vec![0.1; dim],
@@ -451,7 +445,7 @@ use tracing::{debug, error, info};
 
             // Nearest should be vec[0.3] at index 2
             assert_eq!(distances[0].0, 2);
-            
+
             debug!(
                 "High-dimensional FLAT search ({}D): nearest = vec[{}]",
                 dim, distances[0].0

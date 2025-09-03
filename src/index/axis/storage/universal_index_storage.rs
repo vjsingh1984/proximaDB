@@ -15,33 +15,33 @@
  */
 
 //! Universal Index Storage Handler for ALL AXIS Indexes
-//! 
+//!
 //! Storage Tier Hierarchy:
 //! Memory → NVMe → HDD → S3 Express One Zone
-//! 
+//!
 //! Key Principles:
 //! - Memory: bincode format, LRU eviction triggers demotion to disk
 //! - NVMe/HDD: SST or VIPER format, only eviction (no demotion between disk tiers)
 //! - S3: SST or VIPER format, promotion to local disk for bloom filter/columnar scan benefits
 //! - S3 → Disk promotion uses /tmp (if NVMe not configured) or HDD as staging
 
-use anyhow::{anyhow, Result};
+use crate::core::error::{ProximaDBError, StorageError};
+use anyhow::{Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
-use crate::core::error::{ProximaDBError, StorageError};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::engines::impls::sst::writer::SstableWriter;
 
 /// Universal index data that can be stored across tiers
 pub trait IndexData: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync {
     /// Get unique identifier for this data
     fn get_id(&self) -> String;
-    
+
     /// Estimate size in bytes
     fn size_bytes(&self) -> usize;
 }
@@ -80,25 +80,25 @@ pub struct UniversalIndexStorage<T: IndexData> {
     collection_id: String,
     index_type: String, // "hnsw", "lsh", "annoy", "ivf"
     storage_engine: StorageEngine,
-    
+
     /// Current storage location for each data item
     data_locations: Arc<dashmap::DashMap<String, StorageLocation>>,
-    
+
     /// Memory cache (bincode format)
     memory_cache: Arc<dashmap::DashMap<String, Vec<u8>>>,
-    
+
     /// Access tracker for LRU eviction
     access_tracker: Arc<dashmap::DashMap<String, std::time::SystemTime>>,
-    
+
     /// Configuration
     max_memory_items: usize,
     nvme_path: Option<PathBuf>,
     hdd_path: Option<PathBuf>,
     s3_bucket: Option<String>,
-    
+
     /// Staging area for S3 promotion (uses /tmp or HDD)
     staging_path: PathBuf,
-    
+
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -113,7 +113,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         let nvme_path = Self::detect_nvme_path();
         let hdd_path = Self::detect_hdd_path();
         let s3_bucket = std::env::var("PROXIMADB_S3_BUCKET").ok();
-        
+
         // Determine staging path for S3 promotion
         let staging_path = if let Some(ref nvme) = nvme_path {
             nvme.join("staging")
@@ -122,15 +122,15 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         } else {
             PathBuf::from("/tmp/proximadb_staging")
         };
-        
+
         // Create staging directory if needed
         let _ = std::fs::create_dir_all(&staging_path);
-        
+
         info!(
             "Universal index storage for {}/{}: Memory({}) → NVMe({:?}) → HDD({:?}) → S3({:?})",
             collection_id, index_type, max_memory_items, nvme_path, hdd_path, s3_bucket
         );
-        
+
         Self {
             collection_id,
             index_type,
@@ -146,35 +146,38 @@ impl<T: IndexData> UniversalIndexStorage<T> {
             _phantom: std::marker::PhantomData,
         }
     }
-    
+
     /// Store index data
     pub async fn put(&self, data: T) -> Result<()> {
         let id = data.get_id();
-        
+
         // Always start in memory with bincode
         let bytes = bincode::serialize(&data)?;
         self.memory_cache.insert(id.clone(), bytes);
-        self.data_locations.insert(id.clone(), StorageLocation::Memory);
-        self.access_tracker.insert(id.clone(), std::time::SystemTime::now());
-        
+        self.data_locations
+            .insert(id.clone(), StorageLocation::Memory);
+        self.access_tracker
+            .insert(id.clone(), std::time::SystemTime::now());
+
         debug!("Stored {} data {} in mem", self.index_type, id);
-        
+
         // Check if we need to evict from memory
         if self.memory_cache.len() > self.max_memory_items {
             self.evict_from_memory().await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Retrieve index data with automatic tier promotion
     pub async fn get(&self, id: &str) -> Result<Option<T>> {
         // Update access time
-        self.access_tracker.insert(id.to_string(), std::time::SystemTime::now());
-        
+        self.access_tracker
+            .insert(id.to_string(), std::time::SystemTime::now());
+
         // Check current location
         let location = self.data_locations.get(id).map(|l| l.clone());
-        
+
         match location {
             Some(StorageLocation::Memory) => {
                 // Fast path: already in memory
@@ -219,54 +222,71 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 return Ok(None);
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Evict least recently used items from memory
     async fn evict_from_memory(&self) -> Result<()> {
-        let mut access_times: Vec<(String, std::time::SystemTime)> = 
-            self.access_tracker.iter()
-                .filter(|entry| {
-                    self.data_locations.get(entry.key())
-                        .map(|loc| matches!(*loc, StorageLocation::Memory))
-                        .unwrap_or(false)
-                })
-                .map(|entry| (entry.key().clone(), *entry.value()))
-                .collect();
-        
+        let mut access_times: Vec<(String, std::time::SystemTime)> = self
+            .access_tracker
+            .iter()
+            .filter(|entry| {
+                self.data_locations
+                    .get(entry.key())
+                    .map(|loc| matches!(*loc, StorageLocation::Memory))
+                    .unwrap_or(false)
+            })
+            .map(|entry| (entry.key().clone(), *entry.value()))
+            .collect();
+
         access_times.sort_by_key(|&(_, time)| time);
-        
+
         // Evict oldest 10%
         let evict_count = self.max_memory_items / 10;
         for (id, _) in access_times.iter().take(evict_count) {
             if let Some((_key, bytes)) = self.memory_cache.remove(id) {
                 let data: T = bincode::deserialize(&bytes)?;
-                
+
                 // Demote to next available tier
                 if let Some(ref nvme_path) = self.nvme_path {
-                    self.demote_to_disk(id, data, nvme_path.clone(), StorageLocation::NvmeSsd { 
-                        path: nvme_path.clone() 
-                    }).await?;
+                    self.demote_to_disk(
+                        id,
+                        data,
+                        nvme_path.clone(),
+                        StorageLocation::NvmeSsd {
+                            path: nvme_path.clone(),
+                        },
+                    )
+                    .await?;
                 } else if let Some(ref hdd_path) = self.hdd_path {
-                    self.demote_to_disk(id, data, hdd_path.clone(), StorageLocation::HardDisk { 
-                        path: hdd_path.clone() 
-                    }).await?;
+                    self.demote_to_disk(
+                        id,
+                        data,
+                        hdd_path.clone(),
+                        StorageLocation::HardDisk {
+                            path: hdd_path.clone(),
+                        },
+                    )
+                    .await?;
                 } else if let Some(ref bucket) = self.s3_bucket {
                     self.demote_to_s3(id, data, bucket).await?;
                 } else {
                     // No lower tier available - evict anyway to prevent memory pressure
-                    warn!("No lower tier available, evicting {} from memory to prevent crash", id);
+                    warn!(
+                        "No lower tier available, evicting {} from memory to prevent crash",
+                        id
+                    );
                     self.data_locations.remove(id);
                 }
-                
+
                 info!("Evicted {} data {} from mem", self.index_type, id);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Demote data from memory to disk (convert bincode → SST/VIPER)
     async fn demote_to_disk(
         &self,
@@ -276,13 +296,14 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         location: StorageLocation,
     ) -> Result<()> {
         let file_path = self.get_disk_path(&path, id);
-        
+
         match self.storage_engine {
             StorageEngine::SST => {
                 // Write as SST
-                let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+                let mut config =
+                    crate::storage::persistence::filesystem::FilesystemConfig::default();
                 config.default_fs = Some(file_path.to_string_lossy().to_string());
-                let filesystem_factory = 
+                let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::new(config)
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
@@ -291,24 +312,29 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let _value = bincode::serialize(&data)?;
                 // Note: SstableWriter doesn't have add method, need to use write_sorted_records
                 let mut records = std::collections::BTreeMap::new();
-                records.insert(id.to_string(), crate::proto::proximadb::VectorRecord {
-                    id: id.to_string(),
-                    vector: vec![],  // Empty vector for index data
-                    metadata: vec![],
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as u32,
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    quantized_vector: None,
-                    source: None,
-                });
+                records.insert(
+                    id.to_string(),
+                    crate::proto::proximadb::VectorRecord {
+                        id: id.to_string(),
+                        vector: vec![], // Empty vector for index data
+                        metadata: vec![],
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as u32,
+                        updated_at: None,
+                        expires_at: None,
+                        version: None,
+                        quantized_vector: None,
+                        source: None,
+                    },
+                );
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
                 let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
-                writer.write_sorted_records(sorted_records_iter, record_count).await?;
+                writer
+                    .write_sorted_records(sorted_records_iter, record_count)
+                    .await?;
             }
             StorageEngine::VIPER => {
                 // Write as VIPER (Parquet)
@@ -316,30 +342,33 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 debug!("Writing {} to VIPER at {:?}", id, file_path);
             }
         }
-        
+
         self.data_locations.insert(id.to_string(), location);
         Ok(())
     }
-    
+
     /// Read data from disk (SST/VIPER format)
     async fn read_from_disk(&self, path: &PathBuf, id: &str) -> Result<Option<T>> {
         let file_path = self.get_disk_path(path, id);
-        
+
         match self.storage_engine {
             StorageEngine::SST => {
                 // Read from SST
                 if !file_path.exists() {
                     return Ok(None);
                 }
-                let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+                let mut config =
+                    crate::storage::persistence::filesystem::FilesystemConfig::default();
                 config.default_fs = Some(file_path.to_string_lossy().to_string());
-                let filesystem_factory = 
+                let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::new(config)
                         .await
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
                 let filesystem = Arc::new(filesystem_factory);
                 // Create zero-copy system for the reader
-                let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
+                let zero_copy_config =
+                    crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(
+                    );
                 let zero_copy_system = Arc::new(
                     crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
                         zero_copy_config,
@@ -349,13 +378,22 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create zero-copy system: {}", e))
                     )))?
                 );
-                let reader = UnifiedSstableReader::new(filesystem, zero_copy_system, self.collection_id.clone());
+                let reader = UnifiedSstableReader::new(
+                    filesystem,
+                    zero_copy_system,
+                    self.collection_id.clone(),
+                );
                 // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes
                 // We need to handle this differently
-                if let Some(_vector_record) = reader.vector(&file_path.to_string_lossy(), id).await? {
+                if let Some(_vector_record) =
+                    reader.vector(&file_path.to_string_lossy(), id).await?
+                {
                     // For now, we can't directly deserialize since we get a VectorRecord
                     // This would need a different storage approach
-                    debug!("Found record {} in SST but cannot deserialize generic type T from VectorRecord", id);
+                    debug!(
+                        "Found record {} in SST but cannot deserialize generic type T from VectorRecord",
+                        id
+                    );
                 }
             }
             StorageEngine::VIPER => {
@@ -364,21 +402,32 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 debug!("Reading {} from VIPER at {:?}", id, file_path);
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Promote data from S3 to local disk for efficient access
     async fn promote_from_s3(&self, bucket: &str, prefix: &str, id: &str) -> Result<Option<T>> {
-        info!("Promoting {} from S3 to local staging for bloom filter/columnar scan benefits", id);
-        
+        info!(
+            "Promoting {} from S3 to local staging for bloom filter/columnar scan benefits",
+            id
+        );
+
         // Download from S3 to staging area
-        let s3_key = format!("{}/{}/{}/{}", prefix, self.collection_id, self.index_type, id);
-        let staging_file = self.staging_path.join(format!("{}_{}", self.collection_id, id));
-        
+        let s3_key = format!(
+            "{}/{}/{}/{}",
+            prefix, self.collection_id, self.index_type, id
+        );
+        let staging_file = self
+            .staging_path
+            .join(format!("{}_{}", self.collection_id, id));
+
         // In production, use S3 client to download
-        debug!("Downloading s3://{}/{} to {:?}", bucket, s3_key, staging_file);
-        
+        debug!(
+            "Downloading s3://{}/{} to {:?}",
+            bucket, s3_key, staging_file
+        );
+
         // Read from staging using SST/VIPER reader
         match self.storage_engine {
             StorageEngine::SST => {
@@ -392,36 +441,46 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 debug!("Reading promoted VIPER data from {:?}", staging_file);
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Promote data to memory (convert SST/VIPER → bincode)
     async fn promote_to_memory(&self, id: &str, data: T) -> Result<()> {
         let bytes = bincode::serialize(&data)?;
         self.memory_cache.insert(id.to_string(), bytes);
-        self.data_locations.insert(id.to_string(), StorageLocation::Memory);
+        self.data_locations
+            .insert(id.to_string(), StorageLocation::Memory);
         debug!("Promoted {} to mem", id);
         Ok(())
     }
-    
+
     /// Promote data to NVMe
     async fn promote_to_nvme(&self, id: &str, data: T) -> Result<()> {
         if let Some(ref nvme_path) = self.nvme_path {
-            self.demote_to_disk(id, data, nvme_path.clone(),
-                StorageLocation::NvmeSsd { path: nvme_path.clone() }).await?;
+            self.demote_to_disk(
+                id,
+                data,
+                nvme_path.clone(),
+                StorageLocation::NvmeSsd {
+                    path: nvme_path.clone(),
+                },
+            )
+            .await?;
             debug!("Promoted {} to NVMe", id);
         }
         Ok(())
     }
-    
+
     /// Demote data to S3
     async fn demote_to_s3(&self, id: &str, data: T, bucket: &str) -> Result<()> {
         let prefix = format!("{}/{}", self.collection_id, self.index_type);
-        
+
         // First write to staging in SST/VIPER format
-        let staging_file = self.staging_path.join(format!("{}_{}", self.collection_id, id));
-        
+        let staging_file = self
+            .staging_path
+            .join(format!("{}_{}", self.collection_id, id));
+
         match self.storage_engine {
             StorageEngine::SST => {
                 let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
@@ -432,7 +491,9 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     performance_config: Default::default(),
                     scheme_mapping: HashMap::new(),
                 };
-                let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?;
+                let filesystem_factory =
+                    crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+                        .await?;
                 let filesystem = Arc::new(filesystem_factory);
                 let writer = SstableWriter::new(&staging_file, 4096, filesystem);
                 let value = bincode::serialize(&data)?;
@@ -441,15 +502,16 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let record = crate::proto::proximadb::VectorRecord {
                     id: id.to_string(),
                     vector: vec![], // Empty vector since we're storing serialized data
-                    metadata: vec![
-                        crate::proto::proximadb::MetadataItem {
-                            key: "serialized_data".to_string(),
-                            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                                BASE64.encode(&value)
-                            )),
-                        }
-                    ],
-                    timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u32,
+                    metadata: vec![crate::proto::proximadb::MetadataItem {
+                        key: "serialized_data".to_string(),
+                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                            BASE64.encode(&value),
+                        )),
+                    }],
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as u32,
                     updated_at: None,
                     expires_at: None,
                     version: None,
@@ -460,26 +522,31 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
                 let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
-                writer.write_sorted_records(sorted_records_iter, record_count).await?;
+                writer
+                    .write_sorted_records(sorted_records_iter, record_count)
+                    .await?;
             }
             StorageEngine::VIPER => {
                 // Write VIPER format
                 debug!("Writing VIPER to staging {:?}", staging_file);
             }
         }
-        
+
         // Upload to S3
         let s3_key = format!("{}/{}", prefix, id);
         debug!("Uploading {:?} to s3://{}/{}", staging_file, bucket, s3_key);
-        
-        self.data_locations.insert(id.to_string(), StorageLocation::S3Express { 
-            bucket: bucket.to_string(), 
-            prefix 
-        });
-        
+
+        self.data_locations.insert(
+            id.to_string(),
+            StorageLocation::S3Express {
+                bucket: bucket.to_string(),
+                prefix,
+            },
+        );
+
         Ok(())
     }
-    
+
     /// Get disk path for a data item
     fn get_disk_path(&self, base: &PathBuf, id: &str) -> PathBuf {
         let ext = match self.storage_engine {
@@ -490,15 +557,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
             .join(&self.index_type)
             .join(format!("{}.{}", id, ext))
     }
-    
+
     /// Detect NVMe path
     fn detect_nvme_path() -> Option<PathBuf> {
-        let candidates = vec![
-            "/mnt/nvme",
-            "/nvme",
-            "/var/lib/proximadb/nvme",
-        ];
-        
+        let candidates = vec!["/mnt/nvme", "/nvme", "/var/lib/proximadb/nvme"];
+
         for path in candidates {
             let p = PathBuf::from(path);
             if p.exists() {
@@ -507,15 +570,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         }
         None
     }
-    
+
     /// Detect HDD path
     fn detect_hdd_path() -> Option<PathBuf> {
-        let candidates = vec![
-            "/mnt/disk",
-            "/data",
-            "/var/lib/proximadb/data",
-        ];
-        
+        let candidates = vec!["/mnt/disk", "/data", "/var/lib/proximadb/data"];
+
         for path in candidates {
             let p = PathBuf::from(path);
             if p.exists() {
@@ -538,7 +597,7 @@ impl IndexData for HnswNode {
     fn get_id(&self) -> String {
         format!("node_{}_{}", self.layer, self.id)
     }
-    
+
     fn size_bytes(&self) -> usize {
         std::mem::size_of::<Self>() + self.connections.len() * std::mem::size_of::<usize>()
     }
@@ -556,17 +615,16 @@ impl IndexData for LshBucket {
     fn get_id(&self) -> String {
         format!("bucket_{}_{}", self.table_id, self.hash)
     }
-    
+
     fn size_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + 
-        self.vector_ids.iter().map(|s| s.len()).sum::<usize>()
+        std::mem::size_of::<Self>() + self.vector_ids.iter().map(|s| s.len()).sum::<usize>()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
-    
+
     #[tokio::test]
     async fn test_tier_hierarchy() {
         let storage = UniversalIndexStorage::<HnswNode>::new(
@@ -575,7 +633,7 @@ mod tests {
             StorageEngine::SST,
             10, // Small memory limit for testing
         );
-        
+
         // Add nodes
         for i in 0..15 {
             let node = HnswNode {
@@ -585,11 +643,14 @@ mod tests {
             };
             storage.put(node).await.unwrap();
         }
-        
+
         // Memory should have at most max_memory_items + 1 (due to eviction happening after insert)
         // Items will be evicted even without lower tier to prevent memory pressure
-        assert!(storage.memory_cache.len() <= 11, "Expected at most 11 items in memory after eviction");
-        
+        assert!(
+            storage.memory_cache.len() <= 11,
+            "Expected at most 11 items in memory after eviction"
+        );
+
         // Retrieve should promote back to memory
         let node = storage.get(&key).await.unwrap();
         assert!(node.is_some());

@@ -1,13 +1,12 @@
 //! Collection management
-//! 
+//!
 //! Handles collection lifecycle, metadata, and configuration
 
 pub mod manager;
 
 pub use manager::{
-    CollectionService as Collections,
+    CollectionService as Collections, CollectionServiceBuilder as Builder,
     CollectionServiceResponse as Response,
-    CollectionServiceBuilder as Builder,
 };
 
 // Rename for clarity

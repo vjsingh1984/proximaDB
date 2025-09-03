@@ -63,17 +63,17 @@
 //! # Quantization settings
 //! quantization_enabled = true
 //! quantization_type = "adaptive"  # binary, int8, pq4, pq8, adaptive
-//! 
+//!
 //! # Row group configuration
 //! row_group_size = 131072  # 128K vectors
 //! enable_clustering = true
 //! clustering_algorithm = "kmeans"
-//! 
+//!
 //! # Compression per column type
 //! vector_compression = "zstd"
 //! metadata_compression = "snappy"
 //! id_compression = "lz4"
-//! 
+//!
 //! # Cloud optimization
 //! footer_cache_size_mb = 128
 //! enable_range_reads = true
@@ -112,12 +112,12 @@
 //!
 //! ```rust
 //! use proximadb::storage::engines::viper::ViperEngine;
-//! 
+//!
 //! let viper = ViperEngine::new(config)?;
-//! 
+//!
 //! // Batch insert with automatic quantization
 //! viper.insert_batch(vectors).await?;
-//! 
+//!
 //! // Analytics query with predicate pushdown
 //! let results = viper.search(
 //!     query_vector,
@@ -143,11 +143,11 @@
 //! - Bandwidth-optimized transfers
 //! - Cost-aware storage tiering
 
-pub mod readers;
-pub mod factory;
 pub mod eventlog_flush;
+pub mod factory;
 pub mod pipeline;
-pub mod pipeline_tests; // Pipeline tests module
+pub mod pipeline_tests;
+pub mod readers; // Pipeline tests module
 // Quantization now handled by unified compute module
 pub mod utilities;
 // Removed indexed_reader - use columnar/parquet_query_engine instead
@@ -158,9 +158,8 @@ pub mod column_filter;
 pub mod types;
 // Schema now uses columnar module's ColumnarSchema
 pub mod compaction;
-pub mod flush;
 pub mod engine;
-
+pub mod flush;
 
 // Test modules
 
@@ -177,31 +176,31 @@ pub use utilities::ViperUtilities;
 
 // Re-export modular types for better organization
 pub use types::{
-    CollectionMetadata, 
-    ClusterId, 
-    VectorStorageFormat,
-    ParquetCompression,
-    VectorQualityMetrics,
-    SearchPerformanceStats,
-    ViperEngineConfig,  // Internal engine config
+    ClusterId,
+    CollectionMetadata,
     FilterableColumn,
-    ParquetSchemaDesign,
+    ParquetCompression,
     ParquetField,
     ParquetFieldType,
+    ParquetSchemaDesign,
+    SearchPerformanceStats,
+    VectorQualityMetrics,
+    VectorStorageFormat,
+    ViperEngineConfig, // Internal engine config
 };
 // Schema is handled by columnar module
 pub use compaction::Compaction;
-pub use flush::Flush;
-pub use eventlog_flush::ViperFlushNotifier;
 pub use engine::ViperEngine;
+pub use eventlog_flush::ViperFlushNotifier;
+pub use flush::Flush;
 // pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats}; // Moved to AXIS
 
 // Unified search engine removed - using IntegratedSearchOptimizer from core::search
 
 // Clean Release 1 API - Pure data access layer with search optimization
 pub use readers::{
-    UnifiedParquetReader, ReaderConfig, ReadingStrategy,
-    FilterValue, QuantizationMethod, CollectionContext,
+    CollectionContext, FilterValue, QuantizationMethod, ReaderConfig, ReadingStrategy,
+    UnifiedParquetReader,
 };
 // MetadataFilter is directly from columnar module
 pub use crate::storage::engines::core::formats::columnar::MetadataFilter;

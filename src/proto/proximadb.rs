@@ -35,10 +35,7 @@ pub mod metadata_item {
 pub struct EmbeddingModelRegistry {
     /// model_id -> full specification
     #[prost(map = "string, message", tag = "1")]
-    pub models: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        EmbeddingModelSpec,
-    >,
+    pub models: ::std::collections::HashMap<::prost::alloc::string::String, EmbeddingModelSpec>,
 }
 /// Full embedding model specification (stored once per collection)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -167,10 +164,8 @@ pub struct ExternalContent {
     pub storage_backend: ::prost::alloc::string::String,
     /// Access credentials/headers
     #[prost(map = "string, string", tag = "3")]
-    pub access: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub access:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// Caching directives
     #[prost(message, optional, tag = "4")]
     pub cache: ::core::option::Option<CachePolicy>,
@@ -249,10 +244,8 @@ pub struct MediaMetadata {
     pub codec: ::prost::alloc::string::String,
     /// EXIF/metadata tags
     #[prost(map = "string, string", tag = "6")]
-    pub exif: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub exif:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 /// ULTRA-OPTIMIZED: Processing information with packed enum storage (75% savings)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -375,10 +368,7 @@ pub struct SearchVectorRecord {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataMap {
     #[prost(map = "string, message", tag = "1")]
-    pub fields: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        MetadataValue,
-    >,
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, MetadataValue>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -907,10 +897,8 @@ pub struct StorageTieringPolicy {
     ///
     /// MIME type -> tier settings
     #[prost(map = "string, message", tag = "7")]
-    pub content_overrides: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TierOverride,
-    >,
+    pub content_overrides:
+        ::std::collections::HashMap<::prost::alloc::string::String, TierOverride>,
 }
 /// Access-based tiering for compaction (promotes hot data, demotes cold data)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -979,10 +967,8 @@ pub struct ExternalStorageConfig {
     pub prefix: ::prost::alloc::string::String,
     /// Access credentials
     #[prost(map = "string, string", tag = "4")]
-    pub credentials: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub credentials:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// URL expiry in seconds
     #[prost(int64, tag = "5")]
     pub signed_url_expiry: i64,
@@ -1291,8 +1277,9 @@ pub struct QuantizationConfig {
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {
     /// Quantization strategy - controls how quantization levels are selected
-    #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(
+        serde::Serialize,
+        serde::Deserialize,
         Clone,
         Copy,
         Debug,
@@ -1301,7 +1288,7 @@ pub mod quantization_config {
         Hash,
         PartialOrd,
         Ord,
-        ::prost::Enumeration
+        ::prost::Enumeration,
     )]
     #[repr(i32)]
     pub enum Strategy {
@@ -1406,8 +1393,9 @@ pub struct QuantizationLevel {
 /// Nested message and enum types in `QuantizationLevel`.
 pub mod quantization_level {
     /// Quantization method for this level
-    #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(
+        serde::Serialize,
+        serde::Deserialize,
         Clone,
         Copy,
         Debug,
@@ -1416,7 +1404,7 @@ pub mod quantization_level {
         Hash,
         PartialOrd,
         Ord,
-        ::prost::Enumeration
+        ::prost::Enumeration,
     )]
     #[repr(i32)]
     pub enum QuantizationType {
@@ -1532,19 +1520,15 @@ pub struct CollectionRequest {
     pub collection_config: ::core::option::Option<CollectionConfig>,
     /// limit, offset, filters, etc.
     #[prost(map = "string, string", tag = "4")]
-    pub query_params: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub query_params:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     /// force, include_stats, etc.
     #[prost(map = "string, bool", tag = "5")]
     pub options: ::std::collections::HashMap<::prost::alloc::string::String, bool>,
     /// For MIGRATE operations
     #[prost(map = "string, string", tag = "6")]
-    pub migration_config: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub migration_config:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1568,10 +1552,8 @@ pub struct CollectionResponse {
     pub total_count: ::core::option::Option<i64>,
     /// Additional response data
     #[prost(map = "string, string", tag = "7")]
-    pub metadata: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost::alloc::string::String,
-    >,
+    pub metadata:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(string, optional, tag = "8")]
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "9")]
@@ -1811,10 +1793,7 @@ pub struct SearchParams {
     /// Metadata filters to apply
     #[prost(map = "string, message", tag = "2")]
     #[serde(skip)]
-    pub filters: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost_types::Value,
-    >,
+    pub filters: ::std::collections::HashMap<::prost::alloc::string::String, ::prost_types::Value>,
     /// Accuracy threshold for search (0.0-1.0)
     #[prost(float, optional, tag = "3")]
     pub accuracy_threshold: ::core::option::Option<f32>,
@@ -1838,10 +1817,8 @@ pub struct SearchParams {
     /// Custom optimization parameters
     #[prost(map = "string, message", tag = "14")]
     #[serde(skip)]
-    pub custom_hints: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        ::prost_types::Value,
-    >,
+    pub custom_hints:
+        ::std::collections::HashMap<::prost::alloc::string::String, ::prost_types::Value>,
     /// Quantization hint - directly maps to UnifiedQuantizationLevel
     #[prost(oneof = "search_params::QuantizationHint", tags = "7, 8, 9, 10, 11")]
     pub quantization_hint: ::core::option::Option<search_params::QuantizationHint>,
@@ -2007,8 +1984,19 @@ pub struct CollectionSnapshot {
     #[prost(int64, tag = "3")]
     pub timestamp: i64,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum DistanceMetric {
     Unspecified = 0,
@@ -2070,8 +2058,19 @@ impl DistanceMetric {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum StorageEngine {
     Unspecified = 0,
@@ -2114,8 +2113,19 @@ impl StorageEngine {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum IndexingAlgorithm {
     Unspecified = 0,
@@ -2156,8 +2166,19 @@ impl IndexingAlgorithm {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum CollectionOperation {
     Unspecified = 0,
@@ -2202,8 +2223,19 @@ impl CollectionOperation {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum VectorOperation {
     Unspecified = 0,
@@ -2239,8 +2271,19 @@ impl VectorOperation {
     }
 }
 /// Well-known embedding models with enum for efficient storage
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum EmbeddingModelType {
     EmbeddingModelUnspecified = 0,
@@ -2290,18 +2333,10 @@ impl EmbeddingModelType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            EmbeddingModelType::EmbeddingModelUnspecified => {
-                "EMBEDDING_MODEL_UNSPECIFIED"
-            }
-            EmbeddingModelType::OpenaiTextEmbeddingAda002 => {
-                "OPENAI_TEXT_EMBEDDING_ADA_002"
-            }
-            EmbeddingModelType::OpenaiTextEmbedding3Small => {
-                "OPENAI_TEXT_EMBEDDING_3_SMALL"
-            }
-            EmbeddingModelType::OpenaiTextEmbedding3Large => {
-                "OPENAI_TEXT_EMBEDDING_3_LARGE"
-            }
+            EmbeddingModelType::EmbeddingModelUnspecified => "EMBEDDING_MODEL_UNSPECIFIED",
+            EmbeddingModelType::OpenaiTextEmbeddingAda002 => "OPENAI_TEXT_EMBEDDING_ADA_002",
+            EmbeddingModelType::OpenaiTextEmbedding3Small => "OPENAI_TEXT_EMBEDDING_3_SMALL",
+            EmbeddingModelType::OpenaiTextEmbedding3Large => "OPENAI_TEXT_EMBEDDING_3_LARGE",
             EmbeddingModelType::SentenceTransformersAllMinilmL6V2 => {
                 "SENTENCE_TRANSFORMERS_ALL_MINILM_L6_V2"
             }
@@ -2321,12 +2356,8 @@ impl EmbeddingModelType {
             EmbeddingModelType::GoogleUseMultilingualV3 => "GOOGLE_USE_MULTILINGUAL_V3",
             EmbeddingModelType::GoogleUseLite => "GOOGLE_USE_LITE",
             EmbeddingModelType::CohereEmbedEnglishV3 => "COHERE_EMBED_ENGLISH_V3",
-            EmbeddingModelType::CohereEmbedMultilingualV3 => {
-                "COHERE_EMBED_MULTILINGUAL_V3"
-            }
-            EmbeddingModelType::CohereEmbedEnglishLightV3 => {
-                "COHERE_EMBED_ENGLISH_LIGHT_V3"
-            }
+            EmbeddingModelType::CohereEmbedMultilingualV3 => "COHERE_EMBED_MULTILINGUAL_V3",
+            EmbeddingModelType::CohereEmbedEnglishLightV3 => "COHERE_EMBED_ENGLISH_LIGHT_V3",
             EmbeddingModelType::AnthropicVoyage2 => "ANTHROPIC_VOYAGE_2",
             EmbeddingModelType::AnthropicVoyageCode2 => "ANTHROPIC_VOYAGE_CODE_2",
             EmbeddingModelType::MistralEmbed => "MISTRAL_EMBED",
@@ -2390,8 +2421,19 @@ impl EmbeddingModelType {
     }
 }
 /// Content categories for efficient classification
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum ContentCategory {
     Unspecified = 0,
@@ -2475,8 +2517,19 @@ impl ContentCategory {
     }
 }
 /// Quality levels for content and processing
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum QualityLevel {
     QualityUnspecified = 0,
@@ -2516,8 +2569,19 @@ impl QualityLevel {
     }
 }
 /// Processing status for tracking content lifecycle
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum ProcessingStatus {
     Unspecified = 0,
@@ -2569,8 +2633,19 @@ impl ProcessingStatus {
     }
 }
 /// Common language codes as enums for efficiency (ISO 639-1 subset)
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum LanguageCode {
     LanguageUnspecified = 0,
@@ -2710,8 +2785,19 @@ impl LanguageCode {
     }
 }
 /// Data source types for provenance tracking
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum DataSource {
     Unspecified = 0,
@@ -2775,8 +2861,19 @@ impl DataSource {
     }
 }
 /// Extraction methods for content processing
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum ExtractionMethod {
     ExtractionUnspecified = 0,
@@ -2840,8 +2937,19 @@ impl ExtractionMethod {
     }
 }
 /// Index update behavior modes
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum IndexUpdateMode {
     Unspecified = 0,
@@ -2878,8 +2986,19 @@ impl IndexUpdateMode {
 }
 /// Vector representation preference for AXIS queue consumption
 /// Enables indexes to specify what type of vectors they want from the queue
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum VectorRepresentation {
     /// Use system default
@@ -2920,8 +3039,19 @@ impl VectorRepresentation {
     }
 }
 /// Random projection types for LSH
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum RandomProjectionType {
     /// Gaussian random projection
@@ -2954,8 +3084,19 @@ impl RandomProjectionType {
     }
 }
 /// Compression algorithms supported by storage engines
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum CompressionAlgorithm {
     /// No compression
@@ -3028,8 +3169,19 @@ impl CompressionAlgorithm {
     }
 }
 /// Access patterns for optimization hints
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum AccessPattern {
     Unknown = 0,
@@ -3069,8 +3221,19 @@ impl AccessPattern {
     }
 }
 /// Data density characteristics
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum DataDensity {
     DensityUnknown = 0,
@@ -3105,8 +3268,19 @@ impl DataDensity {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum StorageTier {
     Unspecified = 0,
@@ -3145,8 +3319,19 @@ impl StorageTier {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum ChunkingStrategy {
     Unspecified = 0,
@@ -3189,8 +3374,19 @@ impl ChunkingStrategy {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum CacheEvictionPolicy {
     CacheEvictionUnspecified = 0,
@@ -3230,8 +3426,19 @@ impl CacheEvictionPolicy {
     }
 }
 /// Column-specific encoding hints for VIPER Parquet storage
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum ColumnEncoding {
     /// Let Parquet decide based on data
@@ -3275,8 +3482,19 @@ impl ColumnEncoding {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum FilterableDataType {
     Unspecified = 0,
@@ -3323,8 +3541,19 @@ impl FilterableDataType {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum FilterOperator {
     Unspecified = 0,
@@ -3356,8 +3585,19 @@ impl FilterOperator {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    ::prost::Enumeration,
+)]
 #[repr(i32)]
 pub enum FilterOperation {
     Unspecified = 0,
@@ -3416,8 +3656,8 @@ impl FilterOperation {
 /// Generated client implementations.
 pub mod proxima_db_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     #[derive(Debug, Clone)]
     pub struct ProximaDbClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -3456,14 +3696,13 @@ pub mod proxima_db_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-                Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                    http::Request<tonic::body::BoxBody>,
+                    Response = http::Response<
+                        <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                    >,
                 >,
-            >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::BoxBody>,
-            >>::Error: Into<StdError> + Send + Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
+                Into<StdError> + Send + Sync,
         {
             ProximaDbClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -3502,49 +3741,38 @@ pub mod proxima_db_client {
         pub async fn collection_operation(
             &mut self,
             request: impl tonic::IntoRequest<super::CollectionRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::CollectionResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::CollectionResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.ProximaDB/CollectionOperation",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/CollectionOperation");
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("proximadb.ProximaDB", "CollectionOperation"));
+            req.extensions_mut().insert(GrpcMethod::new(
+                "proximadb.ProximaDB",
+                "CollectionOperation",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Vector operations - optimized batch operations
         pub async fn vector_batch(
             &mut self,
             request: impl tonic::IntoRequest<super::VectorBatchRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::VectorOperationResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.ProximaDB/VectorBatch",
-            );
+            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/VectorBatch");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorBatch"));
@@ -3553,23 +3781,16 @@ pub mod proxima_db_client {
         pub async fn vector_search(
             &mut self,
             request: impl tonic::IntoRequest<super::VectorSearchRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::VectorOperationResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.ProximaDB/VectorSearch",
-            );
+            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/VectorSearch");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorSearch"));
@@ -3578,23 +3799,16 @@ pub mod proxima_db_client {
         pub async fn vector_get(
             &mut self,
             request: impl tonic::IntoRequest<super::VectorGetRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::VectorOperationResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.ProximaDB/VectorGet",
-            );
+            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/VectorGet");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorGet"));
@@ -3605,19 +3819,14 @@ pub mod proxima_db_client {
             &mut self,
             request: impl tonic::IntoRequest<super::HealthRequest>,
         ) -> std::result::Result<tonic::Response<super::HealthResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.ProximaDB/Health",
-            );
+            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/Health");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "Health"));
@@ -3626,23 +3835,15 @@ pub mod proxima_db_client {
         pub async fn get_metrics(
             &mut self,
             request: impl tonic::IntoRequest<super::MetricsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::MetricsResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Unknown,
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::MetricsResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/proximadb.ProximaDB/GetMetrics",
-            );
+            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/GetMetrics");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "GetMetrics"));
@@ -3661,32 +3862,20 @@ pub mod proxima_db_server {
         async fn collection_operation(
             &self,
             request: tonic::Request<super::CollectionRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::CollectionResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::CollectionResponse>, tonic::Status>;
         /// Vector operations - optimized batch operations
         async fn vector_batch(
             &self,
             request: tonic::Request<super::VectorBatchRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::VectorOperationResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>;
         async fn vector_search(
             &self,
             request: tonic::Request<super::VectorSearchRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::VectorOperationResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>;
         async fn vector_get(
             &self,
             request: tonic::Request<super::VectorGetRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::VectorOperationResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>;
         /// Health and monitoring
         async fn health(
             &self,
@@ -3720,10 +3909,7 @@ pub mod proxima_db_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -3779,23 +3965,18 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/CollectionOperation" => {
                     #[allow(non_camel_case_types)]
                     struct CollectionOperationSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<
-                        T: ProximaDb,
-                    > tonic::server::UnaryService<super::CollectionRequest>
-                    for CollectionOperationSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::CollectionRequest>
+                        for CollectionOperationSvc<T>
+                    {
                         type Response = super::CollectionResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::CollectionRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as ProximaDb>::collection_operation(&inner, request)
-                                    .await
+                                <T as ProximaDb>::collection_operation(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -3826,15 +4007,9 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/VectorBatch" => {
                     #[allow(non_camel_case_types)]
                     struct VectorBatchSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<
-                        T: ProximaDb,
-                    > tonic::server::UnaryService<super::VectorBatchRequest>
-                    for VectorBatchSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::VectorBatchRequest> for VectorBatchSvc<T> {
                         type Response = super::VectorOperationResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VectorBatchRequest>,
@@ -3872,15 +4047,9 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/VectorSearch" => {
                     #[allow(non_camel_case_types)]
                     struct VectorSearchSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<
-                        T: ProximaDb,
-                    > tonic::server::UnaryService<super::VectorSearchRequest>
-                    for VectorSearchSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::VectorSearchRequest> for VectorSearchSvc<T> {
                         type Response = super::VectorOperationResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VectorSearchRequest>,
@@ -3918,23 +4087,16 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/VectorGet" => {
                     #[allow(non_camel_case_types)]
                     struct VectorGetSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<
-                        T: ProximaDb,
-                    > tonic::server::UnaryService<super::VectorGetRequest>
-                    for VectorGetSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::VectorGetRequest> for VectorGetSvc<T> {
                         type Response = super::VectorOperationResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VectorGetRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProximaDb>::vector_get(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as ProximaDb>::vector_get(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -3964,21 +4126,16 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/Health" => {
                     #[allow(non_camel_case_types)]
                     struct HealthSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::HealthRequest>
-                    for HealthSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::HealthRequest> for HealthSvc<T> {
                         type Response = super::HealthResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::HealthRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProximaDb>::health(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as ProximaDb>::health(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -4008,21 +4165,16 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/GetMetrics" => {
                     #[allow(non_camel_case_types)]
                     struct GetMetricsSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::MetricsRequest>
-                    for GetMetricsSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::MetricsRequest> for GetMetricsSvc<T> {
                         type Response = super::MetricsResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::MetricsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as ProximaDb>::get_metrics(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as ProximaDb>::get_metrics(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -4049,18 +4201,14 @@ pub mod proxima_db_server {
                     };
                     Box::pin(fut)
                 }
-                _ => {
-                    Box::pin(async move {
-                        Ok(
-                            http::Response::builder()
-                                .status(200)
-                                .header("grpc-status", "12")
-                                .header("content-type", "application/grpc")
-                                .body(empty_body())
-                                .unwrap(),
-                        )
-                    })
-                }
+                _ => Box::pin(async move {
+                    Ok(http::Response::builder()
+                        .status(200)
+                        .header("grpc-status", "12")
+                        .header("content-type", "application/grpc")
+                        .body(empty_body())
+                        .unwrap())
+                }),
             }
         }
     }

@@ -1,19 +1,19 @@
 // Batch operations for VIPER - Optimized columnar batch ID lookups
 // Clean implementation leveraging Parquet's row group structure
 
-use anyhow::{anyhow, Result};
-use arrow_array::array::{ArrayRef, StringArray, Float32Array, BinaryArray};
+use super::NovaFile;
+use crate::core::VectorRecord;
+use crate::storage::engines::core::formats::columnar::ParquetLocation;
+use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, StringArray};
 use parquet::arrow::ProjectionMask;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::reader::FileReader;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{Semaphore, RwLock};
+use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info, warn};
-use crate::core::VectorRecord;
-use super::NovaFile;
-use crate::storage::engines::core::formats::columnar::ParquetLocation;
 // ID index not available in NOVA yet
 // use super::id_index::BatchIdReader;
 /// Configuration for batch operations
@@ -21,7 +21,7 @@ use crate::storage::engines::core::formats::columnar::ParquetLocation;
 pub struct BatchConfig {
     /// Maximum concurrent row group reads
     pub max_concurrent_row_groups: usize,
-    
+
     /// Enable row group caching
     pub cache_row_groups: bool,
     /// Maximum cache size in bytes
@@ -59,20 +59,20 @@ impl RowGroupCache {
     fn new(max_size: usize) -> Self {
         Self {
             cache: Arc::new(RwLock::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(100).unwrap()
+                std::num::NonZeroUsize::new(100).unwrap(),
             ))),
             current_size: Arc::new(RwLock::new(0)),
             max_size,
         }
     }
-    
+
     async fn get(&self, rg_id: usize) -> Option<Arc<RecordBatch>> {
         self.cache.write().await.get(&rg_id).cloned()
     }
-    
+
     async fn put(&self, rg_id: usize, batch: Arc<RecordBatch>) {
         let batch_size = estimate_batch_size(&batch);
-        
+
         let mut cache = self.cache.write().await;
         let mut size = self.current_size.write().await;
         // Evict if necessary
@@ -87,10 +87,7 @@ impl RowGroupCache {
 }
 
 /// Main batch ID lookup for NOVA
-pub async fn get_records_by_ids(
-    nova_file: &NovaFile,
-    ids: &[String],
-) -> Result<Vec<VectorRecord>> {
+pub async fn get_records_by_ids(nova_file: &NovaFile, ids: &[String]) -> Result<Vec<VectorRecord>> {
     let config = BatchConfig::default();
     info!("Starting batch ID lookup for {} IDs", ids.len());
     // Step 1: Lookup locations using ID index
@@ -104,12 +101,12 @@ pub async fn get_records_by_ids(
             debug!("ID not found in index: {}", id);
         }
     }
-    
+
     if valid_locations.is_empty() {
         debug!("No IDs found in index");
         return Ok(Vec::new());
     }
-    
+
     debug!("Found {} IDs in index", valid_locations.len());
     // Step 2: Group by row group for efficient reading
     let grouped = group_by_row_group(valid_locations);
@@ -127,7 +124,8 @@ pub async fn get_records_by_ids(
         config.max_concurrent_row_groups,
         config.projection,
         cache,
-    ).await?;
+    )
+    .await?;
     info!("Batch lookup complete: {} records retrieved", records.len());
     Ok(records)
 }
@@ -163,7 +161,7 @@ async fn load_and_extract_records(
         let schema = nova_file.schema.clone();
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
-            
+
             // Check cache or load row group
             let batch = if let Some(ref cache) = cache {
                 if let Some(cached_batch) = cache.get(rg_id).await {
@@ -180,7 +178,9 @@ async fn load_and_extract_records(
                 debug!("Loading row group {} without cache_info", rg_id);
                 // TODO: Fix - this is a standalone function, not a method
                 // Arc::new(load_row_group(rg_id, &projection, &schema).await?)
-                return Err(anyhow::anyhow!("load_row_group not available in this context"))
+                return Err(anyhow::anyhow!(
+                    "load_row_group not available in this context"
+                ));
             };
             // Extract requested records
             let records = extract_records_from_batch(&batch, &id_offsets)?;
@@ -188,7 +188,7 @@ async fn load_and_extract_records(
         });
         handles.push(handle);
     }
-    
+
     // Collect all results
     let mut all_records = Vec::new();
     for handle in handles {
@@ -219,12 +219,14 @@ fn extract_records_from_batch(
 ) -> Result<Vec<VectorRecord>> {
     let mut records = Vec::new();
     // Get column arrays
-    let id_array = batch.column_by_name("id")
+    let id_array = batch
+        .column_by_name("id")
         .ok_or_else(|| anyhow!("ID column not found"))?
         .as_any()
         .downcast_ref::<StringArray>()
         .ok_or_else(|| anyhow!("ID column is not string type"))?;
-    let vector_array = batch.column_by_name("vector")
+    let vector_array = batch
+        .column_by_name("vector")
         .ok_or_else(|| anyhow!("Vector column not found"))?
         .as_any()
         .downcast_ref::<BinaryArray>()
@@ -233,7 +235,11 @@ fn extract_records_from_batch(
     for (expected_id, offset) in id_offsets {
         let row_idx = *offset as usize;
         if row_idx >= batch.num_rows() {
-            warn!("Row offset {} out of bounds for batch with {} rows", row_idx, batch.num_rows());
+            warn!(
+                "Row offset {} out of bounds for batch with {} rows",
+                row_idx,
+                batch.num_rows()
+            );
             continue;
         }
         // Verify ID matches
@@ -249,7 +255,7 @@ fn extract_records_from_batch(
             id: Some(expected_id.clone()),
             vector,
             metadata: None, // Would extract if needed
-            timestamp: 0, // Would extract from timestamp column
+            timestamp: 0,   // Would extract from timestamp column
             updated_at: None,
             quantized_vector: None,
             expires_at: None,
@@ -258,7 +264,7 @@ fn extract_records_from_batch(
         };
         records.push(record);
     }
-    
+
     Ok(records)
 }
 
@@ -272,10 +278,7 @@ pub async fn update_records_batch(
 }
 
 /// Batch delete operations (mark as deleted in metadata)
-pub async fn delete_records_batch(
-    nova_file: &mut NovaFile,
-    ids: &[String],
-) -> Result<usize> {
+pub async fn delete_records_batch(nova_file: &mut NovaFile, ids: &[String]) -> Result<usize> {
     // In NOVA, deletions are typically handled by:
     // 1. Maintaining a deletion list
     // 2. Filtering during compaction
@@ -283,7 +286,8 @@ pub async fn delete_records_batch(
     let mut deleted = 0;
     for id in ids {
         // TODO: Implement ID index for NOVA
-        if false { // Placeholder: nova_file.id_index.lookup(id).await.is_some()
+        if false {
+            // Placeholder: nova_file.id_index.lookup(id).await.is_some()
             // Would add to deletion list
             deleted += 1;
         }
@@ -301,17 +305,21 @@ pub async fn read_batch_optimized(
         projection: columns,
         ..Default::default()
     };
-    info!("Optimized batch read for {} IDs with {} columns", 
-        ids.len(), config.projection.len());
+    info!(
+        "Optimized batch read for {} IDs with {} columns",
+        ids.len(),
+        config.projection.len()
+    );
     // Lookup locations
     // TODO: Implement ID index for NOVA
     let locations: Vec<Option<ParquetLocation>> = ids.iter().map(|_| None).collect();
-    
+
     // Group by row group
     let mut grouped: HashMap<usize, Vec<String>> = HashMap::new();
     for (id, maybe_loc) in ids.iter().zip(locations.iter()) {
         if let Some(loc) = maybe_loc {
-            grouped.entry(loc.row_group_id)
+            grouped
+                .entry(loc.row_group_id)
                 .or_insert_with(Vec::new)
                 .push(id.clone());
         }
@@ -319,11 +327,7 @@ pub async fn read_batch_optimized(
     // Read row groups with projection
     let mut results = HashMap::new();
     for (rg_id, rg_ids) in grouped {
-        let batch = read_row_group_with_projection(
-            nova_file,
-            rg_id,
-            &config.projection,
-        ).await?;
+        let batch = read_row_group_with_projection(nova_file, rg_id, &config.projection).await?;
         for id in rg_ids {
             results.insert(id, batch.clone());
         }
@@ -353,17 +357,17 @@ pub async fn prefetch_row_groups(
     let cache = cache.unwrap();
     let semaphore = Arc::new(Semaphore::new(2)); // Limited prefetch parallelism
     let mut handles = Vec::new();
-    
+
     for rg_id in row_group_ids {
         // Skip if already cached
         if cache.get(rg_id).await.is_some() {
             continue;
         }
-        
+
         let cache = cache.clone();
         let sem = semaphore.clone();
         let schema = nova_file.schema.clone();
-        
+
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             match load_row_group(rg_id, &vec![], &schema).await {
@@ -378,7 +382,7 @@ pub async fn prefetch_row_groups(
         });
         handles.push(handle);
     }
-    
+
     // Wait for all prefetches
     for handle in handles {
         let _ = handle.await;
@@ -426,7 +430,7 @@ impl BatchStats {
             self.cache_hits as f64 / (self.cache_hits + self.cache_misses) as f64
         }
     }
-    
+
     pub fn found_rate(&self) -> f64 {
         if self.total_ids_requested == 0 {
             0.0
@@ -441,37 +445,49 @@ mod tests {
     #[test]
     fn test_group_by_row_group() {
         let locations = vec![
-            ("id1".to_string(), ParquetLocation {
-                row_group_id: 0,
-                row_offset: 10,
-                page_num: Some(1),
-                file_path: String::new(),
-            }),
-            ("id2".to_string(), ParquetLocation {
-                row_group_id: 0,
-                row_offset: 20,
-                page_num: Some(2),
-                file_path: String::new(),
-            }),
-            ("id3".to_string(), ParquetLocation {
-                row_group_id: 1,
-                row_offset: 5,
-                page_num: Some(0),
-                file_path: String::new(),
-            }),
-            ("id4".to_string(), ParquetLocation {
-                row_group_id: 1,
-                row_offset: 15,
-                page_num: None,
-                file_path: String::new(),
-            }),
+            (
+                "id1".to_string(),
+                ParquetLocation {
+                    row_group_id: 0,
+                    row_offset: 10,
+                    page_num: Some(1),
+                    file_path: String::new(),
+                },
+            ),
+            (
+                "id2".to_string(),
+                ParquetLocation {
+                    row_group_id: 0,
+                    row_offset: 20,
+                    page_num: Some(2),
+                    file_path: String::new(),
+                },
+            ),
+            (
+                "id3".to_string(),
+                ParquetLocation {
+                    row_group_id: 1,
+                    row_offset: 5,
+                    page_num: Some(0),
+                    file_path: String::new(),
+                },
+            ),
+            (
+                "id4".to_string(),
+                ParquetLocation {
+                    row_group_id: 1,
+                    row_offset: 15,
+                    page_num: None,
+                    file_path: String::new(),
+                },
+            ),
         ];
         let grouped = group_by_row_group(locations);
         assert_eq!(grouped.len(), 2);
         assert_eq!(grouped[&0].len(), 2);
         assert_eq!(grouped[&1].len(), 2);
     }
-    
+
     #[test]
     fn test_batch_stats() {
         let stats = BatchStats {
@@ -486,7 +502,7 @@ mod tests {
         assert_eq!(stats.hit_rate(), 0.6);
         assert_eq!(stats.found_rate(), 0.95);
     }
-    
+
     #[test]
     fn test_vector_deserialization() {
         let bytes = vec![

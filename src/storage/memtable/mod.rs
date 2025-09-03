@@ -118,16 +118,16 @@
 //! [memtable]
 //! # Maximum size before flush
 //! max_size_mb = 256
-//! 
+//!
 //! # Flush interval
 //! flush_interval_sec = 300
-//! 
+//!
 //! # Implementation type
 //! type = "global_partitioned"
-//! 
+//!
 //! # Underlying structure
 //! structure = "btree"  # btree, skiplist, dashmap, art
-//! 
+//!
 //! # MVCC settings
 //! enable_mvcc = true
 //! max_versions = 10
@@ -159,7 +159,7 @@
 //!
 //! ```rust
 //! use proximadb::storage::memtable::{MemtableFactory, MemtableConfig};
-//! 
+//!
 //! // Create production memtable
 //! let config = MemtableConfig {
 //!     max_size: 256 * 1024 * 1024,  // 256MB
@@ -167,15 +167,15 @@
 //!     enable_mvcc: true,
 //!     ..Default::default()
 //! };
-//! 
+//!
 //! let memtable = MemtableFactory::create_for_wal(config);
-//! 
+//!
 //! // Insert data
 //! memtable.insert("key1", vector_record).await?;
-//! 
+//!
 //! // Query data
 //! let result = memtable.get("key1").await?;
-//! 
+//!
 //! // Range scan
 //! let results = memtable.range_scan("key1", Some(100)).await?;
 //! ```
@@ -216,16 +216,15 @@ use tracing::debug;
 // Re-export implementations
 pub use implementations::{
     // bplustree::BPlusTreeMemtable,  // UNUSED - Never instantiated
-    btree::BTreeMemtable,          // Needed for tests
+    btree::BTreeMemtable, // Needed for tests
     // dashmap::DashMapMemtable,      // UNUSED - Never instantiated
     // artmap::ArtMemtable,           // Already commented out
     // hashmap::HashMapMemtable,      // UNUSED - Never instantiated
-    skiplist::SkipListMemtable,    // Needed for tests
+    skiplist::SkipListMemtable, // Needed for tests
 };
 
 // Re-export specialized wrappers (using proper OOP composition)
 pub use specialized::SpecializedMemtableFactory;
-
 
 /// Available memtable implementation types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,9 +321,9 @@ impl MemtableFactory {
             // MemtableType::HashMap => Box::new(HashMapMemtable::new()),
             // MemtableType::DashMap => Box::new(DashMapMemtable::new()),
             // MemtableType::ART => Box::new(BTreeMemtable::new(false)), // Temporarily use BTree instead of ART
-            
+
             // Return error for now - only GlobalPartitioned is used
-            _ => panic!("Unused memtable type requested: {:?}", memtable_type)
+            _ => panic!("Unused memtable type requested: {:?}", memtable_type),
         }
     }
 
@@ -639,7 +638,7 @@ pub struct PerformanceWinners {
 #[cfg(test)]
 mod tests {
     use super::*;
-use tracing::{debug, error, info, warn};
+    use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_memtable_factory() {

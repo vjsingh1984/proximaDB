@@ -118,24 +118,24 @@
 //! # Global settings
 //! total_memory_mb = 4096
 //! enable_tiering = true
-//! 
+//!
 //! # Vector cache
 //! [cache.vector]
 //! size_mb = 2048
 //! eviction = "arc"
 //! prefetch = true
-//! 
+//!
 //! # Query cache
 //! [cache.query]
 //! size_mb = 512
 //! ttl_seconds = 300
 //! semantic_cache = true
-//! 
+//!
 //! # Metadata cache
 //! [cache.metadata]
 //! size_mb = 256
 //! persist = true
-//! 
+//!
 //! # Index cache
 //! [cache.index]
 //! size_mb = 1024
@@ -155,21 +155,21 @@
 //!
 //! ```rust
 //! use proximadb::cache::{CrossCacheOrchestrator, CacheConfig};
-//! 
+//!
 //! // Initialize cache system
 //! let config = CacheConfig::default();
 //! let orchestrator = CrossCacheOrchestrator::new(config);
-//! 
+//!
 //! // Get vector from cache
 //! let vector = orchestrator.get_vector("vec_123").await?;
-//! 
+//!
 //! // Cache query result
 //! orchestrator.cache_query_result(
 //!     query_hash,
 //!     search_results,
 //!     Duration::from_secs(300)
 //! ).await?;
-//! 
+//!
 //! // Get cache metrics
 //! let metrics = orchestrator.metrics();
 //! println!("Cache hit rate: {:.2}%", metrics.hit_rate * 100.0);
@@ -183,37 +183,32 @@
 //! 4. **Tune Eviction**: Match policy to access pattern
 //! 5. **Warm Cache**: Preload frequently accessed data
 
-pub mod traits;
-pub mod base;
-pub mod eviction;
 pub mod backend;
-pub mod specialized;
-pub mod orchestrator;
-pub mod metrics;
+pub mod base;
 pub mod config;
+pub mod eviction;
 pub mod health_monitor;
+pub mod metrics;
+pub mod orchestrator;
 pub mod performance_optimizer;
+pub mod specialized;
+pub mod traits;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export main types
-pub use traits::{BaseCache, CacheKey, CacheValue, CacheEntry};
+pub use backend::{CacheTier, StorageBackend};
 pub use base::BaseCacheImpl;
-pub use eviction::{EvictionStrategy, LRUStrategy, LFUStrategy, ARCStrategy};
-pub use backend::{StorageBackend, CacheTier};
-pub use orchestrator::{CrossCacheOrchestrator, CacheType, AccessPatternTracker, DynamicMemoryAllocator};
-pub use metrics::CacheMetrics;
-pub use config::{CacheConfig, GlobalCacheConfig, EvictionPolicy};
+pub use config::{CacheConfig, EvictionPolicy, GlobalCacheConfig};
+pub use eviction::{ARCStrategy, EvictionStrategy, LFUStrategy, LRUStrategy};
 pub use health_monitor::{CacheMonitoringDashboard, DashboardState};
+pub use metrics::CacheMetrics;
+pub use orchestrator::{
+    AccessPatternTracker, CacheType, CrossCacheOrchestrator, DynamicMemoryAllocator,
+};
 pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
+pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 
 // Re-export specialized caches
-pub use specialized::{
-    VectorStore,
-    QueryCache,
-    BitmapFilterCache,
-    IndexNodeCache,
-    MetadataStore,
-};
-
+pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorStore};

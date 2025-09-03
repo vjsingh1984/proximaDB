@@ -1,11 +1,11 @@
 //! Search result types
 
+use crate::compute::distance_computation::engine::SimilarityResult;
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::proto::proximadb::SourceContent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::compute::distance_computation::engine::SimilarityResult;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::proto::proximadb::{SourceContent};
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -37,7 +37,7 @@ pub struct InternalSearchResult {
     pub source: Option<SourceContent>,
     /// Expanded context for RAG applications (surrounding chunks)
     pub expanded_context: Vec<SourceContent>,
-    
+
     // Unified search pipeline integration
     /// Semantic distance information with metric awareness (replaces multiple adapters)
     pub semantic_similarity: Option<SimilarityResult>,
@@ -45,7 +45,7 @@ pub struct InternalSearchResult {
     pub quantization_info: Option<QuantizationInfo>,
     /// Engine-specific optimization stats (replaces multiple result types)
     pub engine_stats: Option<EngineStats>,
-    
+
     // Additional fields for compatibility with existing code
     /// Index path for result tracking
     pub index_path: Option<String>,
@@ -119,7 +119,7 @@ impl InternalSearchResult {
             index_path: None,
         }
     }
-    
+
     /// Create search result with metadata
     pub fn with_metadata(
         id: String,
@@ -147,19 +147,19 @@ impl InternalSearchResult {
             index_path: None,
         }
     }
-    
+
     /// Add vector data to result
     pub fn with_vector(mut self, vector: Vec<f32>) -> Self {
         self.vector = Some(vector);
         self
     }
-    
+
     /// Add debug information
     pub fn with_debug_info(mut self, debug_info: SearchDebugInfo) -> Self {
         self.debug_info = Some(debug_info);
         self
     }
-    
+
     /// Add semantic distance information (eliminates adapter conversions)
     pub fn with_semantic_distance(mut self, semantic_distance: SimilarityResult) -> Self {
         self.semantic_similarity = Some(semantic_distance.clone());
@@ -168,19 +168,19 @@ impl InternalSearchResult {
         self.similarity = Some(semantic_distance.rank_value);
         self
     }
-    
+
     /// Add quantization information for Parquet column integration
     pub fn with_quantization_info(mut self, quantization_info: QuantizationInfo) -> Self {
         self.quantization_info = Some(quantization_info);
         self
     }
-    
+
     /// Add engine-specific optimization statistics (eliminates multiple result types)
     pub fn with_engine_stats(mut self, engine_stats: EngineStats) -> Self {
         self.engine_stats = Some(engine_stats);
         self
     }
-    
+
     /// Create search result directly from semantic distance computation
     pub fn from_semantic_distance(
         id: String,
@@ -209,17 +209,20 @@ impl InternalSearchResult {
             index_path: None,
         }
     }
-    
+
     /// Create search result from VectorRecord with score - preserves all source information
     pub fn from_vector_record(record: &crate::proto::proximadb::VectorRecord, score: f32) -> Self {
         // Convert metadata from proto MetadataItem to serde_json::Value
-        let metadata = record.metadata.iter()
+        let metadata = record
+            .metadata
+            .iter()
             .filter_map(|item| {
                 use crate::proto::proximadb::metadata_item::Value;
                 let value = match &item.value {
                     Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
                     Some(Value::NumberValue(n)) => serde_json::Value::Number(
-                        serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))
+                        serde_json::Number::from_f64(*n)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
                     ),
                     Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                     None => return None,
@@ -241,7 +244,7 @@ impl InternalSearchResult {
             updated_at: record.updated_at,
             expires_at: record.expires_at,
             source: record.source.clone(), // Preserve source information
-            expanded_context: Vec::new(),   // Empty by default, can be populated later
+            expanded_context: Vec::new(),  // Empty by default, can be populated later
             semantic_similarity: None,
             quantization_info: None,
             engine_stats: None,
@@ -275,20 +278,23 @@ impl InternalSearchResult {
 
     /// Convert to SearchVectorRecord for proto response - handles include flags properly
     pub fn to_search_vector_record(
-        &self, 
-        include_vector: bool, 
+        &self,
+        include_vector: bool,
         include_metadata: bool,
-        include_source: bool
+        include_source: bool,
     ) -> crate::proto::proximadb::SearchVectorRecord {
-        use crate::proto::proximadb::{SearchVectorRecord, MetadataItem, metadata_item::Value};
+        use crate::proto::proximadb::{MetadataItem, SearchVectorRecord, metadata_item::Value};
 
         // Convert metadata back to proto format if requested
         let metadata = if include_metadata {
-            self.metadata.iter()
+            self.metadata
+                .iter()
                 .map(|(key, value)| {
                     let proto_value = match value {
                         serde_json::Value::String(s) => Some(Value::StringValue(s.clone())),
-                        serde_json::Value::Number(n) => Some(Value::NumberValue(n.as_f64().unwrap_or(0.0))),
+                        serde_json::Value::Number(n) => {
+                            Some(Value::NumberValue(n.as_f64().unwrap_or(0.0)))
+                        }
                         serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
                         _ => None, // Skip complex types for now
                     };
@@ -305,89 +311,104 @@ impl InternalSearchResult {
 
         SearchVectorRecord {
             id: self.id.clone(),
-            vector: if include_vector { self.vector.clone().unwrap_or_default() } else { Vec::new() },
+            vector: if include_vector {
+                self.vector.clone().unwrap_or_default()
+            } else {
+                Vec::new()
+            },
             metadata,
             score: self.score,
             similarity: self.similarity,
             version: self.version,
             timestamp: self.timestamp,
-            source: if include_source { self.source.clone() } else { None }, // Preserve source info when requested
-            expanded_context: if include_source { self.expanded_context.clone() } else { Vec::new() },
+            source: if include_source {
+                self.source.clone()
+            } else {
+                None
+            }, // Preserve source info when requested
+            expanded_context: if include_source {
+                self.expanded_context.clone()
+            } else {
+                Vec::new()
+            },
         }
     }
-    
+
     /// ==================== UNIFIED SIMILARITY SCORING ====================
     /// Standardized distance-to-similarity conversion for consistent ranking
     /// across all storage engines and WAL search
-    
+
     /// Convert raw distance to normalized similarity score (higher = more similar)
     /// This ensures consistent ranking when merging results from different sources
-    /// 
+    ///
     /// Supports all 13 ProximaDB distance metrics with semantic normalization:
     /// Core: Cosine, Euclidean, DotProduct, Manhattan  
     /// Extended: Hamming, Jaccard, Chebyshev, Canberra, Minkowski, Angular, BrayCurtis, Hellinger, Custom
-    pub fn standardized_distance_to_similarity(distance: f32, metric: &crate::compute::distance_computation::DistanceMetric) -> f32 {
+    pub fn standardized_distance_to_similarity(
+        distance: f32,
+        metric: &crate::compute::distance_computation::DistanceMetric,
+    ) -> f32 {
         use crate::compute::distance_computation::DistanceMetric;
         match metric {
             DistanceMetric::Cosine => {
                 // Cosine distance is in [0, 2], similarity = 1 - distance/2 for normalized range
                 if distance.is_infinite() {
-                    0.0  // Zero vectors get worst similarity score
+                    0.0 // Zero vectors get worst similarity score
                 } else {
                     (1.0 - (distance.max(0.0).min(2.0) / 2.0)).max(0.0)
                 }
-            },
+            }
             DistanceMetric::Euclidean => {
                 // Euclidean distance: similarity = 1 / (1 + distance)
                 1.0 / (1.0 + distance)
-            },
+            }
             DistanceMetric::DotProduct => {
                 // Dot product is similarity metric (higher = more similar)
                 // For normalized vectors, dot product is in [-1, 1], convert to [0, 1]
                 (distance + 1.0) / 2.0
-            },
+            }
             DistanceMetric::Manhattan => {
                 // Manhattan distance: similarity = 1 / (1 + distance)
                 1.0 / (1.0 + distance)
-            },
+            }
             DistanceMetric::Hamming => {
                 // Hamming distance: number of differing positions
                 // Similarity = 1 - (distance / max_possible_distance)
                 // For continuous vectors, use exponential decay
                 (-distance).exp()
-            },
+            }
             DistanceMetric::Jaccard => {
                 // Jaccard distance is in [0, 1], similarity = 1 - distance
                 (1.0 - distance).max(0.0)
-            },
+            }
             DistanceMetric::Chebyshev => {
                 // Chebyshev distance (L∞ norm): similarity = 1 / (1 + distance)
                 1.0 / (1.0 + distance)
-            },
+            }
             DistanceMetric::Canberra => {
                 // Canberra distance: weighted Manhattan, similarity = 1 / (1 + distance)
                 1.0 / (1.0 + distance)
-            },
+            }
             DistanceMetric::Minkowski => {
                 // Minkowski distance (p=3): similarity = 1 / (1 + distance)
                 1.0 / (1.0 + distance)
-            },
+            }
             DistanceMetric::Angular => {
                 // Angular distance is normalized to [0, 1], similarity = 1 - distance
                 (1.0 - distance).max(0.0)
-            },
+            }
             DistanceMetric::BrayCurtis => {
                 // Bray-Curtis distance is in [0, 1], similarity = 1 - distance
                 (1.0 - distance).max(0.0)
-            },
+            }
             DistanceMetric::Hellinger => {
                 // Hellinger distance is in [0, 1], similarity = 1 - distance
                 (1.0 - distance).max(0.0)
-            },
+            }
             DistanceMetric::Custom => {
                 // Custom metric: use generic exponential decay
                 (-distance).exp()
-            },
+            }
             DistanceMetric::Unspecified => {
                 // Unspecified defaults to cosine similarity conversion
                 if distance.is_infinite() {
@@ -395,10 +416,10 @@ impl InternalSearchResult {
                 } else {
                     (1.0 - (distance.max(0.0).min(2.0) / 2.0)).max(0.0)
                 }
-            },
+            }
         }
     }
-    
+
     /// Create InternalSearchResult with standardized similarity scoring
     /// This should be used by ALL storage engines for consistent ranking
     pub fn from_distance_standard(
@@ -409,7 +430,7 @@ impl InternalSearchResult {
         metadata: HashMap<String, serde_json::Value>,
     ) -> Self {
         let similarity_score = Self::standardized_distance_to_similarity(raw_distance, metric);
-        
+
         Self {
             id,
             vector_id: None,
@@ -486,11 +507,14 @@ impl SearchResultSet {
 
 /// Helper module for serializing Arc<[T]>
 mod arc_slice_serde {
+    use super::InternalSearchResult;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
-    use super::InternalSearchResult;
 
-    pub fn serialize<S>(results: &Arc<[InternalSearchResult]>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(
+        results: &Arc<[InternalSearchResult]>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -519,7 +543,9 @@ impl Ord for InternalSearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Order by score in REVERSE order (higher scores first)
         // For distance metrics, lower is better, so this gives us better results first
-        other.score.partial_cmp(&self.score)
+        other
+            .score
+            .partial_cmp(&self.score)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| self.id.cmp(&other.id)) // Tie-break by ID for consistency
     }

@@ -322,7 +322,6 @@ pub struct ViperSchemaStrategy {
     filterable_fields: Vec<String>,
 }
 
-
 /// Time-series optimized schema strategy
 pub struct TimeSeriesSchemaStrategy {
     collection_id: String,
@@ -501,10 +500,9 @@ impl ViperFactory {
         config: &ViperConfiguration,
         collection_id: &str,
     ) -> Result<Box<dyn SchemaGenerationStrategy>> {
-        let factory = self
-            .strategy_registry
-            .get(collection_id)
-            .ok_or_else(|| anyhow::anyhow!("Unknown schema // strategy removed -  {}", strategy_name))?;
+        let factory = self.strategy_registry.get(collection_id).ok_or_else(|| {
+            anyhow::anyhow!("Unknown schema // strategy removed -  {}", strategy_name)
+        })?;
 
         Ok(factory.create_strategy(&config.schema_config, collection_id))
     }
@@ -640,22 +638,18 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
         fields.push(Field::new(
             "vectors",
             DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-            true,  // Nullable for sparse vectors
+            true, // Nullable for sparse vectors
         ));
-        
+
         // Version field for MVCC - using tinyint
         fields.push(Field::new("version", DataType::Int8, true));
-        
+
         // Audit field - stores creation or update time
         fields.push(Field::new("updated_at", DataType::Int64, true));
 
         // Dynamic filterable metadata columns
         for field in &self.filterable_fields {
-            fields.push(Field::new(
-                &format!("meta_{}", field),
-                DataType::Utf8,
-                true,
-            ));
+            fields.push(Field::new(&format!("meta_{}", field), DataType::Utf8, true));
         }
 
         // Extra metadata as Map type
@@ -713,8 +707,6 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
         "ViperSchemaStrategy"
     }
 }
-
-
 
 // Processor Implementations
 
@@ -784,7 +776,6 @@ impl SchemaStrategyFactory for ViperSchemaStrategyFactory {
         "ViperSchemaStrategyFactory"
     }
 }
-
 
 impl SchemaStrategyFactory for TimeSeriesSchemaStrategyFactory {
     fn create_strategy(

@@ -109,19 +109,19 @@
 //! ```toml
 //! [metrics]
 //! enabled = true
-//! 
+//!
 //! # Storage configuration
 //! storage_path = "s3://bucket/metrics"
 //! collection_partitions = 16
 //! retention_days = 7
-//! 
+//!
 //! # Update intervals
 //! flush_interval_seconds = 30
 //! snapshot_interval_seconds = 60
-//! 
+//!
 //! # Resource limits
 //! max_memory_mb = 512
-//! 
+//!
 //! # Optimization thresholds
 //! parallel_scan_threshold = 10
 //! sparsity_threshold = 0.3
@@ -140,17 +140,17 @@
 //!
 //! ```rust
 //! use proximadb::metrics::{MetricsConfig, MetricsQueryService};
-//! 
+//!
 //! // Initialize metrics system
 //! let config = MetricsConfig::default();
 //! let metrics = MetricsQueryService::new(config)?;
-//! 
+//!
 //! // Query recent metrics
 //! let recent = metrics.query_recent(
 //!     "collection_name",
 //!     Duration::from_secs(300)  // Last 5 minutes
 //! ).await?;
-//! 
+//!
 //! // Get optimization hints
 //! let hints = metrics.get_optimization_hints("collection_name").await?;
 //! if hints.recommend_index_rebuild {
@@ -178,32 +178,38 @@
 //! - CloudWatch (metric filters)
 //! - Custom web UI at `/dashboard`
 
-pub mod store;
-pub mod updater;
+pub mod aggregator;
+pub mod cache;
+pub mod collectors;
+pub mod compression;
+pub mod exporters;
 pub mod query_service;
 pub mod schema;
-pub mod aggregator;
-pub mod compression;
-pub mod cache;
-pub mod exporters;
-pub mod collectors;
+pub mod store;
+pub mod updater;
 
 #[cfg(test)]
 mod tests;
 
-pub use store::{MetricsPersistenceLayer};
-pub use updater::{InternalMetricsUpdater, MetricsUpdate, FlushMetricsUpdate, CompactionMetricsUpdate};
-pub use query_service::{MetricsQueryService, MetricsQueryOptions};
+pub use aggregator::{AggregationWindow, MetricsAggregationEngine};
+pub use cache::{CacheMetricsCollector, CacheMetricsSnapshot, CacheOptimizationHints};
+pub use collectors::{
+    EngineComparison, EngineMetricsCollector, EngineStatistics, UnifiedMetricsCollector,
+};
+pub use compression::{
+    CompressionMetrics, CompressionMetricsTracker, CompressionResult, DecompressionResult,
+};
+pub use exporters::{ExportFormat, JsonExporter, MetricsExporter, PrometheusExporter};
+pub use query_service::{MetricsQueryOptions, MetricsQueryService};
 pub use schema::{CollectionMetrics, GlobalMetrics, QueryOptimizationHints};
-pub use aggregator::{MetricsAggregationEngine, AggregationWindow};
-pub use compression::{CompressionMetrics, CompressionMetricsTracker, CompressionResult, DecompressionResult};
-pub use cache::{CacheMetricsSnapshot, CacheMetricsCollector, CacheOptimizationHints};
-pub use exporters::{MetricsExporter, ExportFormat, PrometheusExporter, JsonExporter};
-pub use collectors::{UnifiedMetricsCollector, EngineMetricsCollector, EngineStatistics, EngineComparison};
+pub use store::MetricsPersistenceLayer;
+pub use updater::{
+    CompactionMetricsUpdate, FlushMetricsUpdate, InternalMetricsUpdater, MetricsUpdate,
+};
 
 // Re-export common types for compatibility
-pub use exporters::{SystemMetrics, MetricsSnapshot};
 pub use self::schema::Alert;
+pub use exporters::{MetricsSnapshot, SystemMetrics};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -213,31 +219,31 @@ use serde::{Deserialize, Serialize};
 pub struct MetricsConfig {
     /// Enable or disable the entire metrics system
     pub enabled: bool,
-    
+
     /// Number of partitions for collection-based metrics storage
     pub collection_partitions: usize,
-    
+
     /// Base path for metrics storage (e.g., "s3://bucket/metrics" or "file:///data/metrics")
     pub storage_path: String,
-    
+
     /// Flush interval for metrics updates in seconds
     pub flush_interval_seconds: u64,
-    
+
     /// Retention period in days (max: 30, default: 7)
     pub retention_days: u32,
-    
+
     /// Threshold for parallel scan optimization (number of files)
     pub parallel_scan_threshold: usize,
-    
+
     /// Sparsity threshold for compression decisions (% of zero/null values)
     pub sparsity_threshold: f32,
-    
+
     /// Size threshold for quantization recommendations (bytes)
     pub quantization_size_threshold: u64,
-    
+
     /// Snapshot interval for metrics aggregation in seconds
     pub snapshot_interval_seconds: u64,
-    
+
     /// Maximum memory usage in MB for metrics cache
     pub max_memory_mb: usize,
 }
@@ -254,7 +260,7 @@ impl Default for MetricsConfig {
             sparsity_threshold: 0.3,     // Consider sparse if >30% zeros
             quantization_size_threshold: 100 * 1024 * 1024, // 100MB
             snapshot_interval_seconds: 60, // 1 minute snapshots
-            max_memory_mb: 512, // 512MB max memory for metrics cache
+            max_memory_mb: 512,          // 512MB max memory for metrics cache
         }
     }
 }
@@ -264,32 +270,40 @@ impl MetricsConfig {
     pub fn validate(&mut self) -> Result<()> {
         // Enforce minimum flush interval
         if self.flush_interval_seconds < 10 {
-            tracing::warn!("Flush interval {} too low, setting to minimum 10 seconds", 
-                self.flush_interval_seconds);
+            tracing::warn!(
+                "Flush interval {} too low, setting to minimum 10 seconds",
+                self.flush_interval_seconds
+            );
             self.flush_interval_seconds = 10;
         }
-        
+
         // Enforce maximum retention
         if self.retention_days > 30 {
-            tracing::warn!("Retention period {} days too high, setting to maximum 30 days", 
-                self.retention_days);
+            tracing::warn!(
+                "Retention period {} days too high, setting to maximum 30 days",
+                self.retention_days
+            );
             self.retention_days = 30;
         }
-        
+
         // Enforce minimum partitions
         if self.collection_partitions < 1 {
-            tracing::warn!("Collection partitions {} too low, setting to minimum 1", 
-                self.collection_partitions);
+            tracing::warn!(
+                "Collection partitions {} too low, setting to minimum 1",
+                self.collection_partitions
+            );
             self.collection_partitions = 1;
         }
-        
+
         // Enforce maximum partitions
         if self.collection_partitions > 256 {
-            tracing::warn!("Collection partitions {} too high, setting to maximum 256", 
-                self.collection_partitions);
+            tracing::warn!(
+                "Collection partitions {} too high, setting to maximum 256",
+                self.collection_partitions
+            );
             self.collection_partitions = 256;
         }
-        
+
         Ok(())
     }
 }
