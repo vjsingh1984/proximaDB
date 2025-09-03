@@ -120,7 +120,10 @@ impl StorageEngineFactory {
     fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(SwiftEngine::new())?;
+        let engine = runtime.block_on(async {
+            let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+            SwiftEngine::new(distance_compute, None).await
+        })?;
         Ok(Arc::new(engine))
     }
     

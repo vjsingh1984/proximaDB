@@ -347,14 +347,14 @@ impl ParquetTestDataGenerator {
         if config.include_metadata {
             let metadata_json: Vec<Option<String>> = (0..config.num_rows)
                 .map(|i| {
-                    if self.rng.gen::<f32>() < config.null_percentage {
+                    if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                         None
                     } else {
                         Some(format!(
                             r#"{{"category":"cat_{}","year":{},"score":{:.2}}}"#,
                             i % config.metadata_cardinality,
                             2020 + (i % 5),
-                            self.rng.gen::<f32>()
+                            self.rng.gen_range(0.0..1.0)
                         ))
                     }
                 })
@@ -437,7 +437,7 @@ impl ParquetTestDataGenerator {
         let categories = vec!["technology", "science", "art", "music", "sports"];
         let category_values: Vec<Option<String>> = (0..config.num_rows)
             .map(|i| {
-                if self.rng.gen::<f32>() < config.null_percentage {
+                if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                     None
                 } else {
                     Some(categories[i % categories.len()].to_string())
@@ -448,7 +448,7 @@ impl ParquetTestDataGenerator {
         
         let years: Vec<Option<i64>> = (0..config.num_rows)
             .map(|i| {
-                if self.rng.gen::<f32>() < config.null_percentage {
+                if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                     None
                 } else {
                     Some(2020 + (i % 5) as i64)
@@ -459,7 +459,7 @@ impl ParquetTestDataGenerator {
         
         let scores: Vec<Option<f32>> = (0..config.num_rows)
             .map(|_| {
-                if self.rng.gen::<f32>() < config.null_percentage {
+                if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                     None
                 } else {
                     Some(self.rng.gen_range(0.0..1.0))
@@ -470,7 +470,7 @@ impl ParquetTestDataGenerator {
         
         let active_values: Vec<Option<bool>> = (0..config.num_rows)
             .map(|_| {
-                if self.rng.gen::<f32>() < config.null_percentage {
+                if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                     None
                 } else {
                     Some(self.rng.gen_bool(0.7))
@@ -486,7 +486,7 @@ impl ParquetTestDataGenerator {
         );
         
         for _ in 0..config.num_rows {
-            if self.rng.gen::<f32>() < config.null_percentage {
+            if self.rng.gen_range(0.0..1.0) < config.null_percentage {
                 tags_builder.append_null();
             } else {
                 let num_tags = self.rng.gen_range(1..4);

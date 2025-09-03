@@ -16,15 +16,15 @@
 
 //! Storage module unit tests
 
+pub mod metadata_backend_tests;
+pub mod metadata_indexes_tests;
 pub mod single_index_tests;
 pub mod unified_index_tests;
-pub mod metadata_indexes_tests;
-pub mod metadata_backend_tests;
 // pub mod test_wal_config_simple; // File doesn't exist
 // pub mod viper_flush_compaction_tests; // Removed - obsolete API
 // SST tests - now using unified test utilities
-pub mod sst_core_tests;
 pub mod sst_atomic_operations_test;
+pub mod sst_core_tests;
 pub mod sst_sstable_format_test;
 // pub mod sst_flush_test; // Removed - duplicate of integration tests
 

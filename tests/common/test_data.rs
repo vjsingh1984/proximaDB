@@ -6,13 +6,13 @@
  */
 
 //! Centralized test data generation utilities
-//! 
+//!
 //! This module provides standard test data generators used across all tests
 //! to ensure consistency and avoid duplication.
 
-use proximadb::proto::proximadb::{VectorRecord, MetadataItem};
-use rand::{Rng, SeedableRng};
+use proximadb::proto::proximadb::{MetadataItem, VectorRecord};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 
 /// Standard test vector generator with consistent behavior
@@ -47,7 +47,7 @@ impl TestVectorGenerator {
         let vector: Vec<f32> = (0..self.dimension)
             .map(|_| self.rng.gen_range(-1.0..1.0))
             .collect();
-        
+
         VectorRecord {
             id,
             vector,
@@ -61,11 +61,17 @@ impl TestVectorGenerator {
     }
 
     /// Generate test vectors with specific patterns
-    pub fn generate_pattern_vectors(&mut self, count: usize, pattern: VectorPattern) -> Vec<VectorRecord> {
+    pub fn generate_pattern_vectors(
+        &mut self,
+        count: usize,
+        pattern: VectorPattern,
+    ) -> Vec<VectorRecord> {
         match pattern {
             VectorPattern::Random => self.generate_vectors(count, "random"),
             VectorPattern::Sequential => self.generate_sequential_vectors(count),
-            VectorPattern::Clustered { clusters } => self.generate_clustered_vectors(count, clusters),
+            VectorPattern::Clustered { clusters } => {
+                self.generate_clustered_vectors(count, clusters)
+            }
             VectorPattern::Sparse { sparsity } => self.generate_sparse_vectors(count, sparsity),
         }
     }
@@ -77,7 +83,7 @@ impl TestVectorGenerator {
                 let vector: Vec<f32> = (0..self.dimension)
                     .map(|j| (i * self.dimension + j) as f32 / (count * self.dimension) as f32)
                     .collect();
-                
+
                 VectorRecord {
                     id: format!("seq-{}", i),
                     vector,
@@ -93,20 +99,20 @@ impl TestVectorGenerator {
     fn generate_clustered_vectors(&mut self, count: usize, clusters: usize) -> Vec<VectorRecord> {
         let vectors_per_cluster = count / clusters;
         let mut result = Vec::new();
-        
+
         for cluster_id in 0..clusters {
             // Generate cluster centroid
             let centroid: Vec<f32> = (0..self.dimension)
                 .map(|_| self.rng.gen_range(-1.0..1.0))
                 .collect();
-            
+
             // Generate vectors around centroid
             for i in 0..vectors_per_cluster {
                 let mut vector = centroid.clone();
                 for v in &mut vector {
                     *v += self.rng.gen_range(-0.1..0.1); // Small perturbation
                 }
-                
+
                 result.push(VectorRecord {
                     id: format!("cluster-{}-{}", cluster_id, i),
                     vector,
@@ -116,7 +122,7 @@ impl TestVectorGenerator {
                 });
             }
         }
-        
+
         result
     }
 
@@ -126,14 +132,14 @@ impl TestVectorGenerator {
             .map(|i| {
                 let vector: Vec<f32> = (0..self.dimension)
                     .map(|_| {
-                        if self.rng.gen::<f32>() < sparsity {
+                        if self.rng.gen_range(0.0..1.0) < sparsity {
                             0.0
                         } else {
                             self.rng.gen_range(-1.0..1.0)
                         }
                     })
                     .collect();
-                
+
                 VectorRecord {
                     id: format!("sparse-{}", i),
                     vector,
@@ -150,21 +156,28 @@ impl TestVectorGenerator {
         vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                    format!("cat-{}", self.rng.gen_range(0..5))
-                )),
+                value: Some(
+                    proximadb::proto::proximadb::metadata_item::Value::StringValue(format!(
+                        "cat-{}",
+                        self.rng.gen_range(0..5)
+                    )),
+                ),
             },
             MetadataItem {
                 key: "score".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                    self.rng.gen_range(0.0..100.0)
-                )),
+                value: Some(
+                    proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                        self.rng.gen_range(0.0..100.0),
+                    ),
+                ),
             },
             MetadataItem {
                 key: "active".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::BoolValue(
-                    self.rng.gen_bool(0.7)
-                )),
+                value: Some(
+                    proximadb::proto::proximadb::metadata_item::Value::BoolValue(
+                        self.rng.gen_bool(0.7),
+                    ),
+                ),
             },
         ]
     }
@@ -174,9 +187,9 @@ impl TestVectorGenerator {
         let mut metadata = self.generate_metadata();
         metadata.push(MetadataItem {
             key: "cluster_id".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                cluster_id as f64
-            )),
+            value: Some(
+                proximadb::proto::proximadb::metadata_item::Value::NumberValue(cluster_id as f64),
+            ),
         });
         metadata
     }
@@ -199,9 +212,7 @@ pub fn generate_test_vectors(count: usize, dimension: usize, prefix: &str) -> Ve
 /// Generate test query vector
 pub fn generate_query_vector(dimension: usize, seed: u64) -> Vec<f32> {
     let mut rng = StdRng::seed_from_u64(seed);
-    (0..dimension)
-        .map(|_| rng.gen_range(-1.0..1.0))
-        .collect()
+    (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect()
 }
 
 #[cfg(test)]
@@ -210,24 +221,27 @@ mod tests {
 
     #[test]
     fn test_vector_generation() {
-        let mut gen = TestVectorGenerator::new(128, 42);
-        let vectors = gen.generate_vectors(10, "test");
+        let mut generator = TestVectorGenerator::new(128, 42);
+        let vectors = generator.generate_vectors(10, "test");
         assert_eq!(vectors.len(), 10);
         assert_eq!(vectors[0].vector.len(), 128);
     }
 
     #[test]
     fn test_pattern_generation() {
-        let mut gen = TestVectorGenerator::new(64, 42);
-        
-        let clustered = gen.generate_pattern_vectors(100, VectorPattern::Clustered { clusters: 5 });
+        let mut generator = TestVectorGenerator::new(64, 42);
+
+        let clustered =
+            generator.generate_pattern_vectors(100, VectorPattern::Clustered { clusters: 5 });
         assert_eq!(clustered.len(), 100);
-        
-        let sparse = gen.generate_pattern_vectors(50, VectorPattern::Sparse { sparsity: 0.9 });
+
+        let sparse =
+            generator.generate_pattern_vectors(50, VectorPattern::Sparse { sparsity: 0.9 });
         assert_eq!(sparse.len(), 50);
-        
+
         // Check sparsity
-        let zero_count: usize = sparse.iter()
+        let zero_count: usize = sparse
+            .iter()
             .flat_map(|v| &v.vector)
             .filter(|&&x| x == 0.0)
             .count();

@@ -1292,212 +1292,12 @@ mod block_utils {
 // Old deserialization helper functions removed - now handled by FastLanesDataBlock internally
 // FastLanesDataBlock handles all serialization/deserialization with compression support
 
-/// Legacy helper function - temporarily kept for any remaining references
+/// Delegates to FastLanesDataBlock for proper deserialization
+/// This eliminates duplication and ensures consistent block handling
 fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<FastLanesDataBlock> {
-        use std::io::Read;
-        let mut cursor = std::io::Cursor::new(data);
-        
-        // Read metadata length
-        let mut len_bytes = [0u8; 4];
-        cursor.read_exact(&mut len_bytes)?;
-        let metadata_len = u32::from_le_bytes(len_bytes) as usize;
-        
-        // Custom deserialization for hierarchical metadata
-        let metadata_data = &data[4..4 + metadata_len];
-        let mut meta_cursor = std::io::Cursor::new(metadata_data);
-        
-        // Read basic fields
-        let mut u32_bytes = [0u8; 4];
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let block_id = u32::from_le_bytes(u32_bytes);
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let record_count = u32::from_le_bytes(u32_bytes);
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let uncompressed_size = u32::from_le_bytes(u32_bytes);
-        
-        let mut u8_byte = [0u8; 1];
-        meta_cursor.read_exact(&mut u8_byte)?;
-        let has_deletes = u8_byte[0] != 0;
-        
-        // Read DataBlockMetadata fields
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let min_key_len = u32::from_le_bytes(u32_bytes) as usize;
-        let mut min_key_bytes = vec![0u8; min_key_len];
-        meta_cursor.read_exact(&mut min_key_bytes)?;
-        let min_key = String::from_utf8(min_key_bytes)?;
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let max_key_len = u32::from_le_bytes(u32_bytes) as usize;
-        let mut max_key_bytes = vec![0u8; max_key_len];
-        meta_cursor.read_exact(&mut max_key_bytes)?;
-        let max_key = String::from_utf8(max_key_bytes)?;
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let min_timestamp = u32::from_le_bytes(u32_bytes);
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let max_timestamp = u32::from_le_bytes(u32_bytes);
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let metadata_record_count = u32::from_le_bytes(u32_bytes);
-        
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let null_count = u32::from_le_bytes(u32_bytes);
-        
-        // Read metadata_columns
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let columns_len = u32::from_le_bytes(u32_bytes) as usize;
-        let mut metadata_columns = Vec::with_capacity(columns_len);
-        for _ in 0..columns_len {
-            meta_cursor.read_exact(&mut u32_bytes)?;
-            let col_len = u32::from_le_bytes(u32_bytes) as usize;
-            let mut col_bytes = vec![0u8; col_len];
-            meta_cursor.read_exact(&mut col_bytes)?;
-            metadata_columns.push(String::from_utf8(col_bytes)?);
-        }
-        
-        // Read min_values
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let min_values_len = u32::from_le_bytes(u32_bytes) as usize;
-        let mut min_values = HashMap::with_capacity(min_values_len);
-        for _ in 0..min_values_len {
-            meta_cursor.read_exact(&mut u32_bytes)?;
-            let key_len = u32::from_le_bytes(u32_bytes) as usize;
-            let mut key_bytes = vec![0u8; key_len];
-            meta_cursor.read_exact(&mut key_bytes)?;
-            let key = String::from_utf8(key_bytes)?;
-            
-            meta_cursor.read_exact(&mut u32_bytes)?;
-            let value_len = u32::from_le_bytes(u32_bytes) as usize;
-            let mut value_bytes = vec![0u8; value_len];
-            meta_cursor.read_exact(&mut value_bytes)?;
-            let value_str = String::from_utf8(value_bytes)?;
-            let value: serde_json::Value = serde_json::from_str(&value_str)?;
-            min_values.insert(key, value);
-        }
-        
-        // Read max_values
-        meta_cursor.read_exact(&mut u32_bytes)?;
-        let max_values_len = u32::from_le_bytes(u32_bytes) as usize;
-        let mut max_values = HashMap::with_capacity(max_values_len);
-        for _ in 0..max_values_len {
-            meta_cursor.read_exact(&mut u32_bytes)?;
-            let key_len = u32::from_le_bytes(u32_bytes) as usize;
-            let mut key_bytes = vec![0u8; key_len];
-            meta_cursor.read_exact(&mut key_bytes)?;
-            let key = String::from_utf8(key_bytes)?;
-            
-            meta_cursor.read_exact(&mut u32_bytes)?;
-            let value_len = u32::from_le_bytes(u32_bytes) as usize;
-            let mut value_bytes = vec![0u8; value_len];
-            meta_cursor.read_exact(&mut value_bytes)?;
-            let value_str = String::from_utf8(value_bytes)?;
-            let value: serde_json::Value = serde_json::from_str(&value_str)?;
-            max_values.insert(key, value);
-        }
-        
-        // Read bloom filter
-        meta_cursor.read_exact(&mut u8_byte)?;
-        let block_bloom_filter = if u8_byte[0] != 0 {
-            meta_cursor.read_exact(&mut u32_bytes)?;
-            let bloom_len = u32::from_le_bytes(u32_bytes) as usize;
-            let mut bloom_data = vec![0u8; bloom_len];
-            meta_cursor.read_exact(&mut bloom_data)?;
-            Some(bloom_data)
-        } else {
-            None
-        };
-        
-        // Build metadata stats with available fields
-        let metadata_stats = FastLanesBlockMetadata {
-            record_count: metadata_record_count,
-            size_bytes: 0, // Will be set later
-            compressed_size: 0, // Will be set later
-            timestamp: min_timestamp as i64,
-            compaction_level: 0,
-            has_deletes: false,
-            has_updates: false,
-            version_range: (min_timestamp as i64, max_timestamp as i64),
-            column_stats: min_values.into_iter().map(|(k, v)| {
-                (k.clone(), crate::storage::engines::core::formats::fastlanes_blocks::block_structures::ColumnStatistics {
-                    name: k.clone(),
-                    min_value: Some(v),
-                    max_value: max_values.get(&k).cloned(),
-                    null_count: null_count as u32,
-                    distinct_count: 0,
-                    avg_size_bytes: 0,
-                    bloom_filter_enabled: false,
-                })
-            }).collect(),
-            quantization_stats: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::QuantizationStatistics::default(),
-            data_checksum: 0, // TODO: Calculate actual checksum
-            metadata_checksum: 0, // TODO: Calculate actual checksum
-        };
-        
-        // Read records data section (4 bytes for length + metadata_len)
-        let remaining_data = &data[4 + metadata_len..];
-        let mut records_cursor = std::io::Cursor::new(remaining_data);
-        let mut records = Vec::with_capacity(record_count as usize);
-        
-        for _ in 0..record_count {
-            // Read record length
-            let mut len_bytes = [0u8; 4];
-            records_cursor.read_exact(&mut len_bytes)?;
-            let record_len = u32::from_le_bytes(len_bytes) as usize;
-            
-            // Read and deserialize record
-            let mut record_data = vec![0u8; record_len];
-            records_cursor.read_exact(&mut record_data)?;
-            
-            // OPTIMIZED: Deserialize VectorRecord directly (no SstRecord conversion)
-            use prost::Message;
-            let record = VectorRecord::decode(&record_data[..])
-                .context("Failed to deserialize VectorRecord in DataBlock")?;
-            records.push(record);
-        }
-        
-        // Quantization will be populated during write or can be generated on-demand
-        
-        Ok(FastLanesDataBlock {
-            encoding_marker: 0x00, // Raw/Uncompressed format
-            encoding_metadata: None, // No FastLanes metadata for raw format
-            block_id,
-            records,
-            quantized_vectors: None,
-            quantization_level: None,
-            quantized_section: None,
-            metadata: metadata_stats,
-            compression_config: BlockCompressionConfig {
-                algorithm: CompressionAlgorithm::None,
-                compression_level: 0,
-                enable_vector_compression: false,
-                enable_metadata_compression: false,
-                compression_threshold_bytes: 0,
-                dictionary_compression: false,
-            },
-            compression_algorithm: CompressionAlgorithm::None,
-            uncompressed_size: uncompressed_size as u64,
-            bloom_filter: block_bloom_filter.as_ref().and_then(|data| {
-                // Deserialize bloom filter from bytes
-                bincode::deserialize::<bloom_filter::SerializedSstableBloomFilter>(data)
-                    .ok()
-                    .map(|s| s.into())
-            }),
-            block_bloom_filter: block_bloom_filter.as_ref().and_then(|data| {
-                // Deserialize bloom filter from bytes
-                bincode::deserialize::<bloom_filter::SerializedSstableBloomFilter>(data)
-                    .ok()
-                    .map(|s| s.into())
-            }),
-            id_range: (String::new(), String::new()),
-            timestamp_range: (0, 0),
-            statistics: BlockStatistics::default(),
-            metadata_stats: None,  // This is Option<BlockMetadataStats>, not FastLanesBlockMetadata
-            has_deletes,
-        })
-    }
+    // FIXED: Delegate directly to FastLanesDataBlock instead of duplicating logic
+    FastLanesDataBlock::deserialize(data)
+}
 
 // Utility functions for FastLanesDataBlock operations in SST
 mod block_operations {
@@ -1892,9 +1692,8 @@ impl UniversallyOptimized for SstStorage {
         
         Ok(metrics)
     }
-}
-
-impl SstStorage {
+    
+    // ===== Methods from second impl block (consolidated) =====
     // All writes go through WAL → Flush → SSTable directly
     // No intermediate memtable needed
 
@@ -2215,19 +2014,10 @@ impl SstStorage {
     */
 
     // SST is now pure SSTable storage - no memtable to query
-    
 }
-
-// =============================================================================
-// UNIFIED STORAGE ENGINE TRAIT IMPLEMENTATION FOR SST
-// =============================================================================
 
 #[async_trait]
 impl UnifiedStorageEngine for SstStorage {
-    // =============================================================================
-    // ABSTRACT METHODS - SST-specific implementations
-    // =============================================================================
-
     fn engine_name(&self) -> &'static str {
         "sst"
     }
@@ -3068,11 +2858,12 @@ impl UnifiedStorageEngine for SstStorage {
     
 }
 
-// =============================================================================
-// SST IMPLEMENTATION HELPER METHODS (Private)
-// =============================================================================
-
 impl SstStorage {
+    // =============================================================================
+    // SST IMPLEMENTATION HELPER METHODS (Private)
+    // =============================================================================
+    
+    // ===== Methods from third impl block (consolidated) =====
     /// Extract individual records from deserialized WAL vector record batches
     /// These batches come from the global partitioned memtable with WAL behavior
     /// Enhanced with batch processing optimizations for improved performance
@@ -4033,11 +3824,11 @@ impl SstStorage {
 
         Ok(compressed)
     }
-
+    
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
     /// Compact a specific collection - returns standard CompactionResult
-    pub async fn compact_collection(&self, collection_id: &str, collection_config: Option<&Collection>) -> Result<CompactionResult> {
+    async fn compact_collection(&self, collection_id: &str, collection_config: Option<&Collection>) -> Result<CompactionResult> {
         info!("🗜️ SST Engine: Starting collection compaction for {}", collection_id);
         
         // Get storage location from collection config - skip if not provided
@@ -4113,17 +3904,17 @@ impl SstStorage {
     }
 
     // TODO: Missing methods needed by VectorOperationsService - implement properly
-    pub async fn set_scan_filter(&self, _collection_id: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
+    async fn set_scan_filter(&self, _collection_id: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
         // TODO: Implement scan filter configuration
         Ok(())
     }
 
-    pub async fn set_index_filter(&self, _collection_id: &str, _index: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
+    async fn set_index_filter(&self, _collection_id: &str, _index: &str, _filter: &UnifiedMetadataFilter) -> Result<()> {
         // TODO: Implement index filter configuration  
         Ok(())
     }
 
-    pub async fn collection(&self, _collection_id: &str) -> Result<Collection> {
+    async fn collection(&self, _collection_id: &str) -> Result<Collection> {
         // TODO: Implement collection retrieval
         use crate::proto::proximadb::Collection;
         Ok(Collection {
@@ -4132,17 +3923,17 @@ impl SstStorage {
         })
     }
 
-    pub async fn list_collection_files(&self, _collection_id: &str) -> Result<Vec<String>> {
+    async fn list_collection_files(&self, _collection_id: &str) -> Result<Vec<String>> {
         // TODO: Implement file listing
         Ok(vec![])
     }
 
-    pub fn collection_stats(&self, _collection_id: &str) -> Result<serde_json::Value> {
+    fn collection_stats(&self, _collection_id: &str) -> Result<serde_json::Value> {
         // TODO: Implement stats collection
         Ok(serde_json::json!({"vector_count": 0}))
     }
 
-    pub fn collection_metadata(&self, _collection_id: &str) -> Result<serde_json::Value> {
+    fn collection_metadata(&self, _collection_id: &str) -> Result<serde_json::Value> {
         // TODO: Implement metadata retrieval
         Ok(serde_json::json!({}))
     }
@@ -4196,7 +3987,6 @@ impl SstStorage {
         // Use the unified search implementation with context
         self.search_vectors_unified(ctx).await
     }
-
 }
 
 // 🔴 OBSOLETE - Consolidated into storage::traits::CompactionResult

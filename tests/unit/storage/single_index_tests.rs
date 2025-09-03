@@ -16,9 +16,11 @@
 
 //! Unit tests for single collection index functionality
 
+use proximadb::proto::proximadb::{
+    Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
+};
 use proximadb::storage::metadata::single_index::SingleCollectionIndex;
 use tracing::{debug, error, info, warn};
-use proximadb::proto::proximadb::{Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine, IndexingAlgorithm};
 
 fn create_test_collection(id: &str, name: &str) -> Collection {
     Collection {
@@ -55,33 +57,33 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
 #[test]
 fn test_single_index_operations() {
     let index = SingleCollectionIndex::new();
-    
+
     let collection = create_test_collection("uuid-123", "test-collection");
-    
+
     // Test upsert
     index.upsert_collection(collection.clone());
     assert_eq!(index.count(), 1);
-    
+
     // Test UUID lookup - O(1)
     let result = index.get_by_uuid("uuid-123");
     assert!(result.is_some());
     assert_eq!(result.unwrap().id, "uuid-123");
-    
+
     // Test name lookup - O(n) but efficient
     let result = index.get_by_name("test-collection");
     assert!(result.is_some());
     assert_eq!(result.unwrap().id, "uuid-123");
-    
+
     // Test UUID by name
     let uuid = index.get_uuid_by_name("test-collection");
     assert_eq!(uuid.unwrap(), "uuid-123");
-    
+
     // Test existence checks
     assert!(index.exists_by_uuid("uuid-123"));
     assert!(index.exists_by_name("test-collection"));
     assert!(!index.exists_by_uuid("nonexistent"));
     assert!(!index.exists_by_name("nonexistent"));
-    
+
     // Test removal
     let removed = index.remove_collection("uuid-123");
     assert!(removed.is_some());
@@ -93,19 +95,19 @@ fn test_single_index_operations() {
 #[test]
 fn test_single_index_rebuild() {
     let index = SingleCollectionIndex::new();
-    
+
     let records = vec![
         create_test_collection("uuid-1", "collection-1"),
         create_test_collection("uuid-2", "collection-2"),
         create_test_collection("uuid-3", "collection-3"),
     ];
-    
+
     index.rebuild_from_records(records);
-    
+
     assert_eq!(index.count(), 3);
     assert!(index.exists_by_uuid("uuid-1"));
     assert!(index.exists_by_name("collection-2"));
-    
+
     let metrics = index.get_metrics();
     assert!(metrics.last_rebuild_timestamp.is_some());
     assert_eq!(metrics.total_collections, 3);
@@ -115,44 +117,47 @@ fn test_single_index_rebuild() {
 fn test_concurrent_access() {
     use std::sync::Arc;
     use std::thread;
-    
+
     let index = Arc::new(SingleCollectionIndex::new());
     let mut handles = vec![];
-    
+
     // Spawn multiple threads for concurrent operations
     for i in 0..10 {
         let index_clone = index.clone();
         let handle = thread::spawn(move || {
-            let collection = create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
+            let collection =
+                create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
             index_clone.upsert_collection(collection);
-            
+
             // Immediate lookup to test consistency
             let uuid_result = index_clone.get_by_uuid(&format!("uuid-{}", i));
             assert!(uuid_result.is_some());
-            
+
             let name_result = index_clone.get_by_name(&format!("collection-{}", i));
             assert!(name_result.is_some());
         });
         handles.push(handle);
     }
-    
+
     // Wait for all threads
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Verify final state
     assert_eq!(index.count(), 10);
-    
+
     // Test concurrent reads
-    let handles: Vec<_> = (0..10).map(|i| {
-        let index_clone = index.clone();
-        thread::spawn(move || {
-            let result = index_clone.get_by_uuid(&format!("uuid-{}", i));
-            assert!(result.is_some());
+    let handles: Vec<_> = (0..10)
+        .map(|i| {
+            let index_clone = index.clone();
+            thread::spawn(move || {
+                let result = index_clone.get_by_uuid(&format!("uuid-{}", i));
+                assert!(result.is_some());
+            })
         })
-    }).collect();
-    
+        .collect();
+
     for handle in handles {
         handle.join().unwrap();
     }
@@ -161,36 +166,45 @@ fn test_concurrent_access() {
 #[test]
 fn test_performance_characteristics() {
     let index = SingleCollectionIndex::new();
-    
+
     // Insert test data
     for i in 0..1000 {
-        let collection = create_test_collection(&format!("uuid-{:04}", i), &format!("collection-{:04}", i));
+        let collection =
+            create_test_collection(&format!("uuid-{:04}", i), &format!("collection-{:04}", i));
         index.upsert_collection(collection);
     }
-    
+
     // Test UUID lookup performance (should be O(1))
     let start = std::time::Instant::now();
     for i in 0..100 {
         let _result = index.get_by_uuid(&format!("uuid-{:04}", i));
     }
     let uuid_duration = start.elapsed();
-    
+
     // Test name lookup performance (O(n) but should be fast)
     let start = std::time::Instant::now();
     for i in 0..100 {
         let _result = index.get_by_name(&format!("collection-{:04}", i));
     }
     let name_duration = start.elapsed();
-    
+
     debug!("UUID lookup (100 ops): {:?}", uuid_duration);
     debug!("Name lookup (100 ops): {:?}", name_duration);
-    
+
     // UUID lookups should typically be faster than name lookups
     // But in test environments with small datasets, timing can be unreliable
     // Just verify both complete in reasonable time
-    assert!(uuid_duration.as_millis() < 1000, "UUID lookups took too long: {:?}", uuid_duration);
-    assert!(name_duration.as_millis() < 1000, "Name lookups took too long: {:?}", name_duration);
-    
+    assert!(
+        uuid_duration.as_millis() < 1000,
+        "UUID lookups took too long: {:?}",
+        uuid_duration
+    );
+    assert!(
+        name_duration.as_millis() < 1000,
+        "Name lookups took too long: {:?}",
+        name_duration
+    );
+
     let metrics = index.get_metrics();
     assert!(metrics.avg_lookup_time_ns > 0);
     assert_eq!(metrics.total_collections, 1000);

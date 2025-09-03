@@ -266,7 +266,7 @@ impl CentroidStore {
             
             // Choose next centroid with probability proportional to squared distance
             let total: f32 = distances.iter().sum();
-            let mut threshold = rng.gen::<f32>() * total;
+            let mut threshold = rng.gen_range(0.0..1.0) * total;
             
             for (idx, &dist) in distances.iter().enumerate() {
                 threshold -= dist;
@@ -777,7 +777,7 @@ impl UnifiedIvfIndex {
             
             // Choose next centroid with probability proportional to squared distance
             let total: f32 = distances.iter().sum();
-            let mut threshold = rng.gen::<f32>() * total;
+            let mut threshold = rng.gen_range(0.0..1.0) * total;
             
             for (idx, &dist) in distances.iter().enumerate() {
                 threshold -= dist;

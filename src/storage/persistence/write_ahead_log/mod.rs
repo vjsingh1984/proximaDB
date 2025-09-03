@@ -1188,9 +1188,25 @@ impl WriteAheadLogManager {
 
     /// Delete vector record (delegated to batch strategy)
     pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        wal_behavior.delete_vector(&collection_id, &vector_id).await
+        // Deletion is implemented via expires_at field
+        // Create a vector record with expires_at set to current time
+        let mut record = crate::proto::proximadb::VectorRecord {
+            id: vector_id.clone(),
+            vector: Vec::new(),
+            metadata: Vec::new(),
+            version: None,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u32,
+            updated_at: None,
+            expires_at: Some(0), // Setting to 0 or past time marks for deletion
+            quantized_vector: None,
+            source: None, // No source content for deletion record
+        };
+        
+        // Use insert with expired record to mark for deletion
+        self.insert(collection_id, vector_id, &record).await
     }
 
     // Note: Collection lifecycle operations (create/drop) are handled by CollectionService
@@ -2120,14 +2136,19 @@ impl WriteAheadLogManager {
         let recovery_result = tokio::time::timeout(recovery_timeout, async {
             info!("📊 WAL_MANAGER: About to call RecoveryManager.recover()");
             
+            // Create filesystem factory for recovery
+            let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+            let filesystem = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config).await?);
+            
             // Create RecoveryManager instance
             let recovery_manager = RecoveryManager::new(
                 self.config.clone(),
                 self.shared_wal_behavior.get_or_init(&crate::storage::memtable::core::MemtableConfig::default()).clone(),
-                self.filesystem.clone(),
+                filesystem,
             );
 
-            let recovered_count = recovery_manager.recover().await?;
+            let recovery_stats = recovery_manager.recover_all().await?;
+            let recovered_count = recovery_stats.total_vectors_recovered;
             
             info!("📊 WAL_MANAGER: RecoveryManager returned: {} entries", recovered_count);
             Ok::<u64, anyhow::Error>(recovered_count)

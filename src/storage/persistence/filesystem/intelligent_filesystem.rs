@@ -490,7 +490,8 @@ impl FileSystem for IntelligentFilesystem {
         // For cloud storage, use intelligent staging
         if self.is_cloud_path(path) && data.len() > 16 * 1024 * 1024 {
             // Large cloud file: write to local cache first, then async upload
-            self.cache_to_disk(path, data).await;
+            let cache_key = format!("cloud:{}", path);
+            self.cache_to_disk(&cache_key, path, data).await;
             
             // Async upload to cloud (fire and forget)
             let underlying_fs = self.underlying_fs.clone();

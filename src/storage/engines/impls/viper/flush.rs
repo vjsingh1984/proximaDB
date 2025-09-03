@@ -891,10 +891,9 @@ impl Flush {
                 .and_then(|c| c.storage_config.as_ref())
                 .and_then(|s| s.compression.as_ref())
                 .and_then(|c| c.level)
-                
         } else {
             Some(viper_config.compression_level)
-        };
+        }.unwrap_or(viper_config.compression_level);
         
         // Map core compression to Parquet compression using shared function
         let compression_algo = crate::storage::engines::core::formats::columnar::map_core_to_parquet_compression(

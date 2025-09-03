@@ -618,9 +618,7 @@ impl ModularBlockReader {
         
         Ok(all_results)
     }
-}
-
-impl ModularBlockReader {
+    
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, file_path: String) -> Self {
         Self {
             filesystem_factory,
@@ -912,9 +910,7 @@ impl ModularBlockReader {
             }
         }
     }
-}
-
-impl ModularBlockReader {
+    
     fn decompress_block(&self, data: &[u8], algorithm: CompressionAlgorithm) -> Result<Vec<u8>> {
         match algorithm {
             CompressionAlgorithm::None => Ok(data.to_vec()),
@@ -3592,9 +3588,7 @@ impl ReadingStrategySelector {
             sequential_io: true,        // Optimize for disk throughput
         }
     }
-}
-
-impl UnifiedSstableReader {
+    
     /// 🚀 NEW: Read all records from SSTable files optimized for compaction
     /// This is the main entry point that compaction should use instead of search_vectors
     pub async fn read_all_records_for_compaction(

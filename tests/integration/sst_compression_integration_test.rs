@@ -1,5 +1,5 @@
 //! Integration tests for SST engine with compression
-//! 
+//!
 //! Tests cover:
 //! - SST DataBlock compression with ZSTD
 //! - Flush operations with compressed blocks
@@ -12,27 +12,34 @@
 mod common {
     include!("../common/mod.rs");
 }
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
 use crate::integration::viper_compression_integration_test::create_test_vectors;
+use common::unified_test_utils::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
-use proximadb::core::{SstConfig, VectorRecord};
-use proximadb::storage::engines::sst::{
-    SstStorage, DataBlock, DataBlockCompressionConfig
-};
-use proximadb::proto::proximadb::{MetadataItem, StorageEngine, CompressionAlgorithm as ProtoCompressionAlgorithm};
-use proximadb::core::search::{SearchParams, FilterExpression};
-use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
-use proximadb::storage::transaction_coordinator::TransactionCoordinator;
-use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::compression::CompressionAlgorithm;
+use proximadb::core::search::{FilterExpression, SearchParams};
+use proximadb::core::{SstConfig, VectorRecord};
+use proximadb::proto::proximadb::{
+    CompressionAlgorithm as ProtoCompressionAlgorithm, MetadataItem, StorageEngine,
+};
+use proximadb::storage::engines::sst::{DataBlock, DataBlockCompressionConfig, SstStorage};
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb::storage::transaction_coordinator::TransactionCoordinator;
 use std::sync::Arc;
-use tracing::{info, debug, warn};
+use tracing::{debug, info, warn};
 
 /// Create test SST configuration with specific compression algorithm
-fn create_sst_config_with_algorithm(env: &UnifiedTestEnvironment, algorithm: &str, level: i32) -> SstConfig {
+fn create_sst_config_with_algorithm(
+    env: &UnifiedTestEnvironment,
+    algorithm: &str,
+    level: i32,
+) -> SstConfig {
     let mut config = env.sst_config.clone();
-    config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = algorithm.to_string();
+    config
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
     config.compression_level = level;
     config.block_size_kb = 4096; // 4MB for optimal compression
     config
@@ -41,164 +48,218 @@ fn create_sst_config_with_algorithm(env: &UnifiedTestEnvironment, algorithm: &st
 // Collection creation now handled by UnifiedTestEnvironment
 
 /// Create test vectors with compression-friendly patterns
-fn create_compressible_test_vectors(env: &UnifiedTestEnvironment, count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
-    (0..count).map(|i| {
-        let mut vector = vec![0.0; dimension];
-        // Create highly compressible pattern - many repeated values
-        for j in 0..dimension {
-            // Create blocks of repeated values for better compression
-            let block_size = 64;
-            let block_value = (i % 10) as f32 * 0.1;
-            vector[j] = if (j / block_size) % 2 == 0 { block_value } else { 0.0 };
-        }
-        
-        env.create_test_vector_record(
-            format!("{}_{}", prefix, i),
-            vector,
-            (1000 + i) as u32,
-            None,
-            vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        format!("cat_{}", i % 3)
-                    )),
-                },
-                MetadataItem {
-                    key: "timestamp".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                        i as f64
-                    )),
-                },
-            ]
-        )
-    }).collect()
+fn create_compressible_test_vectors(
+    env: &UnifiedTestEnvironment,
+    count: usize,
+    dimension: usize,
+    prefix: &str,
+) -> Vec<VectorRecord> {
+    (0..count)
+        .map(|i| {
+            let mut vector = vec![0.0; dimension];
+            // Create highly compressible pattern - many repeated values
+            for j in 0..dimension {
+                // Create blocks of repeated values for better compression
+                let block_size = 64;
+                let block_value = (i % 10) as f32 * 0.1;
+                vector[j] = if (j / block_size) % 2 == 0 {
+                    block_value
+                } else {
+                    0.0
+                };
+            }
+
+            env.create_test_vector_record(
+                format!("{}_{}", prefix, i),
+                vector,
+                (1000 + i) as u32,
+                None,
+                vec![
+                    MetadataItem {
+                        key: "category".to_string(),
+                        value: Some(
+                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                                format!("cat_{}", i % 3),
+                            ),
+                        ),
+                    },
+                    MetadataItem {
+                        key: "timestamp".to_string(),
+                        value: Some(
+                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                                i as f64,
+                            ),
+                        ),
+                    },
+                ],
+            )
+        })
+        .collect()
 }
 
 /// Test SST DataBlock ZSTD compression and decompression roundtrip
-/// 
+///
 /// Validates that SST DataBlocks can be compressed with ZSTD, achieve reasonable
 /// compression ratios, and can be decompressed back to identical data.
 #[tokio::test]
 async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let env = UnifiedTestEnvironment::new().await?;
-    
+
     // Create SST config with compression enabled
     let mut config = env.sst_config.clone();
-    config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+    config
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     config.compression_level = 3;
-    
+
     // Create DataBlock with test records
     let vectors = create_compressible_test_vectors(&env, 100, 512, "test");
-    let sst_records: Vec<_> = vectors.into_iter()
+    let sst_records: Vec<_> = vectors
+        .into_iter()
         .map(|v| proximadb::storage::engines::sst::SstRecord::from_vector_record(v))
         .collect();
-    
+
     let data_block = DataBlock::new(1, sst_records.clone());
-    
+
     // Test compression with config
     let compression_config = DataBlockCompressionConfig::from_sst_config(&config);
-    let compressed_data = data_block.serialize_with_config(&compression_config).unwrap();
-    
+    let compressed_data = data_block
+        .serialize_with_config(&compression_config)
+        .unwrap();
+
     // Deserialize and verify
     let recovered_block = DataBlock::deserialize(&compressed_data).unwrap();
     assert_eq!(data_block.block_id, recovered_block.block_id);
     assert_eq!(data_block.records.len(), recovered_block.records.len());
-    
+
     // Check compression was applied
     use proximadb::core::serialization::CompressionAlgorithm;
-    assert!(!matches!(recovered_block.compression_algorithm, CompressionAlgorithm::None));
-    
+    assert!(!matches!(
+        recovered_block.compression_algorithm,
+        CompressionAlgorithm::None
+    ));
+
     // Calculate compression ratio on-demand
     let compression_ratio = if recovered_block.uncompressed_size > 0 {
         compressed_data.len() as f32 / recovered_block.uncompressed_size as f32
     } else {
         1.0
     };
-    assert!(compression_ratio > 0.0 && compression_ratio < 1.0, 
-            "Compression ratio should be between 0 and 1, got {}", compression_ratio);
-    
+    assert!(
+        compression_ratio > 0.0 && compression_ratio < 1.0,
+        "Compression ratio should be between 0 and 1, got {}",
+        compression_ratio
+    );
+
     info!("DataBlock compression ratio: {:.2}", compression_ratio);
     Ok(())
 }
 
 /// Test SST engine flush with compression creates compressed SSTable files
-/// 
+///
 /// Validates that when compression is enabled, the SST engine creates compressed
 /// SSTable files that can be searched normally while using less disk space.
 #[tokio::test]
 async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<()> {
     let env = UnifiedTestEnvironment::new().await?;
-    
+
     // Create SST engine with compression enabled
     let mut sst_config = env.sst_config.clone();
-    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+    sst_config
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
-    
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-    let engine = SstStorage::new(
-        sst_config,
-        env.filesystem.clone(),
-        distance_compute
-    ).await?;
-    
+
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        proximadb::compute::distance_computation::DistanceMetric::Cosine,
+    ));
+    let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+
     // Create test vectors
     let vectors = env.create_test_vectors_with_dimension(1000, 256);
     info!("📝 Created {} test vectors with compression", vectors.len());
-    
+
     // Build correct parameters and use production code directly
     let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
-    assert_eq!(result.entries_flushed, 1000, "Should flush all 1000 vectors");
-    info!("✅ Flushed {} vectors with compression", result.entries_flushed);
-    
+    assert_eq!(
+        result.entries_flushed, 1000,
+        "Should flush all 1000 vectors"
+    );
+    info!(
+        "✅ Flushed {} vectors with compression",
+        result.entries_flushed
+    );
+
     // Verify search works on compressed data using unified helper
     let query_vector = env.create_query_vector_with_dimension(256);
     let results = operations::search_vectors_sst(&engine, &env, &query_vector, 10).await?;
-    
-    info!("🔍 Search on compressed data returned {} results", results.len());
-    assert!(!results.is_empty(), "Should find search results on compressed SST data");
-    
+
+    info!(
+        "🔍 Search on compressed data returned {} results",
+        results.len()
+    );
+    assert!(
+        !results.is_empty(),
+        "Should find search results on compressed SST data"
+    );
+
     debug!("✅ SST compression integration test passed");
     Ok(())
 }
 
 /// Test SST compaction preserves compression and maintains data integrity
-/// 
+///
 /// Validates that compaction of compressed SST files maintains compression settings,
 /// preserves all data integrity, and results in searchable compacted files.
 #[tokio::test]
 async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result<()> {
     let env = UnifiedTestEnvironment::new().await?;
-    
+
     // Create SST engine with compression enabled and lower compaction threshold
     let mut sst_config = env.sst_config.clone();
-    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+    sst_config
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
     sst_config.compaction_threshold = 2; // Lower threshold to trigger compaction
-    
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-    let engine = SstStorage::new(
-        sst_config,
-        env.filesystem.clone(),
-        distance_compute
-    ).await?;
-    
+
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        proximadb::compute::distance_computation::DistanceMetric::Cosine,
+    ));
+    let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+
     info!("🚀 Testing SST compaction with compression integrity");
-    
+
     // Create multiple batches to trigger compaction
     for batch in 0..3 {
         let vectors = env.create_test_vectors_with_dimension(500, 128);
-        info!("📝 Flushing batch {} with {} vectors", batch + 1, vectors.len());
-        let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
+        info!(
+            "📝 Flushing batch {} with {} vectors",
+            batch + 1,
+            vectors.len()
+        );
+        let flush_params =
+            operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
         let result = engine.do_flush(&flush_params).await?;
-        assert!(result.success, "Batch {} should flush successfully", batch + 1);
-        debug!("✅ Batch {} flushed {} entries", batch + 1, result.entries_flushed);
+        assert!(
+            result.success,
+            "Batch {} should flush successfully",
+            batch + 1
+        );
+        debug!(
+            "✅ Batch {} flushed {} entries",
+            batch + 1,
+            result.entries_flushed
+        );
     }
-    
+
     info!("🗂️ All 3 batches flushed, triggering compaction...");
-    
+
     // Trigger compaction using unified helper (which would handle the collection config properly)
     let collection_config = env.create_test_collection_for_engine(StorageEngine::Sst);
     let compact_params = proximadb::storage::traits::CompactionParameters {
@@ -208,12 +269,15 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
         collection_config: Some(collection_config),
         ..Default::default()
     };
-    
+
     let compaction_result = engine.compact(compact_params).await?;
     info!("✅ COMPACTION COMPLETED:");
     info!("   - Success: {}", compaction_result.success);
-    info!("   - Entries processed: {}", compaction_result.entries_processed);
-    
+    info!(
+        "   - Entries processed: {}",
+        compaction_result.entries_processed
+    );
+
     // Note: If compaction processes 0 entries, it's a test setup/configuration issue
     // Common problems in manual test setup:
     // 1. Wrong base_location path (should be parent of collection directory)
@@ -225,24 +289,27 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
         debug!("   This happens when test setup has path/configuration mismatches");
         debug!("   UnifiedTestEnvironment handles all setup correctly");
     }
-    
-    assert!(compaction_result.success, "Compaction should report success");
-    
+
+    assert!(
+        compaction_result.success,
+        "Compaction should report success"
+    );
+
     // Verify data integrity after compaction using unified helper
     let query_vector = env.create_query_vector_with_dimension(128);
     let results = operations::search_vectors_sst(&engine, &env, &query_vector, 100).await?;
-    
+
     info!("🔍 Search after compaction found {} results", results.len());
     // Note: This assertion might fail if compaction has configuration issues
     // UnifiedTestEnvironment should provide correct configuration
     debug!("Results after compaction: {} vectors found", results.len());
-    
+
     // If no results found, it's likely due to the configuration issue in compaction
     if results.is_empty() {
         debug!("⚠️  Search returned empty results - likely due to configuration issue");
         debug!("   Compaction may have failed to find files due to incorrect paths");
     }
-    
+
     // For now, just ensure the test completes without crashing
     // Any remaining issues after using UnifiedTestEnvironment need separate investigation
     info!("✅ SST compaction with compression test completed");
@@ -252,22 +319,23 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
 #[tokio::test]
 async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     let env = UnifiedTestEnvironment::new().await?;
-    
+
     // Create SST engine with compression enabled
     let mut sst_config = env.sst_config.clone();
-    sst_config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+    sst_config
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     sst_config.compression_level = 3;
-    
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-    let engine = SstStorage::new(
-        sst_config,
-        env.filesystem.clone(),
-        distance_compute
-    ).await?;
-    
+
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        proximadb::compute::distance_computation::DistanceMetric::Cosine,
+    ));
+    let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+
     // Create diverse test data - sparse and dense vectors
     let mut all_vectors = Vec::new();
-    
+
     // Create sparse vectors (compress well) using unified helper
     for i in 0..100 {
         let mut vector = vec![0.0; 512];
@@ -279,17 +347,17 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
             vector,
             (1000 + i) as u32,
             None,
-            vec![
-                MetadataItem {
-                    key: "type".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        "sparse".to_string()
-                    )),
-                },
-            ]
+            vec![MetadataItem {
+                key: "type".to_string(),
+                value: Some(
+                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        "sparse".to_string(),
+                    ),
+                ),
+            }],
         ));
     }
-    
+
     // Create dense vectors (less compressible)
     for i in 0..100 {
         let vector: Vec<f32> = (0..512).map(|j| ((i * 512 + j) as f32).sin()).collect();
@@ -298,55 +366,76 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
             vector,
             (2000 + i) as u32,
             None,
-            vec![
-                MetadataItem {
-                    key: "type".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        "dense".to_string()
-                    )),
-                },
-            ]
+            vec![MetadataItem {
+                key: "type".to_string(),
+                value: Some(
+                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        "dense".to_string(),
+                    ),
+                ),
+            }],
         ));
     }
-    
-    info!("📝 Created {} test vectors (100 sparse + 100 dense) for compression test", all_vectors.len());
-    
+
+    info!(
+        "📝 Created {} test vectors (100 sparse + 100 dense) for compression test",
+        all_vectors.len()
+    );
+
     // Flush all vectors using production code directly
-    let flush_params = operations::build_flush_params(&env, all_vectors, StorageEngine::Sst).await?;
+    let flush_params =
+        operations::build_flush_params(&env, all_vectors, StorageEngine::Sst).await?;
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
     assert_eq!(result.entries_flushed, 200, "Should flush all 200 vectors");
-    info!("✅ Flushed {} mixed vectors with compression", result.entries_flushed);
-    
+    info!(
+        "✅ Flushed {} mixed vectors with compression",
+        result.entries_flushed
+    );
+
     // Search for sparse vectors using unified helper
     let mut sparse_query = vec![0.0; 512];
     sparse_query[0] = 1.0;
     sparse_query[10] = 1.0;
-    
+
     let sparse_results = operations::search_vectors_sst(&engine, &env, &sparse_query, 100).await?;
-    
+
     // Filter results for sparse vectors (since unified helper doesn't support metadata filtering)
-    let sparse_filtered: Vec<_> = sparse_results.iter()
+    let sparse_filtered: Vec<_> = sparse_results
+        .iter()
         .filter(|r| r.id.starts_with("sparse_"))
         .take(10)
         .collect();
-    
-    info!("🔍 Found {} sparse results from compressed blocks", sparse_filtered.len());
-    assert!(sparse_filtered.len() > 0, "Should find sparse vectors in compressed blocks");
-    
+
+    info!(
+        "🔍 Found {} sparse results from compressed blocks",
+        sparse_filtered.len()
+    );
+    assert!(
+        sparse_filtered.len() > 0,
+        "Should find sparse vectors in compressed blocks"
+    );
+
     // Search for dense vectors
     let dense_query: Vec<f32> = (0..512).map(|j| (j as f32 * 0.1).cos()).collect();
     let dense_results = operations::search_vectors_sst(&engine, &env, &dense_query, 100).await?;
-    
+
     // Filter results for dense vectors
-    let dense_filtered: Vec<_> = dense_results.iter()
+    let dense_filtered: Vec<_> = dense_results
+        .iter()
         .filter(|r| r.id.starts_with("dense_"))
         .take(10)
         .collect();
-    
-    info!("🔍 Found {} dense results from compressed blocks", dense_filtered.len());
-    assert!(dense_filtered.len() > 0, "Should find dense vectors in compressed blocks");
-    
+
+    info!(
+        "🔍 Found {} dense results from compressed blocks",
+        dense_filtered.len()
+    );
+    assert!(
+        dense_filtered.len() > 0,
+        "Should find dense vectors in compressed blocks"
+    );
+
     debug!("✅ SST compressed blocks search test passed");
     Ok(())
 }
@@ -357,96 +446,137 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     // Create two separate environments for compressed and uncompressed tests
     let env_compressed = UnifiedTestEnvironment::new().await?;
     let env_uncompressed = UnifiedTestEnvironment::new().await?;
-    
+
     // Create compressible test vectors (repeated patterns for good compression)
     let vectors_compressed = create_compressible_test_vectors(&env_compressed, 500, 1024, "test");
-    let vectors_uncompressed = create_compressible_test_vectors(&env_uncompressed, 500, 1024, "test");
-    
+    let vectors_uncompressed =
+        create_compressible_test_vectors(&env_uncompressed, 500, 1024, "test");
+
     info!("Testing compression effectiveness with identical data...");
-    
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-    
+
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        proximadb::compute::distance_computation::DistanceMetric::Cosine,
+    ));
+
     // Test with compression enabled
     let mut config_compressed = env_compressed.sst_config.clone();
-    config_compressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+    config_compressed
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
     config_compressed.compression_level = 3;
-    
+
     let compressed_engine = SstStorage::new(
         config_compressed,
         env_compressed.filesystem.clone(),
-        distance_compute.clone()
-    ).await?;
-    
+        distance_compute.clone(),
+    )
+    .await?;
+
     // Flush with compression
-    let flush_params_compressed = operations::build_flush_params(&env_compressed, vectors_compressed, StorageEngine::Sst).await?;
+    let flush_params_compressed =
+        operations::build_flush_params(&env_compressed, vectors_compressed, StorageEngine::Sst)
+            .await?;
     let compressed_result = compressed_engine.do_flush(&flush_params_compressed).await?;
     assert!(compressed_result.success, "Compressed flush should succeed");
-    assert_eq!(compressed_result.entries_flushed, 500, "Should flush all 500 vectors");
-    
+    assert_eq!(
+        compressed_result.entries_flushed, 500,
+        "Should flush all 500 vectors"
+    );
+
     // Get compressed file sizes
-    let compressed_size = get_sst_files_size(env_compressed.get_sst_data_directory().to_str().unwrap()).await;
+    let compressed_size =
+        get_sst_files_size(env_compressed.get_sst_data_directory().to_str().unwrap()).await;
     debug!("Compressed SST size: {} bytes", compressed_size);
-    
+
     // Test with compression disabled
     let mut config_uncompressed = env_uncompressed.sst_config.clone();
-    config_uncompressed.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "none".to_string();
+    config_uncompressed
+        .storage_config
+        .as_ref()
+        .and_then(|s| s.compression.as_ref()) = "none".to_string();
     config_uncompressed.compression_level = 0;
-    
+
     let uncompressed_engine = SstStorage::new(
         config_uncompressed,
         env_uncompressed.filesystem.clone(),
-        distance_compute
-    ).await?;
-    
-    // Flush without compression  
-    let flush_params_uncompressed = operations::build_flush_params(&env_uncompressed, vectors_uncompressed, StorageEngine::Sst).await?;
-    let uncompressed_result = uncompressed_engine.do_flush(&flush_params_uncompressed).await?;
-    assert!(uncompressed_result.success, "Uncompressed flush should succeed");
-    assert_eq!(uncompressed_result.entries_flushed, 500, "Should flush all 500 vectors");
-    
+        distance_compute,
+    )
+    .await?;
+
+    // Flush without compression
+    let flush_params_uncompressed =
+        operations::build_flush_params(&env_uncompressed, vectors_uncompressed, StorageEngine::Sst)
+            .await?;
+    let uncompressed_result = uncompressed_engine
+        .do_flush(&flush_params_uncompressed)
+        .await?;
+    assert!(
+        uncompressed_result.success,
+        "Uncompressed flush should succeed"
+    );
+    assert_eq!(
+        uncompressed_result.entries_flushed, 500,
+        "Should flush all 500 vectors"
+    );
+
     // Get uncompressed file sizes
-    let uncompressed_size = get_sst_files_size(env_uncompressed.get_sst_data_directory().to_str().unwrap()).await;
+    let uncompressed_size =
+        get_sst_files_size(env_uncompressed.get_sst_data_directory().to_str().unwrap()).await;
     debug!("Uncompressed SST size: {} bytes", uncompressed_size);
-    
+
     info!("Compression comparison results:");
     info!("  Compressed size: {} bytes", compressed_size);
     info!("  Uncompressed size: {} bytes", uncompressed_size);
     if uncompressed_size > 0 {
         let ratio = compressed_size as f64 / uncompressed_size as f64;
         let savings = 100.0 * (1.0 - ratio);
-        info!("  Compression ratio: {:.2} ({:.1}% savings)", ratio, savings);
+        info!(
+            "  Compression ratio: {:.2} ({:.1}% savings)",
+            ratio, savings
+        );
     }
-    
+
     // Verify files were created
-    assert!(compressed_size > 0, "Compressed SST files should exist and have size > 0");
-    assert!(uncompressed_size > 0, "Uncompressed SST files should exist and have size > 0");
-    
+    assert!(
+        compressed_size > 0,
+        "Compressed SST files should exist and have size > 0"
+    );
+    assert!(
+        uncompressed_size > 0,
+        "Uncompressed SST files should exist and have size > 0"
+    );
+
     // With small test data (500 vectors), compression might not be very effective
     // Just verify that compression didn't make things worse (shouldn't be > 110% of uncompressed)
     // and print the actual ratio for debugging
     let compression_achieved = compressed_size < uncompressed_size;
-    
+
     if !compression_achieved {
         warn!("⚠️ No compression achieved on small test data:");
         warn!("  This is expected with small datasets (500 vectors of 1024 dimensions)");
         warn!("  SST block headers and metadata overhead can dominate small files");
     }
-    
+
     // Check if compression is working
     if compressed_size >= uncompressed_size {
-        println!("⚠️  WARNING: SST Compressed size ({}) is >= uncompressed ({}). \
-            Compression is not working for this algorithm/data combination!", 
-            compressed_size, uncompressed_size);
+        println!(
+            "⚠️  WARNING: SST Compressed size ({}) is >= uncompressed ({}). \
+            Compression is not working for this algorithm/data combination!",
+            compressed_size, uncompressed_size
+        );
     } else if compressed_size > uncompressed_size * 95 / 100 {
-        println!("⚠️  WARNING: Minimal compression achieved. Only {} bytes saved ({:.1}% reduction)", 
-            uncompressed_size - compressed_size, 
-            (1.0 - compressed_size as f64 / uncompressed_size as f64) * 100.0);
+        println!(
+            "⚠️  WARNING: Minimal compression achieved. Only {} bytes saved ({:.1}% reduction)",
+            uncompressed_size - compressed_size,
+            (1.0 - compressed_size as f64 / uncompressed_size as f64) * 100.0
+        );
     }
-    
+
     // For debugging - print actual sizes even when test passes
     info!("✅ Compression test completed (small dataset):");
     info!("  Note: Small test datasets may not compress well due to overhead");
-    
+
     Ok(())
 }
 
@@ -468,36 +598,38 @@ async fn test_all_compression_algorithms_sst() -> anyhow::Result<()> {
         ("lz4hc", 9, "LZ4 high compression"),
         ("lzma", 3, "LZMA level 3"),
     ];
-    
+
     let mut results = Vec::new();
-    
+
     for (algo, level, description) in &algorithms {
-        info!("🧪 Testing compression algorithm: {} - {}", algo, description);
-        
+        info!(
+            "🧪 Testing compression algorithm: {} - {}",
+            algo, description
+        );
+
         let env = UnifiedTestEnvironment::new().await?;
         let mut sst_config = create_sst_config_with_algorithm(&env, algo, *level);
-        
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-        let engine = SstStorage::new(
-            sst_config,
-            env.filesystem.clone(),
-            distance_compute
-        ).await?;
-        
+
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+            proximadb::compute::distance_computation::DistanceMetric::Cosine,
+        ));
+        let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+
         // Create test vectors with good compression patterns
         let vectors = create_compressible_test_vectors(&env, 100, 256, algo);
-        
+
         // Measure flush time and resulting size
         let start = std::time::Instant::now();
-        let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
+        let flush_params =
+            operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
         let result = engine.do_flush(&flush_params).await?;
         let flush_time = start.elapsed();
-        
+
         if !result.success {
             warn!("❌ Algorithm {} failed to flush", algo);
             continue;
         }
-        
+
         // Check resulting file sizes
         let data_dir = env.get_sst_data_directory();
         let total_size = if data_dir.exists() {
@@ -509,34 +641,46 @@ async fn test_all_compression_algorithms_sst() -> anyhow::Result<()> {
         } else {
             0
         };
-        
+
         results.push((algo.to_string(), *level, total_size, flush_time));
         info!("   ✅ {}: {} bytes in {:?}", algo, total_size, flush_time);
     }
-    
+
     // Print comparison table
     info!("\n📊 COMPRESSION ALGORITHM COMPARISON (SST):");
     info!("┌─────────────┬───────┬──────────────┬──────────────┐");
     info!("│ Algorithm   │ Level │ Size (bytes) │ Time (ms)    │");
     info!("├─────────────┼───────┼──────────────┼──────────────┤");
-    
-    let baseline_size = results.iter().find(|(a, _, _, _)| a == "none").map(|(_, _, s, _)| *s).unwrap_or(1);
-    
+
+    let baseline_size = results
+        .iter()
+        .find(|(a, _, _, _)| a == "none")
+        .map(|(_, _, s, _)| *s)
+        .unwrap_or(1);
+
     for (algo, level, size, time) in &results {
-        let ratio = if baseline_size > 0 { 
+        let ratio = if baseline_size > 0 {
             format!("{:.1}%", (*size as f64 / baseline_size as f64) * 100.0)
         } else {
             "N/A".to_string()
         };
-        info!("│ {:11} │ {:5} │ {:>12} │ {:>12.1?} │", 
-              algo, level, format!("{} ({})", size, ratio), time.as_millis());
+        info!(
+            "│ {:11} │ {:5} │ {:>12} │ {:>12.1?} │",
+            algo,
+            level,
+            format!("{} ({})", size, ratio),
+            time.as_millis()
+        );
     }
     info!("└─────────────┴───────┴──────────────┴──────────────┘");
-    
+
     // Verify at least some algorithms work
     let working_algos = results.iter().filter(|(_, _, size, _)| *size > 0).count();
-    assert!(working_algos >= 2, "At least 2 compression algorithms should work (none + one other)");
-    
+    assert!(
+        working_algos >= 2,
+        "At least 2 compression algorithms should work (none + one other)"
+    );
+
     Ok(())
 }
 
@@ -545,56 +689,64 @@ async fn test_compression_levels() -> anyhow::Result<()> {
     // Test different compression levels to verify effectiveness
     let base_env = UnifiedTestEnvironment::new().await?;
     let vectors = base_env.create_test_vectors_with_dimension(200, 512);
-    
+
     let compression_levels = vec![1, 3, 6, 9];
     let mut results = Vec::new();
-    
+
     for level in compression_levels {
         let env = UnifiedTestEnvironment::new().await?;
-        
+
         // Configure SST with specific compression level
         let mut config = env.sst_config.clone();
-        config.storage_config.as_ref().and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        config
+            .storage_config
+            .as_ref()
+            .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
         config.compression_level = level;
-        
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Cosine));
-        let engine = SstStorage::new(
-            config,
-            env.filesystem.clone(),
-            distance_compute.clone()
-        ).await?;
-        
+
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+            proximadb::compute::distance_computation::DistanceMetric::Cosine,
+        ));
+        let engine =
+            SstStorage::new(config, env.filesystem.clone(), distance_compute.clone()).await?;
+
         let start = std::time::Instant::now();
-        
+
         // Use production code directly with proper parameters
-        let flush_params = operations::build_flush_params(&env, vectors.clone(), StorageEngine::Sst).await?;
+        let flush_params =
+            operations::build_flush_params(&env, vectors.clone(), StorageEngine::Sst).await?;
         engine.do_flush(&flush_params).await?;
         let duration = start.elapsed();
-        
+
         // Get file sizes from the data directory
         let data_dir = env.get_sst_data_directory();
         let size = get_sst_files_size(data_dir.to_str().unwrap()).await;
         results.push((level, size, duration));
-        
+
         info!("Level {}: Size {} bytes, Time {:?}", level, size, duration);
     }
-    
+
     // Debug output for compression results
     debug!("Compression test results:");
     for (level, size, duration) in &results {
         debug!("  Level {}: {} bytes in {:?}", level, size, duration);
     }
-    
+
     // Higher compression levels should generally produce smaller files
     // Allow some variance as compression effectiveness depends on data patterns
     if results.len() >= 4 {
         // Level 9 should not be significantly larger than Level 1
-        assert!(results[3].1 <= results[0].1 * 110 / 100, 
-            "Level 9 size ({}) should not be more than 10% larger than Level 1 size ({})", 
-            results[3].1, results[0].1);
+        assert!(
+            results[3].1 <= results[0].1 * 110 / 100,
+            "Level 9 size ({}) should not be more than 10% larger than Level 1 size ({})",
+            results[3].1,
+            results[0].1
+        );
         // Note: Compression time comparison can be unreliable in test environments
-        debug!("Compression level comparison: Level 1 = {} bytes, Level 9 = {} bytes", 
-               results[0].1, results[3].1);
+        debug!(
+            "Compression level comparison: Level 1 = {} bytes, Level 9 = {} bytes",
+            results[0].1, results[3].1
+        );
     }
     Ok(())
 }
@@ -603,7 +755,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
 async fn get_sst_files_size(path: &str) -> u64 {
     use std::fs;
     use std::path::Path;
-    
+
     fn sst_size(path: &Path) -> u64 {
         let mut size = 0;
         if let Ok(entries) = fs::read_dir(path) {
@@ -618,6 +770,6 @@ async fn get_sst_files_size(path: &str) -> u64 {
         }
         size
     }
-    
+
     sst_size(Path::new(path))
 }

@@ -280,7 +280,7 @@ impl FilestoreMetadataBackend {
     }
     
     /// Get filesystem instance  
-    fn get_fs(&self) -> Result<&dyn crate::storage::persistence::filesystem::FileSystem> {
+    fn get_fs(&self) -> Result<Arc<dyn crate::storage::persistence::filesystem::FileSystem>> {
         self.filesystem_factory
             .get_filesystem(&self.config.storage_url)
             .map_err(|e| anyhow::anyhow!("Failed to get filesystem: {}", e))

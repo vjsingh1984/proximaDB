@@ -1736,9 +1736,7 @@ impl RaptorMetrics {
             written as f32 / memory as f32
         }
     }
-}
-
-impl RaptorEngine {
+    
     fn determine_storage_tier(base_path: &str) -> StorageTier {
         if base_path.starts_with("s3://") {
             if base_path.contains("express") {
@@ -1784,7 +1782,7 @@ impl RaptorEngine {
             
             if let Some(arr) = string_array {
                 if let Some(metadata_str) = arr.value(index).parse::<String>().ok() {
-                    serde_json::from_str(&metadata_str).clone()
+                    serde_json::from_str(&metadata_str).unwrap_or_default()
                 } else {
                     HashMap::<String, serde_json::Value>::new()
                 }

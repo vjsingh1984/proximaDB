@@ -1,8 +1,8 @@
 //! Storage Engine Benchmark Runner
-//! 
+//!
 //! Run this binary to generate real performance benchmarks for all storage engines
 //! and populate the SearchCostEstimator with actual data.
-//! 
+//!
 //! Usage:
 //!   cargo run --release --bin benchmark_engines -- [options]
 //!   
@@ -16,22 +16,18 @@ use anyhow::Result;
 use clap::{Arg, Command};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{info, error};
+use tracing::{error, info};
 
-use proximadb::core::search::engine_benchmarks::{
-    StorageEngineBenchmark, BenchmarkConfig, EngineBenchmarkResults
-};
 use crate::core::search::integrated_search_optimization::SearchCostEstimator;
+use proximadb::core::search::engine_benchmarks::{
+    BenchmarkConfig, EngineBenchmarkResults, StorageEngineBenchmark,
+};
 use proximadb::storage::traits::UnifiedStorageEngine;
 
 // Import all storage engines
 use proximadb::storage::engines::{
-    sst::SstStorage,
-    viper::ViperEngine,
-    nova::NovaEngine,
-    swift::SwiftEngine,
-    raptor::RaptorEngine,
-    prism::PrismEngine,
+    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
+    swift::SwiftEngine, viper::ViperEngine,
 };
 
 #[tokio::main]
@@ -40,31 +36,39 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("proximadb=info")
         .init();
-    
+
     // Parse command line arguments
     let matches = Command::new("ProximaDB Engine Benchmarks")
         .version("1.0")
         .author("ProximaDB Team")
         .about("Benchmarks storage engines for cost estimation")
-        .arg(Arg::new("quick")
-            .long("quick")
-            .help("Run quick benchmarks")
-            .action(clap::ArgAction::SetTrue))
-        .arg(Arg::new("comprehensive")
-            .long("comprehensive")
-            .help("Run comprehensive benchmarks")
-            .action(clap::ArgAction::SetTrue))
-        .arg(Arg::new("engine")
-            .long("engine")
-            .value_name("ENGINE")
-            .help("Benchmark specific engine only")
-            .value_parser(["sst", "viper", "nova", "swift", "raptor", "prism"]))
-        .arg(Arg::new("output")
-            .long("output")
-            .value_name("FILE")
-            .help("Write results to JSON file"))
+        .arg(
+            Arg::new("quick")
+                .long("quick")
+                .help("Run quick benchmarks")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("comprehensive")
+                .long("comprehensive")
+                .help("Run comprehensive benchmarks")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("engine")
+                .long("engine")
+                .value_name("ENGINE")
+                .help("Benchmark specific engine only")
+                .value_parser(["sst", "viper", "nova", "swift", "raptor", "prism"]),
+        )
+        .arg(
+            Arg::new("output")
+                .long("output")
+                .value_name("FILE")
+                .help("Write results to JSON file"),
+        )
         .get_matches();
-    
+
     // Determine benchmark configuration
     let config = if matches.get_flag("comprehensive") {
         info!("🔬 Running comprehensive benchmarks (this may take a while)...");
@@ -73,16 +77,16 @@ async fn main() -> Result<()> {
         info!("⚡ Running quick benchmarks...");
         BenchmarkConfig::quick()
     };
-    
+
     // Create benchmark runner
     let benchmark = StorageEngineBenchmark::new(config);
-    
+
     // Determine which engines to benchmark
     let engine_filter = matches.get_one::<String>("engine");
-    
+
     // Store all results
     let mut all_results: HashMap<String, EngineBenchmarkResults> = HashMap::new();
-    
+
     // Benchmark SST Engine
     if should_benchmark("sst", engine_filter) {
         match benchmark_sst_engine(&benchmark).await {
@@ -93,7 +97,7 @@ async fn main() -> Result<()> {
             Err(e) => error!("❌ SST benchmark failed: {}", e),
         }
     }
-    
+
     // Benchmark VIPER Engine
     if should_benchmark("viper", engine_filter) {
         match benchmark_viper_engine(&benchmark).await {
@@ -104,7 +108,7 @@ async fn main() -> Result<()> {
             Err(e) => error!("❌ VIPER benchmark failed: {}", e),
         }
     }
-    
+
     // Benchmark NOVA Engine
     if should_benchmark("nova", engine_filter) {
         match benchmark_nova_engine(&benchmark).await {
@@ -115,7 +119,7 @@ async fn main() -> Result<()> {
             Err(e) => error!("❌ NOVA benchmark failed: {}", e),
         }
     }
-    
+
     // Benchmark SWIFT Engine
     if should_benchmark("swift", engine_filter) {
         match benchmark_swift_engine(&benchmark).await {
@@ -126,7 +130,7 @@ async fn main() -> Result<()> {
             Err(e) => error!("❌ SWIFT benchmark failed: {}", e),
         }
     }
-    
+
     // Benchmark RAPTOR Engine
     if should_benchmark("raptor", engine_filter) {
         match benchmark_raptor_engine(&benchmark).await {
@@ -137,7 +141,7 @@ async fn main() -> Result<()> {
             Err(e) => error!("❌ RAPTOR benchmark failed: {}", e),
         }
     }
-    
+
     // Benchmark PRISM Engine
     if should_benchmark("prism", engine_filter) {
         match benchmark_prism_engine(&benchmark).await {
@@ -148,21 +152,21 @@ async fn main() -> Result<()> {
             Err(e) => error!("❌ PRISM benchmark failed: {}", e),
         }
     }
-    
+
     // Display results summary
     display_results_summary(&all_results);
-    
+
     // Generate cost estimator configuration
     generate_cost_estimator_config(&all_results);
-    
+
     // Write results to file if requested
     if let Some(output_file) = matches.get_one::<String>("output") {
         write_results_to_file(&all_results, output_file)?;
         info!("📄 Results written to {}", output_file);
     }
-    
+
     info!("🎉 Benchmark complete!");
-    
+
     Ok(())
 }
 
@@ -174,20 +178,22 @@ async fn benchmark_sst_engine(
     benchmark: &StorageEngineBenchmark,
 ) -> Result<EngineBenchmarkResults> {
     info!("🔧 Benchmarking SST engine...");
-    
+
     // Create SST engine instance
     let config = proximadb::storage::engines::impls::sst::SstConfig::default();
     let engine = Arc::new(SstStorage::new(config)) as Arc<dyn UnifiedStorageEngine>;
-    
+
     // Run benchmarks
     let mut results = benchmark.benchmark_engine(engine.clone(), "SST").await?;
-    
+
     // Add SST-specific benchmarks
-    let specific_metrics = proximadb::core::search::engine_benchmarks::engine_specific::benchmark_sst_specific(engine).await?;
+    let specific_metrics =
+        proximadb::core::search::engine_benchmarks::engine_specific::benchmark_sst_specific(engine)
+            .await?;
     for (key, value) in specific_metrics {
         results.optimal_configs.insert(key, value.to_string());
     }
-    
+
     Ok(results)
 }
 
@@ -195,19 +201,23 @@ async fn benchmark_viper_engine(
     benchmark: &StorageEngineBenchmark,
 ) -> Result<EngineBenchmarkResults> {
     info!("🔧 Benchmarking VIPER engine...");
-    
+
     // Create VIPER engine instance
     let engine = Arc::new(ViperEngine::new().await?) as Arc<dyn UnifiedStorageEngine>;
-    
+
     // Run benchmarks
     let mut results = benchmark.benchmark_engine(engine.clone(), "VIPER").await?;
-    
+
     // Add VIPER-specific benchmarks
-    let specific_metrics = proximadb::core::search::engine_benchmarks::engine_specific::benchmark_viper_specific(engine).await?;
+    let specific_metrics =
+        proximadb::core::search::engine_benchmarks::engine_specific::benchmark_viper_specific(
+            engine,
+        )
+        .await?;
     for (key, value) in specific_metrics {
         results.optimal_configs.insert(key, value.to_string());
     }
-    
+
     Ok(results)
 }
 
@@ -215,19 +225,23 @@ async fn benchmark_nova_engine(
     benchmark: &StorageEngineBenchmark,
 ) -> Result<EngineBenchmarkResults> {
     info!("🔧 Benchmarking NOVA engine...");
-    
+
     // Create NOVA engine instance
     let engine = Arc::new(NovaEngine::new().await?) as Arc<dyn UnifiedStorageEngine>;
-    
+
     // Run benchmarks
     let mut results = benchmark.benchmark_engine(engine.clone(), "NOVA").await?;
-    
+
     // Add NOVA-specific benchmarks
-    let specific_metrics = proximadb::core::search::engine_benchmarks::engine_specific::benchmark_nova_specific(engine).await?;
+    let specific_metrics =
+        proximadb::core::search::engine_benchmarks::engine_specific::benchmark_nova_specific(
+            engine,
+        )
+        .await?;
     for (key, value) in specific_metrics {
         results.optimal_configs.insert(key, value.to_string());
     }
-    
+
     Ok(results)
 }
 
@@ -235,19 +249,23 @@ async fn benchmark_swift_engine(
     benchmark: &StorageEngineBenchmark,
 ) -> Result<EngineBenchmarkResults> {
     info!("🔧 Benchmarking SWIFT engine...");
-    
+
     // Create SWIFT engine instance
     let engine = Arc::new(SwiftEngine::new().await?) as Arc<dyn UnifiedStorageEngine>;
-    
+
     // Run benchmarks
     let mut results = benchmark.benchmark_engine(engine.clone(), "SWIFT").await?;
-    
+
     // Add SWIFT-specific benchmarks
-    let specific_metrics = proximadb::core::search::engine_benchmarks::engine_specific::benchmark_swift_specific(engine).await?;
+    let specific_metrics =
+        proximadb::core::search::engine_benchmarks::engine_specific::benchmark_swift_specific(
+            engine,
+        )
+        .await?;
     for (key, value) in specific_metrics {
         results.optimal_configs.insert(key, value.to_string());
     }
-    
+
     Ok(results)
 }
 
@@ -255,20 +273,24 @@ async fn benchmark_raptor_engine(
     benchmark: &StorageEngineBenchmark,
 ) -> Result<EngineBenchmarkResults> {
     info!("🔧 Benchmarking RAPTOR engine...");
-    
+
     // Create RAPTOR engine instance
     let config = proximadb::storage::engines::impls::raptor::RaptorConfig::default();
     let engine = Arc::new(RaptorEngine::new(config).await?) as Arc<dyn UnifiedStorageEngine>;
-    
+
     // Run benchmarks
     let mut results = benchmark.benchmark_engine(engine.clone(), "RAPTOR").await?;
-    
+
     // Add RAPTOR-specific benchmarks
-    let specific_metrics = proximadb::core::search::engine_benchmarks::engine_specific::benchmark_raptor_specific(engine).await?;
+    let specific_metrics =
+        proximadb::core::search::engine_benchmarks::engine_specific::benchmark_raptor_specific(
+            engine,
+        )
+        .await?;
     for (key, value) in specific_metrics {
         results.optimal_configs.insert(key, value.to_string());
     }
-    
+
     Ok(results)
 }
 
@@ -276,55 +298,58 @@ async fn benchmark_prism_engine(
     benchmark: &StorageEngineBenchmark,
 ) -> Result<EngineBenchmarkResults> {
     info!("🔧 Benchmarking PRISM engine...");
-    
+
     // Create PRISM engine instance
     let config = proximadb::storage::engines::impls::prism::PrismConfig::default();
     let engine = Arc::new(PrismEngine::new(config).await?) as Arc<dyn UnifiedStorageEngine>;
-    
+
     // Run benchmarks
     let mut results = benchmark.benchmark_engine(engine.clone(), "PRISM").await?;
-    
+
     // Add PRISM-specific benchmarks
-    let specific_metrics = proximadb::core::search::engine_benchmarks::engine_specific::benchmark_prism_specific(engine).await?;
+    let specific_metrics =
+        proximadb::core::search::engine_benchmarks::engine_specific::benchmark_prism_specific(
+            engine,
+        )
+        .await?;
     for (key, value) in specific_metrics {
         results.optimal_configs.insert(key, value.to_string());
     }
-    
+
     Ok(results)
 }
 
 fn display_results_summary(results: &HashMap<String, EngineBenchmarkResults>) {
     println!("\n📊 ========== BENCHMARK RESULTS SUMMARY ==========\n");
-    
+
     for (engine_name, engine_results) in results {
         println!("🔧 {} Engine:", engine_name);
         println!("  Memory Usage: {:.1} MB", engine_results.memory_usage_mb);
-        println!("  Filter Overhead: {:.1}%", engine_results.filter_overhead_percent);
-        
+        println!(
+            "  Filter Overhead: {:.1}%",
+            engine_results.filter_overhead_percent
+        );
+
         // Show direct search performance
         println!("\n  Direct Search Performance:");
         for (category, stats) in &engine_results.direct_search_stats {
-            println!("    {:?}: {:.2}ms (±{:.2}ms, p95: {:.2}ms)",
-                category,
-                stats.avg_time_ms,
-                stats.std_dev_ms,
-                stats.p95_time_ms
+            println!(
+                "    {:?}: {:.2}ms (±{:.2}ms, p95: {:.2}ms)",
+                category, stats.avg_time_ms, stats.std_dev_ms, stats.p95_time_ms
             );
         }
-        
+
         // Show progressive search performance
         if !engine_results.progressive_search_stats.is_none() {
             println!("\n  Progressive Search Performance:");
             for (level, stats) in &engine_results.progressive_search_stats {
-                println!("    {:?}: {:.2}ms (±{:.2}ms, p95: {:.2}ms)",
-                    level,
-                    stats.avg_time_ms,
-                    stats.std_dev_ms,
-                    stats.p95_time_ms
+                println!(
+                    "    {:?}: {:.2}ms (±{:.2}ms, p95: {:.2}ms)",
+                    level, stats.avg_time_ms, stats.std_dev_ms, stats.p95_time_ms
                 );
             }
         }
-        
+
         // Show optimal configurations
         if !engine_results.optimal_configs.is_none() {
             println!("\n  Optimal Configurations:");
@@ -332,7 +357,7 @@ fn display_results_summary(results: &HashMap<String, EngineBenchmarkResults>) {
                 println!("    {}: {}", key, value);
             }
         }
-        
+
         println!("\n  {}", "=".repeat(50));
     }
 }
@@ -340,13 +365,13 @@ fn display_results_summary(results: &HashMap<String, EngineBenchmarkResults>) {
 fn generate_cost_estimator_config(results: &HashMap<String, EngineBenchmarkResults>) {
     println!("\n🔧 ========== COST ESTIMATOR CONFIGURATION ==========\n");
     println!("// Add this to your SearchCostEstimator initialization:\n");
-    
+
     println!("let mut estimator = SearchCostEstimator::new();");
-    
+
     // Generate code for each engine's results
     for (engine_name, engine_results) in results {
         println!("\n// {} Engine benchmarks", engine_name);
-        
+
         // Direct search times
         for (category, stats) in &engine_results.direct_search_stats {
             println!(
@@ -367,22 +392,22 @@ fn generate_cost_estimator_config(results: &HashMap<String, EngineBenchmarkResul
                 stats.sample_count
             );
         }
-        
+
         // Progressive search times
         for (level, stats) in &engine_results.progressive_search_stats {
             let level_str = match level {
-                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Binary => 
+                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Binary =>
                     "QuantizationLevel::Binary".to_string(),
-                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Int8 => 
+                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Int8 =>
                     "QuantizationLevel::Int8".to_string(),
-                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Pq4 { subvectors } => 
+                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Pq4 { subvectors } =>
                     format!("QuantizationLevel::Pq4 {{ subvectors: {} }}", subvectors),
-                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Pq8 { subvectors } => 
+                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Pq8 { subvectors } =>
                     format!("QuantizationLevel::Pq8 {{ subvectors: {} }}", subvectors),
-                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Pq16 { subvectors } => 
+                proximadb::core::search::integrated_search_optimization::UnifiedQuantizationLevel::Pq16 { subvectors } =>
                     format!("QuantizationLevel::Pq16 {{ subvectors: {} }}", subvectors),
             };
-            
+
             println!(
                 r#"estimator.progressive_search_times.insert(
     {},
@@ -402,7 +427,7 @@ fn generate_cost_estimator_config(results: &HashMap<String, EngineBenchmarkResul
             );
         }
     }
-    
+
     println!("\n// Use this estimator in your IntegratedSearchOptimizer initialization");
 }
 
@@ -412,10 +437,10 @@ fn write_results_to_file(
 ) -> Result<()> {
     use std::fs::File;
     use std::io::Write;
-    
+
     let json = serde_json::to_string_pretty(results)?;
     let mut file = File::create(filename)?;
     file.write_all(json.as_bytes())?;
-    
+
     Ok(())
 }

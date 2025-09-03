@@ -478,7 +478,7 @@ impl RecoveryManager {
         let base_wal_dir = self.disk_manager.get_base_wal_dir();
         
         // List directories within the base WAL directory
-        let entries = self.disk_manager.filesystem_factory.get_filesystem(&base_wal_dir.to_string_lossy())
+        let entries = self.disk_manager.filesystem_factory().get_filesystem(&base_wal_dir.to_string_lossy())
             .context("Failed to get filesystem for base WAL directory")?
             .list(&base_wal_dir.to_string_lossy())
             .await

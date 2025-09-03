@@ -63,6 +63,11 @@ impl WriteBufferDiskManager {
         &self.filesystem_factory
     }
     
+    /// Get the base WAL directory
+    pub fn get_base_wal_dir(&self) -> &PathBuf {
+        &self.wal_base_dir
+    }
+    
     /// Write a serialized batch to disk
     pub async fn write_batch(
         &self,

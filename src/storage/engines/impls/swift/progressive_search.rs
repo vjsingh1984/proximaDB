@@ -163,7 +163,7 @@ impl PartialOrd for Candidate {
 
 impl Ord for Candidate {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other)
+        self.partial_cmp(other).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -578,11 +578,12 @@ fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
 }
 
 fn block_matches_filter(block: &FastLanesDataBlock, filter: &MetadataFilter) -> bool {
-    // Check block-level statistics against filter
-    for condition in &filter.conditions {
-        if !condition_matches_block_stats(condition, &block.metadata_stats) {
-            return false;
-        }
+    // Check block-level statistics against filter if available
+    if let Some(ref stats) = block.metadata_stats {
+        // Convert BlockMetadataStats to expected format
+        // For now, skip block-level filtering if stats format doesn't match
+        // TODO: Properly convert BlockMetadataStats to HashMap<String, ColumnStats>
+        return true; // Conservative: include block if we can't check stats
     }
     true
 }
@@ -598,9 +599,9 @@ fn condition_matches_block_stats(
             if let Some(col_stats) = stats.get(column) {
                 // Check if range overlaps with block's range
                 // Use JSON comparison helpers
-                compare_json_values(&col_stats.max_value, min, std::cmp::Ordering::Greater)
+                compare_json_values(&col_stats.max_value, min, std::cmp::Ordering::Greater).unwrap_or(false)
                     
-                    && compare_json_values(&col_stats.min_value, max, std::cmp::Ordering::Less)
+                    && compare_json_values(&col_stats.min_value, max, std::cmp::Ordering::Less).unwrap_or(false)
                         
             } else {
                 false
@@ -611,14 +612,27 @@ fn condition_matches_block_stats(
 }
 
 fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool {
-    if let Some(metadata) = &record.metadata {
-        for condition in &filter.conditions {
-            if !condition_matches_record(condition, metadata) {
-                return false;
-            }
+    // Convert metadata to HashMap for easier lookup
+    let metadata_map: std::collections::HashMap<String, serde_json::Value> = record.metadata
+        .iter()
+        .map(|item| (item.key.clone(), metadata_item_to_json(&item.value)))
+        .collect();
+    
+    for condition in &filter.conditions {
+        if !condition_matches_record(condition, &metadata_map) {
+            return false;
         }
     }
     true
+}
+
+fn metadata_item_to_json(value: &Option<crate::proto::proximadb::metadata_item::Value>) -> serde_json::Value {
+    match value {
+        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f)) => serde_json::Value::Number(serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0))),
+        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+        None => serde_json::Value::Null,
+    }
 }
 
 fn condition_matches_record(
@@ -633,8 +647,8 @@ fn condition_matches_record(
         }
         FilterCondition::Range(column, min, max) => {
             metadata.get(column).map_or(false, |v| {
-                compare_json_values(v, min, std::cmp::Ordering::Greater)
-                    && compare_json_values(v, max, std::cmp::Ordering::Less)
+                compare_json_values(v, min, std::cmp::Ordering::Greater).unwrap_or(false)
+                    && compare_json_values(v, max, std::cmp::Ordering::Less).unwrap_or(false)
             })
         }
         FilterCondition::In(column, values) => {

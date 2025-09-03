@@ -4071,7 +4071,7 @@ impl RaptorWriter {
                 self.column_projections.metadata_columns
                     .entry(key.clone())
                     .or_insert_with(Vec::new)
-                    .push(bincode::serialize(&value).clone());
+                    .push(bincode::serialize(&value).expect("Failed to serialize metadata value"));
             }
         }
         

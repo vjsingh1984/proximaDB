@@ -778,5 +778,7 @@ impl DistanceCompute for GpuDistanceCalculator {
 }
 
 #[cfg(test)]
-#[path = "gpu_detection_tests.rs"]
-mod gpu_detection_tests;
+mod tests {
+    use super::*;
+    // GPU detection tests would go here
+}

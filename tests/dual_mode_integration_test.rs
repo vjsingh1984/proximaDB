@@ -3,23 +3,20 @@
 
 use anyhow::Result;
 use proximadb::{
+    compute::distance_computation::DistanceMetric,
     core::{VectorRecord, hardware_capabilities},
     storage::engines::{
         sst::dual_mode::{
-            SstFile, ViperFile, SearchMode,
-            id_index::IdIndex,
-            batch_operations::get_records_by_ids as sst_get_by_ids,
+            SearchMode, SstFile, ViperFile, batch_operations::get_records_by_ids as sst_get_by_ids,
+            id_index::IdIndex, optimized_operations::OptimizedSstOperations,
             progressive_search::search_progressive as sst_search,
-            optimized_operations::OptimizedSstOperations,
         },
         viper::dual_mode::{
-            id_index::ParquetIdIndex,
             batch_operations::get_records_by_ids as viper_get_by_ids,
-            columnar_search::search_columnar_progressive as viper_search,
+            columnar_search::search_columnar_progressive as viper_search, id_index::ParquetIdIndex,
             optimized_operations::OptimizedViperOperations,
         },
     },
-    compute::distance_computation::DistanceMetric,
 };
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -36,7 +33,7 @@ impl DualModeTestFixture {
     fn new(num_vectors: usize, dimension: usize) -> Result<Self> {
         // Initialize hardware capabilities
         let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         // Generate test vectors
         let mut test_vectors = Vec::new();
         for i in 0..num_vectors {
@@ -44,7 +41,10 @@ impl DualModeTestFixture {
                 id: Some(format!("vec_{:06}", i)),
                 vector: vec![i as f32 / num_vectors as f32; dimension],
                 metadata: Some(HashMap::from([
-                    ("category".to_string(), serde_json::json!(if i % 2 == 0 { "even" } else { "odd" })),
+                    (
+                        "category".to_string(),
+                        serde_json::json!(if i % 2 == 0 { "even" } else { "odd" }),
+                    ),
                     ("index".to_string(), serde_json::json!(i)),
                 ])),
                 timestamp: i as i64,
@@ -53,13 +53,13 @@ impl DualModeTestFixture {
                 version: Some(1),
             });
         }
-        
+
         // Create SST file with test data
         let sst_file = create_test_sst_file(&test_vectors, dimension)?;
-        
+
         // Create VIPER file with test data
         let viper_file = create_test_viper_file(&test_vectors, dimension)?;
-        
+
         Ok(Self {
             sst_file,
             viper_file,
@@ -72,7 +72,7 @@ impl DualModeTestFixture {
 /// Create a test SST file
 fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<SstFile> {
     use proximadb::storage::engines::sst::dual_mode::*;
-    
+
     let mut sst = SstFile {
         header: SstHeader {
             version: 1,
@@ -88,12 +88,12 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
         quantized_index: quantization_blocks::QuantizedIndex::new(dimension),
         metadata_index: hierarchical_blocks::MetadataIndex::new(),
     };
-    
+
     // Build ID index
     for (idx, record) in vectors.iter().enumerate() {
         if let Some(id) = &record.id {
             let location = id_index::BlockLocation {
-                superblock_idx:(idx / 1000) as u32,
+                superblock_idx: (idx / 1000) as u32,
                 block_idx: ((idx % 1000) / 100) as u32,
                 offset_in_block: (idx % 100) as u32,
                 size_bytes: 1024,
@@ -101,11 +101,11 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
             sst.id_index.insert(id.clone(), location)?;
         }
     }
-    
+
     // Create superblocks and blocks (simplified)
     let vectors_per_block = 100;
     let blocks_per_superblock = 10;
-    
+
     let mut current_superblock = SuperBlock {
         id: 0,
         blocks: Vec::new(),
@@ -113,7 +113,7 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
         id_range: (String::new(), String::new()),
         timestamp_range: (0, 0),
     };
-    
+
     let mut current_block = DataBlock {
         id: 0,
         offset_in_superblock: 0,
@@ -126,20 +126,21 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
         max_timestamp: 0,
         metadata_stats: HashMap::new(),
     };
-    
+
     for (idx, record) in vectors.iter().enumerate() {
         current_block.records.push(record.clone());
-        
+
         if current_block.records.len() >= vectors_per_block {
             // Quantize block
-            let block_vectors: Vec<Vec<f32>> = current_block.records.iter()
+            let block_vectors: Vec<Vec<f32>> = current_block
+                .records
+                .iter()
                 .map(|r| r.vector.clone())
                 .collect();
-            current_block.quantized_block.quantize_vectors(
-                &block_vectors,
-                &sst.header.quantization,
-            )?;
-            
+            current_block
+                .quantized_block
+                .quantize_vectors(&block_vectors, &sst.header.quantization)?;
+
             current_superblock.blocks.push(current_block);
             current_block = DataBlock {
                 id: current_superblock.blocks.len() as u32,
@@ -153,7 +154,7 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
                 max_timestamp: 0,
                 metadata_stats: HashMap::new(),
             };
-            
+
             if current_superblock.blocks.len() >= blocks_per_superblock {
                 sst.superblocks.push(current_superblock);
                 current_superblock = SuperBlock {
@@ -166,7 +167,7 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
             }
         }
     }
-    
+
     // Add remaining blocks
     if !current_block.records.is_empty() {
         current_superblock.blocks.push(current_block);
@@ -174,15 +175,15 @@ fn create_test_sst_file(vectors: &[VectorRecord], dimension: usize) -> Result<Ss
     if !current_superblock.blocks.is_empty() {
         sst.superblocks.push(current_superblock);
     }
-    
+
     Ok(sst)
 }
 
 /// Create a test VIPER file
 fn create_test_viper_file(vectors: &[VectorRecord], dimension: usize) -> Result<ViperFile> {
-    use proximadb::storage::engines::viper::dual_mode::*;
     use parquet::file::metadata::RowGroupMetaDataBuilder;
-    
+    use proximadb::storage::engines::viper::dual_mode::*;
+
     let mut viper = ViperFile {
         metadata: ViperMetadata {
             collection_id: "test_collection".to_string(),
@@ -208,7 +209,7 @@ fn create_test_viper_file(vectors: &[VectorRecord], dimension: usize) -> Result<
         },
         schema: create_vector_schema(dimension, &QuantizationConfig::default(), &[]),
     };
-    
+
     // Build ID index
     let vectors_per_row_group = 1000;
     for (idx, record) in vectors.iter().enumerate() {
@@ -222,7 +223,7 @@ fn create_test_viper_file(vectors: &[VectorRecord], dimension: usize) -> Result<
             let _ = (id, location);
         }
     }
-    
+
     Ok(viper)
 }
 
@@ -231,147 +232,131 @@ fn create_test_viper_file(vectors: &[VectorRecord], dimension: usize) -> Result<
 #[tokio::test]
 async fn test_sst_id_lookup_after_compaction() -> Result<()> {
     let fixture = DualModeTestFixture::new(1000, 768)?;
-    
+
     // Simulate AXIS returning top-k IDs
     let axis_ids = vec![
         "vec_000100".to_string(),
         "vec_000200".to_string(),
         "vec_000500".to_string(),
     ];
-    
+
     // Lookup vectors by IDs in SST
     let records = sst_get_by_ids(&fixture.sst_file, &axis_ids).await?;
-    
+
     assert_eq!(records.len(), 3);
     for (id, record) in axis_ids.iter().zip(records.iter()) {
         assert_eq!(record.id.as_ref().unwrap(), id);
         assert_eq!(record.vector.len(), fixture.dimension);
     }
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_viper_id_lookup_after_compaction() -> Result<()> {
     let fixture = DualModeTestFixture::new(1000, 768)?;
-    
+
     // Simulate AXIS returning IDs
     let axis_ids = vec![
         "vec_000150".to_string(),
         "vec_000350".to_string(),
         "vec_000750".to_string(),
     ];
-    
+
     // Lookup vectors by IDs in VIPER
     let records = viper_get_by_ids(&fixture.viper_file, &axis_ids).await?;
-    
+
     assert_eq!(records.len(), 3);
     for record in records {
         assert!(axis_ids.contains(record.id.as_ref().unwrap()));
     }
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_sst_progressive_search() -> Result<()> {
     let fixture = DualModeTestFixture::new(1000, 128)?;
-    
+
     // Create query vector
     let query = vec![0.5; fixture.dimension];
-    
+
     // Perform progressive search
-    let results = sst_search(
-        &fixture.sst_file,
-        &query,
-        10,
-        None,
-    ).await?;
-    
+    let results = sst_search(&fixture.sst_file, &query, 10, None).await?;
+
     assert!(!results.is_empty());
     assert!(results.len() <= 10);
-    
+
     // Verify results are valid vectors
     for record in results {
         assert_eq!(record.vector.len(), fixture.dimension);
     }
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_viper_columnar_search() -> Result<()> {
     let fixture = DualModeTestFixture::new(1000, 128)?;
-    
+
     // Create query vector
     let query = vec![0.5; fixture.dimension];
-    
+
     // Perform columnar search
-    let results = viper_search(
-        &fixture.viper_file,
-        &query,
-        10,
-        None,
-    ).await?;
-    
+    let results = viper_search(&fixture.viper_file, &query, 10, None).await?;
+
     assert!(!results.is_empty());
     assert!(results.len() <= 10);
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_optimized_sst_operations() -> Result<()> {
     let fixture = DualModeTestFixture::new(100, 128)?;
-    
+
     // Create optimized operations
     let ops = OptimizedSstOperations::new()?;
-    
+
     // Test optimized search
     let query = vec![0.5; fixture.dimension];
     let config = proximadb::storage::engines::sst::dual_mode::progressive_search::ProgressiveSearchConfig::default();
-    
-    let results = ops.search_optimized(
-        &fixture.sst_file,
-        &query,
-        5,
-        config,
-    ).await?;
-    
+
+    let results = ops
+        .search_optimized(&fixture.sst_file, &query, 5, config)
+        .await?;
+
     assert!(!results.is_empty());
     assert!(results.len() <= 5);
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_optimized_viper_operations() -> Result<()> {
     let fixture = DualModeTestFixture::new(100, 128)?;
-    
+
     // Create optimized operations
     let ops = OptimizedViperOperations::new()?;
-    
+
     // Test optimized columnar search
     let query = vec![0.5; fixture.dimension];
     let config = proximadb::storage::engines::viper::dual_mode::columnar_search::ColumnarSearchConfig::default();
-    
-    let results = ops.search_columnar_optimized(
-        &fixture.viper_file,
-        &query,
-        5,
-        config,
-    ).await?;
-    
+
+    let results = ops
+        .search_columnar_optimized(&fixture.viper_file, &query, 5, config)
+        .await?;
+
     assert!(!results.is_empty());
     assert!(results.len() <= 5);
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_hybrid_search_mode() -> Result<()> {
     let fixture = DualModeTestFixture::new(1000, 256)?;
-    
+
     // Simulate AXIS providing initial candidates
     let axis_candidates = vec![
         "vec_000100".to_string(),
@@ -380,33 +365,33 @@ async fn test_hybrid_search_mode() -> Result<()> {
         "vec_000400".to_string(),
         "vec_000500".to_string(),
     ];
-    
+
     // Get full vectors for reranking
     let candidates = sst_get_by_ids(&fixture.sst_file, &axis_candidates).await?;
-    
+
     // Rerank with query
     let query = vec![0.45; fixture.dimension];
     let ops = OptimizedSstOperations::new()?;
-    
+
     // In real implementation, would compute distances and rerank
     assert_eq!(candidates.len(), 5);
-    
+
     Ok(())
 }
 
 #[test]
 fn test_memory_pool_efficiency() {
     use proximadb::core::memory::pool::VectorMemoryPool;
-    
+
     let pool = VectorMemoryPool::new();
-    
+
     // Acquire and release buffers multiple times
     for _ in 0..100 {
         let mut buffer = pool/* TODO: Fix VectorMemoryPool::acquire() method */;
         buffer.resize(768, 0.0);
         // Buffer automatically returned on drop
     }
-    
+
     // Check pool statistics
     let stats = pool.stats();
     assert!(stats.hit_rate() > 0.9); // Should have high cache hit rate
@@ -415,23 +400,23 @@ fn test_memory_pool_efficiency() {
 #[test]
 fn test_hardware_detection() {
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-    
+
     let caps = hardware_capabilities::HardwareCapabilities::get().unwrap();
-    
+
     // Verify hardware was detected
     assert!(caps.cpu_cores() > 0);
-    
+
     // Check for SIMD support
     let backend = caps/* TODO: Fix HardwareCapabilities::best_backend() method */;
     println!("Detected backend: {:?}", backend);
-    
+
     // Should have at least scalar support
     assert!(matches!(
         backend,
-        hardware_capabilities::HardwareBackend::Scalar |
-        hardware_capabilities::HardwareBackend::SSE |
-        hardware_capabilities::HardwareBackend::AVX2 |
-        hardware_capabilities::HardwareBackend::AVX512 |
-        hardware_capabilities::HardwareBackend::NEON
+        hardware_capabilities::HardwareBackend::Scalar
+            | hardware_capabilities::HardwareBackend::SSE
+            | hardware_capabilities::HardwareBackend::AVX2
+            | hardware_capabilities::HardwareBackend::AVX512
+            | hardware_capabilities::HardwareBackend::NEON
     ));
 }

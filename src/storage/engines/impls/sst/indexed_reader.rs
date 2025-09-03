@@ -107,11 +107,11 @@ impl SSTMetadataSource {
     
     fn infer_data_type(value: &serde_json::Value) -> ColumnData {
         match value {
-            serde_json::Value::String(_) => ColumnDataType::String,
-            serde_json::Value::Number(_) => ColumnDataType::Float,
-            serde_json::Value::Bool(_) => ColumnDataType::Boolean,
-            serde_json::Value::Array(_) => ColumnDataType::Array,
-            _ => ColumnDataType::String, // Default
+            serde_json::Value::String(_) => ColumnData::String(String::new()),
+            serde_json::Value::Number(_) => ColumnData::Float(0.0),
+            serde_json::Value::Bool(_) => ColumnData::Boolean(false),
+            serde_json::Value::Array(_) => ColumnData::Array(Vec::new()),
+            _ => ColumnData::String(String::new()), // Default
         }
     }
     
@@ -137,8 +137,18 @@ impl SSTIndexBasedReader {
                 .block_on(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config))
                 .expect("Failed to create filesystem factory")
         );
+        // Create a zero-copy IO system for the reader
+        let zero_copy_system = Arc::new(crate::storage::engines::impls::sst::readers::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+            filesystem.clone(),
+            1024 * 1024 * 64, // 64MB cache
+        ));
+        
         Self {
-            reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(filesystem),
+            reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
+                filesystem,
+                zero_copy_system,
+                String::from("default_collection"),
+            ),
         }
     }
     

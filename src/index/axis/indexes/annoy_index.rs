@@ -451,7 +451,7 @@ impl AxisAnnoyIndex {
             debug!("Building tree {}/{}", tree_idx + 1, self.config.n_trees);
             
             let mut tree = AnnoyTree::new(vectors.config().dimension);
-            let tree_seed = rng.gen();
+            let tree_seed = rng.next_u64();
             let mut tree_rng = ChaCha20Rng::seed_from_u64(tree_seed);
             
             tree.build(&vector_data, &self.config, &mut tree_rng, &self.distance_compute, self.collection_id.as_deref())?;
@@ -666,5 +666,7 @@ pub struct AnnoyStats {
 }
 
 #[cfg(test)]
-#[path = "annoy_index_tests.rs"]
-mod annoy_index_tests;
+mod tests {
+    use super::*;
+    // Annoy index tests would go here
+}

@@ -86,7 +86,7 @@ impl AvroSerializationStrategy {
             wal_base_url
         };
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
-            filesystem_factory,
+            filesystem_factory.clone(),
             wal_base_dir,
         ));
         
@@ -366,7 +366,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
-            duration_ms,
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,

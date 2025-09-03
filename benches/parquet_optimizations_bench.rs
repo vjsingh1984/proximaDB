@@ -7,14 +7,13 @@
 //! - Native metadata types
 //! - Hybrid writer strategy
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use proximadb::storage::engines::columnar::{
-    ParquetWriterConfig, StreamingParquetWriter, BatchParquetWriter,
-    HybridParquetWriter, HybridWriterConfig, WriterMode,
-    ParquetFooterCache, FooterCacheConfig, WarmingStrategy,
-    NativeMetadataHandler, NativeMetadataQueryOptimizer,
-};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::core::VectorRecord;
+use proximadb::storage::engines::columnar::{
+    BatchParquetWriter, FooterCacheConfig, HybridParquetWriter, HybridWriterConfig,
+    NativeMetadataHandler, NativeMetadataQueryOptimizer, ParquetFooterCache, ParquetWriterConfig,
+    StreamingParquetWriter, WarmingStrategy, WriterMode,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -28,7 +27,7 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             let vector = (0..dimension)
                 .map(|j| ((i + j) as f32 * 0.001) % 1.0)
                 .collect();
-            
+
             let metadata = json!({
                 "category": format!("cat_{}", i % 10),
                 "is_active": i % 2 == 0,
@@ -40,7 +39,7 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
                     "key2": i.to_string(),
                 }
             });
-            
+
             VectorRecord {
                 id: Some(format!("vec_{:08}", i)),
                 vector,
@@ -58,13 +57,13 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 fn bench_footer_cache(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("footer_cache");
-    
+
     // Setup
     let dir = tempdir().unwrap();
     let file_paths: Vec<_> = (0..100)
         .map(|i| dir.path().join(format!("test_{:03}.parquet", i)))
         .collect();
-    
+
     // Create test files
     rt.block_on(async {
         for (i, path) in file_paths.iter().enumerate().take(10) {
@@ -75,13 +74,14 @@ fn bench_footer_cache(c: &mut Criterion) {
             writer.finalize().await.unwrap();
         }
     });
-    
+
     let filesystem = Arc::new(
-        rt.block_on(proximadb::storage::persistence::filesystem::FilesystemFactory::new(
-            Default::default()
-        )).unwrap()
+        rt.block_on(
+            proximadb::storage::persistence::filesystem::FilesystemFactory::new(Default::default()),
+        )
+        .unwrap(),
     );
-    
+
     // Benchmark without cache
     group.bench_function("without_cache", |b| {
         b.iter(|| {
@@ -93,7 +93,7 @@ fn bench_footer_cache(c: &mut Criterion) {
             });
         });
     });
-    
+
     // Benchmark with cache
     let cache_config = FooterCacheConfig {
         max_entries: 1000,
@@ -101,9 +101,11 @@ fn bench_footer_cache(c: &mut Criterion) {
         enable_persistence: false,
         ..Default::default()
     };
-    
-    let cache = rt.block_on(ParquetFooterCache::new(cache_config, filesystem.clone())).unwrap();
-    
+
+    let cache = rt
+        .block_on(ParquetFooterCache::new(cache_config, filesystem.clone()))
+        .unwrap();
+
     group.bench_function("with_cache", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -113,16 +115,18 @@ fn bench_footer_cache(c: &mut Criterion) {
             });
         });
     });
-    
+
     // Benchmark cache warming
     group.bench_function("cache_warming", |b| {
         b.iter(|| {
             rt.block_on(async {
-                cache.warm_cache(WarmingStrategy::FrequentlyAccessed { count: 50 }).await
+                cache
+                    .warm_cache(WarmingStrategy::FrequentlyAccessed { count: 50 })
+                    .await
             });
         });
     });
-    
+
     group.finish();
 }
 
@@ -130,55 +134,47 @@ fn bench_footer_cache(c: &mut Criterion) {
 fn bench_pq_sorting(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("pq_sorting");
-    
+
     for size in [100, 1000, 10000].iter() {
         let vectors = generate_vectors(*size, 768);
         let dir = tempdir().unwrap();
-        
+
         // Without PQ sorting
-        group.bench_with_input(
-            BenchmarkId::new("without_pq", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        let path = dir.path().join("without_pq.parquet");
-                        let config = ParquetWriterConfig {
-                            enable_pq_sorting: false,
-                            ..Default::default()
-                        };
-                        let mut writer = StreamingParquetWriter::new(&path, 768, config).unwrap();
-                        writer.write_batch(&vectors).await.unwrap();
-                        writer.finalize().await.unwrap();
-                    });
+        group.bench_with_input(BenchmarkId::new("without_pq", size), size, |b, _| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let path = dir.path().join("without_pq.parquet");
+                    let config = ParquetWriterConfig {
+                        enable_pq_sorting: false,
+                        ..Default::default()
+                    };
+                    let mut writer = StreamingParquetWriter::new(&path, 768, config).unwrap();
+                    writer.write_batch(&vectors).await.unwrap();
+                    writer.finalize().await.unwrap();
                 });
-            }
-        );
-        
+            });
+        });
+
         // With PQ sorting
-        group.bench_with_input(
-            BenchmarkId::new("with_pq", size),
-            size,
-            |b, _| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        let path = dir.path().join("with_pq.parquet");
-                        let config = ParquetWriterConfig {
-                            enable_pq_sorting: true,
-                            pq_sorting_segments: 16,
-                            pq_sorting_codebook_size: 256,
-                            ..Default::default()
-                        };
-                        let mut writer = StreamingParquetWriter::new(&path, 768, config).unwrap();
-                        writer.write_batch(&vectors).await.unwrap();
-                        let stats = writer.finalize().await.unwrap();
-                        black_box(stats.compression_ratio);
-                    });
+        group.bench_with_input(BenchmarkId::new("with_pq", size), size, |b, _| {
+            b.iter(|| {
+                rt.block_on(async {
+                    let path = dir.path().join("with_pq.parquet");
+                    let config = ParquetWriterConfig {
+                        enable_pq_sorting: true,
+                        pq_sorting_segments: 16,
+                        pq_sorting_codebook_size: 256,
+                        ..Default::default()
+                    };
+                    let mut writer = StreamingParquetWriter::new(&path, 768, config).unwrap();
+                    writer.write_batch(&vectors).await.unwrap();
+                    let stats = writer.finalize().await.unwrap();
+                    black_box(stats.compression_ratio);
                 });
-            }
-        );
+            });
+        });
     }
-    
+
     group.finish();
 }
 
@@ -186,10 +182,10 @@ fn bench_pq_sorting(c: &mut Criterion) {
 fn bench_native_metadata(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("native_metadata");
-    
+
     let vectors = generate_vectors(1000, 128);
     let dir = tempdir().unwrap();
-    
+
     // JSON metadata (baseline)
     group.bench_function("json_metadata", |b| {
         b.iter(|| {
@@ -205,7 +201,7 @@ fn bench_native_metadata(c: &mut Criterion) {
             });
         });
     });
-    
+
     // Native metadata types
     group.bench_function("native_metadata", |b| {
         b.iter(|| {
@@ -222,17 +218,18 @@ fn bench_native_metadata(c: &mut Criterion) {
             });
         });
     });
-    
+
     // Metadata query optimization
-    let metadata_samples: Vec<_> = vectors.iter()
+    let metadata_samples: Vec<_> = vectors
+        .iter()
         .filter_map(|v| v.metadata.as_ref())
         .take(100)
         .cloned()
         .collect();
-    
+
     let mut handler = NativeMetadataHandler::new();
     handler.analyze_metadata(&metadata_samples).unwrap();
-    
+
     group.bench_function("metadata_type_inference", |b| {
         b.iter(|| {
             let mut h = NativeMetadataHandler::new();
@@ -240,7 +237,7 @@ fn bench_native_metadata(c: &mut Criterion) {
             black_box(h.get_optimization_stats());
         });
     });
-    
+
     group.finish();
 }
 
@@ -248,14 +245,12 @@ fn bench_native_metadata(c: &mut Criterion) {
 fn bench_hybrid_writer(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("hybrid_writer");
-    
+
     let dir = tempdir().unwrap();
-    
+
     // Streaming pattern (small batches)
-    let streaming_batches: Vec<_> = (0..100)
-        .map(|i| generate_vectors(10, 128))
-        .collect();
-    
+    let streaming_batches: Vec<_> = (0..100).map(|i| generate_vectors(10, 128)).collect();
+
     group.bench_function("streaming_pattern", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -266,22 +261,20 @@ fn bench_hybrid_writer(c: &mut Criterion) {
                     ..Default::default()
                 };
                 let writer = HybridParquetWriter::new(&path, 128, config).await.unwrap();
-                
+
                 for batch in &streaming_batches {
                     writer.write(batch.clone()).await.unwrap();
                 }
-                
+
                 let stats = writer.finalize().await.unwrap();
                 black_box(stats.mode_switches);
             });
         });
     });
-    
+
     // Batch pattern (large batches)
-    let batch_batches: Vec<_> = (0..10)
-        .map(|i| generate_vectors(1000, 128))
-        .collect();
-    
+    let batch_batches: Vec<_> = (0..10).map(|i| generate_vectors(1000, 128)).collect();
+
     group.bench_function("batch_pattern", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -292,17 +285,17 @@ fn bench_hybrid_writer(c: &mut Criterion) {
                     ..Default::default()
                 };
                 let writer = HybridParquetWriter::new(&path, 128, config).await.unwrap();
-                
+
                 for batch in &batch_batches {
                     writer.write(batch.clone()).await.unwrap();
                 }
-                
+
                 let stats = writer.finalize().await.unwrap();
                 black_box(stats.mode_switches);
             });
         });
     });
-    
+
     // Mixed pattern
     group.bench_function("mixed_pattern", |b| {
         b.iter(|| {
@@ -314,7 +307,7 @@ fn bench_hybrid_writer(c: &mut Criterion) {
                     ..Default::default()
                 };
                 let writer = HybridParquetWriter::new(&path, 128, config).await.unwrap();
-                
+
                 // Alternate between small and large batches
                 for i in 0..20 {
                     if i % 2 == 0 {
@@ -323,13 +316,13 @@ fn bench_hybrid_writer(c: &mut Criterion) {
                         writer.write(generate_vectors(500, 128)).await.unwrap();
                     }
                 }
-                
+
                 let stats = writer.finalize().await.unwrap();
                 black_box(stats.mode_switches);
             });
         });
     });
-    
+
     group.finish();
 }
 
@@ -337,10 +330,10 @@ fn bench_hybrid_writer(c: &mut Criterion) {
 fn bench_page_indexes(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("page_indexes");
-    
+
     let vectors = generate_vectors(10000, 256);
     let dir = tempdir().unwrap();
-    
+
     // Without page indexes
     group.bench_function("without_indexes", |b| {
         b.iter(|| {
@@ -356,7 +349,7 @@ fn bench_page_indexes(c: &mut Criterion) {
             });
         });
     });
-    
+
     // With page indexes
     group.bench_function("with_indexes", |b| {
         b.iter(|| {
@@ -374,7 +367,7 @@ fn bench_page_indexes(c: &mut Criterion) {
             });
         });
     });
-    
+
     group.finish();
 }
 
@@ -382,10 +375,10 @@ fn bench_page_indexes(c: &mut Criterion) {
 fn bench_bloom_filters(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("bloom_filters");
-    
+
     let vectors = generate_vectors(5000, 128);
     let dir = tempdir().unwrap();
-    
+
     // Without bloom filters
     group.bench_function("without_bloom", |b| {
         b.iter(|| {
@@ -400,7 +393,7 @@ fn bench_bloom_filters(c: &mut Criterion) {
             });
         });
     });
-    
+
     // With bloom filters
     group.bench_function("with_bloom", |b| {
         b.iter(|| {
@@ -418,7 +411,7 @@ fn bench_bloom_filters(c: &mut Criterion) {
             });
         });
     });
-    
+
     group.finish();
 }
 
@@ -426,10 +419,10 @@ fn bench_bloom_filters(c: &mut Criterion) {
 fn bench_end_to_end(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("end_to_end");
-    
+
     let vectors = generate_vectors(10000, 768);
     let dir = tempdir().unwrap();
-    
+
     // Baseline (no optimizations)
     group.bench_function("baseline", |b| {
         b.iter(|| {
@@ -448,7 +441,7 @@ fn bench_end_to_end(c: &mut Criterion) {
             });
         });
     });
-    
+
     // All optimizations enabled
     group.bench_function("optimized", |b| {
         b.iter(|| {
@@ -470,7 +463,7 @@ fn bench_end_to_end(c: &mut Criterion) {
             });
         });
     });
-    
+
     group.finish();
 }
 

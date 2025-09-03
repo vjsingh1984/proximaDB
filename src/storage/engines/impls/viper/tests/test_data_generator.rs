@@ -109,7 +109,7 @@ impl TestDataGenerator {
     fn generate_clustered_vector(&mut self, center: f32, std_dev: f32) -> Vec<f32> {
         (0..self.config.dimension)
             .map(|_| {
-                let normal: f32 = self.rng.gen::<f32>() * std_dev;
+                let normal: f32 = self.rng.gen_range(0.0..1.0) * std_dev;
                 center + normal
             })
             .collect()
@@ -119,7 +119,7 @@ impl TestDataGenerator {
     fn generate_sparse_vector(&mut self, sparsity: f32) -> Vec<f32> {
         (0..self.config.dimension)
             .map(|_| {
-                if self.rng.gen::<f32>() < sparsity {
+                if self.rng.gen_range(0.0..1.0) < sparsity {
                     self.rng.gen_range(-1.0..1.0)
                 } else {
                     0.0
@@ -306,7 +306,7 @@ impl TestDataGenerator {
         
         let expires_at: ArrayRef = Arc::new(Int64Array::from_iter(
             (0..self.config.num_vectors).map(|i| {
-                if self.rng.gen::<f32>() < self.config.expiry_rate {
+                if self.rng.gen_range(0.0..1.0) < self.config.expiry_rate {
                     Some(current_time - 1000000) // Expired
                 } else {
                     None // No expiry

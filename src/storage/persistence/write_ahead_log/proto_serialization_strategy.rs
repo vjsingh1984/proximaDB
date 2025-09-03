@@ -88,7 +88,7 @@ impl ProtoSerializationStrategy {
             wal_base_url
         };
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
-            filesystem_factory,
+            filesystem_factory.clone(),
             wal_base_dir,
         ));
         

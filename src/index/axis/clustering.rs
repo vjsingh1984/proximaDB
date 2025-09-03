@@ -596,7 +596,7 @@ impl AxisClusteringEngine {
             // Choose next centroid with probability proportional to squared distance
             let total_dist: f32 = distances.iter().map(|d| d * d).sum();
             let mut cumsum = 0.0;
-            let target = rng.gen::<f32>() * total_dist;
+            let target = rng.gen_range(0.0..1.0) * total_dist;
             
             for (idx, dist) in distances.iter().enumerate() {
                 cumsum += dist * dist;
@@ -969,7 +969,7 @@ impl AxisClusteringEngine {
             }
             
             let mut cumsum = 0.0;
-            let target = rng.gen::<f32>() * total_dist;
+            let target = rng.gen_range(0.0..1.0) * total_dist;
             
             for (idx, dist) in distances.iter().enumerate() {
                 cumsum += dist * dist;

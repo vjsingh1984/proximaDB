@@ -91,10 +91,14 @@ fn test_batch_serialization_performance() {
     debug!("   Total records: 1000");
     debug!("   Total time: {:?}", batch_time);
     debug!("   Average time per record: {:?}", avg_time_per_record);
-    debug!("   Total serialized size: {} MB",
-        total_size as f64 / 1_048_576.0);
-    debug!("   Average size per record: {} KB",
-        total_size as f64 / 1000.0 / 1024.0);
+    debug!(
+        "   Total serialized size: {} MB",
+        total_size as f64 / 1_048_576.0
+    );
+    debug!(
+        "   Average size per record: {} KB",
+        total_size as f64 / 1000.0 / 1024.0
+    );
 
     // Performance assertions
     assert!(

@@ -1,7 +1,7 @@
 [package]
 name = "proximadb"
 version = "0.1.4"
-edition = "2021"
+edition = "2024"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
@@ -9,6 +9,7 @@ repository = "https://github.com/vjsingh1984/proximadb"
 homepage = "https://github.com/vjsingh1984/proximadb"
 keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
+rust-version = "1.88"
 
 [workspace]
 members = [
@@ -23,7 +24,7 @@ path = "src/bin/server.rs"
 
 [dependencies]
 # Core async runtime
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.37", features = ["full"] }
 tokio-util = "0.7"
 tokio-stream = "0.1"
 

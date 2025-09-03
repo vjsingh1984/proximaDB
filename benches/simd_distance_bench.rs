@@ -7,47 +7,41 @@
 
 //! Benchmarks for SIMD-accelerated distance computation
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use proximadb::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute, DistanceMode};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use proximadb::compute::distance_computation::{
+    DistanceMetric, DistanceMode, UnifiedDistanceCompute,
+};
 use rand::prelude::*;
-use tracing::{debug};
+use tracing::debug;
 
 /// Generate random vectors for benchmarking
 fn generate_random_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
     let mut rng = rand::thread_rng();
     (0..count)
-        .map(|_| {
-            (0..dimension)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect()
-        })
+        .map(|_| (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect())
         .collect()
 }
 
 /// Benchmark different vector dimensions
 fn benchmark_dimensions(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_distance_dimensions");
-    
+
     // Test different dimensions (powers of 2 for optimal SIMD)
     for dimension in [64, 128, 256, 512, 1024, 2048].iter() {
         let vec_a = generate_random_vectors(1, *dimension)[0].clone();
         let vec_b = generate_random_vectors(1, *dimension)[0].clone();
-        
+
         group.throughput(Throughput::Elements(*dimension as u64));
-        
+
         // Cosine distance
-        group.bench_with_input(
-            BenchmarkId::new("cosine", dimension),
-            dimension,
-            |b, _| {
-                let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-                b.iter(|| {
-                    let result = calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
-                    black_box(result.raw_value)
-                });
-            }
-        );
-        
+        group.bench_with_input(BenchmarkId::new("cosine", dimension), dimension, |b, _| {
+            let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+            b.iter(|| {
+                let result = calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
+                black_box(result.raw_value)
+            });
+        });
+
         // Euclidean distance
         group.bench_with_input(
             BenchmarkId::new("euclidean", dimension),
@@ -55,12 +49,13 @@ fn benchmark_dimensions(c: &mut Criterion) {
             |b, _| {
                 let calculator = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
                 b.iter(|| {
-                    let result = calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Euclidean);
+                    let result =
+                        calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Euclidean);
                     black_box(result.raw_value)
                 });
-            }
+            },
         );
-        
+
         // Dot product
         group.bench_with_input(
             BenchmarkId::new("dot_product", dimension),
@@ -68,30 +63,31 @@ fn benchmark_dimensions(c: &mut Criterion) {
             |b, _| {
                 let calculator = UnifiedDistanceCompute::new(DistanceMetric::DotProduct);
                 b.iter(|| {
-                    let result = calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::DotProduct);
+                    let result =
+                        calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::DotProduct);
                     black_box(result.raw_value)
                 });
-            }
+            },
         );
     }
-    
+
     group.finish();
 }
 
 /// Benchmark batch processing
 fn benchmark_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_distance_batch");
-    
+
     let dimension = 128;
     let query = generate_random_vectors(1, dimension)[0].clone();
-    
+
     // Test different batch sizes
     for batch_size in [100, 500, 1000, 5000, 10000].iter() {
         let vectors = generate_random_vectors(*batch_size, dimension);
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
-        
+
         group.throughput(Throughput::Elements(*batch_size as u64));
-        
+
         // Standard batch processing
         group.bench_with_input(
             BenchmarkId::new("standard", batch_size),
@@ -99,12 +95,16 @@ fn benchmark_batch_processing(c: &mut Criterion) {
             |b, _| {
                 let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                 b.iter(|| {
-                    let results = calculator.calculate_distance_batch(&query, &vector_refs, &DistanceMetric::Cosine);
+                    let results = calculator.calculate_distance_batch(
+                        &query,
+                        &vector_refs,
+                        &DistanceMetric::Cosine,
+                    );
                     black_box(results)
                 });
-            }
+            },
         );
-        
+
         // GPU-enabled batch processing
         group.bench_with_input(
             BenchmarkId::new("gpu_enabled", batch_size),
@@ -113,13 +113,17 @@ fn benchmark_batch_processing(c: &mut Criterion) {
                 let mut calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                 calculator.set_gpu_enabled(true);
                 b.iter(|| {
-                    let results = calculator.calculate_distance_batch(&query, &vector_refs, &DistanceMetric::Cosine);
+                    let results = calculator.calculate_distance_batch(
+                        &query,
+                        &vector_refs,
+                        &DistanceMetric::Cosine,
+                    );
                     black_box(results)
                 });
-            }
+            },
         );
     }
-    
+
     group.finish();
 }
 
@@ -129,15 +133,15 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
     let calculator = UnifiedDistanceCompute::default();
     debug!("\nHardware Backend:");
     debug!("  Using: {}", calculator.preferred_backend());
-    
+
     let mut group = c.benchmark_group("hardware_backends");
-    
+
     let dimension = 1024; // Large dimension to show SIMD benefits
     let vec_a = generate_random_vectors(1, dimension)[0].clone();
     let vec_b = generate_random_vectors(1, dimension)[0].clone();
-    
+
     group.throughput(Throughput::Elements(dimension as u64));
-    
+
     // CPU backend
     group.bench_function("cpu", |b| {
         let mut calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
@@ -147,7 +151,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
             black_box(result.raw_value)
         });
     });
-    
+
     // GPU backend (if available)
     group.bench_function("gpu", |b| {
         let mut calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
@@ -157,7 +161,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
             black_box(result.raw_value)
         });
     });
-    
+
     group.finish();
 }
 

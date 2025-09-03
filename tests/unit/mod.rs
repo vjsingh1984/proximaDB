@@ -20,16 +20,16 @@
 //! Unit tests focus on testing individual components in isolation.
 
 pub mod compute;
-pub mod storage;
-pub mod server;
-pub mod services;
-pub mod search;
 pub mod handlers;
+pub mod mvcc_logic_tests;
 pub mod network;
 pub mod query;
-pub mod mvcc_logic_tests;
+pub mod search;
+pub mod serialization_compression_tests;
+pub mod server;
+pub mod services;
 pub mod sql_comprehensive_operator_tests;
 pub mod sql_parsing_verification_test;
-pub mod serialization_compression_tests;
 pub mod sst_optimization_tests;
+pub mod storage;
 pub mod viper_optimization_tests;

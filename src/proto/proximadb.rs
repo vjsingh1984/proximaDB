@@ -182,6 +182,7 @@ pub struct ExternalContent {
 pub struct StructuredContent {
     /// Arbitrary JSON structure
     #[prost(message, optional, tag = "1")]
+    #[serde(skip)]
     pub data: ::core::option::Option<::prost_types::Struct>,
     /// Schema version for evolution
     #[prost(string, tag = "2")]

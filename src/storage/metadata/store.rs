@@ -458,7 +458,7 @@ impl MetadataStoreInterface for MetadataStore {
             let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id.clone(),
                 name: config.name.clone(),
-                dimension: config.dimension as usize,
+                dimension: config.dimension,
                 distance_metric: format!("{:?}", config.distance_metric()),
                 indexing_algorithm: "HNSW".to_string(), // Default indexing algorithm
                 timestamp: Utc::now().timestamp() as u32,
@@ -488,7 +488,7 @@ impl MetadataStoreInterface for MetadataStore {
             if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
                 let config = CollectionConfig {
                     name: versioned.name.clone(),
-                    dimension: versioned.dimension as i32,
+                    dimension: versioned.dimension,
                     distance_metric: crate::proto::proximadb::DistanceMetric::Cosine.into(), // Default
                     storage_engine: crate::proto::proximadb::StorageEngine::Viper.into(), // Default
                     storage_config: None,
@@ -541,7 +541,7 @@ impl MetadataStoreInterface for MetadataStore {
             let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id.clone(),
                 name: config.name.clone(),
-                dimension: config.dimension as usize,
+                dimension: config.dimension,
                 distance_metric: format!("{:?}", config.distance_metric()),
                 indexing_algorithm: "HNSW".to_string(), // Default
                 timestamp: Utc::now().timestamp() as u32,
@@ -583,7 +583,7 @@ impl MetadataStoreInterface for MetadataStore {
                 .map(|versioned| {
                     let config = CollectionConfig {
                         name: versioned.name.clone(),
-                        dimension: versioned.dimension as i32,
+                        dimension: versioned.dimension,
                         distance_metric: crate::proto::proximadb::DistanceMetric::Cosine.into(),
                         storage_engine: crate::proto::proximadb::StorageEngine::Viper.into(),
                         storage_config: None,

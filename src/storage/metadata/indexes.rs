@@ -47,7 +47,7 @@ impl From<&Collection> for CollectionLookupResult {
         Self {
             uuid: record.id.clone(),
             name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_else(|| "unknown".to_string()),
-            dimension: record.config.as_ref().map(|c| c.dimension).unwrap_or(0),
+            dimension: record.config.as_ref().map(|c| c.dimension as i32).unwrap_or(0),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record.config.as_ref().and_then(|c| c.primary_index.clone()).unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),

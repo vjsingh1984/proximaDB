@@ -1,47 +1,45 @@
 use anyhow::Result;
-use proximadb::proto::proximadb::VectorRecord;
+use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::{
-    StorageQuantizationEngine, StorageQuantizationConfig, SearchStage,
-    UnifiedQuantizationLevel, QuantizationLevelType, BinaryQuantization,
-    ProductQuantization as PqConfig, UnifiedQuantizationEngine, InMemoryCodebookStore,
+    BinaryQuantization, InMemoryCodebookStore, ProductQuantization as PqConfig,
+    QuantizationLevelType, SearchStage, StorageQuantizationConfig, StorageQuantizationEngine,
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
-use proximadb::compute::distance_computation::engine::{
-    UnifiedDistanceCompute, DistanceMetric,
-};
+use proximadb::core::SstConfig;
+use proximadb::proto::proximadb::VectorRecord;
 use proximadb::storage::engines::sst::SstStorage;
-use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::persistence::filesystem::local::LocalConfig;
 use proximadb::storage::persistence::filesystem::{FileOptions, FilesystemPerformanceConfig};
-use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
-use proximadb::core::SstConfig;
+use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
-use rand::{Rng, SeedableRng};
-use rand::rngs::StdRng;
 
 #[tokio::test]
 async fn test_quantization_statistics_comprehensive() -> Result<()> {
     println!("\n{}", "=".repeat(80));
     println!("🎯 COMPREHENSIVE QUANTIZATION STATISTICS TEST");
     println!("{}", "=".repeat(80));
-    
+
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    
+
     // Test parameters
     let num_vectors = 1000;
     let dimension = 768; // BERT-like dimensions
     let sparsity_levels = vec![0, 30, 50, 70, 90];
-    
+
     // Generate test vectors with different sparsity levels
     let mut all_test_data = Vec::new();
     for sparsity in &sparsity_levels {
         let vectors = generate_sparse_vectors(num_vectors, dimension, *sparsity);
         all_test_data.push((*sparsity, vectors));
     }
-    
+
     // Run tests for different quantization configurations
     let quantization_configs = vec![
         ("No Quantization", None, None),
@@ -85,21 +83,21 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
             None,
         ),
     ];
-    
+
     println!("\n📊 TEST CONFIGURATION:");
     println!("  • Vectors: {}", num_vectors);
     println!("  • Dimension: {}", dimension);
     println!("  • Sparsity levels: {:?}%", sparsity_levels);
     println!("  • Quantization types: {}", quantization_configs.len());
-    
+
     // Store results for summary
     let mut all_results = Vec::new();
-    
+
     for (config_name, primary_level, fast_level) in quantization_configs {
         println!("\n{}", "-".repeat(80));
         println!("🔧 Testing: {}", config_name);
         println!("{}", "-".repeat(80));
-        
+
         for (sparsity, vectors) in &all_test_data {
             let result = run_quantization_test(
                 config_name,
@@ -108,15 +106,16 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
                 dimension,
                 primary_level.clone(),
                 fast_level.clone(),
-            ).await?;
-            
+            )
+            .await?;
+
             all_results.push(result);
         }
     }
-    
+
     // Print comprehensive summary
     print_summary_statistics(&all_results);
-    
+
     Ok(())
 }
 
@@ -129,11 +128,11 @@ async fn run_quantization_test(
     fast_level: Option<UnifiedQuantizationLevel>,
 ) -> Result<TestResult> {
     let start_time = Instant::now();
-    
+
     // Create temporary directory
     let temp_dir = TempDir::new()?;
     let base_path = temp_dir.path().to_str().unwrap();
-    
+
     // Setup SST engine with test configuration
     let sst_config = SstConfig::test_config_256kb(); // Use 256KB blocks for clustering
     let fs_config = FilesystemConfig {
@@ -145,47 +144,45 @@ async fn run_quantization_test(
         scheme_mapping: HashMap::new(),
     };
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    
+
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let mut sst_storage = SstStorage::new(
-        sst_config.clone(),
-        filesystem,
-        distance_compute,
-    ).await?;
-    
+    let mut sst_storage = SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
+
     // Calculate baseline (uncompressed) size
     let baseline_size = vectors.len() * dimension * 4; // FP32 = 4 bytes per float
-    
+
     // Setup quantization if enabled
     let (quantized_size, quantization_time) = if primary_level.is_some() || fast_level.is_some() {
         let quant_start = Instant::now();
-        
+
         let config = StorageQuantizationConfig::default();
-        
+
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(InMemoryCodebookStore::new());
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
             codebook_store,
         ));
-        let quantization_engine = StorageQuantizationEngine::new(
-            unified_engine,
-            distance_compute,
-            config,
-        );
-        
+        let quantization_engine =
+            StorageQuantizationEngine::new(unified_engine, distance_compute, config);
+
         // Train quantization model
-        let vector_data: Vec<Vec<f32>> = vectors.iter()
-            .map(|v| v.vector.clone())
-            .collect();
+        let vector_data: Vec<Vec<f32>> = vectors.iter().map(|v| v.vector.clone()).collect();
         quantization_engine.train(&vector_data).await?;
-        
+
         // Quantize vectors
-        let quantized_data = quantization_engine.quantize_batch(
-            &vector_data,
-            Some(&vectors.iter().map(|v| v.id.clone().unwrap_or_default()).collect::<Vec<_>>()),
-        ).await?;
-        
+        let quantized_data = quantization_engine
+            .quantize_batch(
+                &vector_data,
+                Some(
+                    &vectors
+                        .iter()
+                        .map(|v| v.id.clone().unwrap_or_default())
+                        .collect::<Vec<_>>(),
+                ),
+            )
+            .await?;
+
         // Calculate quantized size
         let mut total_quantized_size = 0usize;
         for qdata in &quantized_data {
@@ -199,12 +196,12 @@ async fn run_quantization_test(
                 total_quantized_size += filter.data.len();
             }
         }
-        
+
         (total_quantized_size, quant_start.elapsed())
     } else {
         (baseline_size, std::time::Duration::ZERO)
     };
-    
+
     // Flush vectors to SST
     let flush_start = Instant::now();
     let flush_params = FlushParameters {
@@ -212,47 +209,56 @@ async fn run_quantization_test(
         collection_id: Some("test_collection".to_string()),
         collection_config: None,
     };
-    
+
     sst_storage.insert_batch(vectors.to_vec()).await?;
     let flush_result = sst_storage.do_flush(flush_params).await?;
     let flush_time = flush_start.elapsed();
-    
+
     // Perform search test
     let query = &vectors[0].vector;
     let search_start = Instant::now();
-    let search_results = sst_storage.search_vectors(
-        query,
-        10,
-        None,
-        &DistanceMetric::Cosine,
-    ).await?;
+    let search_results = sst_storage
+        .search_vectors(query, 10, None, &DistanceMetric::Cosine)
+        .await?;
     let search_time = search_start.elapsed();
-    
+
     // Calculate compression ratio
     let compression_ratio = if quantized_size > 0 {
         baseline_size as f64 / quantized_size as f64
     } else {
         1.0
     };
-    
+
     let space_savings = if quantized_size < baseline_size {
         ((baseline_size - quantized_size) as f64 / baseline_size as f64) * 100.0
     } else {
         0.0
     };
-    
+
     // Print test results
     println!("\n  📈 Sparsity {}%:", sparsity);
-    println!("    • Baseline size: {:.2} MB", baseline_size as f64 / (1024.0 * 1024.0));
-    println!("    • Quantized size: {:.2} MB", quantized_size as f64 / (1024.0 * 1024.0));
+    println!(
+        "    • Baseline size: {:.2} MB",
+        baseline_size as f64 / (1024.0 * 1024.0)
+    );
+    println!(
+        "    • Quantized size: {:.2} MB",
+        quantized_size as f64 / (1024.0 * 1024.0)
+    );
     println!("    • Compression ratio: {:.2}x", compression_ratio);
     println!("    • Space savings: {:.1}%", space_savings);
-    println!("    • Quantization time: {:.2}ms", quantization_time.as_millis());
+    println!(
+        "    • Quantization time: {:.2}ms",
+        quantization_time.as_millis()
+    );
     println!("    • Flush time: {:.2}ms", flush_time.as_millis());
-    println!("    • Search time: {:.2}ms", search_time.as_micros() as f64 / 1000.0);
+    println!(
+        "    • Search time: {:.2}ms",
+        search_time.as_micros() as f64 / 1000.0
+    );
     println!("    • Search results: {} found", search_results.len());
     println!("    • Entries flushed: {}", flush_result.entries_flushed);
-    
+
     Ok(TestResult {
         config_name: config_name.to_string(),
         sparsity,
@@ -270,17 +276,17 @@ async fn run_quantization_test(
 fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) -> Vec<VectorRecord> {
     let mut rng = StdRng::seed_from_u64(42);
     let mut vectors = Vec::with_capacity(count);
-    
+
     for i in 0..count {
         let mut vector = vec![0.0f32; dim];
         let non_zero_count = dim * (100 - sparsity_percent) / 100;
-        
+
         // Randomly set non-zero values
         for j in 0..non_zero_count {
             let idx = rng.gen_range(0..dim);
             vector[idx] = rng.gen_range(-1.0..1.0);
         }
-        
+
         // Normalize vector
         let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 0.0 {
@@ -288,7 +294,7 @@ fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) ->
                 *val /= norm;
             }
         }
-        
+
         vectors.push(VectorRecord {
             id: Some(format!("vec_{}", i)),
             vector,
@@ -302,7 +308,7 @@ fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) ->
             distance: None,
         });
     }
-    
+
     vectors
 }
 
@@ -310,21 +316,25 @@ fn print_summary_statistics(results: &[TestResult]) {
     println!("\n{}", "=".repeat(80));
     println!("📊 QUANTIZATION SUMMARY STATISTICS");
     println!("{}", "=".repeat(80));
-    
+
     // Group results by configuration
-    let mut by_config: std::collections::HashMap<String, Vec<&TestResult>> = std::collections::HashMap::new();
+    let mut by_config: std::collections::HashMap<String, Vec<&TestResult>> =
+        std::collections::HashMap::new();
     for result in results {
-        by_config.entry(result.config_name.clone())
+        by_config
+            .entry(result.config_name.clone())
             .or_insert_with(Vec::new)
             .push(result);
     }
-    
+
     // Print comparison table
     println!("\n📈 COMPRESSION RATIO COMPARISON (Higher is Better):");
-    println!("{:<25} {:>10} {:>10} {:>10} {:>10} {:>10}", 
-        "Configuration", "0% Sparse", "30% Sparse", "50% Sparse", "70% Sparse", "90% Sparse");
+    println!(
+        "{:<25} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Configuration", "0% Sparse", "30% Sparse", "50% Sparse", "70% Sparse", "90% Sparse"
+    );
     println!("{}", "-".repeat(85));
-    
+
     for (config, results) in by_config.iter() {
         print!("{:<25}", config);
         for sparsity in &[0, 30, 50, 70, 90] {
@@ -336,12 +346,14 @@ fn print_summary_statistics(results: &[TestResult]) {
         }
         println!();
     }
-    
+
     println!("\n💾 SPACE SAVINGS COMPARISON (% Reduction):");
-    println!("{:<25} {:>10} {:>10} {:>10} {:>10} {:>10}", 
-        "Configuration", "0% Sparse", "30% Sparse", "50% Sparse", "70% Sparse", "90% Sparse");
+    println!(
+        "{:<25} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Configuration", "0% Sparse", "30% Sparse", "50% Sparse", "70% Sparse", "90% Sparse"
+    );
     println!("{}", "-".repeat(85));
-    
+
     for (config, results) in by_config.iter() {
         print!("{:<25}", config);
         for sparsity in &[0, 30, 50, 70, 90] {
@@ -353,12 +365,14 @@ fn print_summary_statistics(results: &[TestResult]) {
         }
         println!();
     }
-    
+
     println!("\n⚡ SEARCH LATENCY COMPARISON (ms):");
-    println!("{:<25} {:>10} {:>10} {:>10} {:>10} {:>10}", 
-        "Configuration", "0% Sparse", "30% Sparse", "50% Sparse", "70% Sparse", "90% Sparse");
+    println!(
+        "{:<25} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Configuration", "0% Sparse", "30% Sparse", "50% Sparse", "70% Sparse", "90% Sparse"
+    );
     println!("{}", "-".repeat(85));
-    
+
     for (config, results) in by_config.iter() {
         print!("{:<25}", config);
         for sparsity in &[0, 30, 50, 70, 90] {
@@ -370,20 +384,29 @@ fn print_summary_statistics(results: &[TestResult]) {
         }
         println!();
     }
-    
+
     // Calculate and print averages
     println!("\n📊 AVERAGE METRICS ACROSS ALL SPARSITY LEVELS:");
     println!("{}", "-".repeat(85));
-    
+
     for (config, results) in by_config.iter() {
-        let avg_compression: f64 = results.iter().map(|r| r.compression_ratio).sum::<f64>() / results.len() as f64;
-        let avg_savings: f64 = results.iter().map(|r| r.space_savings).sum::<f64>() / results.len() as f64;
-        let avg_search: f64 = results.iter().map(|r| r.search_time.as_micros() as f64).sum::<f64>() / results.len() as f64 / 1000.0;
-        
-        println!("{:<25} Compression: {:.2}x | Savings: {:.1}% | Search: {:.2}ms",
-            config, avg_compression, avg_savings, avg_search);
+        let avg_compression: f64 =
+            results.iter().map(|r| r.compression_ratio).sum::<f64>() / results.len() as f64;
+        let avg_savings: f64 =
+            results.iter().map(|r| r.space_savings).sum::<f64>() / results.len() as f64;
+        let avg_search: f64 = results
+            .iter()
+            .map(|r| r.search_time.as_micros() as f64)
+            .sum::<f64>()
+            / results.len() as f64
+            / 1000.0;
+
+        println!(
+            "{:<25} Compression: {:.2}x | Savings: {:.1}% | Search: {:.2}ms",
+            config, avg_compression, avg_savings, avg_search
+        );
     }
-    
+
     println!("\n✅ QUANTIZATION TEST COMPLETE");
     println!("{}", "=".repeat(80));
 }

@@ -42,7 +42,7 @@ pub mod isolated_sst_engine_test;
 // gRPC integration tests
 pub mod grpc;
 
-// REST API integration tests  
+// REST API integration tests
 pub mod rest;
 
 // Storage system integration tests
@@ -80,16 +80,16 @@ pub mod mvcc_logic_integration_test;
 // pub mod storage_aware_search_tests;
 
 // Compression integration tests - NEW optimization features
-pub mod sst_compression_integration_test;
-pub mod viper_compression_integration_test;
 pub mod optimization_e2e_test;
 pub mod sst_compression_comprehensive_test;
+pub mod sst_compression_integration_test;
 pub mod sst_compression_sparse_dense_test;
+pub mod viper_compression_integration_test;
 
 // Benchmark and comparison tests
+pub mod comprehensive_engine_benchmark_report;
 pub mod engine_compression_comparison_test;
 pub mod engine_sparsity_compression_benchmark;
-pub mod comprehensive_engine_benchmark_report;
 
 // Early termination optimization tests
 pub mod early_termination_test;

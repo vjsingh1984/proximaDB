@@ -809,25 +809,9 @@ impl UniversallyOptimized for SwiftEngine {
         
         Ok(metrics)
     }
-}
-
-// Additional implementation methods for SwiftEngine
-impl SwiftEngine {
-    /// Get the AXIS manager if available
-    fn get_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
-        self.axis_manager.clone()
-            .ok_or_else(|| anyhow!("AXIS manager not configured for this SWIFT instance"))
-    }
     
-    /// Get the distance engine
-    fn get_distance_engine(&self) -> Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute> {
-        self.distance_engine.clone()
-    }
-    
-    /// Get the quantization engine (wrapper for compatibility)
-    fn get_quantization_engine(&self) -> Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
-        self.quantization_engine.clone()
-    }
+    // Removed unnecessary helper methods - engines already have these components as fields
+    // Distance and quantization engines are accessed directly from struct fields
     
     /// Fallback to direct search when orchestration fails
     async fn fallback_to_direct_search(

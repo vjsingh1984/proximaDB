@@ -1,4 +1,4 @@
-use tracing::{debug};
+use tracing::debug;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize basic logging for build scripts
@@ -16,9 +16,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .protoc_arg("--experimental_allow_proto3_optional") // Allow proto3 optional fields
         // Add serde derives to messages only (not enums - they get prost::Enumeration)
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Skip serde for fields containing prost_types::Value since it doesn't implement serde
+        // Skip serde for fields containing prost_types::Value/Struct since they don't implement serde
         .field_attribute("SearchParams.filters", "#[serde(skip)]")
         .field_attribute("SearchParams.custom_hints", "#[serde(skip)]")
+        .field_attribute("StructuredContent.data", "#[serde(skip)]")
         .compile(&["proto/proximadb.proto"], &["proto"])?;
     tracing::info!("✅ Protobuf compilation complete");
 
