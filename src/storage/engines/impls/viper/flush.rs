@@ -68,6 +68,9 @@ pub struct Flush {
     
     /// Metrics updater for flush operation tracking
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
+    
+    /// Quantization engine for unified quantization
+    quantization_engine: Option<Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>>,
 }
 
 impl std::fmt::Debug for Flush {
@@ -79,6 +82,7 @@ impl std::fmt::Debug for Flush {
             .field("atomic_coordinator", &self.atomic_coordinator)
             .field("compression_provider", &"StandardCompression")
             .field("metrics_updater", &self.metrics_updater.is_some())
+            .field("quantization_engine", &self.quantization_engine.is_some())
             .finish()
     }
 }
@@ -98,6 +102,16 @@ impl Flush {
         // Initialize compression provider directly
         let compression_provider = StandardCompression::default();
         
+        // Initialize quantization engine
+        let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new());
+        let quantization_engine = Some(Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_compute,
+                codebook_store,
+            )
+        ));
+        
         Ok(Self {
             schema: ColumnarSchema::new(),
             collection_service,
@@ -105,6 +119,7 @@ impl Flush {
             atomic_coordinator,
             compression_provider,
             metrics_updater: None, // Set via set_metrics_updater for dependency injection
+            quantization_engine,
         })
     }
     
@@ -1052,43 +1067,34 @@ impl Flush {
     }
 
     /// INT8 Quantization for Parquet columnar storage
-    /// Uses Parquet's native DELTA_BINARY_PACKED encoding for optimal compression
-    fn quantize_to_int8(&self, fp32_vector: &[f32], quant_config: &crate::proto::proximadb::QuantizationConfig) -> Vec<i8> {
-        // Note: Parquet handles encoding internally, no need for FastLanes
-        
+    /// Delegates to unified quantization engine for consistency across all engines
+    fn quantize_to_int8(&self, fp32_vector: &[f32], _quant_config: &crate::proto::proximadb::QuantizationConfig) -> Vec<i8> {
         if fp32_vector.is_empty() {
             return Vec::new();
         }
         
-        debug!("🔧 VIPER: Enhanced INT8 quantization for Parquet storage, quality_threshold={:?}", 
-               quant_config.quality_threshold);
+        debug!("🔧 VIPER: Using unified INT8 quantization for Parquet storage");
         
-        // Use collection-specific quality threshold for better precision
-        let quality_threshold = quant_config.quality_threshold;
-        
-        // Enhanced scaling with quality-aware precision
-        let min_val = fp32_vector.iter().copied().fold(f32::INFINITY, f32::min);
-        let max_val = fp32_vector.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        
-        let range = if (max_val - min_val).abs() < f32::EPSILON {
-            1.0
-        } else {
-            max_val - min_val
+        // Get unified quantization engine
+        let quant_engine = match self.quantization_engine.as_ref() {
+            Some(engine) => engine,
+            None => {
+                error!("Quantization engine not initialized");
+                return Vec::new();
+            }
         };
         
-        // Apply quality scaling factor
-        let scale_factor = if quality_threshold > 0.9 { 0.9 } else { 0.8 };
-        
-        let quantized: Vec<i8> = fp32_vector.iter().map(|&val| {
-            let normalized = (val - min_val) / range;
-            let scaled = (normalized * 255.0 - 128.0) * scale_factor;
-            scaled.clamp(-128.0, 127.0) as i8
-        }).collect();
-        
-        // For Parquet columnar storage, we return the raw INT8 values
-        // The Parquet writer will apply its own encoding (DELTA_BINARY_PACKED)
-        // Row-based engines (SST, RAPTOR, SWIFT, PRISM) use FastLanes for SIMD optimization
-        quantized
+        // Use unified engine's INT8 quantization
+        match quant_engine.quantize_to_u8(fp32_vector) {
+            Ok((quantized, _min, _max)) => {
+                // Convert u8 to i8 for compatibility with existing code
+                quantized.iter().map(|&v| v as i8).collect()
+            }
+            Err(e) => {
+                error!("Failed to quantize vector: {}", e);
+                Vec::new()
+            }
+        }
     }
     
     // DEPRECATED: Use UnifiedQuantizationEngine::quantize_to_pq() instead

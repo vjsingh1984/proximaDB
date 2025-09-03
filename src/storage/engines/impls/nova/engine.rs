@@ -57,6 +57,8 @@ pub struct NovaEngine {
     compression_provider: StandardCompression,
     /// Unified quantization engine from compute module
     quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    /// Distance computation engine
+    distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
     
     // Universal performance optimization (replaces NOVA-specific optimization)
     /// Universal performance optimizer eliminating code duplication
@@ -130,6 +132,7 @@ impl NovaEngine {
             metrics_collector: None,
             compression_provider,
             quantization_engine,
+            distance_engine: distance_compute,
             universal_optimizer,
         })
     }
@@ -890,9 +893,10 @@ impl NovaEngine {
     /// Helper methods for search orchestration
     /// These create mock services for orchestration functionality
     
-    fn get_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
-        // Get real AXIS manager from the system
-        crate::index::axis::management::manager::AxisManager::get_instance()
+    async fn get_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
+        // Create AXIS manager with default config
+        let config = crate::index::axis::management::manager::AxisConfig::default();
+        Ok(Arc::new(crate::index::axis::management::manager::AxisManager::new(config).await?))
     }
     
     fn get_collection_service(&self) -> Arc<crate::services::collection::manager::CollectionService> {

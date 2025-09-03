@@ -704,7 +704,7 @@ impl StreamingParquetWriter {
         
         // Create FixedSizeBinaryArray for PQ codes
         let pq_array = Arc::new(FixedSizeBinaryArray::try_from_iter(
-            pq_codes.into_iter().map(|opt| opt.map(|v| v))
+            pq_codes.into_iter().map(|opt| opt.as_deref())
         )?);
         
         // Create BinaryArray for codebooks

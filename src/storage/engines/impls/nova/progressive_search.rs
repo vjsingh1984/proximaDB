@@ -16,7 +16,31 @@ use super::streaming_processor::{
     StreamingRowGroupProcessor, StreamingContext, RowGroupProcessingResult,
     RowGroupCandidate, ProcessingStage, StreamingConfig,
 };
-use super::quantized_columns::{BinarySketch, Int8Vector, PQCode, DistanceTable};
+// Import types from refactored quantized_columns module
+use super::quantized_columns::{Int8QuantizedData, PQQuantizedData};
+
+// Create compatibility types for progressive search
+#[derive(Debug, Clone)]
+struct BinarySketch {
+    bits: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct Int8Vector {
+    values: Vec<i8>,
+    scale: f32,
+    zero_point: i8,
+}
+
+#[derive(Debug, Clone)]
+struct PQCode {
+    codes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct DistanceTable {
+    table: Vec<Vec<f32>>,
+}
 
 /// Simple quantization adapter that wraps UnifiedQuantizationEngine
 /// Provides the specific methods needed for progressive search
@@ -106,6 +130,7 @@ pub struct ProgressiveSearchConfig {
     pub memory_budget_bytes: Option<usize>,
 }
 /// Configuration for a single search stage
+#[derive(Debug, Clone, Default)]
 pub struct StageConfig {
     /// Maximum candidates to pass to next stage
     pub max_candidates: usize,
@@ -136,6 +161,7 @@ pub struct ProgressiveSearchResult {
 }
 
 /// Metrics for a single search stage
+#[derive(Debug, Clone)]
 pub struct StageMetrics {
     pub stage: ProcessingStage,
     pub duration_ms: u64,
