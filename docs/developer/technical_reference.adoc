@@ -3,7 +3,7 @@
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Implementation guide with code examples, API reference, and performance optimization patterns.**
+**An implementation guide with code examples, API reference, and performance optimization patterns.**
 
 == Quick Reference
 
@@ -11,10 +11,22 @@
 [cols="2,1,1", options="header"]
 |===
 | Operation | Target | Achieved
-| Insert (gRPC) | >5K vec/s | 17K vec/s
-| Search (p99) | <2ms | 0.9ms  
-| Compression | >50% | 50-80%
-| Cache Hit Rate | >80% | 95%
+
+| Insert (gRPC)
+| >5K vec/s
+| 17K vec/s
+
+| Search (p99)
+| <2ms
+| 0.9ms
+
+| Compression
+| >50%
+| 50-80%
+
+| Cache Hit Rate
+| >80%
+| 95%
 |===
 
 === Required Setup
@@ -36,10 +48,10 @@ image::api-architecture-flow.svg[API Protocol Architecture, width=800, align=cen
 ----
 POST /collections
 {
-  "name": "product_vectors",  # Min 8 characters
+  "name": "product_vectors",
   "dimension": 1536,
   "distance_metric": "cosine",
-  "storage_engine": "viper",   # viper or sst
+  "storage_engine": "viper",
   "compression": {
     "algorithm": "zstd",
     "level": 6,
@@ -147,32 +159,6 @@ LIMIT 10;
 
 == Storage Engine Selection
 
-```
-Storage Engine Decision Flow:
-┌──────────────────────────────────────────────────┐
-│           What's Your Workload?                  │
-└────────────────┬─────────────────────────────────┘
-                 ▼
-         ┌───────────────┐
-         │ Write Pattern │
-         └───────┬───────┘
-      ┌──────────┴──────────┐
-      ▼                     ▼
-┌─────────────┐       ┌─────────────┐
-│  Streaming  │       │    Batch    │
-│  Real-time  │       │  Analytics  │
-└──────┬──────┘       └──────┬──────┘
-       ▼                     ▼
-┌─────────────┐       ┌─────────────┐
-│  SST ENGINE │       │ VIPER ENGINE│
-├─────────────┤       ├─────────────┤
-│ • Row-based │       │ • Columnar  │
-│ • Low latency│      │ • Compressed│
-│ • 17K vec/s │       │ • 5K vec/s  │
-│ • 0.9ms p99 │       │ • 50-80% save│
-└─────────────┘       └─────────────┘
-```
-
 === Decision Matrix
 [cols="2,2,2,2", options="header"]
 |===
@@ -204,7 +190,7 @@ Storage Engine Decision Flow:
 ----
 // SST Engine - Row-based
 pub struct SstEngine {
-    three_stage_filter: FilterPipeline,  // Bloom → Index → Row
+    three_stage_filter: FilterPipeline,  // Bloom -> Index -> Row
     cache: VectorStore,                   // Hot data cache
 }
 
@@ -222,10 +208,25 @@ pub struct ViperEngine {
 |===
 | Algorithm | Speed | Ratio | Use Case
 
-| **LZ4** | Fastest | 2-3x | Real-time, low latency
-| **Snappy** | Very Fast | 2-3x | Balanced performance
-| **ZSTD** | Moderate | 3-5x | Best compression ratio
-| **Gzip** | Slow | 3-4x | Compatibility
+| **LZ4**
+| Fastest
+| 2-3x
+| Real-time, low latency
+
+| **Snappy**
+| Very Fast
+| 2-3x
+| Balanced performance
+
+| **ZSTD**
+| Moderate
+| 3-5x
+| Best compression ratio
+
+| **Gzip**
+| Slow
+| 3-4x
+| Compatibility
 |===
 
 === Quantization Options
@@ -292,11 +293,35 @@ max_compression = CompressionConfig(
 |===
 | Algorithm | Scale | Memory | Speed | Accuracy
 
-| **HNSW** | <10M | High | Fast | 99%+
-| **IVF** | >10M | Medium | Good | 95-99%
-| **PQ** | Any | Low | Moderate | 90-95%
-| **FLAT** | <100K | Low | Slow | 100%
-| **LSH** | >100M | Medium | Fast | 85-95%
+| **HNSW**
+| <10M
+| High
+| Fast
+| 99%+
+
+| **IVF**
+| >10M
+| Medium
+| Good
+| 95-99%
+
+| **PQ**
+| Any
+| Low
+| Moderate
+| 90-95%
+
+| **FLAT**
+| <100K
+| Low
+| Slow
+| 100%
+
+| **LSH**
+| >100M
+| Medium
+| Fast
+| 85-95%
 |===
 
 === Configuration Examples
@@ -355,46 +380,6 @@ pub struct QueryCache {
 ----
 
 == Performance Optimization
-
-```
-Performance Optimization Pipeline:
-┌──────────────────────────────────────────────────┐
-│            INCOMING REQUEST                       │
-└────────────────┬─────────────────────────────────┘
-                 ▼
-┌──────────────────────────────────────────────────┐
-│         HARDWARE DETECTION                        │
-│  ┌──────────────────────────────────────────┐   │
-│  │ if (GPU) → 10x speedup                   │   │
-│  │ else if (AVX-512) → 4x speedup           │   │
-│  │ else → Scalar fallback                   │   │
-│  └──────────────────────────────────────────┘   │
-└────────────────┬─────────────────────────────────┘
-                 ▼
-┌──────────────────────────────────────────────────┐
-│           BATCH OPTIMIZATION                      │
-│  ┌──────────────────────────────────────────┐   │
-│  │ GPU: 10,000 vectors/batch                │   │
-│  │ SIMD: 256 vectors/batch                  │   │
-│  │ Disk: 1,000 vectors/batch                │   │
-│  └──────────────────────────────────────────┘   │
-└────────────────┬─────────────────────────────────┘
-                 ▼
-┌──────────────────────────────────────────────────┐
-│              CACHE LAYERS                         │
-│  ┌──────────────────────────────────────────┐   │
-│  │ L1: Query Cache (30%) - TTL based        │   │
-│  │ L2: Vector Store (40%) - LRU eviction    │   │
-│  │ L3: Filter Cache (20%) - Bloom filters   │   │
-│  │ L4: Index Cache (10%) - Hot nodes        │   │
-│  └──────────────────────────────────────────┘   │
-└────────────────┬─────────────────────────────────┘
-                 ▼
-┌──────────────────────────────────────────────────┐
-│              FINAL RESULTS                        │
-│         17K vec/s | 0.9ms p99                    │
-└──────────────────────────────────────────────────┘
-```
 
 === Hardware Acceleration
 [source,rust]
@@ -553,9 +538,9 @@ async fn test_end_to_end() {
 == Related Documentation
 
 * link:architecture.adoc[Architecture Overview] - System design
-* link:../user/api_reference.adoc[API Reference] - Complete endpoint documentation
-* link:../performance_reference.adoc[Performance Guide] - Benchmarking and tuning
+* link:../api/grpc_api_reference.adoc[API Reference] - Complete endpoint documentation
+* link:../optimization.adoc[Performance Guide] - Benchmarking and tuning
 * link:storage_engines.adoc[Storage Engines] - SST & VIPER details
 
 ---
-**Version 0.1.4** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01-15

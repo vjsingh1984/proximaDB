@@ -1,0 +1,96 @@
+= Testing Guide
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+**A comprehensive guide to testing ProximaDB, covering unit, integration, and performance testing strategies.**
+
+== Overview
+
+ProximaDB employs a multi-layered testing strategy to ensure reliability, performance, and correctness across its complex architecture. This guide outlines the different types of tests, best practices, and tools used in the development workflow.
+
+== Testing Philosophy
+
+*   **Test Early, Test Often**: Integrate testing throughout the development lifecycle.
+*   **Automated Testing**: Maximize automation to ensure rapid feedback and prevent regressions.
+*   **Layered Testing**: Apply different testing types (unit, integration, performance) at appropriate levels.
+*   **Reproducibility**: Ensure tests are deterministic and can be run consistently across environments.
+*   **Performance as a Feature**: Treat performance testing as a critical part of the development process.
+
+== Test Types
+
+=== Unit Tests
+
+Unit tests focus on individual components or functions in isolation. They are fast to run and provide immediate feedback on code changes.
+
+*   **Purpose**: Verify the correctness of small, isolated units of code.
+*   **Location**: Typically in the same module as the code being tested, within a `tests` submodule or `_test.rs` file.
+*   **Tools**: `cargo test`
+*   **Best Practices**:
+    *   Keep tests small and focused.
+    *   Mock external dependencies to isolate the unit under test.
+    *   Aim for high code coverage.
+
+=== Integration Tests
+
+Integration tests verify the interactions between multiple components or modules. They are slower than unit tests but provide more confidence in the system's overall behavior.
+
+*   **Purpose**: Verify that different parts of the system work together as expected.
+*   **Location**: In the `tests/` directory at the project root.
+*   **Tools**: `cargo test --test <test_name>`, `pytest` (for Python SDK).
+*   **Best Practices**:
+    *   Test realistic scenarios.
+    *   Use a dedicated test environment (e.g., Docker containers).
+    *   Focus on critical paths and common use cases.
+
+=== Performance Tests
+
+Performance tests measure the system's performance characteristics, such as latency, throughput, and resource utilization. They are crucial for identifying bottlenecks and optimizing the system.
+
+*   **Purpose**: Measure and optimize the system's performance.
+*   **Location**: In the `benches/` directory at the project root.
+*   **Tools**: `cargo bench`, custom benchmarking scripts.
+*   **Best Practices**:
+    *   Run tests on dedicated hardware.
+    *   Use realistic workloads and data.
+    *   Monitor key performance metrics (CPU, memory, I/O, network).
+
+=== End-to-End Tests
+
+End-to-end tests simulate real-world user scenarios, covering the entire system from the client application to the storage layer.
+
+*   **Purpose**: Verify the system's behavior from a user's perspective.
+*   **Location**: In the `tests/` directory at the project root.
+*   **Tools**: Custom scripts, integration with client SDKs.
+*   **Best Practices**:
+    *   Automate as much as possible.
+    *   Test critical user flows.
+    *   Use a production-like environment.
+
+== Testing Tools and Frameworks
+
+*   **Rust**:
+    *   `cargo test`: Built-in test runner for unit and integration tests.
+    *   `criterion.rs`: A powerful benchmarking harness for Rust.
+    *   `tokio::test`: For asynchronous tests.
+    *   `mockall`: For mocking dependencies in unit tests.
+*   **Python**:
+    *   `pytest`: A popular testing framework for Python.
+    *   `pytest-asyncio`: For testing asynchronous Python code.
+    *   `unittest.mock`: For mocking dependencies.
+*   **Docker**: Used to create isolated test environments for integration and end-to-end tests.
+
+== Best Practices for Testing
+
+1.  **Write Clear and Concise Tests**: Tests should be easy to read and understand.
+2.  **Test Edge Cases**: Don't just test the happy path; test error conditions, boundary values, and unusual inputs.
+3.  **Automate Everything**: Automate as much of your testing as possible to ensure rapid feedback and prevent regressions.
+4.  **Integrate with CI/CD**: Run tests automatically as part of your continuous integration and continuous delivery pipeline.
+5.  **Monitor Test Coverage**: Use code coverage tools to identify areas of the codebase that are not adequately tested.
+6.  **Performance Regression Testing**: Include performance benchmarks in your CI/CD pipeline to detect performance regressions early.
+
+== Related Documentation
+
+*   link:codebase_overview.adoc[Codebase Overview]
+*   link:performance_tuning.adoc[Performance Tuning Guide]
+*   link:../admin/monitoring_guide.adoc[Monitoring Guide]

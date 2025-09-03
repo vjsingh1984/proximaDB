@@ -63,10 +63,38 @@ use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import FastLanes common structures (SWIFT uses hierarchical structure)
-use crate::storage::engines::core::formats::fastlanes_blocks::{
-    FastLanesDataBlock,
-    SuperBlock,
-};
+// Note: FastLanesDataBlock provides the block structure with encoding support
+use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock;
+
+/// SWIFT-specific SuperBlock structure - hierarchical container for multiple data blocks
+#[derive(Debug)]
+pub struct SuperBlock {
+    pub superblock_id: usize,
+    pub name: String,
+    pub blocks: Vec<FastLanesDataBlock>,
+    pub superblock_encoding_marker: u8,
+    pub centroid: Option<Vec<f32>>,
+    pub quantized_signature: Vec<u8>,
+    pub bloom_filter: Option<SstableBloomFilter>,
+}
+
+impl SuperBlock {
+    pub fn new(id: usize, name: String) -> Self {
+        Self {
+            superblock_id: id,
+            name,
+            blocks: Vec::new(),
+            superblock_encoding_marker: 0x00,
+            centroid: None,
+            quantized_signature: Vec::new(),
+            bloom_filter: None,
+        }
+    }
+    
+    pub fn add_block(&mut self, block: FastLanesDataBlock) {
+        self.blocks.push(block);
+    }
+}
 
 /// Placeholder for quantized index - now handled by unified compute module
 #[derive(Debug)]
@@ -232,6 +260,7 @@ pub struct ColumnStats {
 }
 
 /// Memory manager for efficient resource usage
+#[derive(Debug)]
 pub struct MemoryManager {
     max_memory_bytes: usize,
     current_usage: std::sync::atomic::AtomicUsize,
@@ -273,40 +302,41 @@ impl SwiftFile {
                 // Quantize vectors using the storage quantization engine
                 use tokio::runtime::Handle;
                 let quantized_vectors = Handle::current().block_on(async {
-                    engine.quantize_batch(&vectors).await
+                    engine.quantize_batch(&vectors, None).await
                 }).map_err(|e| anyhow::anyhow!("Failed to quantize vectors: {}", e))?;
                 
                 // Encode quantized vectors with FastLanes based on quantization level
                 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
-                use crate::compute::quantization::types::UnifiedQuantizationLevel;
+                use crate::compute::quantization::types::{UnifiedQuantizationLevel, QuantizationLevel};
                 
-                let fastlanes_encoder = FastLanesEncoder::new();
+                // Use BitPacked scheme as default for vector encoding
+                let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 32 });
                 
                 // Process each quantized vector and encode with appropriate FastLanes method
                 for (idx, quantized) in quantized_vectors.iter().enumerate() {
-                    let encoded_data = match &quantized.quantization_level {
-                        UnifiedQuantizationLevel::None => {
+                    let encoded_data = match &quantized.quantization_level.level_type {
+                        None | Some(QuantizationLevel::None(_)) => {
                             // Full precision FP32 - use FastLanes float encoding
                             fastlanes_encoder.encode_f32(&vectors[idx])?
                         },
-                        UnifiedQuantizationLevel::Binary(_) => {
+                        Some(QuantizationLevel::Binary(_)) => {
                             // Binary quantization - use FastLanes binary encoding
                             fastlanes_encoder.encode_binary(&quantized.data)?
                         },
-                        UnifiedQuantizationLevel::Scalar(ref config) if config.bits_per_dimension == 8 => {
+                        Some(QuantizationLevel::Scalar(ref config)) if config.bits == 8 => {
                             // INT8 quantization - use FastLanes INT8 encoding
                             let int8_data: Vec<i8> = quantized.data.iter()
                                 .map(|&b| b as i8)
                                 .collect();
                             fastlanes_encoder.encode_int8(&int8_data)?
                         },
-                        UnifiedQuantizationLevel::Product(ref config) if config.bits == 4 => {
+                        Some(QuantizationLevel::Pq(ref config)) if config.bits_per_code == 4 => {
                             // PQ4 quantization - use FastLanes PQ4 encoding
-                            fastlanes_encoder.encode_pq4(&quantized.data, config.num_subvectors)?
+                            fastlanes_encoder.encode_pq4(&quantized.data, config.num_subvectors as usize)?
                         },
-                        UnifiedQuantizationLevel::Product(ref config) if config.bits == 8 => {
+                        Some(QuantizationLevel::Pq(ref config)) if config.bits_per_code == 8 => {
                             // PQ8 quantization - use FastLanes PQ8 encoding
-                            fastlanes_encoder.encode_pq8(&quantized.data, config.num_subvectors)?
+                            fastlanes_encoder.encode_pq8(&quantized.data, config.num_subvectors as usize)?
                         },
                         _ => {
                             // Fallback to raw quantized data

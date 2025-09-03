@@ -107,16 +107,17 @@ pub struct IntelligentBlockFilter {
 impl IntelligentBlockFilter {
     /// Create a new block filter with given strategy
     pub fn new(strategy: BlockFilterStrategy) -> Self {
-        Self { strategy }
+        Self { search_strategy: strategy }
     }
     
     /// Create filter for specific query type
     pub fn for_query_type(query_type: &QueryType) -> Self {
         let strategy = match query_type {
-            QueryType::Compaction => BlockFilterStrategy::for_compaction(),
             QueryType::PointQuery => BlockFilterStrategy::for_point_query(),
-            QueryType::RangeQuery | QueryType::MetadataFilter => BlockFilterStrategy::for_range_query(),
+            QueryType::RangeQuery => BlockFilterStrategy::for_range_query(),
+            QueryType::MetadataFilter => BlockFilterStrategy::for_range_query(),
             QueryType::FullScan => BlockFilterStrategy::default(),
+            QueryType::Compaction => BlockFilterStrategy::for_compaction(),
         };
         Self::new(strategy)
     }
@@ -280,7 +281,7 @@ impl IntelligentBlockFilter {
             
             (Value::Number(a), Value::Number(b)) => {
                 if let (Some(a_f64), Some(b_f64)) = (a.as_f64(), b.as_f64()) {
-                    a_f64.partial_cmp(&b_f64)
+                    a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
                 } else if let (Some(a_i64), Some(b_i64)) = (a.as_i64(), b.as_i64()) {
                     a_i64.cmp(&b_i64)
                 } else {

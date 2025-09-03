@@ -3,10 +3,16 @@ graph TD
     Client[Client Applications] --> REST[REST API<br/>Port 5678<br/>JSON Format]
     Client --> GRPC[gRPC API<br/>Port 5679<br/>Protobuf Format]
     
-    REST --> VOS[VectorOperations Service<br/>Direct Memtable Access]
-    GRPC --> VOS
+    REST --> UnifiedHandlers[Unified Handlers]
+    GRPC --> UnifiedHandlers
     
+    UnifiedHandlers --> VOS[VectorOperations Service]
+    
+    VOS --> Compute[Compute Layer]
     VOS --> Storage[Storage Layer]
+    
+    Compute --> Distance[Distance Computation]
+    Compute --> Quantization[Quantization]
     
     Storage --> SST[SST Engine<br/>Row-based<br/>Real-time]
     Storage --> VIPER[VIPER Engine<br/>Columnar<br/>Analytics]
@@ -14,6 +20,9 @@ graph TD
     style Client fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     style REST fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
     style GRPC fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style UnifiedHandlers fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     style VOS fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Compute fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style Storage fill:#fce4ec,stroke:#c2185b,stroke-width:2px
     style SST fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px
     style VIPER fill:#f3e5f5,stroke:#7b1fa2,stroke-width:1px

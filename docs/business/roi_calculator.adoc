@@ -3,13 +3,12 @@
 :toclevels: 2
 :imagesdir: ../diagrams/images
 
-**Transform your vector database costs with proven 70% infrastructure savings.**
+**Estimate the return on investment (ROI) of using ProximaDB for your vector database needs.**
 
 == Industry Pricing Analysis (2025)
 
 **Vector Database Market Reality:**
-
-The vector database industry has established premium pricing models that create significant cost barriers for organizations scaling beyond proof-of-concept deployments.
+The vector database market has a wide range of pricing models, which can make it difficult to predict the total cost of ownership (TCO).
 
 === Managed Solutions Baseline Costs
 
@@ -35,19 +34,19 @@ The vector database industry has established premium pricing models that create 
 
 **Hidden Cost Multipliers:**
 * High-availability configurations: +200-300%
-* Multi-region deployments: +150-250% 
+* Multi-region deployments: +150-250%
 * Enterprise support: +$500-2,000/month
 * Backup and disaster recovery: +50-100%
 * Operational overhead: +$1,000-5,000/month
 
 === ProximaDB Competitive Positioning
 
-ProximaDB delivers enterprise-grade performance at **70-85% lower total cost** through architectural innovations that eliminate traditional cost drivers:
+ProximaDB delivers enterprise-grade performance at a significantly lower total cost of ownership (TCO) through architectural innovations that eliminate traditional cost drivers:
 
-* **No pod-based pricing scaling** - Single container architecture
-* **No separate backup infrastructure** - Built-in resilience
-* **No operational overhead** - Stateless design with auto-scaling
-* **No performance penalties** - Hardware acceleration included
+* *Simplified Architecture*: A single-container architecture that is easy to deploy and manage.
+* *Built-in Resilience*: Built-in support for high availability and disaster recovery.
+* *Stateless Design*: A stateless design that allows for automatic scaling.
+* *Hardware Acceleration*: Included hardware acceleration at no extra cost.
 
 == Cost Reduction Architecture
 
@@ -58,7 +57,7 @@ image::cost-reduction-architecture.svg[Cost Reduction Architecture, width=900, a
 
 [IMPORTANT]
 ====
-Calculate your potential savings based on your current infrastructure:
+Calculate your potential savings based on your current infrastructure.
 
 **Example Configuration:**
 * Current managed solution cost: $3,250/month
@@ -72,7 +71,6 @@ Calculate your potential savings based on your current infrastructure:
 * **Cost reduction: 74%**
 ====
 
-
 === Key Performance Metrics
 
 [cols="1,1,1", options="header", width="100%"]
@@ -81,10 +79,10 @@ Calculate your potential savings based on your current infrastructure:
 
 | **Infrastructure Savings**
 | 70%
-| $84,000/year on $10K/month spend
+| $84,000/year on a $10,000/month spend
 
-| **Query Performance** 
-| 2.9× faster
+| **Query Performance**
+| 2.9x faster
 | 0.9ms vs 2.6ms latency
 
 | **API Call Reduction**
@@ -181,53 +179,20 @@ Calculate your potential savings based on your current infrastructure:
 == Key Value Drivers vs Industry Solutions
 
 === 1. Infrastructure Efficiency (70-85% Cost Reduction)
-**Industry Challenge:**
-* Managed solutions: $70+ per million vectors/month (Pinecone)
-* Self-hosted: Complex 3-5 server clusters + operational overhead
-* Enterprise solutions: $500-3,500/month for 100M vectors
-
-**ProximaDB Advantage:**
-* Single container deployment
-* $8.50 per million vectors/month
-* Cloud-native resilience without complexity
-* **Result**: 74-85% cost reduction vs managed solutions
+*Industry Challenge*: Managed solutions can be expensive, and self-hosted solutions can be complex to manage.
+*ProximaDB Advantage*: A single-container deployment that is easy to manage and scale, resulting in a 74-85% cost reduction compared to managed solutions.
 
 === 2. Operational Simplification (90% Less Management)
-**Industry Challenge:**
-* Dedicated DevOps teams for scaling
-* Complex backup and disaster recovery
-* Multi-region deployment complexity
-* Hidden costs: backup, DR, monitoring
+*Industry Challenge*: Scaling and managing a vector database can require a dedicated DevOps team.
+*ProximaDB Advantage*: A stateless architecture with automatic scaling and built-in resilience, which significantly reduces the operational overhead.
 
-**ProximaDB Advantage:**
-* Stateless architecture with <1 minute failover
-* Automatic scaling without manual intervention
-* Built-in resilience eliminates separate DR infrastructure
-* **Result**: $450/month vs $5,000/month operational overhead
-
-=== 3. Performance Economics (2.9× Faster = Lower Infrastructure Needs)
-**Industry Challenge:**
-* Higher latency requires more replicas for load distribution
-* 2.6ms average query latency in production
-* Expensive high-performance configurations
-
-**ProximaDB Advantage:**
-* 0.9ms query latency reduces infrastructure needs
-* SIMD/GPU acceleration included at no extra cost
-* Zero-copy operations eliminate memory duplication
-* **Result**: 40-60% fewer instances needed for same performance
+=== 3. Performance Economics (2.9x Faster = Lower Infrastructure Needs)
+*Industry Challenge*: Higher latency can require more replicas to handle the load.
+*ProximaDB Advantage*: Sub-millisecond query latency, which reduces the need for additional infrastructure.
 
 === 4. Storage Optimization (50-80% Space Reduction)
-**Industry Challenge:**
-* Standard vector storage with minimal compression
-* Expensive high-IOPS storage requirements
-* Backup storage costs multiply total costs
-
-**ProximaDB Advantage:**
-* Multi-tier quantization (50-80% compression)
-* Intelligent tiering (10% hot, 90% cold optimization)
-* Bloom filters (95% metadata scan reduction)
-* **Result**: 50-80% storage cost reduction
+*Industry Challenge*: Storing large numbers of vectors can be expensive.
+*ProximaDB Advantage*: Multi-tier quantization and intelligent tiering, which can reduce storage costs by 50-80%.
 
 == Migration Economics vs Industry Solutions
 
@@ -270,20 +235,14 @@ Calculate your potential savings based on your current infrastructure:
 ====
 **How Premium Revenue Works:**
 
-When your application responds in 0.9ms instead of 2.6ms, you can offer premium features that weren't possible before:
+When your application responds in sub-milliseconds instead of hundreds of milliseconds, you can offer premium features that were not possible before:
 
-* **Real-time personalization** - Update recommendations instantly as users browse
-* **Live search suggestions** - Show results as users type, not after they submit
-* **Interactive filtering** - Apply complex filters without page refreshes
-* **AI-powered features** - Enable ChatGPT-like experiences in your product
+* *Real-time personalization*: Update recommendations instantly as users browse.
+* *Live search suggestions*: Show results as users type, not after they submit.
+* *Interactive filtering*: Apply complex filters without page refreshes.
+* *AI-powered features*: Enable ChatGPT-like experiences in your product.
 
-These performance improvements allow you to charge premium pricing:
-
-**Example Calculation for 100K users:**
-* 100,000 users × $5/month extra = $500,000/month
-* $500,000/month × 12 months = $6,000,000/year
-
-The faster your product, the more users are willing to pay for premium features.
+These performance improvements allow you to charge premium pricing.
 ====
 
 [cols="2,1,1", options="header"]
@@ -293,20 +252,15 @@ The faster your product, the more users are willing to pay for premium features.
 | 100K users
 | +$5/month extra
 | $6M/year
-(100K × $5 × 12)
 
 | 1M users
 | +$8/month extra
 | $96M/year
-(1M × $8 × 12)
 
 | 10M users
 | +$12/month extra
 | $1.4B/year
-(10M × $12 × 12)
 |===
-
-Sub-millisecond latency enables real-time personalization features that justify premium pricing.
 
 == Quick Start ROI by Business Size
 
@@ -339,7 +293,7 @@ Sub-millisecond latency enables real-time personalization features that justify 
 | $1,050,000/year
 |===
 
-**Note:** Industry costs based on managed vector database solutions including Pinecone, Weaviate Cloud, and enterprise deployments. ProximaDB pricing includes all infrastructure, storage, and operational costs.
+**Note:** Industry costs are based on managed vector database solutions, including Pinecone, Weaviate Cloud, and enterprise deployments. ProximaDB pricing includes all infrastructure, storage, and operational costs.
 
 == Total Cost of Ownership (TCO) Analysis
 
@@ -394,14 +348,14 @@ Sub-millisecond latency enables real-time personalization features that justify 
 
 **Key TCO Advantages:**
 
-* **Built-in Resilience**: No separate backup/DR infrastructure needed
-* **Performance Efficiency**: 2.9× faster queries reduce scaling requirements
-* **Operational Simplicity**: Single container vs complex multi-service clusters
-* **Hardware Acceleration**: Included SIMD/GPU optimization at no extra cost
+* *Built-in Resilience*: No separate backup/DR infrastructure needed.
+* *Performance Efficiency*: 2.9x faster queries reduce scaling requirements.
+* *Operational Simplicity*: Single container vs. complex multi-service clusters.
+* *Hardware Acceleration*: Included SIMD/GPU optimization at no extra cost.
 
 == Performance Economics Impact
 
-**How 2.9× Faster Performance Reduces Infrastructure Costs:**
+**How Faster Performance Reduces Infrastructure Costs:**
 
 [cols="2,1,1,1", options="header"]
 |===
@@ -433,33 +387,31 @@ Sub-millisecond latency enables real-time personalization features that justify 
 **Example: E-commerce Search (100M products, 10,000 concurrent users)**
 
 *Industry Standard Architecture:*
-* 8× r6g.4xlarge instances: $4,800/month
+* 8x r6g.4xlarge instances: $4,800/month
 * High-IOPS storage (20TB): $2,400/month
 * Load balancers & networking: $800/month
 * **Total: $8,000/month**
 
 *ProximaDB Architecture:*
-* 3× r6g.2xlarge instances: $1,200/month
+* 3x r6g.2xlarge instances: $1,200/month
 * Standard SSD storage (8TB): $600/month
 * Simplified networking: $200/month
 * **Total: $2,000/month**
 
 **Monthly Savings: $6,000 (75% reduction)**
 
-This performance advantage compounds at scale - the faster your database, the less infrastructure you need to achieve the same user experience.
-
 == Next Steps
 
-1. **Run Proof of Concept**: 2-week trial with your data
-2. **Validate Savings**: Compare actual costs
-3. **Migrate Incrementally**: Start with non-critical workloads
-4. **Scale Confidently**: Expand as savings are proven
+. **Run a Proof of Concept**: Try ProximaDB with your own data for 2 weeks.
+. **Validate Your Savings**: Compare the costs and see the difference for yourself.
+. **Migrate Incrementally**: Start with a non-critical workload and gradually migrate the rest.
+. **Scale with Confidence**: Scale your AI applications with confidence, knowing that you have a high-performance and cost-effective vector database.
 
 [NOTE]
 ====
 **Contact for Custom Analysis**: singhvjd@gmail.com
 
-Get a detailed ROI report specific to your workload and infrastructure.
+Get a detailed ROI report that is specific to your workload and infrastructure.
 ====
 
 ---
@@ -469,10 +421,10 @@ Get a detailed ROI report specific to your workload and infrastructure.
 ====
 **Ready for Production Evaluation**
 
-ProximaDB is available for proof-of-concept deployments with organizations looking to:
-* Reduce vector database infrastructure costs by 70%
-* Achieve sub-millisecond query latency
-* Simplify operational complexity
+ProximaDB is available for proof-of-concept deployments with organizations that are looking to:
+* Reduce their vector database infrastructure costs by 70%.
+* Achieve sub-millisecond query latency.
+* Simplify their operational complexity.
 
-Contact singhvjd@gmail.com for technical evaluation and custom analysis for your workload.
+Contact singhvjd@gmail.com for a technical evaluation and a custom analysis for your workload.
 ====

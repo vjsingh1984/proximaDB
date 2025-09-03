@@ -1,0 +1,13 @@
+= ProximaDB Administrator Guide
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+Welcome to the ProximaDB Administrator Guide! This section provides comprehensive documentation for administrators looking to configure, deploy, monitor, and operate ProximaDB in production environments.
+
+Explore the following topics:
+
+*   link:configuration_reference.adoc[**Configuration Reference**]: A comprehensive reference for all configuration options.
+*   link:deployment_guide.adoc[**Deployment Guide**]: Information on deploying ProximaDB in various environments (cloud, on-premise, HA).
+*   link:monitoring_guide.adoc[**Monitoring Guide**]: Guidance on monitoring ProximaDB and setting up alerts.
+*   link:operations_guide.adoc[**Operations Guide**]: Information on operational tasks such as backup, recovery, and maintenance.

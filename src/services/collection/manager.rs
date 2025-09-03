@@ -262,15 +262,16 @@ impl CollectionService {
         }
 
         // Check if collection already exists
+        // Check if collection already exists
+        // Check if collection already exists
         if let Some(_) = self
             .metadata_backend
-            .find_collection(&config.name)
+            .get_collection(&config.name).await?
         {
             return Ok(CollectionServiceResponse {
                 success: false,
                 collection: None,
                 storage_path: None,
-                // error_message removed -  Some(format!("Collection '{}' already exists", config.name)),
                 error_code: Some("COLLECTION_EXISTS".to_string()),
                 processing_time_us: start_time.elapsed().as_micros() as i64,
             });
@@ -634,7 +635,7 @@ impl CollectionService {
         // Get collection record first to retrieve UUID and other details
         let collection_record = self
             .metadata_backend
-            .find_collection(collection_identifier);
+            .get_collection(collection_identifier).await?;
 
         if let Some(record) = collection_record {
             let collection_uuid = record.id.clone();
@@ -706,7 +707,6 @@ impl CollectionService {
                 success: false,
                 collection: None,
                 storage_path: None,
-                // error_message removed -  Some(format!("Collection '{}' not found", collection_identifier)),
                 error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                 processing_time_us: start_time.elapsed().as_micros() as i64,
             })
@@ -728,7 +728,7 @@ impl CollectionService {
         // Get current record, update stats, and save back
         if let Some(mut record) = self
             .metadata_backend
-            .find_collection(collection_name)
+            .get_collection(collection_name).await?
         {
             // Update stats manually for Collection
             if let Some(stats) = record.stats.as_mut() {
@@ -781,9 +781,10 @@ impl CollectionService {
         let start_time = std::time::Instant::now();
 
         // Get current record (supports both names and UUIDs)
+        // Get current record (supports both names and UUIDs)
         let mut record = match self
             .metadata_backend
-            .find_collection(identifier)
+            .get_collection(identifier).await?
         {
             Some(record) => record,
             None => {
@@ -791,7 +792,6 @@ impl CollectionService {
                     success: false,
                     collection: None,
                     storage_path: None,
-                    // error_message removed -  Some(format!("Collection '{}' not found", identifier)),
                     error_code: Some("COLLECTION_NOT_FOUND".to_string()),
                     processing_time_us: start_time.elapsed().as_micros() as i64,
                 });
@@ -1117,7 +1117,7 @@ impl CollectionService {
                             match filesystem.exists(&collection_dir).await {
                                 Ok(true) => {
                                     // Recursively delete the entire collection directory
-                                    match filesystem.delete(&collection_dir).await {
+                                    match filesystem.remove_dir_all(&collection_dir).await {
                                         Ok(_) => {
                                             info!(
                                                 "✅ Deleted entire collection directory: {}",
@@ -1126,10 +1126,11 @@ impl CollectionService {
                                             cleaned_components = 3; // All components deleted
                                         }
                                         Err(e) => {
-                                            warn!(
-                                                "⚠️ Failed to delete collection directory {}: {}",
+                                            error!(
+                                                "❌ Failed to delete collection directory {}: {}",
                                                 collection_dir, e
                                             );
+                                            return Err(anyhow::anyhow!("Failed to delete collection directory: {}", e));
                                         }
                                     }
                                 }
@@ -1262,7 +1263,6 @@ impl CollectionServiceResponse {
             success: true,
             collection: None, // Collection should be passed in if needed
             storage_path: Some(storage_path),
-            // error_message removed -  None,
             error_code: None,
             processing_time_us,
         }
@@ -1274,7 +1274,6 @@ impl CollectionServiceResponse {
             success: true,
             collection: Some(collection),
             storage_path: Some(storage_path),
-            // error_message removed -  None,
             error_code: None,
             processing_time_us,
         }
@@ -1539,7 +1538,7 @@ mod tests {
 impl CollectionMetadataProvider for CollectionService {
     async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>> {
         // Call the actual implementation method to avoid recursion  
-        CollectionService::get_uuid(self, collection_id).await
+        self.uuid(collection_id).await
     }
     
     async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
@@ -1548,7 +1547,7 @@ impl CollectionMetadataProvider for CollectionService {
     
     async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
         // Call the actual implementation method to avoid recursion
-        CollectionService::get_collection(self, collection_id).await
+        self.collection(collection_id).await
     }
     
     async fn list_collections(&self) -> Result<Vec<Collection>> {

@@ -1,0 +1,13 @@
+= ProximaDB User Guide
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+Welcome to the ProximaDB User Guide! This section provides comprehensive documentation for users looking to get started with ProximaDB, perform common tasks, and build their first applications.
+
+Explore the following topics:
+
+*   link:getting_started.adoc[**Getting Started**]: Learn how to install ProximaDB and take your first steps.
+*   link:api_reference.adoc[**API Reference**]: Detailed documentation for ProximaDB's REST, gRPC, and SQL APIs.
+*   link:semantic_search_guide.adoc[**Semantic Search Guide**]: A guide to building powerful semantic search applications.
+*   link:tutorials/index.adoc[**Tutorials**]: Step-by-step guides and examples for various use cases.

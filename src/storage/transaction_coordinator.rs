@@ -345,7 +345,7 @@ impl TransactionCoordinator {
             panic!("No filesystem available")
         });
         let write_strategy =
-            WriteStrategyFactory::create_metadata_strategy(fs, temp_directory.as_deref())?;
+            WriteStrategyFactory::create_metadata_strategy(fs.as_ref(), temp_directory.as_deref())?;
 
         let coordinator = Self {
             filesystem,
@@ -492,7 +492,7 @@ impl TransactionCoordinator {
         
         let file_options = self
             .write_strategy
-            .create_file_options(fs, &staging_file_url)?;
+            .create_file_options(fs.as_ref(), &staging_file_url)?;
 
         // Extract path for write
         let staging_path = FilesystemFactory::resolve_path(&staging_file_url)?;
@@ -502,7 +502,7 @@ impl TransactionCoordinator {
         info!("    Calling write_atomic...");
         match self.atomic_executor
             .write_atomic(
-                fs,
+                fs.as_ref(),
                 &staging_path,
                 data,
                 Some(file_options),

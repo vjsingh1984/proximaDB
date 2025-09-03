@@ -1,0 +1,89 @@
+= Monitoring Guide
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+**A comprehensive guide to monitoring ProximaDB and setting up alerts for optimal performance and reliability.**
+
+== Overview
+
+ProximaDB provides a comprehensive set of metrics and monitoring tools to help you keep track of your deployment's health and performance. This guide covers how to access these metrics, set up dashboards, and configure alerts.
+
+== Key Metrics
+
+ProximaDB exposes a wide range of metrics through its `/metrics` endpoint (Prometheus format). These metrics cover various aspects of the system, including:
+
+*   **Operation Metrics**: Latency, throughput, error rates for API calls.
+*   **Resource Metrics**: CPU usage, memory consumption, disk I/O, network traffic.
+*   **Storage Metrics**: Compression ratios, file counts, data sizes, compaction progress.
+*   **Index Metrics**: Build times, search efficiency, recall, accuracy.
+*   **Cache Metrics**: Hit rates, evictions, memory usage of various caches.
+
+=== Accessing Metrics
+
+You can access ProximaDB's metrics through the following endpoints:
+
+*   **Prometheus Format**: `GET http://localhost:5678/metrics`
+*   **JSON Format**: `GET http://localhost:5678/metrics/json`
+*   **Per-Collection Metrics**: `GET http://localhost:5678/metrics/{collection_id}`
+
+== Dashboards
+
+ProximaDB provides pre-built dashboards and integrates with popular monitoring solutions.
+
+=== Grafana
+
+You can import pre-built Grafana dashboards to visualize ProximaDB metrics. These dashboards provide a quick way to get an overview of your deployment's health and performance.
+
+=== Custom Web UI
+
+ProximaDB includes a built-in web UI at `http://localhost:8080` that provides basic monitoring capabilities.
+
+== Alerts
+
+Setting up alerts is crucial for proactive monitoring. ProximaDB metrics can be integrated with your existing alerting systems (e.g., Prometheus Alertmanager, PagerDuty).
+
+=== Common Alert Scenarios
+
+*   **High Query Latency**: Alert if P99 query latency exceeds a threshold (e.g., >50ms).
+*   **Low Insert Throughput**: Alert if insert rate drops below a critical threshold (e.g., <5K vectors/sec).
+*   **Low Cache Hit Rate**: Alert if cache hit rate falls below an acceptable level (e.g., <60%).
+*   **High Memory Usage**: Alert if memory consumption exceeds a predefined limit (e.g., >90% of allocated memory).
+*   **Disk Full**: Alert if storage usage approaches capacity limits.
+*   **Error Rate Spikes**: Alert on sudden increases in API error rates.
+
+== Logging
+
+ProximaDB provides structured JSON logs that can be integrated with centralized logging solutions (e.g., ELK Stack, Splunk).
+
+=== Log Levels
+
+You can configure the log level in `config.toml` or via the `RUST_LOG` environment variable:
+
+*   `error`: Only critical errors.
+*   `warn`: Warnings and non-critical issues.
+*   `info`: General information and progress messages (default).
+*   `debug`: Detailed debugging information.
+*   `trace`: Extremely verbose, for deep debugging.
+
+=== Example Log Configuration
+
+[source,toml]
+----
+[monitoring]
+log_level = "info"
+----
+
+== Troubleshooting
+
+When investigating issues, combine metrics, logs, and health checks:
+
+1.  **Check Health Endpoint**: `curl http://localhost:5678/health` to quickly assess service status.
+2.  **Review Metrics**: Use Prometheus or Grafana to identify abnormal trends in latency, throughput, or resource usage.
+3.  **Analyze Logs**: Dive into structured logs to find specific error messages or warnings related to the issue.
+
+== Related Documentation
+
+*   link:configuration_reference.adoc[Configuration Reference]
+*   link:operations_guide.adoc[Operations Guide]
+*   link:../developer/performance_tuning.adoc[Performance Tuning Guide]

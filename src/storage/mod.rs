@@ -252,7 +252,7 @@ pub use transaction_coordinator::{
 pub use engine::StorageEngine;
 // Write Buffer system exports
 use crate::core::StorageError;
-pub use metadata::{CollectionMetadata, MetadataStore, SystemMetadata};
+pub use metadata::{MetadataStore, SystemMetadata};
 pub use persistence::write_ahead_log::{BatchId, WALConfig, WriteAheadLogManager, WALOperation};
 
 // ResultProcessor has naming conflicts, import explicitly when needed

@@ -1,0 +1,152 @@
+= Codebase Overview
+:toc: left
+:toclevels: 2
+
+This document provides a module-by-module overview of the ProximaDB codebase. It aims to help developers understand the logical structure, responsibilities, and interactions of different components within the system.
+
+== Top-Level Modules
+
+The `src/` directory contains the main source code, organized into the following top-level modules:
+
+*   link:../architecture/api_architecture.adoc[**`api_handlers`**]: Contains the unified business logic handlers that serve both REST and gRPC APIs, acting as a central dispatcher.
+*   **`bin`**: Contains the main server binary (`server.rs`) and benchmarking tools.
+*   link:../architecture/compute_architecture.adoc[**`compute`**]: Provides hardware-accelerated vector operations, including distance calculations and quantization. It leverages SIMD and GPU for performance.
+*   **`config`**: Holds the default configuration values for ProximaDB.
+*   **`core`**: Provides foundational types, configurations, error handling, and utilities. It includes core components like `hardware_capabilities`, `compression`, `search`, and `enum_packing`. This is the foundation of the "proto-first" architecture.
+*   link:../architecture/indexing_architecture.adoc[**`index`**]: Implements the AXIS (Adaptive eXtensible Indexing System), which is the intelligent indexing layer for vector similarity search. It supports various indexing algorithms and adaptive strategies.
+*   **`infrastructure`**: Contains shared foundational components like concurrent data structures, tiering policies, and adaptive storage mechanisms.
+*   **`metrics`**: Implements the comprehensive metrics and monitoring system.
+*   **`monitoring`**: Primarily focuses on the web-based dashboard and uses the `metrics` module for data collection.
+*   **`network`**: Implements the multi-protocol API server (REST and gRPC). It uses `api_handlers` for unified business logic and `proto` for data structures.
+*   **`proto`**: Defines the core data structures and service contracts using Protocol Buffers. This is the foundation of the "proto-first" architecture.
+*   **`query`**: Provides the SQL and vector search engine, including query optimization.
+*   **`schema`**: Contains the schema management logic, possibly for different data models (document and relational).
+*   **`server`**: Primarily responsible for abstracting and building the ProximaDB server instance.
+*   **`services`**: Implements higher-level business logic services, such as `CollectionService`, `VectorOperationsService`, `SearchService`, and `EventLogService`. These services coordinate between different subsystems.
+*   link:../architecture/storage_architecture.adoc[**`storage`**]: Manages all data persistence, including multiple storage engines, WAL, MemTable, metadata, and caching.
+
+== Module Details
+
+This section provides a more detailed breakdown of each top-level module.
+
+=== `api_handlers`
+*   **Location**: `src/api_handlers/`
+*   **Responsibility**: Acts as a central dispatcher for all API operations, delegating to `CollectionService` and `VectorOperationsService`. It ensures a unified handling of requests from both REST and gRPC interfaces.
+*   **Key Files**: `unified_handlers.rs`
+
+=== `bin`
+*   **Location**: `src/bin/`
+*   **Responsibility**: Contains the executable binaries for the ProximaDB server and related tools.
+*   **Key Files**: `server.rs` (main server entry point), `benchmark_engines.rs`, `benchmark_real.rs`.
+
+=== `compute`
+*   **Location**: `src/compute/`
+*   **Responsibility**: Provides hardware-accelerated vector operations, including distance calculations and quantization. It leverages SIMD and GPU for performance.
+*   **Key Submodules**: 
+    *   `distance_computation`: Core distance algorithms and the `UnifiedDistanceCompute` engine.
+    *   `gpu`: GPU acceleration layer (CUDA, ROCm, Metal).
+    *   `quantization`: Vector quantization techniques (`UnifiedQuantizationEngine`).
+
+=== `config`
+*   **Location**: `src/config/`
+*   **Responsibility**: Manages the configuration system, including loading default values and handling overrides.
+*   **Key Files**: `defaults.toml` (default configuration values).
+
+=== `core`
+*   **Location**: `src/core/`
+*   **Responsibility**: The foundational module providing common types, configurations, error handling, and utilities used throughout the codebase. It underpins the "proto-first" architecture.
+*   **Key Submodules**: 
+    *   `bloom`: Bloom filter implementations.
+    *   `compression`: Unified compression algorithms.
+    *   `errors`: Unified error types.
+    *   `hardware_capabilities`: SIMD/GPU detection and optimization.
+    *   `memory`: Memory management and pools.
+    *   `search`: Core search functionality and result types.
+    *   `serialization`: Serialization utilities.
+    *   `storage`: Storage-related core types and traits.
+
+=== `index`
+*   **Location**: `src/index/`
+*   **Responsibility**: Implements the AXIS (Adaptive eXtensible Indexing System), ProximaDB's intelligent indexing layer for vector similarity search. It supports various indexing algorithms and adaptive strategies.
+*   **Key Submodules**: 
+    *   `axis`: Contains the core AXIS implementation, including different index algorithms (HNSW, IVF, LSH, Annoy, PQ, Flat).
+    *   `config`: Index configuration settings.
+
+=== `infrastructure`
+*   **Location**: `src/infrastructure/`
+*   **Responsibility**: Provides shared foundational components like concurrent data structures, tiering policies, and adaptive storage mechanisms.
+*   **Key Submodules**: 
+    *   `adaptive_structures`: Self-tuning data structures.
+    *   `concurrent_structures`: Lock-free and wait-free data structures.
+    *   `tier_data_movement`: Efficient data migration between tiers.
+    *   `tier_policy_engine`: Manages data placement across storage tiers.
+
+=== `metrics`
+*   **Location**: `src/metrics/`
+*   **Responsibility**: Implements the comprehensive metrics and monitoring system, tracking performance, resource usage, and providing optimization hints.
+*   **Key Submodules**: 
+    *   `collectors`: Metric collection from components.
+    *   `store`: Persistent metrics storage.
+    *   `updater`: Internal metrics update API.
+    *   `query_service`: Metrics query API.
+    *   `exporters`: Export formats (Prometheus, JSON).
+
+=== `monitoring`
+*   **Location**: `src/monitoring/`
+*   **Responsibility**: Primarily focuses on the web-based dashboard and uses the `metrics` module for data collection.
+*   **Key Submodules**: 
+    *   `dashboard`: Web-based dashboard implementation.
+
+=== `network`
+*   **Location**: `src/network/`
+*   **Responsibility**: Implements the multi-protocol API server (REST and gRPC).
+*   **Key Submodules**: 
+    *   `grpc`: gRPC service implementation.
+    *   `middleware`: Cross-cutting concerns (auth, rate limit, CORS, metrics).
+    *   `rest`: REST API implementation.
+    *   `multi_server`: Concurrent server orchestration.
+
+=== `proto`
+*   **Location**: `src/proto/`
+*   **Responsibility**: Contains the generated Rust code from the Protocol Buffer definitions, forming the basis of the proto-first architecture.
+*   **Key Files**: `proximadb.proto` (source protobuf definition), `proximadb.rs` (generated Rust code).
+
+=== `query`
+*   **Location**: `src/query/`
+*   **Responsibility**: Provides the SQL and vector search engine, including query optimization.
+*   **Key Submodules**: 
+    *   `sql_engine`: SQL parsing and execution.
+    *   `vector_search`: Native vector search implementation.
+    *   `unified_query_optimizer`: Query optimization.
+
+=== `schema`
+*   **Location**: `src/schema/`
+*   **Responsibility**: Contains the schema management logic, possibly for different data models (document and relational).
+*   **Key Submodules**: 
+    *   `document`: Document schema management.
+    *   `relational`: Relational schema management.
+
+=== `server`
+*   **Location**: `src/server/`
+*   **Responsibility**: Primarily responsible for abstracting and building the ProximaDB server instance.
+*   **Key Files**: `builder.rs` (server builder).
+
+=== `services`
+*   **Location**: `src/services/`
+*   **Responsibility**: Implements higher-level business logic services, such as `CollectionService`, `VectorOperationsService`, `SearchService`, and `EventLogService`. These services coordinate between different subsystems.
+*   **Key Submodules**: 
+    *   `collection`: Collection management.
+    *   `operations`: Vector CRUD operations.
+    *   `search`: Vector similarity search orchestration.
+    *   `events`: Persistent event logging.
+
+=== `storage`
+*   **Location**: `src/storage/`
+*   **Responsibility**: Manages all data persistence, including multiple storage engines, WAL, MemTable, metadata, and caching.
+*   **Key Submodules**: 
+    *   `engines`: Implementations of specialized storage engines (SST, VIPER, NOVA, SWIFT, PRISM, RAPTOR).
+    *   `persistence`: Write-Ahead Log (WAL) and filesystem abstraction.
+    *   `memtable`: In-memory write buffer.
+    *   `metadata`: Collection and system metadata.
+    *   `cache`: Multi-level caching infrastructure.
+    *   `transaction_coordinator`: Atomic operations.

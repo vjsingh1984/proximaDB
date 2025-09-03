@@ -73,15 +73,10 @@ Request:
 {
   "operation": "create",
   "config": {
-    "name": "my_vectors",
-    "dimension": 384,
-    "distance_metric": "cosine",
-    "storage_engine": "viper",
-    "compression": {
-      "algorithm": "zstd",
-      "level": 6,
-      "enable_quantization": true
-    }
+    "name": "products",
+    "dimensions": 384,
+    "metric": "cosine",
+    "engine": "sst"
   }
 }
 ```
@@ -176,27 +171,22 @@ DELETE /api/v1/vector/{collection_id}/{vector_id}
 
 === Service Definition
 
-```protobuf
+[source,protobuf]
+----
 service ProximaDB {
-  // Collections
-  rpc CreateCollection(CreateCollectionRequest) 
-      returns (Collection);
-  rpc ListCollections(Empty) 
-      returns (ListCollectionsResponse);
-  rpc DeleteCollection(DeleteCollectionRequest) 
-      returns (Empty);
+  // Collection management - single unified endpoint for flexibility
+  rpc CollectionOperation(CollectionRequest) returns (CollectionResponse);
   
-  // Vectors
-  rpc InsertVectors(VectorBatchRequest) 
-      returns (VectorBatchResponse);
-  rpc SearchVectors(VectorSearchRequest) 
-      returns (VectorSearchResponse);
-  rpc GetVector(GetVectorRequest) 
-      returns (VectorRecord);
-  rpc DeleteVector(DeleteVectorRequest) 
-      returns (Empty);
+  // Vector operations - optimized batch operations
+  rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);         // Unified batch: insert/upsert/delete
+  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);       // Search via gRPC
+  rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);             // Get single vector by ID
+  
+  // Health and monitoring
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
 }
-```
+----
 
 === Python gRPC Example
 
@@ -243,10 +233,12 @@ INSERT INTO my_vectors (id, vector, metadata)
 VALUES ('vec_001', [...], '{"category": "A"}');
 
 -- Vector search
-SELECT id, 
-       VECTOR_SIMILARITY(vector, [...], 'cosine') as score
+SELECT 
+  id,
+  metadata->>'tier' as tier,
+  VECTOR_SIMILARITY(vector, [...], 'cosine') as score
 FROM my_vectors
-WHERE score > 0.8
+WHERE metadata->>'tier' = 'premium'
 ORDER BY score DESC
 LIMIT 10;
 ```
@@ -299,6 +291,10 @@ Default limits per client:
 * 100 concurrent connections
 * 100MB max request size
 
+== SDK Support
+
+Currently, only the **Python SDK** is available. Support for other languages is planned for future releases.
+
 == See Also
 
 * link:getting_started.adoc[Getting Started]
@@ -306,4 +302,4 @@ Default limits per client:
 * link:../developer/technical_reference.adoc[Technical Reference]
 
 ---
-**Version 0.1.4** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01-15

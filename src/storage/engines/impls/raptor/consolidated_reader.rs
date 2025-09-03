@@ -1846,7 +1846,7 @@ impl RaptorReader {
     /// Zero-copy memory-mapped footer loading (preferred method)
     async fn load_footer_with_mmap(&mut self, file_path: &str) -> Result<Arc<RaptorFooter>> {
         // Use filesystem API for cloud compatibility
-        let filesystem = self.filesystem_factory.get_filesystem(file_path).await?;
+        let filesystem = self.filesystem.clone();
         
         // Get file metadata for size
         let metadata = filesystem.metadata(file_path).await?;

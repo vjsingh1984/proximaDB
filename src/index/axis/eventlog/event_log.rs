@@ -141,12 +141,9 @@ impl EventLogQueue {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         // Create filesystem for the base URL
-        let filesystem_ref = filesystem_factory
+        let filesystem = filesystem_factory
             .get_filesystem(&base_url)
             .context("Failed to create filesystem")?;
-        // Note: This assumes the filesystem factory returns an owned filesystem
-        // If it returns a reference, we need to handle this differently
-        let filesystem = todo!("Handle filesystem conversion from &dyn to Arc<dyn>");
         
         // Create transaction coordinator for this collection
         let transaction_coordinator = Arc::new(TransactionCoordinator::new(

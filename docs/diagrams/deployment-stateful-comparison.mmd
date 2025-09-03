@@ -1,99 +1,53 @@
-%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#f3f4f6', 'primaryBorderColor':'#4b5563', 'lineColor':'#6b7280', 'secondaryColor':'#374151', 'tertiaryColor':'#111827', 'background':'#111827', 'mainBkg':'#1f2937', 'secondBkg':'#374151', 'tertiaryBkg':'#111827'}}}%%
 graph LR
     subgraph "Stateless Deployment (Recommended)"
-        subgraph "Kubernetes Pod"
-            CONTAINER[ProximaDB Container<br/>Stateless<br/>12 vCPU, 48GB RAM]
+        subgraph "Compute"
+            COMPUTE_S[Stateless Compute Instance<br/>(e.g., Kubernetes Pod)]
         end
-        
-        subgraph "External Storage"
-            subgraph "Primary Storage"
-                S3P[S3/Blob/GCS<br/>Unlimited Scale<br/>$0.02/GB/month]
-            end
-            subgraph "Backup/Replication"
-                S3R[Cross-Region<br/>Automatic<br/>15-min RTO]
-            end
+        subgraph "Storage"
+            STORAGE_S[Cloud-Native Object Storage<br/>(e.g., S3, GCS, Azure Blob)]
         end
-        
-        CONTAINER --> S3P
-        S3P --> S3R
-        
+        COMPUTE_S --> STORAGE_S
         subgraph "Benefits"
-            B1[✓ Pod can shift AZ instantly]
-            B2[✓ No data migration needed]
-            B3[✓ Auto-scaling enabled]
-            B4[✓ Zero-downtime updates]
-            B5[✓ Multi-region ready]
+            B1_S[✓ Instant AZ Failover]
+            B2_S[✓ No Data Migration]
+            B3_S[✓ Auto-Scaling]
+            B4_S[✓ Zero-Downtime Updates]
+            B5_S[✓ Multi-Region Ready]
         end
-        
         subgraph "Cost Structure"
-            CS1[Compute: $500/month]
-            CS2[Storage: $20/TB/month]
-            CS3[Transfer: $0.09/GB egress]
-            CS4[Total: ~$700/month for 10TB]
+            COST_S[Lower TCO<br/>(Optimized for Cloud)]
         end
     end
     
-    subgraph "Stateful Deployment (Performance)"
-        subgraph "StatefulSet Pod"
-            CONTAINERST[ProximaDB Container<br/>Stateful<br/>16 vCPU, 64GB RAM]
+    subgraph "Stateful Deployment (Performance-Oriented)"
+        subgraph "Compute"
+            COMPUTE_F[Stateful Compute Instance<br/>(e.g., VM with Attached Disk)]
         end
-        
-        subgraph "Attached Storage"
-            subgraph "Primary Disk"
-                EBS[EBS gp3/io2<br/>16TB max<br/>$0.08/GB/month]
-            end
-            subgraph "Snapshots"
-                SNAP[EBS Snapshots<br/>Manual/Scheduled<br/>5-10 min restore]
-            end
+        subgraph "Storage"
+            STORAGE_F[High-Performance Persistent Disk<br/>(e.g., EBS, Azure Disk, PD-SSD)]
         end
-        
-        CONTAINERST --> EBS
-        EBS --> SNAP
-        
+        COMPUTE_F --> STORAGE_F
         subgraph "Limitations"
-            L1[✗ AZ-locked pod]
-            L2[✗ Manual failover required]
-            L3[✗ Downtime for resize]
-            L4[✗ Complex backup strategy]
-            L5[✗ Single-region bound]
+            L1_F[✗ AZ-Locked]
+            L2_F[✗ Manual Failover]
+            L3_F[✗ Downtime for Resize]
+            L4_F[✗ Complex Backup]
+            L5_F[✗ Single-Region Bound]
         end
-        
-        subgraph "Cost Structure - Higher"
-            CST1[Compute: $800/month]
-            CST2[Storage: $80/TB/month]
-            CST3[Snapshots: $50/TB/month]
-            CST4[Total: ~$1,500/month for 10TB]
+        subgraph "Cost Structure"
+            COST_F[Higher TCO<br/>(Higher Storage Costs)]
         end
     end
     
     subgraph "Traditional Database Cluster"
-        subgraph "Multi-Node Setup"
-            PRIMARY[Primary Node<br/>32 vCPU, 128GB RAM]
-            REPLICA1[Replica 1<br/>32 vCPU, 128GB RAM]
-            REPLICA2[Replica 2<br/>32 vCPU, 128GB RAM]
+        subgraph "Compute"
+            COMPUTE_T[Multiple Database Nodes<br/>(Primary/Replicas)]
         end
-        
-        PRIMARY --> REPLICA1
-        PRIMARY --> REPLICA2
-        
-        subgraph "Infrastructure Overhead"
-            LB[Load Balancer<br/>$200/month]
-            MONITOR[Monitoring Stack<br/>$300/month]
-            BACKUP[Backup System<br/>$500/month]
+        subgraph "Infrastructure"
+            INFRA_T[Load Balancers, Monitoring, Backup Systems]
         end
-        
-        subgraph "Cost Structure - Highest"
-            CT1[Compute: $3,600/month]
-            CT2[Storage: $240/TB/month]
-            CT3[Infrastructure: $1,000/month]
-            CT4[Total: ~$5,000/month for 10TB]
+        COMPUTE_T --> INFRA_T
+        subgraph "Cost Structure"
+            COST_T[Highest TCO<br/>(Complex Infrastructure)]
         end
     end
-    
-    style CONTAINER fill:#90ee90,stroke:#000,color:#000
-    style CONTAINERST fill:#ffeb3b,stroke:#000,color:#000
-    style PRIMARY fill:#ff6b6b,stroke:#fff,color:#fff
-    
-    style CS4 fill:#90ee90,stroke:#000,color:#000,font-weight:bold
-    style CST4 fill:#ffeb3b,stroke:#000,color:#000,font-weight:bold
-    style CT4 fill:#ff6b6b,stroke:#fff,color:#fff,font-weight:bold

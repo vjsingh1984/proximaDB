@@ -2,8 +2,9 @@
 graph TD
     Client["CLIENT APPLICATIONS<br/>Python SDK | REST | gRPC | SQL"] --> API["API LAYER<br/>REST Handler (5678) | gRPC Handler (5679)<br/>Unified Request Processing"]
     
-    API --> Service["SERVICE LAYER<br/>VectorOperationsService<br/>• Direct memtable access<br/>• Query orchestration<br/>• Compression routing"]
+    API --> Service["SERVICE LAYER<br/>VectorOperationsService<br/>• Query orchestration<br/>• Compression routing"]
     
+    Service --> Compute["COMPUTE LAYER<br/>UnifiedDistanceCompute<br/>UnifiedQuantizationEngine<br/>Hardware Acceleration"]
     Service --> Storage["STORAGE LAYER"]
     
     Storage --> SST["SST Engine<br/>• Row-based<br/>• Real-time<br/>• Bloom filter"]
@@ -15,6 +16,7 @@ graph TD
     style Client fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     style API fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
     style Service fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style Compute fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style Storage fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style SST fill:#fff9c4,stroke:#f57f17,stroke-width:2px
     style VIPER fill:#fce4ec,stroke:#c2185b,stroke-width:2px

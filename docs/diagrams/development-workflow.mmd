@@ -1,10 +1,10 @@
 %%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
 graph TD
-    Dev[1. LOCAL DEVELOPMENT<br/>• Edit code in src/<br/>• Proto-first design<br/>• DashMap for concurrency] 
+    Dev[1. LOCAL DEVELOPMENT<br/>• Edit code in src/<br/>• Proto-first design<br/>• Concurrency with Arc/RwLock] 
     
     Dev --> Quality[2. CODE QUALITY<br/>cargo fmt - Auto-format<br/>cargo clippy - Lint checks<br/>cargo build - Compilation]
     
-    Quality --> Test[3. TESTING<br/>cargo test --all - 2700+ tests<br/>cargo test --release - Performance<br/>pytest tests/ - Python SDK]
+    Quality --> Test[3. TESTING<br/>cargo test --all - Unit & Integration tests<br/>pytest tests/ - Python SDK tests]
     
     Test --> Integration[4. INTEGRATION TESTING<br/>• Start server<br/>• Run demo<br/>• Check metrics]
     

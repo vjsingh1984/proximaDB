@@ -70,15 +70,23 @@ pub struct RecoveryProgress {
 impl RecoveryManager {
     /// Create a new recovery manager with direct-to-storage recovery
     pub fn new(
-        disk_manager: Arc<WriteBufferDiskManager>,
-        flush_coordinator: Arc<WALFlushCoordinator>,
+        config: crate::storage::persistence::write_ahead_log::config::WALConfig,
+        wal_behavior: Arc<crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper>,
+        filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     ) -> Self {
         info!("🎯 Creating RecoveryManager with direct-to-storage recovery");
         
+        // Create disk manager
+        let disk_manager = Arc::new(WriteBufferDiskManager::new(
+            filesystem_factory.clone(),
+            // Use the first data directory from WAL config as base for disk manager
+            config.multi_disk.data_directories.first().cloned().unwrap_or_default(),
+        ));
+
         Self {
             disk_manager,
             storage_engines: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            flush_coordinator,
+            flush_coordinator: Arc::new(WALFlushCoordinator::new()), // Flush coordinator is internal to recovery
             recovery_mode: RecoveryMode::DirectToStorage,
             stats: Arc::new(tokio::sync::RwLock::new(RecoveryStats::default())),
         }
@@ -462,14 +470,30 @@ impl RecoveryManager {
     
     /// Discover all collections by scanning the filesystem
     async fn discover_collections(&self) -> Result<Vec<String>> {
-        // This is a simplified implementation
-        // In a real system, we might want to use a metadata file or index
-        // For now, we'll return an empty list and rely on explicit collection recovery
         debug!("Discovering collections from WAL directory");
         
-        // TODO: Implement collection discovery by listing directories
-        // For now, return empty list
-        Ok(Vec::new())
+        let mut collections = Vec::new();
+        
+        // Get the base WAL directory from disk_manager
+        let base_wal_dir = self.disk_manager.get_base_wal_dir();
+        
+        // List directories within the base WAL directory
+        let entries = self.disk_manager.filesystem_factory.get_filesystem(&base_wal_dir.to_string_lossy())
+            .context("Failed to get filesystem for base WAL directory")?
+            .list(&base_wal_dir.to_string_lossy())
+            .await
+            .context("Failed to list base WAL directory")?;
+        
+        for entry in entries {
+            if entry.metadata.is_directory {
+                // Assume directories are collection IDs for now
+                // TODO: Add more robust validation for collection IDs
+                collections.push(entry.name);
+            }
+        }
+        
+        info!("Discovered {} collections for recovery", collections.len());
+        Ok(collections)
     }
     
     /// Get recovery statistics

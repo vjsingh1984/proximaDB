@@ -1,0 +1,201 @@
+= ProximaDB Architecture
+:toc: left
+:toclevels: 3
+:imagesdir: ../diagrams/images
+
+== Overview
+
+ProximaDB is a high-performance vector database with zero infrastructure tax, designed for sub-millisecond search at scale. It is built in Rust and features a modern, asynchronous, and modular architecture.
+
+== System Architecture
+
+include::../diagrams/architecture.mmd[]
+
+== Core Components
+
+=== API Layer
+include::api_architecture.adoc[]
+
+=== Service Layer
+The service layer contains the core business logic of the database.
+
+- *VectorOperationsService*: Handles all CRUD (Create, Read, Update, Delete) operations for vectors, as well as search coordination.
+- *CollectionService*: Manages the lifecycle of collections, including creation, deletion, and schema management.
+- *EventLogService*: Provides a log of all events in the system, which can be used for auditing and recovery.
+
+=== Compute Layer
+include::compute_architecture.adoc[]
+
+=== Storage Layer
+The storage layer is responsible for persisting data to disk. It is designed to be highly performant and scalable.
+
+- *StorageEngine*: The main component of the storage layer. It manages the different storage engines and provides a unified interface for accessing data.
+- *MemTable*: An in-memory table that stores recently written data.
+- *Write-Ahead Log (WAL)*: A log that records all write operations before they are applied to the database. This ensures data durability in case of a crash.
+- *Metadata Store*: Stores all the metadata about collections, indexes, and other system components.
+
+==== Hierarchical SST Format
+ProximaDB's enhanced SSTable format features a hierarchical structure and direct offset access for high performance and efficiency, especially for cloud-native deployments.
+
+include::../diagrams/sst-hierarchical-detail-modular.svg[]
+
+==== Storage Engine Comparison
+ProximaDB offers multiple storage engines optimized for different workloads.
+
+|===
+| Engine | Use Case | Storage Format | Optimization
+
+| SST
+| Real-time OLTP
+| Row-based
+| Write-optimized
+
+| VIPER
+| Analytics
+| Columnar Parquet
+| Compression
+
+| NOVA
+| Hybrid
+| Columnar + Quantization
+| Balance
+
+| SWIFT
+| High-throughput
+| Hierarchical blocks
+| Speed
+
+| PRISM
+| Memory-optimized
+| LSM-tree
+| Low memory
+
+| RAPTOR
+| Adaptive
+| Matrix-based
+| Hardware-aware
+|===
+
+=== Caching Architecture
+ProximaDB's unified cache architecture provides a multi-tier, intelligent caching system that optimizes data access across cloud storage, local disk, and memory.
+
+include::../diagrams/cache-architecture-overview.mmd[]
+
+=== Compression Architecture
+ProximaDB's unified compression architecture provides a centralized, context-aware compression system that works across all components of the database.
+
+include::../diagrams/compression-flow.mmd[]
+
+=== Indexing Architecture (AXIS)
+AXIS is ProximaDB's intelligent indexing layer that provides high-performance vector similarity search through multiple indexing algorithms.
+
+include::../diagrams/axis-tiering-abstract.svg[]
+
+== Data Flow
+
+include::data_flow.adoc[]
+
+== Key Design Decisions
+
+=== Proto-First Architecture
+ProximaDB uses a "proto-first" architecture, where all data structures and APIs are defined in Protocol Buffers. This has several advantages:
+- *Zero-copy serialization*: Data can be passed between components without the need for expensive serialization and deserialization.
+- *Type safety*: The protobuf compiler generates type-safe code in multiple languages.
+- *Efficient wire format*: Protocol Buffers provide a compact and efficient wire format for gRPC.
+
+=== Pluggable Storage Engines
+ProximaDB has a pluggable storage engine architecture, which allows for different storage engines to be used for different workloads. The two main storage engines are:
+- *SST*: Optimized for real-time OLTP workloads.
+- *VIPER*: Optimized for analytical OLAP workloads.
+The `StorageEngine` component automatically selects the best engine based on the workload.
+
+=== Hardware-Adaptive Compute
+The compute layer is designed to be hardware-adaptive. It can automatically detect and use the best available hardware for a given task, whether it's SIMD instructions on the CPU or a dedicated GPU. This allows ProximaDB to achieve the best possible performance on a wide range of hardware.
+
+== Performance Characteristics
+
+|===
+| Metric | Value | Notes
+
+| Insert Throughput
+| 17K vectors/sec
+| Bulk loading
+
+| Search Latency
+| < 1ms
+| 1M vectors, indexed
+
+| Memory Usage
+| 30% less
+| vs. alternatives
+
+| Compression Ratio
+| 70%
+| With quantization
+
+| Concurrent Queries
+| 10K+
+| Per server
+|===
+
+== Deployment Architecture
+
+=== Single Server
+[source,yaml]
+----
+# docker-compose.yml
+services:
+  proximadb:
+    image: proximadb/proximadb:latest
+    ports:
+      - "5678:5678"  # REST
+      - "5679:5679"  # gRPC
+    volumes:
+      - data:/data
+----
+
+=== High Availability
+- Active-passive failover
+- Shared storage backend (S3/Azure/GCS)
+- Metadata replication
+
+=== Scaling Strategy
+- Vertical: Up to 1TB RAM, 128 cores
+- Horizontal: Sharding by collection
+- Tiering: Hot/warm/cold data separation
+
+== Configuration
+
+Key configuration in `config/config.toml`:
+
+[source,toml]
+----
+[server]
+http_port = 5678
+grpc_port = 5679
+
+[storage]
+default_engine = "sst"  # or "viper"
+data_dir = "/data"
+
+[compute]
+enable_gpu = true
+enable_simd = true
+
+[cache]
+total_memory_mb = 4096
+----
+
+== Monitoring
+
+- *Metrics*: Prometheus `/metrics` endpoint
+- *Health*: `/health` for liveness checks
+- *Dashboard*: Built-in web UI on port 8080
+- *Logging*: Structured JSON logs
+
+== Security
+
+- *Authentication*: JWT tokens, API keys
+- *TLS*: Certificate-based encryption
+- *Authorization*: Role-based access control
+- *Audit*: Event logging for compliance

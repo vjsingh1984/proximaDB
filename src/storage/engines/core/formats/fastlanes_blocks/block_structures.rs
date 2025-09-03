@@ -812,11 +812,13 @@ impl FastLanesDataBlock {
                 records.push(VectorRecord {
                     id: format!("record_{}", i), // Will be updated from metadata
                     vector,
-                    metadata: HashMap::new(),
+                    metadata: Vec::new(),
                     timestamp: 0,
                     updated_at: None,
+                    quantized_vector: None,
                     expires_at: None,
                     version: None,
+                    source: None,
                 });
             }
             

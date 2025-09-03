@@ -1,137 +1,36 @@
-%%{init: {'theme':'dark', 'themeVariables': { 'primaryColor':'#1f2937', 'primaryTextColor':'#f3f4f6', 'primaryBorderColor':'#4b5563', 'lineColor':'#6b7280', 'secondaryColor':'#374151', 'tertiaryColor':'#111827', 'background':'#111827', 'mainBkg':'#1f2937', 'secondBkg':'#374151', 'tertiaryBkg':'#111827'}}}%%
 graph TB
-    subgraph "AWS EC2 Self-Managed Deployment"
-        subgraph "Compute Options"
-            EC2A[EC2 Instance<br/>r6i.4xlarge<br/>16 vCPU, 128GB RAM<br/>$900/month]
-            EC2B[EC2 Spot Instance<br/>r6i.4xlarge<br/>70% discount<br/>$270/month]
-        end
-        
-        subgraph "Storage Options"
-            subgraph "High Performance"
-                NVME[Instance Store<br/>3.8TB NVMe<br/>Ephemeral<br/>Included in EC2]
-                GP3[EBS gp3<br/>16TB<br/>16K IOPS<br/>$1,280/month]
-                IO2[EBS io2<br/>16TB<br/>64K IOPS<br/>$5,120/month]
+    subgraph "Self-Managed Deployment Options"
+        subgraph "Cloud VM Deployment"
+            VM[Virtual Machine<br/>(e.g., EC2, Azure VM, GCP Compute Engine)]
+            subgraph "Local Storage"
+                LocalSSD[High-Performance Local SSD<br/>(Ephemeral)]
+            end
+            subgraph "Network Attached Storage"
+                NetStorage[Persistent Network Storage<br/>(e.g., EBS, Azure Disk, GCP Persistent Disk)]
+            end
+            subgraph "Object Storage Backend"
+                CloudObject[Cloud Object Storage<br/>(e.g., S3, Azure Blob, GCS)]
             end
             
-            subgraph "Cost Optimized"
-                ST1[EBS st1<br/>16TB<br/>Throughput optimized<br/>$720/month]
-                SC1[EBS sc1<br/>16TB<br/>Cold HDD<br/>$240/month]
-                S3BACK[S3 Backend<br/>Unlimited<br/>$368/month for 16TB]
+            VM --> LocalSSD
+            VM --> NetStorage
+            VM --> CloudObject
+        end
+        
+        subgraph "On-Premise / Bare Metal Deployment"
+            Server[Physical Server<br/>(Bare Metal or VM)]
+            subgraph "Direct Attached Storage"
+                DAS[High-Performance NVMe/SSD<br/>(Direct Attached)]
             end
-        end
-        
-        EC2A --> NVME
-        EC2A --> GP3
-        EC2A --> S3BACK
-        EC2B --> S3BACK
-        
-        subgraph "Backup Strategy"
-            SNAP[EBS Snapshots<br/>Incremental<br/>$0.05/GB/month]
-            AMI[AMI Backup<br/>Full System<br/>$0.05/GB/month]
-            S3BACKUP[S3 Backup<br/>Cross-Region<br/>$0.023/GB/month]
-        end
-        
-        GP3 --> SNAP
-        EC2A --> AMI
-        S3BACK --> S3BACKUP
-    end
-    
-    subgraph "Azure VM Self-Managed Deployment"
-        subgraph "Azure Compute"
-            AZVM[Azure VM<br/>E16s v5<br/>16 vCPU, 128GB RAM<br/>$850/month]
-            AZSPOT[Spot VM<br/>E16s v5<br/>80% discount<br/>$170/month]
-        end
-        
-        subgraph "Azure Storage"
-            subgraph "Premium Storage"
-                AZNVME[Local SSD<br/>3.8TB Temp<br/>Ephemeral<br/>Included]
-                AZPREM[Premium SSD v2<br/>16TB<br/>Custom IOPS<br/>$1,400/month]
-                AZULTRA[Ultra Disk<br/>16TB<br/>160K IOPS<br/>$6,000/month]
+            subgraph "Network Attached Storage"
+                NAS[NAS/SAN Storage<br/>(Network Attached)]
+            end
+            subgraph "Object Storage Backend"
+                OnPremObject[On-Premise Object Storage<br/>(e.g., MinIO)]
             end
             
-            subgraph "Standard Storage"
-                AZSTD[Standard SSD<br/>16TB<br/>6K IOPS<br/>$960/month]
-                AZHDD[Standard HDD<br/>16TB<br/>500 IOPS<br/>$320/month]
-                AZBLOB[Blob Storage<br/>Unlimited<br/>$294/month for 16TB]
-            end
+            Server --> DAS
+            Server --> NAS
+            Server --> OnPremObject
         end
-        
-        AZVM --> AZNVME
-        AZVM --> AZPREM
-        AZVM --> AZBLOB
-        AZSPOT --> AZBLOB
-        
-        subgraph "Azure Backup"
-            AZSNAP[Disk Snapshots<br/>Incremental<br/>$0.05/GB/month]
-            AZBACKUP[Azure Backup<br/>VM level<br/>$10+storage/month]
-            AZGEO[Geo-Redundant<br/>Blob Storage<br/>$0.046/GB/month]
-        end
-        
-        AZPREM --> AZSNAP
-        AZVM --> AZBACKUP
-        AZBLOB --> AZGEO
     end
-    
-    subgraph "GCP Compute Engine Self-Managed"
-        subgraph "GCP Compute"
-            GCPVM[Compute Engine<br/>n2-highmem-16<br/>16 vCPU, 128GB RAM<br/>$875/month]
-            GCPSPOT[Preemptible VM<br/>n2-highmem-16<br/>60% discount<br/>$350/month]
-        end
-        
-        subgraph "GCP Storage"
-            subgraph "SSD Options"
-                GCPLOCAL[Local SSD<br/>3TB x2<br/>Ephemeral<br/>$160/month]
-                GCPPD[PD-SSD<br/>16TB<br/>30K IOPS<br/>$2,720/month]
-                GCPEXT[PD-Extreme<br/>16TB<br/>120K IOPS<br/>$5,440/month]
-            end
-            
-            subgraph "HDD Options"
-                GCPSTD[PD-Standard<br/>16TB<br/>1.5K IOPS<br/>$640/month]
-                GCPGCS[Cloud Storage<br/>Unlimited<br/>$320/month for 16TB]
-            end
-        end
-        
-        GCPVM --> GCPLOCAL
-        GCPVM --> GCPPD
-        GCPVM --> GCPGCS
-        GCPSPOT --> GCPGCS
-        
-        subgraph "GCP Backup"
-            GCPSNAP[PD Snapshots<br/>Incremental<br/>$0.026/GB/month]
-            GCPIMAGE[Machine Image<br/>Full backup<br/>$0.026/GB/month]
-            GCPMULTI[Multi-Region<br/>Cloud Storage<br/>$0.026/GB/month]
-        end
-        
-        GCPPD --> GCPSNAP
-        GCPVM --> GCPIMAGE
-        GCPGCS --> GCPMULTI
-    end
-    
-    subgraph "On-Premise/Bare Metal"
-        subgraph "Physical Server"
-            SERVER[Dell/HP Server<br/>32 cores, 256GB RAM<br/>$15,000 one-time]
-        end
-        
-        subgraph "Storage Array"
-            DAS[Direct Attached<br/>8x 4TB NVMe<br/>32TB total<br/>$8,000 one-time]
-            NAS[NAS Storage<br/>100TB<br/>Network attached<br/>$10,000 one-time]
-            MINIO[MinIO Cluster<br/>Object Storage<br/>S3 compatible<br/>$0 software]
-        end
-        
-        SERVER --> DAS
-        SERVER --> NAS
-        SERVER --> MINIO
-        
-        subgraph "Backup Solution"
-            TAPE[Tape Backup<br/>LTO-9<br/>18TB/tape<br/>$100/tape]
-            REPLICATE[Replication<br/>Secondary site<br/>Real-time<br/>$20,000 setup]
-        end
-        
-        DAS --> TAPE
-        MINIO --> REPLICATE
-    end
-    
-    style EC2A fill:#ff9900,stroke:#fff,color:#000
-    style AZVM fill:#0078d4,stroke:#fff,color:#fff
-    style GCPVM fill:#4285f4,stroke:#fff,color:#fff
-    style SERVER fill:#90ee90,stroke:#000,color:#000

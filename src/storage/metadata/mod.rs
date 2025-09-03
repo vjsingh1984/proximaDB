@@ -27,7 +27,6 @@ pub mod write_ahead_log;
 mod atomic_tests;
 
 
-use crate::storage::strategy::CollectionStrategyConfig;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -39,242 +38,43 @@ pub use transaction_coordinator::TransactionId;
 pub use store::{MetadataStore, MetadataStoreConfig};
 pub use write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog, SystemMetadata, VersionedCollectionMetadata};
 
-// Re-export strategy types for convenience
-pub use crate::storage::strategy::{StorageEngineType, IndexingAlgorithm, DistanceMetric};
-
 // No conversion implementations needed - StorageEngineType is now a type alias for proto enum
 
-/// Collection metadata with comprehensive information and migration support
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionMetadata {
-    // Core identification
-    pub id: String,
-    pub name: String,
 
-    // Vector configuration
-    pub dimension: usize,
-    pub distance_metric: String,
-    pub indexing_algorithm: String,
 
-    // Timestamps
-    pub timestamp: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-
-    // Statistics
-    pub vector_count: u64,
-    pub total_size_bytes: u64,
-
-    // Configuration and user-defined metadata
-    pub config: HashMap<String, serde_json::Value>,
-
-    // Access patterns for optimization
-    pub access_pattern: AccessPattern,
-
-    // Retention and lifecycle management
-    pub retention_policy: Option<RetentionPolicy>,
-
-    // Tags for organization
-    pub tags: Vec<String>,
-
-    // Ownership and permissions
-    pub owner: Option<String>,
-    pub description: Option<String>,
-
-    // Strategy configuration for storage, indexing, and search
-    pub strategy_config: CollectionStrategyConfig,
-
-    // Strategy change tracking
-    pub strategy_change_history: Vec<StrategyChangeStatus>,
-
-    // WAL flush configuration (None = use global defaults)
-    pub flush_config: Option<CollectionFlushConfig>,
-    
-    // Storage assignment information
-    pub storage_assignment: Option<StorageAssignment>,
-}
-
-/// Storage assignment information for a collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageAssignment {
-    /// Base storage location URL (e.g., "file:///data/disk1")
-    /// Data will be at: {base_location}/{collection_id}/data
-    /// WAL will be at: {base_location}/{collection_id}/write_buffer
-    /// Indexes will be at: {base_location}/{collection_id}/indexes
-    pub base_location: String,
-    
-    /// Assignment timestamp
-    pub assigned_at: DateTime<Utc>,
-}
-
-/// Access pattern hints for storage optimization
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum AccessPattern {
-    /// Very frequent access - keep in memory, replicate
-    Hot,
-    /// Normal access pattern - standard caching
-    Normal,
-    /// Infrequent access - can be moved to slower storage
-    Cold,
-    /// Very rare access - archive to cheapest storage
-    Archive,
-}
-
-impl Default for AccessPattern {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
-/// Data retention and lifecycle policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetentionPolicy {
-    /// Days to retain data
-    pub retain_days: u32,
-
-    /// Automatically move to archive storage
-    pub auto_archive: bool,
-
-    /// Automatically delete after retention period
-    pub auto_delete: bool,
-
-    /// Move to cold storage after days
-    pub cold_storage_days: Option<u32>,
-
-    /// Backup configuration
-    pub backup_config: Option<BackupConfig>,
-}
-
-/// Backup configuration for collections
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackupConfig {
-    /// Enable automatic backups
-    pub enabled: bool,
-
-    /// Backup frequency in hours
-    pub frequency_hours: u32,
-
-    /// Number of backups to retain
-    pub retain_count: u32,
-
-    /// Storage location for backups
-    pub backup_location: String, // filesystem URL
-}
-
-/// Strategy change tracking (since migration is just metadata update)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StrategyChangeStatus {
-    /// Change ID for tracking
-    pub change_id: String,
-
-    /// Timestamp of strategy change
-    pub changed_at: DateTime<Utc>,
-
-    /// Previous strategy configuration
-    pub previous_strategy: CollectionStrategyConfig,
-
-    /// Current strategy configuration
-    pub current_strategy: CollectionStrategyConfig,
-
-    /// What was changed (storage, indexing, search, or combination)
-    pub change_type: StrategyChangeType,
-
-    /// User who initiated the change
-    pub changed_by: Option<String>,
-
-    /// Reason for the change
-    pub change_reason: Option<String>,
-}
-
-/// Type of strategy change
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StrategyChangeType {
-    /// Only storage layout strategy changed
-    StorageOnly,
-    /// Only indexing strategy changed
-    IndexingOnly,
-    /// Only search strategy changed
-    SearchOnly,
-    /// Storage and indexing changed
-    StorageAndIndexing,
-    /// Storage and search changed
-    StorageAndSearch,
-    /// Indexing and search changed
-    IndexingAndSearch,
-    /// All three strategies changed
-    Complete,
-}
-
-impl Default for CollectionMetadata {
-    fn default() -> Self {
-        Self {
-            id: "default".to_string(),
-            name: "Default Collection".to_string(),
-            dimension: 128,
-            distance_metric: "cosine".to_string(),
-            indexing_algorithm: "hnsw".to_string(),
-            timestamp: Utc::now(),
-            updated_at: Utc::now(),
-            vector_count: 0,
-            total_size_bytes: 0,
-            config: HashMap::new(),
-            access_pattern: AccessPattern::default(),
-            retention_policy: None,
-            tags: Vec::new(),
-            owner: None,
-            description: None,
-            strategy_config: CollectionStrategyConfig::default(),
-            strategy_change_history: Vec::new(),
-            flush_config: None, // Use global defaults
-            storage_assignment: None,
-        }
-    }
-}
-
-/// Metadata operation types for atomic transactions
+/// Operations that can be performed on metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetadataOperation {
-    /// Create collection
-    CreateCollection(CollectionMetadata),
-
-    /// Update collection metadata
+    CreateCollection(crate::proto::proximadb::Collection),
     UpdateCollection {
         collection_id: String,
-        metadata: CollectionMetadata,
+        metadata: crate::proto::proximadb::Collection,
     },
-
-    /// Delete collection
     DeleteCollection(String),
-
-    /// Update statistics (atomic counter updates)
     UpdateStats {
         collection_id: String,
         vector_delta: i64,
         size_delta: i64,
     },
-
-    /// Update access pattern
     UpdateAccessPattern {
         collection_id: String,
-        pattern: AccessPattern,
+        access_pattern: String,
     },
-
-    /// Update tags
     UpdateTags {
         collection_id: String,
         tags: Vec<String>,
     },
-
-    /// Update retention policy
     UpdateRetentionPolicy {
         collection_id: String,
-        policy: Option<RetentionPolicy>,
+        retention_policy: String,
     },
+    UpdateSystemMetadata(SystemMetadata),
 }
 
 /// Metadata query filters
 pub struct MetadataFilter {
     /// Filter by access pattern
-    pub access_pattern: Option<AccessPattern>,
+    pub access_pattern: Option<String>,
 
     /// Filter by tags (AND operation)
     pub tags: Vec<String>,
@@ -289,7 +89,7 @@ pub struct MetadataFilter {
     pub max_age_days: Option<u32>,
 
     /// Custom filter function
-    pub custom_filter: Option<Box<dyn Fn(&CollectionMetadata) -> bool + Send + Sync>>,
+    pub custom_filter: Option<Box<dyn Fn(&crate::proto::proximadb::Collection) -> bool + Send + Sync>>,
 }
 
 impl std::fmt::Debug for MetadataFilter {
@@ -331,33 +131,33 @@ impl Default for MetadataFilter {
     }
 }
 
-/// Metadata store trait for different implementations
+/// Interface for metadata storage operations
 #[async_trait]
 pub trait MetadataStoreInterface: Send + Sync {
     /// Create a new collection
-    async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()>;
+    async fn create_collection(&self, metadata: crate::proto::proximadb::Collection) -> Result<()>;
 
-    /// Get collection metadata
+    /// Get collection metadata by ID
     async fn get_collection(
         &self,
         collection_id: &str,
-    ) -> Result<Option<CollectionMetadata>>;
+    ) -> Result<Option<crate::proto::proximadb::Collection>>;
 
     /// Update collection metadata
     async fn update_collection(
         &self,
         collection_id: &str,
-        metadata: CollectionMetadata,
+        metadata: crate::proto::proximadb::Collection,
     ) -> Result<()>;
 
-    /// Delete collection
+    /// Delete collection metadata
     async fn delete_collection(&self, collection_id: &str) -> Result<bool>;
 
-    /// List collections with optional filtering
+    /// List collections with filtering
     async fn list_collections(
         &self,
         filter: Option<MetadataFilter>,
-    ) -> Result<Vec<CollectionMetadata>>;
+    ) -> Result<Vec<crate::proto::proximadb::Collection>>;
 
     /// Update collection statistics atomically
     async fn update_stats(
@@ -367,8 +167,17 @@ pub trait MetadataStoreInterface: Send + Sync {
         size_delta: i64,
     ) -> Result<()>;
 
-    /// Batch operations (atomic)
+    /// Batch operations (atomic if supported)
     async fn batch_operations(&self, operations: Vec<MetadataOperation>) -> Result<()>;
+
+    /// Begin transaction (if supported)
+    async fn begin_transaction(&self) -> Result<Option<String>>;
+
+    /// Commit transaction (if supported)
+    async fn commit_transaction(&self, transaction_id: &str) -> Result<()>;
+
+    /// Rollback transaction (if supported)
+    async fn rollback_transaction(&self, transaction_id: &str) -> Result<()>;
 
     /// Get system metadata
     async fn get_system_metadata(&self) -> Result<SystemMetadata>;
@@ -379,58 +188,17 @@ pub trait MetadataStoreInterface: Send + Sync {
     /// Health check
     async fn health_check(&self) -> Result<bool>;
 
-    /// Get storage statistics
-    async fn get_storage_stats(&self) -> Result<MetadataStorageStats>;
-}
+    /// Get metadata storage statistics
+    async fn get_stats(&self) -> Result<MetadataStorageStats>;
 
-/// Collection-specific WAL flush configuration
-/// SIZE-BASED FLUSH ONLY - age and count-based triggers removed for stability
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionFlushConfig {
-    /// Maximum WAL size before forced flush (bytes, None = use global default)
-    pub max_wal_size_bytes: Option<usize>,
-}
+    /// Backup metadata
+    async fn backup(&self, location: &str) -> Result<String>; // Returns backup ID
 
-impl Default for CollectionFlushConfig {
-    fn default() -> Self {
-        Self {
-            max_wal_size_bytes: None, // Use global default (128MB)
-        }
-    }
-}
+    /// Restore from backup
+    async fn restore(&self, backup_id: &str, location: &str) -> Result<()>;
 
-/// Global flush defaults for the system
-/// SIZE-BASED FLUSH ONLY - simplified for write-triggered flush architecture
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlobalFlushDefaults {
-    /// Default maximum WAL size (128MB)
-    pub default_max_wal_size_bytes: usize,
-}
-
-impl Default for GlobalFlushDefaults {
-    fn default() -> Self {
-        Self {
-            default_max_wal_size_bytes: 128 * 1024 * 1024, // 128MB for write-triggered flush
-        }
-    }
-}
-
-impl CollectionFlushConfig {
-    /// Get effective configuration using global defaults for None values
-    pub fn effective_config(&self, global_defaults: &GlobalFlushDefaults) -> EffectiveFlushConfig {
-        EffectiveFlushConfig {
-            max_wal_size_bytes: self
-                .max_wal_size_bytes
-                .unwrap_or(global_defaults.default_max_wal_size_bytes),
-        }
-    }
-}
-
-/// Effective flush configuration with all values resolved
-/// SIZE-BASED FLUSH ONLY
-#[derive(Debug, Clone)]
-pub struct EffectiveFlushConfig {
-    pub max_wal_size_bytes: usize,
+    /// Close/cleanup metadata store
+    async fn close(&self) -> Result<()>;
 }
 
 /// Storage statistics for monitoring
@@ -445,3 +213,7 @@ pub struct MetadataStorageStats {
     pub wal_entries: u64,
     pub wal_size_bytes: u64,
 }
+
+
+
+

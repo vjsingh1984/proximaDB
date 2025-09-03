@@ -173,26 +173,14 @@ use tracing::{debug, error, info};
 
 pub mod atomic_strategy;
 pub mod auth;
-// 🔴 UNUSED CLOUD STORAGE - Never actually used in production
-pub mod azure;
-pub mod gcs;
-pub mod hdfs;
 pub mod local;
 pub mod manager;
-pub mod s3;
 pub mod write_strategy;
 pub mod zero_copy_filesystem;
 pub mod intelligent_filesystem;
 
 #[cfg(test)]
 pub mod tests;
-
-// 🔴 UNUSED CLOUD STORAGE IMPORTS
-use azure::AzureFileSystem;
-use gcs::GcsFileSystem;
-use hdfs::HdfsFileSystem;
-use local::LocalFileSystem;
-use s3::S3FileSystem;
 
 // Zero-copy filesystem with intelligent caching
 pub use zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
@@ -754,21 +742,8 @@ pub struct FilesystemConfig {
     /// Default filesystem URL for unqualified paths
     pub default_fs: Option<String>,
 
-    // 🔴 UNUSED CLOUD STORAGE CONFIG - modules commented out
-    /// AWS S3 configuration
-    pub s3: Option<s3::S3Config>,
-
-    /// Azure Data Lake Storage configuration
-    pub azure: Option<azure::AzureConfig>,
-
-    // /// Google Cloud Storage configuration
-    pub gcs: Option<gcs::GcsConfig>,
-
     /// Local filesystem configuration
     pub local: Option<local::LocalConfig>,
-
-    // /// HDFS configuration
-    pub hdfs: Option<hdfs::HdfsConfig>,
 
     /// Global filesystem options
     pub global_options: FileOptions,
@@ -808,11 +783,7 @@ impl Default for FilesystemConfig {
     fn default() -> Self {
         Self {
             default_fs: Some("file://".to_string()),
-            s3: None,  // 🔴 UNUSED
-            azure: None,  // 🔴 UNUSED
-            gcs: None,  // 🔴 UNUSED
             local: Some(local::LocalConfig::default()),
-            hdfs: None,  // 🔴 UNUSED
             global_options: FileOptions::default(),
             auth_config: None,
             performance_config: FilesystemPerformanceConfig::default(),
@@ -872,44 +843,6 @@ impl FilesystemFactory {
             let local_fs = LocalFileSystem::new(default_config).await?;
             self.filesystems
                 .insert("file".to_string(), Arc::new(local_fs));
-        }
-
-        // 🔴 UNUSED CLOUD STORAGE - Never actually used in production
-        // Initialize S3 filesystem
-        if let Some(s3_config) = &self.config.s3 {
-            let s3_fs = S3FileSystem::new(s3_config.clone()).await?;
-            self.filesystems.insert("s3".to_string(), Arc::new(s3_fs));
-        }
-
-        // Initialize Azure filesystem
-        if let Some(azure_config) = &self.config.azure {
-            let azure_fs_adls = AzureFileSystem::new(azure_config.clone()).await?;
-            let azure_fs_abfs = AzureFileSystem::new(azure_config.clone()).await?;
-            let azure_arc = Arc::new(azure_fs_adls);
-            self.filesystems
-                .insert("adls".to_string(), Arc::clone(&azure_arc));
-            // ABFS is the same as ADLS Gen2 - just different URL scheme
-            // Share the same Arc instance
-            self.filesystems
-                .insert("abfs".to_string(), azure_arc);
-        }
-
-        // Initialize GCS filesystem
-        if let Some(gcs_config) = &self.config.gcs {
-            // Create two instances for both schemes
-            let gcs_fs1 = GcsFileSystem::new(gcs_config.clone()).await?;
-            let gcs_fs2 = GcsFileSystem::new(gcs_config.clone()).await?;
-            // Register under both "gcs" and "gs" schemes for compatibility
-            let gcs_arc = Arc::new(gcs_fs1);
-            self.filesystems.insert("gcs".to_string(), Arc::clone(&gcs_arc));
-            self.filesystems.insert("gs".to_string(), gcs_arc);
-        }
-
-        // Initialize HDFS filesystem
-        if let Some(hdfs_config) = &self.config.hdfs {
-            let hdfs_fs = HdfsFileSystem::new(hdfs_config.clone()).await?;
-            self.filesystems
-                .insert("hdfs".to_string(), Arc::new(hdfs_fs));
         }
 
         Ok(())
@@ -1003,19 +936,28 @@ impl FilesystemFactory {
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
 
-        // Read from source
-        info!("    📖 Reading source file...");
-        debug!("    📖 [DEBUG] Reading source file from: {}", from_path);
-        let data = from_fs.read(&from_path).await?;
-        info!("    ✅ Read {} bytes", data.len());
-        debug!("    ✅ [DEBUG] Read {} bytes", data.len());
+        // Open source and destination files for streaming
+        info!("    📖 Opening source file for streaming...");
+        let mut source_file = from_fs.open_file(&from_path, false).await?;
+        info!("    💾 Opening destination file for streaming...");
+        let mut dest_file = to_fs.open_file(&to_path, true).await?;
 
-        // Write to destination atomically
-        info!("    💾 Writing to destination atomically...");
-        debug!("    💾 [DEBUG] Writing to destination: {}", to_path);
-        to_fs.write_atomic(&to_path, &data, None).await?;
-        info!("    ✅ Write complete");
-        debug!("    ✅ [DEBUG] Write complete to: {}", to_path);
+        // Stream data in chunks
+        let mut buffer = vec![0; 8 * 1024 * 1024]; // 8MB buffer
+        loop {
+            let bytes_read = source_file.read(&mut buffer).await?;
+            if bytes_read == 0 {
+                break;
+            }
+            dest_file.write(&buffer[..bytes_read]).await?;
+        }
+        
+        // Flush and sync destination file
+        dest_file.flush().await?;
+        dest_file.sync_all().await?;
+
+        info!("    ✅ Streaming copy complete");
+        debug!("    ✅ [DEBUG] Streaming copy complete");
 
         info!("📋 [DEBUG] copy_atomic COMPLETE");
         debug!("📋 [DEBUG] copy_atomic COMPLETE");
@@ -1031,12 +973,12 @@ impl FilesystemFactory {
         debug!("    from_url: {}", from_url);
         debug!("    to_url: {}", to_url);
         
-        // Copy first
-        info!("    📋 Copying file atomically...");
-        debug!("    📋 [DEBUG] Copying file atomically...");
+        // Copy first using streaming copy
+        info!("    📋 Copying file atomically (streaming)...");
+        debug!("    📋 [DEBUG] Copying file atomically (streaming)...");
         self.copy_atomic(from_url, to_url).await?;
-        info!("    ✅ Copy successful");
-        debug!("    ✅ [DEBUG] Copy successful");
+        info!("    ✅ Streaming copy successful");
+        debug!("    ✅ [DEBUG] Streaming copy successful");
 
         // Delete source after successful copy
         info!("    🗑️ Deleting source file...");
@@ -1435,7 +1377,7 @@ impl FilesystemFactory {
     /// 
     /// # Returns
     /// A zero-copy filesystem that transparently optimizes all file operations
-    pub fn create_zero_copy_filesystem(
+    pub async fn create_zero_copy_filesystem(
         &self,
         url: &str,
         io_system: std::sync::Arc<crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem>,
@@ -1458,20 +1400,9 @@ impl FilesystemFactory {
         // In production, the FilesystemFactory should be refactored to use Arc<dyn FileSystem>
         // throughout to support zero-copy filesystem creation more efficiently
         let underlying_fs_arc = if scheme == "file" {
-            let local_config = self.config.local.clone().clone();
-            // We'll need to use a blocking approach here since we're in a sync method
-            // In a real implementation, this method should be async
-            match tokio::runtime::Handle::try_current() {
-                Ok(handle) => {
-                    let local_fs = handle.block_on(LocalFileSystem::new(local_config.unwrap_or_default()))?;
-                    std::sync::Arc::new(local_fs) as std::sync::Arc<dyn FileSystem>
-                }
-                Err(_) => {
-                    return Err(FilesystemError::Config(
-                        "Zero-copy filesystem creation requires a tokio runtime".to_string()
-                    ));
-                }
-            }
+            let local_config = self.config.local.clone().unwrap_or_default();
+            let local_fs = LocalFileSystem::new(local_config).await?;
+            std::sync::Arc::new(local_fs) as std::sync::Arc<dyn FileSystem>
         } else {
             return Err(FilesystemError::UnsupportedScheme(
                 format!("Zero-copy filesystem not yet supported for scheme: {}", scheme)

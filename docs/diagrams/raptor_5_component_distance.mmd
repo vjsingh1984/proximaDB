@@ -2,18 +2,18 @@
 flowchart TD
     %% RAPTOR 5-Component Boosted Distance Calculation
     
-    Q[Query Vector q] --> D1[Inter-Centroid Distance<br/>d1 = distance(c1, c2)<br/>Raw centroid-to-centroid]
+    Q[Query Vector] --> D1[Inter-Centroid Distance<br/>(d1)]
     
-    Q --> D2[Query-to-Target Distance<br/>d2 = distance(q, target_centroid)<br/>Query positioning]
+    Q --> D2[Query-to-Target Distance<br/>(d2)]
     
-    Q --> D3[Query-to-Source Distance<br/>d3 = distance(q, source_centroid)<br/>Source relevance]
+    Q --> D3[Query-to-Source Distance<br/>(d3)]
     
-    Q --> D4[Intra-Cluster Penalty<br/>d4 = cluster_penalty(source)<br/>Same cluster bias]
+    Q --> D4[Intra-Cluster Penalty<br/>(d4)]
     
-    Q --> D5[Cross-Cluster Penalty<br/>d5 = cluster_penalty(target)<br/>Different cluster cost]
+    Q --> D5[Cross-Cluster Penalty<br/>(d5)]
     
     %% Boosted distance formula
-    D1 --> B[Boosted Distance Formula<br/>D = α₁×d1 + α₂×d2 + α₃×d3 + β₁×d4 + β₂×d5]
+    D1 --> B[Boosted Distance Formula<br/>D = α₁d1 + α₂d2 + α₃d3 + β₁d4 + β₂d5]
     D2 --> B
     D3 --> B
     D4 --> B
@@ -22,18 +22,18 @@ flowchart TD
     B --> R[Final Distance Score<br/>Lower = Better Match]
     
     %% Component explanations
-    D1 --> E1[Raw Distance Component<br/>• Stored in hierarchical neighbors<br/>• Computed once during indexing<br/>• No query-specific bias]
+    D1 --> E1[Raw Distance Component<br/>• Stored in hierarchical neighbors]
     
-    D2 --> E2[Query Relevance Component<br/>• Computed at query time<br/>• Target cluster attractiveness<br/>• Dynamic based on query vector]
+    D2 --> E2[Query Relevance Component<br/>• Computed at query time]
     
-    D3 --> E3[Source Context Component<br/>• Query-to-current-cluster distance<br/>• Helps navigate from current position<br/>• Exploration vs exploitation balance]
+    D3 --> E3[Source Context Component<br/>• Query-to-current-cluster distance]
     
-    D4 --> E4[Intra-Cluster Component<br/>• Penalty for staying in same cluster<br/>• Encourages exploration<br/>• Lower penalty for good matches]
+    D4 --> E4[Intra-Cluster Component<br/>• Penalty for staying in same cluster]
     
-    D5 --> E5[Cross-Cluster Component<br/>• Cost of jumping between clusters<br/>• Higher penalty for distant clusters<br/>• Balances local vs global search]
+    D5 --> E5[Cross-Cluster Component<br/>• Cost of jumping between clusters]
     
     %% Coefficient explanation
-    B --> C[Coefficient Strategy<br/>α₁ = 1.0 (base distance)<br/>α₂ = 0.8 (query relevance)<br/>α₃ = 0.6 (source context)<br/>β₁ = 0.2 (intra penalty)<br/>β₂ = 0.4 (cross penalty)]
+    B --> C[Coefficient Strategy<br/>α₁ = 1.0, α₂ = 0.8, α₃ = 0.6<br/>β₁ = 0.2, β₂ = 0.4]
     
     %% Performance characteristics
     R --> P[Performance Benefits<br/>• Multi-probe accuracy<br/>• Balanced exploration<br/>• Avoids local minima<br/>• Query-adaptive navigation]

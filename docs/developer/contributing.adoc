@@ -2,8 +2,6 @@
 :toc: left
 :toclevels: 2
 
-// Licensed under the Apache License, Version 2.0
-
 Welcome! We're excited to have you contribute to ProximaDB.
 
 == Quick Start

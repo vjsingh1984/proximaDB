@@ -10,13 +10,14 @@ graph TB
         VIPER["VIPER Engine<br/>5K write/sec<br/>2-3ms search<br/>70-80% compression<br/>✅ Production"]
         PRISM["PRISM Engine<br/>20K write/sec<br/>0.3ms search<br/>75-96% memory savings<br/>🚧 Beta"]
         SWIFT["SWIFT Engine<br/>12K write/sec<br/>0.7ms search<br/>O(log n) ID lookups<br/>🚧 Beta"]
-        NOVA["NOVA Engine<br/>4K write/sec<br/>1-2ms search<br/>80-90% compression<br/>🔬 Alpha"]
+        NOVA["NOVA Engine<br/>4K write/sec<br/>1-2ms search<br/>80-90% compression<br/>🚧 Beta"]
+        RAPTOR["RAPTOR Engine<br/>Adaptive<br/>Hardware-aware<br/>🚧 Beta"]
     end
     
     subgraph "System Efficiency"
-        CPU["Background CPU<br/>5.15s/hour<br/>84% reduction"]
-        QPS["Concurrent Search<br/>1,770 QPS<br/>2.1x improvement"]
-        Tests["Test Coverage<br/>2,700+ tests<br/>100% pass rate"]
+        CPU["Background CPU<br/>Optimized for low usage"]
+        QPS["Concurrent Search<br/>10K+ QPS<br/>High throughput"]
+        Tests["Test Coverage<br/>Comprehensive test suite<br/>High pass rate"]
     end
     
     %% Protocol styling
@@ -29,6 +30,7 @@ graph TB
     style PRISM fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     style SWIFT fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
     style NOVA fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style RAPTOR fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     
     %% System styling
     style CPU fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px

@@ -76,7 +76,12 @@ impl PrismFastLanesSerializer {
             }
         );
         
-        let fp32_decoder = FastLanesDecoder::new();
+        let fp32_decoder = FastLanesDecoder::new(
+            FastLanesScheme::FrameOfReference { 
+                base: 0.0, 
+                bits: 32 
+            }
+        );
         
         Self {
             quantization_engine,

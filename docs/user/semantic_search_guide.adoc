@@ -102,25 +102,40 @@ for result in results:
 |===
 | Model | Dimensions | Speed | Use Case
 
-| all-MiniLM-L6-v2 | 384 | Fast | General purpose
-| all-mpnet-base-v2 | 768 | Balanced | High quality
-| text-embedding-ada-002 | 1536 | API call | Best quality
-| e5-large-v2 | 1024 | Slow | Multilingual
+| all-MiniLM-L6-v2
+| 384
+| Fast
+| General purpose
+
+| all-mpnet-base-v2
+| 768
+| Balanced
+| High quality
+
+| text-embedding-ada-002
+| 1536
+| API call
+| Best quality
+
+| e5-large-v2
+| 1024
+| Slow
+| Multilingual
 |===
 
 === Preprocessing Best Practices
 
-1. **Text Cleaning**
+. **Text Cleaning**
    - Remove HTML tags
    - Normalize whitespace
    - Handle special characters
 
-2. **Chunking Strategy**
+. **Chunking Strategy**
    - Sentence-level: Precise matching
    - Paragraph-level: Context preservation
    - Fixed-size: Consistent performance
 
-3. **Metadata Enrichment**
+. **Metadata Enrichment**
    - Add timestamps
    - Include source references
    - Tag with categories
@@ -227,9 +242,9 @@ config = {
 
 === Indexing Strategy
 
-* **HNSW**: Best quality, <10M vectors
-* **IVF**: Scalable, >10M vectors
-* **LSH**: Fast approximate, >100M vectors
+* *HNSW*: Best quality, <10M vectors
+* *IVF*: Scalable, >10M vectors
+* *LSH*: Fast approximate, >100M vectors
 
 == Use Case Examples
 
@@ -306,4 +321,4 @@ qa_vector = {
 * link:api_reference.adoc[API Reference]
 
 ---
-**Version 0.1.4** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01-15

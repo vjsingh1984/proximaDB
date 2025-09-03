@@ -230,20 +230,20 @@ ProximaDB offers five storage engines optimized for different workloads:
 
 === Best Practices
 
-1. **Batch Operations**
+. **Batch Operations**
    - Insert: 100-500 vectors per batch
    - Search: Use batch_search for multiple queries
 
-2. **Protocol Selection**
+. **Protocol Selection**
    - gRPC: 3x faster than REST
    - REST: Better for debugging
 
-3. **Compression Settings**
+. **Compression Settings**
    - LZ4: Fast, 2-3x compression
    - ZSTD: Balanced, 3-5x compression
    - With quantization: 16-64x compression
 
-4. **Index Selection**
+. **Index Selection**
    - HNSW: Best quality, <10M vectors
    - IVF: Scalable, >10M vectors
    - PQ: Maximum compression
@@ -320,4 +320,4 @@ enable_gpu = true
 * link:../admin/configuration_reference.adoc[Configuration] - All settings
 
 ---
-**Version 0.1.4** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01-15

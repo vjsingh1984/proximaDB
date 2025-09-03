@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::{CollectionMetadata, MetadataFilter, MetadataOperation, SystemMetadata};
+use super::{MetadataFilter, MetadataOperation, SystemMetadata};
 
 
 /// Metadata backend configuration
@@ -306,8 +306,6 @@ pub struct BackendStats {
     pub storage_size_bytes: u64,
 }
 
-/// Generic metadata backend trait
-#[async_trait]
 pub trait MetadataBackend: Send + Sync {
     /// Backend name for identification
     fn backend_name(&self) -> &'static str;
@@ -319,19 +317,19 @@ pub trait MetadataBackend: Send + Sync {
     async fn health_check(&self) -> Result<bool>;
 
     /// Create collection metadata
-    async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()>;
+    async fn create_collection(&self, metadata: crate::proto::proximadb::Collection) -> Result<()>;
 
     /// Get collection metadata
     async fn get_collection(
         &self,
         collection_id: &str,
-    ) -> Result<Option<CollectionMetadata>>;
+    ) -> Result<Option<crate::proto::proximadb::Collection>>;
 
     /// Update collection metadata
     async fn update_collection(
         &self,
         collection_id: &str,
-        metadata: CollectionMetadata,
+        metadata: crate::proto::proximadb::Collection,
     ) -> Result<()>;
 
     /// Delete collection metadata
@@ -341,7 +339,7 @@ pub trait MetadataBackend: Send + Sync {
     async fn list_collections(
         &self,
         filter: Option<MetadataFilter>,
-    ) -> Result<Vec<CollectionMetadata>>;
+    ) -> Result<Vec<crate::proto::proximadb::Collection>>;
 
     /// Update collection statistics atomically
     async fn update_stats(

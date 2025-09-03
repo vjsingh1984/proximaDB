@@ -1,20 +1,38 @@
 %%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
 graph TD
-    Config[Client Configuration<br/>CompressionConfig] --> Module[Unified Compression Module<br/>src/core/compression/mod.rs]
+    subgraph "Configuration"
+        Config[Client Configuration<br/>CompressionConfig]
+    end
     
-    Module --> Algorithms[13 Compression Algorithms<br/>LZ4, ZSTD, Snappy, Gzip, Brotli<br/>Bzip2, Deflate, XZ, Zlib, LZO<br/>LZ4HC, LZMA, None]
+    subgraph "Unified Compression Engine"
+        Module[Unified Compression Module<br/>src/core/compression/mod.rs]
+        Algorithms[14 Compression Algorithms<br/>+ Mixed Strategy]
+    end
     
-    Algorithms --> Context[Context Detection]
+    subgraph "Data Types"
+        FP32[FP32 Vectors]
+        INT8[INT8 Vectors]
+        PQ[PQ Codes]
+        IDs[IDs]
+        Metadata[Metadata]
+        Bloom[Bloom Filters]
+    end
     
-    Context --> SST[SST Blocks<br/>• Block-level<br/>• Random access<br/>• 3MB blocks]
-    Context --> Vectors[Vectors<br/>• Header<br/>• Checksum<br/>• Streaming]
-    Context --> Parquet[Parquet Columns<br/>• Column-level<br/>• Predicate pushdown]
+    subgraph "Compressed Output"
+        Savings[50-80% Storage Reduction]
+    end
     
-    SST --> Results[Storage Results]
-    Vectors --> Results
-    Parquet --> Results
+    Config --> Module
+    Module --> Algorithms
     
-    Results --> Savings[75% Storage Reduction<br/>From 100% → 25%]
+    FP32 --> Module
+    INT8 --> Module
+    PQ --> Module
+    IDs --> Module
+    Metadata --> Module
+    Bloom --> Module
+    
+    Module --> Savings
     
     style Config fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     style Module fill:#fce4ec,stroke:#c2185b,stroke-width:2px

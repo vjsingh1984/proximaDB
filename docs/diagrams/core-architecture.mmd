@@ -17,20 +17,24 @@ graph TB
         end
         
         subgraph "Service Layer"
-            VS[VectorOperationsService]
-            CS[CollectionService]
-            ES[EventLogService]
+            UnifiedHandlers[Unified Handlers]
+            VectorOperationsService[VectorOperationsService]
+            CollectionService[CollectionService]
+        end
+        
+        subgraph "Compute Layer"
+            UnifiedDistanceCompute[UnifiedDistanceCompute]
+            UnifiedQuantizationEngine[UnifiedQuantizationEngine]
+            HardwareAcceleration[Hardware Acceleration (SIMD/GPU)]
         end
         
         subgraph "Storage Layer"
-            MT[MemTable]
-            AXIS[AXIS Index]
-            ENG[Storage Engines]
-        end
-        
-        subgraph "Persistence"
+            StorageEngine[StorageEngine]
+            MemTable[MemTable]
+            SST[SST Engine]
+            VIPER[VIPER Engine]
             WAL[Write-Ahead Log]
-            META[Metadata Store]
+            MetadataStore[Metadata Store]
         end
     end
     
@@ -45,11 +49,24 @@ graph TB
     C2 --> GRPC
     C3 --> REST & GRPC
     REST & GRPC --> AUTH
-    AUTH --> VS & CS & ES
-    VS & CS --> MT & AXIS
-    MT --> ENG
-    ENG --> WAL & META
-    WAL & META --> FS & S3 & AZURE & GCS
+    AUTH --> UnifiedHandlers
+    UnifiedHandlers --> VectorOperationsService
+    UnifiedHandlers --> CollectionService
+    VectorOperationsService --> StorageEngine
+    VectorOperationsService --> UnifiedDistanceCompute
+    VectorOperationsService --> UnifiedQuantizationEngine
+    CollectionService --> MetadataStore
+    StorageEngine --> MemTable
+    StorageEngine --> SST
+    StorageEngine --> VIPER
+    StorageEngine --> WAL
+    StorageEngine --> MetadataStore
+    MetadataStore --> FS & S3 & AZURE & GCS
+    WAL --> FS & S3 & AZURE & GCS
+    SST --> FS & S3 & AZURE & GCS
+    VIPER --> FS & S3 & AZURE & GCS
+    UnifiedDistanceCompute --> HardwareAcceleration
+    UnifiedQuantizationEngine --> HardwareAcceleration
 ```
 
 ## Data Flow

@@ -5,7 +5,7 @@ use crate::storage::{
     engines::impls::sst::{Compaction, SstStorage},
     persistence::disk_manager::DiskManager,
     traits::CollectionMetadataProvider,
-    CollectionMetadata,
+    
 };
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
@@ -315,10 +315,11 @@ impl StorageEngine {
             collection_id,
             vector_size
         );
-        // TODO: Update metadata stats through SharedServices
-        // // TODO: Use SharedServices - self.metadata_store
-        //     .update_stats(&collection_id, 1, vector_size as i64)
-        //     .await?;
+        if let Some(provider) = self.get_metadata_provider().await {
+            provider.update_stats(collection_id, 1, vector_size as i64).await?;
+        } else {
+            tracing::warn!("⚠️ No metadata provider available, cannot update stats for collection {}", collection_id);
+        }
         tracing::debug!(
             "✅ Completed metadata stats update for collection {}",
             collection_id
@@ -337,13 +338,14 @@ impl StorageEngine {
         collection_id: &str,
         id: &VectorId,
     ) -> crate::storage::Result<bool> {
-        // Check SST storage for vector existence
-        if let Some(sst_storage) = self.sst_storages.get(collection_id) {
-            // Use SST storage to check if vector exists
-            // This could be enhanced to check SST files directly
-            return Ok(false); // TODO: Implement SST-based existence check
+        // Check WAL for unflushed vectors first
+        if let Some(_) = self.write_ahead_log_manager.search_vector_by_id(collection_id, id).await? {
+            return Ok(true);
         }
 
+        // Check SST storage for vector existence
+        // TODO: Implement SST-based existence check in SstStorage
+        tracing::warn!("⚠️ SST-based existence check not yet implemented for collection {}", collection_id);
         Ok(false)
     }
 
@@ -367,8 +369,12 @@ impl StorageEngine {
                 .delete(collection_id, id.clone())
                 .await?;
 
-            // TODO: Update metadata statistics through SharedServices
-            // self.metadata_store.update_stats(collection_id, -1, 0).await?;
+            // Update metadata statistics
+            if let Some(provider) = self.get_metadata_provider().await {
+                provider.update_stats(collection_id, -1, 0).await?;
+            } else {
+                tracing::warn!("⚠️ No metadata provider available, cannot update stats for collection {}", collection_id);
+            }
         }
 
         // Mark as deleted in SST storage using tombstone
@@ -441,12 +447,11 @@ impl StorageEngine {
         // Don't eagerly create SST tree and MMAP reader - they will be created on first access
         tracing::debug!("📁 Collection directories created, SST tree will be initialized on first access");
 
-        // TODO: Create search index using metadata from SharedServices
-        // For now, skip search index creation entirely
-        tracing::debug!(
-            "TODO: Create search index for collection {} via SharedServices",
-            collection_id
-        );
+        // Create search index
+        self.axis_index_manager
+            .create_collection(&collection_id)
+            .await
+            .map_err(|e| crate::core::StorageError::IndexError(e.to_string()))?;
 
         tracing::info!("✅ Created collection: {} with directories at {}", collection_id, base_location);
         Ok(())
@@ -594,7 +599,7 @@ impl StorageEngine {
     /// This method is called by SharedServices during initialization to restore collection metadata
     pub async fn recovered_collections_metadata(
         &self,
-    ) -> crate::storage::Result<Vec<(String, CollectionMetadata)>> {
+    ) -> crate::storage::Result<Vec<(String, crate::proto::proximadb::Collection)>> {
         tracing::info!("📊 Extracting collection metadata from recovered WAL entries");
 
         let mut collections_metadata = Vec::new();
@@ -638,18 +643,23 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
-                                    let mut metadata = CollectionMetadata::default();
-                                    metadata.id = collection_id.to_string();
-                                    metadata.name = collection_id.to_string();
-                                    metadata.dimension = record.vector.len();
-                                    metadata.distance_metric = "cosine".to_string();
-                                    metadata.indexing_algorithm = "hnsw".to_string();
-                                    metadata.vector_count = entries.len() as u64;
-                                    metadata.total_size_bytes = entries.len() as u64 * record.vector.len() as u64 * 4;
-                                    metadata.timestamp = chrono::Utc::now();
-                                    metadata.updated_at = chrono::Utc::now();
+                                    let mut collection = crate::proto::proximadb::Collection::default();
+                                    collection.id = collection_id.to_string();
+                                    collection.config = Some(crate::proto::proximadb::CollectionConfig {
+                                        name: collection_id.to_string(),
+                                        dimension: record.vector.len() as u32,
+                                        distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
+                                        ..Default::default()
+                                    });
+                                    collection.stats = Some(crate::proto::proximadb::CollectionStats {
+                                        vector_count: entries.len() as i64,
+                                        data_size_bytes: (entries.len() * record.vector.len() * 4) as i64,
+                                        ..Default::default()
+                                    });
+                                    collection.created_at = chrono::Utc::now().timestamp_micros();
+                                    collection.updated_at = chrono::Utc::now().timestamp_micros();
                                         
-                                        collections_metadata.push((collection_id.to_string(), metadata));
+                                        collections_metadata.push((collection_id.to_string(), collection));
                                 }
                             }
                         }
@@ -702,9 +712,6 @@ impl StorageEngine {
                     e
                 );
             }
-
-            // TODO: Remove metadata through SharedServices
-            // self.metadata_store.delete_collection(collection_id).await?;
 
             // Remove AXIS indexes for collection
             self.axis_index_manager

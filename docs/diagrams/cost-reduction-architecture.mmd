@@ -3,7 +3,7 @@ graph TB
         T1[Multiple Servers]
         T2[Load Balancers]
         T3[Replication Layer]
-        T4[On-Demand Only]
+        T4[On-Demand Instances]
         T5[Manual Scaling]
     end
 
@@ -11,14 +11,14 @@ graph TB
         P1[Single Container]
         P2[Direct Connection]
         P3[Cloud-Native Storage]
-        P4[70% Spot Instances]
+        P4[Spot Instances]
         P5[Auto-Scaling]
     end
 
     T1 -->|70% Reduction| P1
     T2 -->|Eliminated| P2
     T3 -->|Built-in| P3
-    T4 -->|Spot Ready| P4
+    T4 -->|70% Savings| P4
     T5 -->|Automated| P5
 
     style T1 fill:#ff6b6b

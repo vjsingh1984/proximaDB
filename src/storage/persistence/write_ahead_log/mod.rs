@@ -332,6 +332,9 @@ pub struct WriteAheadLogManager {
     // atomic_sync: Option<Arc<atomic_wal_sync::AtomicWalSync>>,
     /// Strategy type for routing and serialization decisions
     strategy_type: config::WriteBufferStrategyType,
+
+    /// Last time a sync operation was performed (for periodic sync)
+    last_sync_time: Arc<tokio::sync::RwLock<Option<std::time::Instant>>>,
 }
 
 /// Adaptive WriteAheadLogManager Registry with Pool-based Collection Assignment
@@ -984,6 +987,7 @@ impl WriteAheadLogManager {
             // path_resolver: None,
             // atomic_sync: None,
             strategy_type,
+            last_sync_time: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1034,6 +1038,7 @@ impl WriteAheadLogManager {
             // path_resolver: None,
             // atomic_sync: None,
             strategy_type,
+            last_sync_time: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -1184,9 +1189,9 @@ impl WriteAheadLogManager {
 
     /// Delete vector record (delegated to batch strategy)
     pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
-        // Delegate to the batch strategy's delete implementation
-        // TODO: Implement delete via shared_wal_behavior - self.strategy.delete_vector(&collection_id, &vector_id).await
-        Ok(0) // Return 0 for now until implementation is complete
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior.delete_vector(&collection_id, &vector_id).await
     }
 
     // Note: Collection lifecycle operations (create/drop) are handled by CollectionService
@@ -1472,11 +1477,9 @@ impl WriteAheadLogManager {
         
         // Check if we should sync to disk based on sync mode
         if self.should_sync_to_disk(&collection_id).await? {
-            debug!("🔄 PerBatch sync mode - triggering disk persistence for collection: {}", collection_id);
-            if let Err(e) = self.force_sync(Some(&collection_id)).await {
-                tracing::warn!("Failed to sync WAL to disk: {}", e);
-                // Continue - data is in memory, sync failure shouldn't fail the insert
-            }
+            debug!("🔄 Sync mode enabled - triggering disk persistence for collection: {}", collection_id);
+            // Trigger flush by calling flush_all_vectors which will write to disk
+            let _ = wal_behavior.flush_all_vectors().await?;
         }
 
         Ok(sequences)
@@ -2001,8 +2004,22 @@ impl WriteAheadLogManager {
             config::SyncMode::Always => Ok(true),
             config::SyncMode::PerBatch => Ok(true),
             config::SyncMode::Periodic => {
-                // TODO: Implement periodic sync logic
-                Ok(false)
+                let mut last_sync_time = self.last_sync_time.write().await;
+                let now = std::time::Instant::now();
+                let sync_interval = std::time::Duration::from_secs(self.config.performance.sync_interval_seconds);
+
+                if let Some(last_time) = *last_sync_time {
+                    if now.duration_since(last_time) >= sync_interval {
+                        *last_sync_time = Some(now);
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                } else {
+                    // First sync, so trigger it
+                    *last_sync_time = Some(now);
+                    Ok(true)
+                }
             }
             config::SyncMode::Never | config::SyncMode::MemoryOnly => Ok(false),
         }
@@ -2100,19 +2117,18 @@ impl WriteAheadLogManager {
         let recovery_timeout = std::time::Duration::from_secs(30);
         
         let recovery_result = tokio::time::timeout(recovery_timeout, async {
-            info!("📊 WAL_MANAGER: About to call strategy.recover()");
+            info!("📊 WAL_MANAGER: About to call RecoveryManager.recover()");
             
-            // For now, just use the strategy recovery (which now reads from global memtable)
-            // TODO: Re-enable parallel recovery once compilation issues are resolved
-            let recovered_count = {
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let _wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        // WALBehaviorWrapper doesn't have a recover method - recovery is handled externally
-        // Return 0 for now since recovery is handled externally
-        0u64
-    };
+            // Create RecoveryManager instance
+            let recovery_manager = RecoveryManager::new(
+                self.config.clone(),
+                self.shared_wal_behavior.get_or_init(&crate::storage::memtable::core::MemtableConfig::default()).clone(),
+                self.filesystem.clone(),
+            );
+
+            let recovered_count = recovery_manager.recover().await?;
             
-            info!("📊 WAL_MANAGER: Strategy recovery returned: {} entries", recovered_count);
+            info!("📊 WAL_MANAGER: RecoveryManager returned: {} entries", recovered_count);
             Ok::<u64, anyhow::Error>(recovered_count)
         }).await;
         

@@ -34,7 +34,7 @@ use std::io::Read;
 use std::io::prelude::*;
 
 use crate::storage::engines::core::io::zero_copy::traits::{
-    CacheTemperature, QueryContext, QueryType, RequestPriority
+    CacheTemperature, QueryType, RequestPriority
 };
 use tracing::{debug, error, info, warn};
 use futures::stream::{Stream, StreamExt};
@@ -50,7 +50,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{SharedSstFormatReader, SstMmapStrategy, SstRegion};
-use crate::storage::engines::impls::sst::{SstableHeader, IndexEntry, VectorFormat};  // OPTIMIZED: Removed SstRecord import
+use crate::storage::engines::impls::sst::{SstableHeader, IndexEntry};  // OPTIMIZED: Removed SstRecord import
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::bloom::BloomFilterConfig;
@@ -195,9 +195,9 @@ impl ReadStrategy {
     /// Convert ReadStrategy to QueryType for intelligent block filtering
     fn to_query_type(&self) -> QueryType {
         match self {
-            ReadStrategy::CompactionDirect => QueryType::Compaction,
+            ReadStrategy::CompactionDirect => QueryType::FullScan,
             ReadStrategy::FilteredScan(_) => QueryType::MetadataFilter,
-            ReadStrategy::SearchOptimized => QueryType::PointQuery,
+            ReadStrategy::SearchOptimized => QueryType::VectorSearch,
             ReadStrategy::FullScan => QueryType::FullScan,
         }
     }
@@ -428,7 +428,7 @@ impl ModularBlockReader {
         distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
         _adapter: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        use crate::compute::quantization::storage_engine::{SearchStage, StorageQuantizedData};
+        use crate::compute::quantization::storage_engine::StorageQuantizedData;
         
         info!("🔍 Starting progressive search with quantization for {} vectors", k);
         
@@ -1296,7 +1296,7 @@ impl UnifiedSstableReader {
             // Hot path: number comparisons
             (Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)), serde_json::Value::Number(filter_n)) => {
                 // Direct f64 comparison is very fast
-                (*n - filter_n.as_f64()).abs() < f64::EPSILON
+                filter_n.as_f64().map_or(false, |filter_val| (*n - filter_val).abs() < f64::EPSILON)
             }
             // Less common paths
             (Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)), serde_json::Value::Bool(filter_b)) => {
@@ -1372,10 +1372,10 @@ impl UnifiedSstableReader {
                 SstRegion::IndexBlock,      // Always cache index blocks
             ],
             conditional_mmap: vec![
-                (SstRegion::DataBlock, 0.7), // Cache data blocks if memory pressure < 70%
+                (SstRegion::DataBlocks, 0.7), // Cache data blocks if memory pressure < 70%
             ],
             never_mmap: vec![
-                SstRegion::Footer,          // Footers are small, don't need mmap
+                SstRegion::Metadata,        // Metadata is small, don't need mmap
             ],
         };
         
@@ -1413,10 +1413,10 @@ impl UnifiedSstableReader {
                 SstRegion::IndexBlock,      // Always cache index blocks for range queries
             ],
             conditional_mmap: vec![
-                (SstRegion::DataBlock, 0.7), // Cache data blocks based on bandwidth optimizer decisions
+                (SstRegion::DataBlocks, 0.7), // Cache data blocks based on bandwidth optimizer decisions
             ],
             never_mmap: vec![
-                SstRegion::Footer,          // Footers are small, direct read is faster
+                SstRegion::Metadata,        // Metadata is small, direct read is faster
             ],
         };
         
@@ -1680,8 +1680,8 @@ impl UnifiedSstableReader {
                 blocks.extend(fallback);
                 Ok(blocks)
             }
-            SstableReadingStrategy::CompactionOptimized { skip_bloom_filters, skip_indexes, bypass_cache, sequential_io } => {
-                self.compaction_optimized_strategy(context, *skip_bloom_filters, *skip_indexes, *bypass_cache, *sequential_io).await
+            SstableReadingStrategy::CompactionFullRead { skip_bloom_filters, skip_indexes, bypass_write_cache, use_disk_cache_if_exists, sequential_io } => {
+                self.compaction_full_read_strategy(context, *skip_bloom_filters, *skip_indexes, *bypass_write_cache, *use_disk_cache_if_exists, *sequential_io).await
             }
             // 🚀 NEW: Dual strategy support
             SstableReadingStrategy::SelectiveWithCache { use_range_reads, enable_bloom_filters, enable_cache_lookup, enable_metadata_cache } => {
@@ -3268,7 +3268,7 @@ impl UnifiedSstableReader {
                 Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => 
                     serde_json::Number::from_f64(*n)
                         .map(serde_json::Value::Number)
-                        ,
+                        .unwrap_or(serde_json::Value::Null),
                 Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => 
                     serde_json::Value::Bool(*b),
                 None => serde_json::Value::Null,
@@ -3493,9 +3493,8 @@ impl UnifiedSstableReader {
         
         for chunk in records.chunks(block_size) {
             use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-                BlockCompressionConfig, QuantizationStatistics, BlockStatistics
+                BlockCompressionConfig, BlockStatistics
             };
-            use std::collections::HashMap;
             
             blocks.push(FastLanesDataBlock {
                 encoding_marker: 0x00, // Raw/Uncompressed
@@ -3538,9 +3537,7 @@ impl UnifiedSstableReader {
     
     fn is_hot_data(&self, data_block: &FastLanesDataBlock) -> bool {
         // Simple heuristic: blocks with many non-tombstone records are hot
-        let active_records = data_block.records.iter()
-            .filter(|r| !r/* REMOVED: is_tombstone field no longer exists */)
-            .count();
+        let active_records = data_block.records.len();
         active_records > data_block.records.len() / 2
     }
 }
@@ -3587,10 +3584,11 @@ impl ReadingStrategySelector {
         &self,
         _context: &CollectionContext,
     ) -> SstableReadingStrategy {
-        SstableReadingStrategy::CompactionOptimized {
+        SstableReadingStrategy::CompactionFullRead {
             skip_bloom_filters: true,   // No point lookups in compaction
             skip_indexes: true,         // Reading everything anyway
-            bypass_cache: true,         // Avoid memory pressure
+            bypass_write_cache: true,   // Avoid memory pressure
+            use_disk_cache_if_exists: false,  // Don't pollute cache during compaction
             sequential_io: true,        // Optimize for disk throughput
         }
     }

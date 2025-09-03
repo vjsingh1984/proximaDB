@@ -294,12 +294,14 @@ impl NovaEngine {
     /// Columnar I/O optimization with parallel column reads (delegates to universal optimizer)
     async fn parallel_column_read(&self, file_path: &str, column_indices: &[usize]) -> Result<Vec<Vec<u8>>> {
         // Use universal optimizer for parallel operations
+        let optimizer = &self.universal_optimizer;
         let read_operations: Vec<_> = column_indices.iter()
             .map(|&column_idx| {
                 let file_path = file_path.to_string();
+                let optimizer_clone = optimizer.clone();
                 async move {
                     // Simulate column-specific read (in production, use actual column reader)
-                    self.universal_optimizer.read_data_optimized(&format!("{}:col:{}", file_path, column_idx)).await
+                    optimizer_clone.read_data_optimized(&format!("{}:col:{}", file_path, column_idx)).await
                 }
             }).collect();
         
@@ -511,11 +513,11 @@ impl UnifiedStorageEngine for NovaEngine {
         Ok(FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: params.vector_records.len() as u64,
-            bytes_written: params.estimated_size as u64,
-            files_created: 1,
+            entries_flushed: Some(params.vector_records.len() as u64),
+            bytes_written: Some(params.estimated_size as u64),
+            files_created: Some(1),
             flushed_batch_ids: vec![], // Initialize empty batch IDs
-            duration_ms,
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
@@ -537,13 +539,13 @@ impl UnifiedStorageEngine for NovaEngine {
             return Ok(CompactionResult {
                 success: true,
                 collections_affected: vec![collection_id.to_string()],
-                entries_processed: 0,
-                entries_removed: 0,
-                bytes_read: 0,
-                bytes_written: 0,
-                input_files: files.len() as u64,
-                output_files: files.len() as u64,
-                duration_ms,
+                entries_processed: Some(0),
+                entries_removed: Some(0),
+                bytes_read: Some(0),
+                bytes_written: Some(0),
+                input_files: Some(files.len() as u64),
+                output_files: Some(files.len() as u64),
+                duration_ms: Some(duration_ms),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
             });
@@ -561,13 +563,13 @@ impl UnifiedStorageEngine for NovaEngine {
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_processed: 0, // TODO: Count actual entries
-            entries_removed: 0,
-            bytes_read: params.estimated_input_size as u64,
-            bytes_written: (params.estimated_input_size * 70 / 100) as u64, // 30% reduction with columnar
-            input_files: input_count,
-            output_files: output_count,
-            duration_ms,
+            entries_processed: Some(0), // TODO: Count actual entries
+            entries_removed: Some(0),
+            bytes_read: Some(params.estimated_input_size as u64),
+            bytes_written: Some((params.estimated_input_size * 70 / 100) as u64), // 30% reduction with columnar
+            input_files: Some(input_count),
+            output_files: Some(output_count),
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
         })
@@ -895,7 +897,7 @@ impl NovaEngine {
     
     async fn get_axis_manager(&self) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
         // Create AXIS manager with default config
-        let config = crate::index::axis::management::manager::AxisConfig::default();
+        let config = crate::index::axis::types::AxisConfig::default();
         Ok(Arc::new(crate::index::axis::management::manager::AxisManager::new(config).await?))
     }
     

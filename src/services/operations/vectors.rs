@@ -92,6 +92,9 @@ pub struct VectorOperationsService {
     
     /// Query result cache - unified for all query sources (SQL, REST API, gRPC)
     query_cache: Arc<QueryCache>,
+
+    /// AXIS index manager for index lookups
+    axis_index_manager: Arc<crate::index::AxisManager>,
 }
 
 impl VectorOperationsService {
@@ -99,6 +102,7 @@ impl VectorOperationsService {
     pub fn new(
         storage_engine: Arc<SstStorage>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
+        axis_index_manager: Arc<crate::index::AxisManager>,
     ) -> Self {
         info!("🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer and two-stage search");
         info!("   ✅ Eliminated ~650 lines of duplicate optimization code");
@@ -117,6 +121,7 @@ impl VectorOperationsService {
             query_optimizer: Arc::new(UnifiedQueryOptimizer::new(optimizer_config)),
             collection_cache: Arc::new(dashmap::DashMap::new()),
             query_cache,
+            axis_index_manager,
         }
     }
     
@@ -643,11 +648,50 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
-        method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        input: Option<&Vec<crate::core::search::InternalSearchResult>>,
+        _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
+        _input: Option<&Vec<crate::core::search::InternalSearchResult>>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        // Implementation
-        Ok(vec![])
+        debug!("🔍 Executing metadata filter for collection {}", collection_id);
+
+        let collection = self.get_or_load_collection(collection_id).await?;
+
+        // Convert FilterCondition to FilterExpression
+        let filter_expression = crate::core::search::FilterExpression::And(conditions);
+
+        // Create a dummy search_params for filtering only
+        let search_params = crate::core::search::SearchParams {
+            query_vectors: None, // No query vector needed for pure filtering
+            vector: None,
+            top_k: Some(0), // We only want filtered results, not search results
+            distance_metric: None,
+            filter_expression: Some(filter_expression),
+            filters: None,
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: None,
+            enable_two_stage: None,
+            custom_hints: None,
+            enable_clustering_hint: None,
+            enable_metadata_filtering_hint: None,
+            quantization_hint: None,
+            runtime_hints: None,
+            requires_ordering: None,
+            enable_progressive_search: None,
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: None,
+        };
+
+        let search_context = crate::storage::traits::StorageQueryContext::new(
+            Arc::new(search_params),
+            collection.clone(),
+        );
+
+        // Call the storage engine to perform filtering
+        let results = self.storage_engine.search_vectors_unified(&search_context).await?;
+
+        debug!("✅ Metadata filter returned {} results", results.len());
+        Ok(results)
     }
     
     async fn execute_search(
@@ -658,8 +702,44 @@ impl VectorOperationsService {
         candidates: usize,
         input: Option<&Vec<crate::core::search::InternalSearchResult>>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        // Implementation
-        Ok(vec![])
+        debug!("🎯 Executing vector search for collection {} with method {:?}", collection_id, method);
+
+        let collection = self.get_or_load_collection(collection_id).await?;
+
+        // Create search parameters
+        let search_params = crate::core::search::SearchParams {
+            query_vectors: None, // Query vector will be passed in execute_unified_plan
+            vector: None,
+            top_k: Some(candidates), // Use candidates as top_k for this stage
+            distance_metric: None,
+            filter_expression: None,
+            filters: None,
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: None,
+            enable_two_stage: None,
+            custom_hints: None,
+            enable_clustering_hint: None,
+            enable_metadata_filtering_hint: None,
+            quantization_hint: quantization.map(|q| q.to_string()),
+            runtime_hints: None,
+            requires_ordering: Some(true),
+            enable_progressive_search: None,
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: Some(method.to_string()),
+        };
+
+        let search_context = crate::storage::traits::StorageQueryContext::new(
+            Arc::new(search_params),
+            collection.clone(),
+        );
+
+        // Call the storage engine to perform search
+        let results = self.storage_engine.search_vectors_unified(&search_context).await?;
+
+        debug!("✅ Vector search returned {} results", results.len());
+        Ok(results)
     }
     
     async fn execute_index_lookup(
@@ -668,8 +748,40 @@ impl VectorOperationsService {
         index_type: crate::query::unified_query_optimizer::Index,
         params: crate::query::unified_query_optimizer::IndexLookupParams,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        // Implementation
-        Ok(vec![])
+        debug!("📚 Executing index lookup for collection {} with index type {:?}", collection_id, index_type);
+
+        // Convert IndexLookupParams to SearchParams
+        let search_params = crate::core::search::SearchParams {
+            query_vectors: params.query_vector.map(|v| vec![v]),
+            vector: None,
+            top_k: Some(params.top_k),
+            distance_metric: None,
+            filter_expression: params.filter,
+            filters: None,
+            accuracy_threshold: None,
+            include_expired: Some(false),
+            timeout_ms: None,
+            enable_two_stage: None,
+            custom_hints: None,
+            enable_clustering_hint: None,
+            enable_metadata_filtering_hint: None,
+            quantization_hint: None,
+            runtime_hints: None,
+            requires_ordering: None,
+            enable_progressive_search: None,
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
+        };
+
+        // Perform index lookup using axis_index_manager
+        let results = self.axis_index_manager.search(
+            collection_id,
+            search_params,
+        ).await?;
+
+        debug!("✅ Index lookup returned {} results", results.len());
+        Ok(results)
     }
     
     async fn apply_bloom_filter(
@@ -678,8 +790,17 @@ impl VectorOperationsService {
         filter_type: crate::query::unified_query_optimizer::BloomFilter,
         input: Option<&Vec<crate::core::search::InternalSearchResult>>,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        // Implementation
-        Ok(vec![])
+        debug!("🌸 Applying bloom filter {:?} for collection {}", filter_type, collection_id);
+
+        // For now, just return the input as is. Actual bloom filter application
+        // would involve checking each InternalSearchResult against the bloom filter
+        // based on the filter_type and metadata within the InternalSearchResult.
+        // This is a placeholder for future, more sophisticated bloom filter integration.
+        if let Some(results) = input {
+            Ok(results.clone())
+        } else {
+            Ok(Vec::new())
+        }
     }
     
     // Additional service methods

@@ -208,7 +208,7 @@ impl OptimizedNovaOperations {
                         expires_at: None,
                         version: None,
                         source: None,
-                    }, *dist));
+                    }, dist.rank_value));
                 }
             }
         }

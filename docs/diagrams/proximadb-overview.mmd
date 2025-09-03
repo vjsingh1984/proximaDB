@@ -1,13 +1,21 @@
 %%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
 graph TD
-    App["YOUR APPLICATION<br/>Python / REST / gRPC / SQL"] --> Server["PROXIMADB SERVER<br/>• 17K vectors/sec insert<br/>• 0.9ms search latency<br/>• 50-80% compression<br/>• Auto GPU/SIMD acceleration"]
+    App["YOUR APPLICATION<br/>Python / REST / gRPC / SQL"] --> Server["PROXIMADB SERVER<br/>• High-performance vector database<br/>• Sub-millisecond search latency<br/>• 50-80% compression<br/>• Auto GPU/SIMD acceleration"]
     
     Server --> Engines[STORAGE ENGINES]
     
     Engines --> SST[SST<br/>Real-time<br/>Row-based]
     Engines --> VIPER[VIPER<br/>Analytics<br/>Columnar]
+    Engines --> NOVA[NOVA<br/>Hybrid<br/>Adaptive]
+    Engines --> SWIFT[SWIFT<br/>High Throughput<br/>Streaming]
+    Engines --> PRISM[PRISM<br/>Memory-Optimized<br/>LSM-tree]
+    Engines --> RAPTOR[RAPTOR<br/>Adaptive<br/>Hardware-aware]
     
     style App fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     style Server fill:#fff3e0,stroke:#ef6c00,stroke-width:3px
     style SST fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style VIPER fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style NOVA fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style SWIFT fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    style PRISM fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style RAPTOR fill:#fce4ec,stroke:#c2185b,stroke-width:2px

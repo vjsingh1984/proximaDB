@@ -68,6 +68,9 @@ pub struct PerformanceConfig {
     /// Sync mode for disk writes
     pub sync_mode: SyncMode,
 
+    /// Sync interval for periodic sync mode (seconds)
+    pub sync_interval_seconds: u64,
+
     /// Shrink factor for global threshold management (percentage)
     /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
     pub global_shrink_factor: f64,
@@ -98,6 +101,7 @@ impl Default for PerformanceConfig {
             mvcc_cleanup_interval_secs: 3600, // Clean up old versions every hour
             ttl_cleanup_interval_secs: 300, // Check TTL every 5 minutes
             sync_mode: SyncMode::PerBatch, // Balance safety and bulk insert performance
+            sync_interval_seconds: 60, // Default to 60 seconds for periodic sync
             global_shrink_factor: 0.4, // 40% shrink factor - recommended for global threshold management
             cloud_backup: None, // Cloud backup disabled by default
             enable_optimized_write_buffer_writer: Some(false), // Disabled by default for gradual rollout

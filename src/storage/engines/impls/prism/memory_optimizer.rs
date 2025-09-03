@@ -2,7 +2,9 @@
 // Maximizes in-memory caching and minimizes I/O for read-heavy workloads
 
 use std::collections::HashMap;
-use crate::storage::persistence::filesystem::FileSystem;use std::sync::Arc;
+use std::num::NonZeroUsize;
+use crate::storage::persistence::filesystem::FileSystem;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
@@ -174,7 +176,9 @@ impl MemoryOptimizedStorage {
             int8_vectors: Arc::new(RwLock::new(HashMap::new())),
             pq_codes: Arc::new(RwLock::new(HashMap::new())),
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
-            fp32_cache: Arc::new(RwLock::new(LruCache::new(fp32_capacity))),
+            fp32_cache: Arc::new(RwLock::new(LruCache::new(
+                NonZeroUsize::new(fp32_capacity).unwrap_or(NonZeroUsize::new(100).unwrap())
+            ))),
             filesystem,
             access_stats: Arc::new(AccessStatistics::new()),
             prefetch_queue: Arc::new(RwLock::new(Vec::new())),
@@ -230,15 +234,18 @@ impl MemoryOptimizedStorage {
         }
         
         // Fetch from cloud L0 file
-        let vector = self.fetch_fp32_from_cloud(id).await?;
-        
-        if let Some(ref vec) = vector {
-            // Add to cache
-            let mut cache = self.fp32_cache.write().await;
-            cache.put(id.to_string(), (vec.clone(), Instant::now()));
+        match self.fetch_fp32_from_cloud(id).await {
+            Ok(vector) => {
+                // Add to cache
+                let mut cache = self.fp32_cache.write().await;
+                cache.put(id.to_string(), (vector.clone(), Instant::now()));
+                Ok(Some(vector))
+            }
+            Err(_) => {
+                // Cloud fetch failed, return None
+                Ok(None)
+            }
         }
-        
-        Ok(vector)
     }
     
     /// Batch get with prefetching
@@ -248,7 +255,7 @@ impl MemoryOptimizedStorage {
         
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            results.push(self.vector(id).await?);
+            results.push(self.fp32_vector(id).await?);
         }
         
         Ok(results)
@@ -315,7 +322,7 @@ impl MemoryOptimizedStorage {
             self.evict_cold_entries().await?;
         }
         
-        l1.put(id.to_string(), vector);
+        l1.put(id.to_string(), (vector, Instant::now()));
         Ok(())
     }
     
@@ -329,9 +336,11 @@ impl MemoryOptimizedStorage {
             let mut prefetch_queue = self.prefetch_queue.write().await;
             
             // Simple sequential prefetch (would be more sophisticated in practice)
-            for i in 0..self.config.prefetch_ahead_count {
-                let next_id = format!("{}_next_{}", current_ids.last(), i);
-                prefetch_queue.push(next_id);
+            if let Some(last_id) = current_ids.last() {
+                for i in 0..self.config.prefetch_ahead_count {
+                    let next_id = format!("{}_next_{}", last_id, i);
+                    prefetch_queue.push(next_id);
+                }
             }
             
             // Note: Can't spawn async task from &self reference
@@ -558,14 +567,14 @@ impl PrismMemoryOptimizer {
         // Load binary sketches into L2 (smallest, most frequently accessed)
         let binary_path = format!("{}/binary_sketches.bin", collection_id);
         if self.filesystem.exists(&binary_path).await.unwrap_or(false) {
-            self.storage.mmap_file(&binary_path, MemoryTier::L2Binary, &self.filesystem).await?;
+            self.storage.mmap_file(&binary_path, MemoryTier::L2Binary, &(self.filesystem.clone() as Arc<dyn FileSystem>)).await?;
             debug!("Loaded binary sketches into L2 memory-mapped cache");
         }
         
         // Load frequently accessed quantized vectors
         let quantized_path = format!("{}/quantized_vectors.pq", collection_id);
         if self.filesystem.exists(&quantized_path).await.unwrap_or(false) {
-            self.storage.mmap_file(&quantized_path, MemoryTier::L2Quantized, &self.filesystem).await?;
+            self.storage.mmap_file(&quantized_path, MemoryTier::L2Quantized, &(self.filesystem.clone() as Arc<dyn FileSystem>)).await?;
             debug!("Loaded quantized vectors into L2 memory-mapped cache");
         }
         

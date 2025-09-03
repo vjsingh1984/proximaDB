@@ -126,17 +126,17 @@ impl FilestoreCheckpoint {
         let fs = self.filesystem.get_filesystem(&self.filestore_url)?;
 
         // Step 1: Load current snapshot
-        let mut memtable = self.load_current_snapshot(fs).await?;
+        let mut memtable = self.load_current_snapshot(fs.as_ref()).await?;
         let initial_count = memtable.len();
 
         // Step 2: Apply incremental operations
-        let (ops_count, ops_size) = self.apply_incremental_operations(fs, &mut memtable).await?;
+        let (ops_count, ops_size) = self.apply_incremental_operations(fs.as_ref(), &mut memtable).await?;
 
         // Step 3: Create new snapshot
-        self.create_new_snapshot(fs, &memtable).await?;
+        self.create_new_snapshot(fs.as_ref(), &memtable).await?;
 
         // Step 4: Archive old files
-        let archive_path = self.archive_current_state(fs).await?;
+        let archive_path = self.archive_current_state(fs.as_ref()).await?;
 
         // Step 5: Clean up old archives
         self.cleanup_old_archives(fs).await?;

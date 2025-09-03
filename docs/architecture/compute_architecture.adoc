@@ -1,0 +1,10 @@
+= Compute Architecture
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+The compute layer is responsible for all vector computations, including distance calculations and quantization.
+
+- *UnifiedDistanceCompute*: A unified engine for distance calculations. It supports a wide range of distance metrics and uses hardware acceleration (SIMD and GPU) to speed up computations.
+- *UnifiedQuantizationEngine*: A unified engine for vector quantization. It supports various quantization techniques, such as Product Quantization (PQ) and scalar quantization, to reduce the memory footprint and accelerate queries.
+- *Hardware Acceleration*: The compute layer is designed to take advantage of modern hardware. It automatically detects and uses SIMD instructions (AVX2, AVX-512, NEON) and can offload computations to GPUs (CUDA, ROCm, Metal).

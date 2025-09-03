@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use super::{
     write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog},
-    CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
+    MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
 use crate::storage::strategy::CollectionStrategyConfig;
@@ -663,26 +663,21 @@ impl MetadataStoreInterface for MetadataStore {
         Ok(true)
     }
 
-    async fn get_storage_stats(&self) -> Result<MetadataStorageStats> {
+    async fn get_stats(&self) -> Result<MetadataStorageStats> {
         if let Some(atomic_store) = &self.transaction_coordinator {
-            atomic_store.get_storage_stats().await
+            atomic_store.get_stats().await
         } else {
+            // Fallback for direct WAL access (e.g., during recovery)
             let wal_stats = self.write_buffer_manager.stats().await?;
-
             Ok(MetadataStorageStats {
                 total_collections: wal_stats.total_collections,
-                total_metadata_size_bytes: 0, // TODO: Calculate
-                cache_hit_rate: if wal_stats.cache_hits + wal_stats.cache_misses > 0 {
-                    wal_stats.cache_hits as f64
-                        / (wal_stats.cache_hits + wal_stats.cache_misses) as f64
-                } else {
-                    0.0
-                },
-                avg_operation_latency_ms: 0.0,
-                storage_backend: "metadata-write-buffer-btree".to_string(),
+                total_metadata_size_bytes: 0, // Not directly available from WAL stats
+                cache_hit_rate: 0.0,        // Not directly available from WAL stats
+                avg_operation_latency_ms: 0.0, // Not directly available from WAL stats
+                storage_backend: "wal-only".to_string(),
                 last_backup_time: None,
                 wal_entries: wal_stats.write_buffer_writes,
-                wal_size_bytes: 0,
+                wal_size_bytes: 0, // Not directly available from WAL stats
             })
         }
     }

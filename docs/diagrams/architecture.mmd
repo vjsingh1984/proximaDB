@@ -3,46 +3,48 @@
 ## System Architecture
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        REST[REST Clients]
-        GRPC[gRPC Clients]
-        SDK[Python/Go/Java SDKs]
-    end
+    Client[Client Applications]
     
-    subgraph "API Gateway"
-        RESTAPI[REST API :5678]
-        GRPCAPI[gRPC API :5679]
-        AUTH[Auth Middleware]
+    subgraph "API Layer"
+        REST[REST API :5678]
+        GRPC[gRPC API :5679]
     end
     
     subgraph "Service Layer"
-        VS[VectorOperationsService]
-        CS[CollectionService]
-        ES[EventLogService]
+        UnifiedHandlers[Unified Handlers]
+        VectorOperationsService[VectorOperationsService]
+        CollectionService[CollectionService]
+    end
+    
+    subgraph "Compute Layer"
+        UnifiedDistanceCompute[UnifiedDistanceCompute]
+        UnifiedQuantizationEngine[UnifiedQuantizationEngine]
+        HardwareAcceleration[Hardware Acceleration (SIMD/GPU)]
     end
     
     subgraph "Storage Layer"
-        MT[MemTable]
-        subgraph "Storage Engines"
-            SST[SST Engine]
-            VIPER[VIPER Engine]
-            NOVA[NOVA Engine]
-        end
-    end
-    
-    subgraph "Persistence"
+        StorageEngine[StorageEngine]
+        MemTable[MemTable]
+        SST[SST Engine]
+        VIPER[VIPER Engine]
         WAL[Write-Ahead Log]
-        META[Metadata Store]
-        FS[Filesystem/S3/Azure]
+        MetadataStore[Metadata Store]
     end
     
-    REST & GRPC & SDK --> RESTAPI & GRPCAPI
-    RESTAPI & GRPCAPI --> AUTH
-    AUTH --> VS & CS & ES
-    VS & CS --> MT
-    MT --> SST & VIPER & NOVA
-    SST & VIPER & NOVA --> WAL & META
-    WAL & META --> FS
+    Client --> REST & GRPC
+    REST & GRPC --> UnifiedHandlers
+    UnifiedHandlers --> VectorOperationsService
+    UnifiedHandlers --> CollectionService
+    VectorOperationsService --> StorageEngine
+    VectorOperationsService --> UnifiedDistanceCompute
+    VectorOperationsService --> UnifiedQuantizationEngine
+    CollectionService --> MetadataStore
+    StorageEngine --> MemTable
+    StorageEngine --> SST
+    StorageEngine --> VIPER
+    StorageEngine --> WAL
+    UnifiedDistanceCompute --> HardwareAcceleration
+    UnifiedQuantizationEngine --> HardwareAcceleration
 ```
 
 ## Write Path Flow

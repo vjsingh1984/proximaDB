@@ -1,0 +1,22 @@
+= Data Flow
+:toc: left
+:toclevels: 2
+:imagesdir: ../diagrams/images
+
+== Write Path
+. A client sends a vector to the API layer (REST or gRPC).
+. The request is validated by the `UnifiedHandlers` and passed to the `VectorOperationsService`.
+. The `VectorOperationsService` writes the vector to the Write-Ahead Log (WAL) for durability.
+. The vector is then written to the `MemTable`.
+. In the background, the `MemTable` is flushed to a new SST file.
+. The `StorageEngine` periodically runs a compaction process to merge SST files and optimize the storage layout.
+
+== Read Path
+. A client sends a search request to the API layer.
+. The `UnifiedHandlers` pass the request to the `VectorOperationsService`.
+. The `VectorOperationsService` uses the `UnifiedDistanceCompute` and `UnifiedQuantizationEngine` to perform the search.
+. The search is performed in multiple stages:
+.. The query is first compared against the data in the `MemTable`.
+.. Then, the SST files are searched using the three-stage filtering pipeline (bloom filter, quantized search, full precision).
+.. The results from the `MemTable` and the SST files are merged.
+. The top-K results are returned to the client.

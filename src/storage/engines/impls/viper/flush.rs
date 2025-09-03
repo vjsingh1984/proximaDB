@@ -104,7 +104,9 @@ impl Flush {
         
         // Initialize quantization engine
         let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
-        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new());
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            crate::proto::proximadb::DistanceMetric::Cosine
+        ));
         let quantization_engine = Some(Arc::new(
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
                 distance_compute,

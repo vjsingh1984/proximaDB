@@ -1424,16 +1424,16 @@ pub struct FlushResult {
     pub collections_affected: Vec<String>,
 
     /// Number of entries flushed
-    pub entries_flushed: u64,
+    pub entries_flushed: Option<u64>,
 
     /// Bytes written to storage
-    pub bytes_written: u64,
+    pub bytes_written: Option<u64>,
 
     /// Number of files/segments created
-    pub files_created: u64,
+    pub files_created: Option<u64>,
 
     /// Duration of the operation
-    pub duration_ms: u64,
+    pub duration_ms: Option<u64>,
 
     /// Timestamp when operation completed
     pub completed_at: DateTime<Utc>,
@@ -1463,25 +1463,25 @@ pub struct CompactionResult {
     pub collections_affected: Vec<String>,
 
     /// Number of entries processed
-    pub entries_processed: u64,
+    pub entries_processed: Option<u64>,
 
     /// Number of entries removed (tombstones, duplicates, etc.)
-    pub entries_removed: u64,
+    pub entries_removed: Option<u64>,
 
     /// Bytes read during compaction
-    pub bytes_read: u64,
+    pub bytes_read: Option<u64>,
 
     /// Bytes written during compaction
-    pub bytes_written: u64,
+    pub bytes_written: Option<u64>,
 
     /// Input files/segments processed
-    pub input_files: u64,
+    pub input_files: Option<u64>,
 
     /// Output files/segments created
-    pub output_files: u64,
+    pub output_files: Option<u64>,
 
     /// Duration of the operation
-    pub duration_ms: u64,
+    pub duration_ms: Option<u64>,
 
     /// Timestamp when operation completed
     pub completed_at: DateTime<Utc>,
@@ -1624,10 +1624,10 @@ impl Default for FlushResult {
         Self {
             success: false,
             collections_affected: Vec::new(),
-            entries_flushed: u64::MAX, // -1 equivalent for u64 (indicates uninitialized)
-            bytes_written: u64::MAX,   // -1 equivalent for u64 (indicates uninitialized)
-            files_created: u64::MAX,   // -1 equivalent for u64 (indicates uninitialized)
-            duration_ms: u64::MAX,     // -1 equivalent for u64 (indicates uninitialized)
+            entries_flushed: None,
+            bytes_written: None,
+            files_created: None,
+            duration_ms: None,
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
@@ -1641,13 +1641,13 @@ impl Default for CompactionResult {
         Self {
             success: false,
             collections_affected: Vec::new(),
-            entries_processed: u64::MAX, // -1 equivalent for u64 (indicates uninitialized)
-            entries_removed: u64::MAX,   // -1 equivalent for u64 (indicates uninitialized)
-            bytes_read: u64::MAX,        // -1 equivalent for u64 (indicates uninitialized)
-            bytes_written: u64::MAX,     // -1 equivalent for u64 (indicates uninitialized)
-            input_files: u64::MAX,       // -1 equivalent for u64 (indicates uninitialized)
-            output_files: u64::MAX,      // -1 equivalent for u64 (indicates uninitialized)
-            duration_ms: u64::MAX,       // -1 equivalent for u64 (indicates uninitialized)
+            entries_processed: None,
+            entries_removed: None,
+            bytes_read: None,
+            bytes_written: None,
+            input_files: None,
+            output_files: None,
+            duration_ms: None,
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         }

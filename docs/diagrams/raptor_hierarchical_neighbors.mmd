@@ -2,24 +2,24 @@
 flowchart TD
     %% RAPTOR Hierarchical Neighbor Strategy - Optimal Formula Implementation
     
-    A[Collection Size k] --> B{k ≤ 25?}
+    A[Collection Size (k)] --> B{k <= 25?}
     B -->|Yes| C[Ultra-small Strategy]
-    C --> C1["neighbors = k-1<br/>type = Direct<br/>Example: k=15 → 14 neighbors"]
+    C --> C1["neighbors = k-1<br/>type = Direct"]
     
-    B -->|No| D{k ≤ 100?}
+    B -->|No| D{k <= 100?}
     D -->|Yes| E[Small Strategy]
-    E --> E1["neighbors = min(8, k-1)<br/>type = Direct<br/>Example: k=50 → 8 neighbors"]
+    E --> E1["neighbors = min(8, k-1)<br/>type = Direct"]
     
-    D -->|No| F{k ≤ 1000?}
+    D -->|No| F{k <= 1000?}
     F -->|Yes| G[Medium Strategy]
-    G --> G1["intra = ⌈0.8×√k⌉<br/>inter = 0<br/>Example: k=250 → 13 intra"]
+    G --> G1["intra = ⌈0.8×√k⌉<br/>inter = 0"]
     
-    F -->|No| H{k ≤ 5000?}
+    F -->|No| H{k <= 5000?}
     H -->|Yes| I[Large Strategy]
-    I --> I1["intra = ⌈0.5×√k⌉<br/>inter = 6<br/>Example: k=1000 → 16+6=22 total"]
+    I --> I1["intra = ⌈0.5×√k⌉<br/>inter = 6"]
     
     H -->|No| J[XLarge Strategy]
-    J --> J1["intra = ⌈2×ln(k)⌉<br/>inter = ⌈0.8×ln(k)⌉<br/>Example: k=10000 → 19+8=27 total"]
+    J --> J1["intra = ⌈2×ln(k)⌉<br/>inter = ⌈0.8×ln(k)⌉"]
     
     %% Performance characteristics
     C1 --> PC[Performance: <5μs<br/>Memory: <5KB<br/>Quality: Maximum]
@@ -35,7 +35,7 @@ flowchart TD
     PI --> M
     PJ --> M
     
-    M --> M1["RowGroupNeighbor:<br/>rowgroup_id: u16 (2 bytes)<br/>neighbor_cluster_id: u16 (2 bytes)<br/>neighbor_type: u8 (1 byte)<br/>Total: 8 bytes (with padding)<br/>33% savings vs u32"]
+    M --> M1["RowGroupNeighbor:<br/>rowgroup_id: u16<br/>neighbor_cluster_id: u16<br/>neighbor_type: u8"]
     
     %% Storage strategy
     M1 --> S[Storage Strategy]

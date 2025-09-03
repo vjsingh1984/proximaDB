@@ -4,7 +4,7 @@ graph TD
     
     Pipeline --> WAL[1. Write to WAL<br/>Durability guarantee]
     WAL --> Memtable[2. Add to Memtable<br/>Fast in-memory access]
-    Memtable --> Index[3. Build Index<br/>HNSW/IVF/PQ structures]
+    Memtable --> Index[3. Asynchronous Indexing<br/>HNSW/IVF/PQ structures]
     Index --> Storage[4. Flush to Storage<br/>SST or VIPER engine]
     
     Storage --> Search[SEARCH REQUEST<br/>Query vector<br/>Metadata filters<br/>Top-K: 10]

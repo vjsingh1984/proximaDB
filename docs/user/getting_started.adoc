@@ -14,8 +14,11 @@ image::technical-architecture-abstract.svg[ProximaDB Architecture, width=900]
 | Component | Minimum | Recommended
 
 | Docker | 20.10+ | Latest stable
+
 | Memory | 4GB | 16GB+
+
 | Storage | 10GB | NVMe SSD
+
 | Ports | 5678, 5679 | Available
 |===
 
@@ -77,7 +80,7 @@ collection = client.create_collection(
 vectors = [
     {
         "id": "vec_001",
-        "vector": [0.1, 0.2, ...],  # 384 dimensions
+        "vector": [0.1, 0.2, ...],
         "metadata": {"category": "A", "score": 0.95}
     }
 ]
@@ -111,10 +114,10 @@ print(f"Found {len(results)} matches")
 
 == Performance Tips
 
-1. **Use gRPC** for 3x better performance
-2. **Batch inserts** with 100-500 vectors
-3. **Enable compression** for 50-80% storage savings
-4. **Choose right engine** based on workload
+. Use gRPC for 3x better performance
+. Batch inserts with 100-500 vectors
+. Enable compression for 50-80% storage savings
+. Choose right engine based on workload
 
 == Next Steps
 
@@ -124,4 +127,4 @@ print(f"Found {len(results)} matches")
 * link:../admin/configuration_reference.adoc[Configuration] - Production setup
 
 ---
-**Version 0.1.4** | Last Updated: 2025-01
+**Version 0.1.4** | Last Updated: 2025-01-15

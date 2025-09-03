@@ -1,0 +1,13 @@
+= ProximaDB Documentation
+
+Welcome to the ProximaDB documentation! This guide provides comprehensive information about ProximaDB, a high-performance vector database.
+
+This documentation is organized into several key sections to help you find the information you need quickly and efficiently:
+
+*   link:architecture/index.adoc[**Architecture Overview**]: Understand the core design principles, system components, and data flow within ProximaDB.
+*   link:user/index.adoc[**User Guide**]: Learn how to get started with ProximaDB, perform common tasks, and build your first applications.
+*   link:developer/index.adoc[**Developer Guide**]: Dive into the technical details, contribution guidelines, and advanced development topics.
+*   link:admin/index.adoc[**Administrator Guide**]: Find information on configuring, deploying, monitoring, and operating ProximaDB in production environments.
+*   link:business/index.adoc[**Business Overview**]: Explore the business value, competitive advantages, and real-world use cases of ProximaDB.
+
+We aim to provide clear, concise, and accurate information to help you leverage ProximaDB effectively.

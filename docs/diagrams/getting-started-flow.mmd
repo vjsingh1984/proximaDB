@@ -1,7 +1,7 @@
 %%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
 graph TD
     Start([Start Here]) --> Server[1. Start ProximaDB Server<br/>docker run -d proximadb/proximadb]
-    Server --> SDK[2. Install Client SDK<br/>pip install proximadb]
+    Server --> SDK[2. Install Client SDK (Python)<br/>pip install proximadb]
     SDK --> Collection[3. Create Collection<br/>• Choose dimension<br/>• Select metric<br/>• Pick engine]
     Collection --> Insert[4. Insert Vectors<br/>• Batch for performance<br/>• Include metadata]
     Insert --> Search[5. Search & Retrieve<br/>• Query with vector<br/>• Apply filters<br/>• Get top-K results]

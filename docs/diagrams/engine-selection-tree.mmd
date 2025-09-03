@@ -1,24 +1,18 @@
 %%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
 graph TD
-    Start[What's Your Primary Requirement?] --> Priority{Priority?}
+    Start[What's Your Primary Workload?] --> Workload{Workload Type?}
     
-    Priority -->|Production Stability| Stable{Workload Type?}
-    Priority -->|Ultra-Low Latency| Latency{Memory Constraints?}
-    Priority -->|Maximum Compression| Compression{Analytics Complexity?}
-    Priority -->|Fast ID Lookups| Navigation[SWIFT ENGINE<br/>🚧 Beta<br/>✓ B+ tree navigation<br/>✓ O log n lookups<br/>✓ 12K write/sec, 0.7ms search<br/>✓ Progressive search]
-    
-    Stable -->|General Purpose| SST[SST ENGINE<br/>✅ Production<br/>✓ Row-based LSM-tree<br/>✓ 17K write/sec, 0.9ms search<br/>✓ 40-50% compression<br/>✓ Proven reliability]
-    Stable -->|Analytics/Batch| VIPER[VIPER ENGINE<br/>✅ Production<br/>✓ Columnar Parquet<br/>✓ 5K write/sec, 2-3ms search<br/>✓ 70-80% compression<br/>✓ Analytics optimized]
-    
-    Latency -->|Memory Critical| PRISM[PRISM ENGINE<br/>🚧 Beta<br/>✓ 75-96% memory savings<br/>✓ 20K write/sec, 0.3ms search<br/>✓ Hierarchical caching<br/>✓ Zero-overhead storage]
-    Latency -->|Balanced| SST
-    
-    Compression -->|Research/Advanced| NOVA[NOVA ENGINE<br/>🔬 Alpha<br/>✓ 80-90% compression<br/>✓ 4K write/sec, 1-2ms search<br/>✓ Hierarchical statistics<br/>✓ Streaming analytics]
-    Compression -->|Production Ready| VIPER
+    Workload -->|Write-Heavy / Real-time| SST[SST ENGINE<br/>✅ Production<br/>• Row-based LSM-tree<br/>• Fast writes, low latency reads<br/>• 40-50% compression]
+    Workload -->|Read-Heavy / Analytics| VIPER[VIPER ENGINE<br/>✅ Production<br/>• Columnar Parquet<br/>• High compression, fast analytics<br/>• 70-80% compression]
+    Workload -->|Mixed / Hybrid| NOVA[NOVA ENGINE<br/>🚧 Beta<br/>• Hybrid row-columnar<br/>• Adaptive optimization<br/>• Balanced performance]
+    Workload -->|High Throughput Ingestion| SWIFT[SWIFT ENGINE<br/>🚧 Beta<br/>• Hierarchical blocks<br/>• Optimized for streaming writes<br/>• Minimal write amplification]
+    Workload -->|Memory-Constrained / Edge| PRISM[PRISM ENGINE<br/>🚧 Beta<br/>• LSM-tree with progressive quantization<br/>• Low memory footprint<br/>• Good for edge deployments]
+    Workload -->|Adaptive / Self-Optimizing| RAPTOR[RAPTOR ENGINE<br/>🚧 Beta<br/>• Learns access patterns<br/>• Adapts storage layout dynamically<br/>• Hardware-aware]
     
     style SST fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style VIPER fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
-    style PRISM fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    style NOVA fill:#fff3e0,stroke:#f57c00,stroke-width:2px
     style SWIFT fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
-    style NOVA fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style PRISM fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style RAPTOR fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     style Start fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
