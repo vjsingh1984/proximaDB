@@ -866,10 +866,23 @@ impl VectorOperationsService {
         let results: Vec<crate::core::search::InternalSearchResult> = query_result.results
             .into_iter()
             .map(|scored_result| crate::core::search::InternalSearchResult {
-                id: scored_result.id,
-                score: scored_result.score,
+                id: scored_result.vector_id.clone(),
+                score: scored_result.similarity,
                 vector: None, // AXIS doesn't return vectors by default
-                metadata: None, // AXIS metadata would need to be fetched separately
+                metadata: Default::default(),
+                vector_id: Some(scored_result.vector_id),
+                similarity: Some(scored_result.similarity),
+                debug_info: None,
+                version: None,
+                timestamp: None,
+                updated_at: None,
+                expires_at: scored_result.expires_at,
+                source: None,
+                expanded_context: Vec::new(),
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
             })
             .collect();
 

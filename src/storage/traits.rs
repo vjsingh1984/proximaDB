@@ -582,16 +582,16 @@ pub trait UnifiedStorageEngine: Send + Sync {
         let mut result = self.do_flush(&params).await?;
 
         // Common post-flush processing
-        result.duration_ms = start_time.elapsed().as_millis() as u64;
+        result.duration_ms = Some(start_time.elapsed().as_millis() as u64);
         result.completed_at = Utc::now();
 
         // Log operation completion
         tracing::info!(
             "✅ {} flush completed: {} entries, {} bytes in {}ms",
             self.engine_name(),
-            result.entries_flushed,
-            result.bytes_written,
-            result.duration_ms
+            result.entries_flushed.unwrap_or(0),
+            result.bytes_written.unwrap_or(0),
+            result.duration_ms.unwrap_or(0)
         );
 
         // Trigger compaction if requested and supported
@@ -642,16 +642,16 @@ pub trait UnifiedStorageEngine: Send + Sync {
         let mut result = self.do_compact(&params).await?;
 
         // Common post-compaction processing
-        result.duration_ms = start_time.elapsed().as_millis() as u64;
+        result.duration_ms = Some(start_time.elapsed().as_millis() as u64);
         result.completed_at = Utc::now();
 
         // Log operation completion
         tracing::info!(
             "✅ {} compaction completed: {} entries processed, {} removed in {}ms",
             self.engine_name(),
-            result.entries_processed,
-            result.entries_removed,
-            result.duration_ms
+            result.entries_processed.unwrap_or(0),
+            result.entries_removed.unwrap_or(0),
+            result.duration_ms.unwrap_or(0)
         );
 
         Ok(result)

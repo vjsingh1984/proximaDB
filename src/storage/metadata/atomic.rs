@@ -289,19 +289,21 @@ impl AtomicMetadataStore {
             match operation {
                 MetadataOperation::CreateCollection(collection) => {
                     let versioned = VersionedCollectionMetadata {
-                        id: collection.collection_id.clone(),
-                        name: collection.collection_name.clone().unwrap_or_default(),
-                        dimension: collection.dimension,
-                        distance_metric: format!("{:?}", collection.distance_metric),
+                        id: collection.id.clone(),
+                        name: collection.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
+                        dimension: collection.config.as_ref().map(|c| c.dimension as usize).unwrap_or(0),
+                        distance_metric: collection.config.as_ref().map(|c| format!("{:?}", c.distance_metric)).unwrap_or_default(),
                         indexing_algorithm: "HNSW".to_string(), // Default
                         timestamp: Utc::now().timestamp() as u32,
-                        version: Some(version),
-                        vector_count: collection.collection_statistics.total_vectors,
-                        total_size_bytes: collection.collection_statistics.total_size_bytes,
+                        version: Some(version as u32),
+                        vector_count: collection.stats.as_ref().map(|s| s.vector_count as u64).unwrap_or(0),
+                        total_size_bytes: collection.stats.as_ref().map(|s| s.data_size_bytes as u64).unwrap_or(0),
                         config: std::collections::HashMap::new(), // TODO: Convert from collection config
                         description: None,
                         tags: Vec::new(),
                         owner: None,
+                        access_pattern: AccessPattern::Random, // Default
+                        retention_policy: None,
                     };
 
                     // Write to write buffer
@@ -316,13 +318,17 @@ impl AtomicMetadataStore {
                     collection_id,
                     metadata,
                 } => {
-                    let versioned = VersionedCollectionMetadata {
-                        metadata: metadata.clone(),
-                        version: version,
-                        timestamp: Utc::now().timestamp_micros(),
-                        is_deleted: false,
-                    };
-
+                    // Fetch existing metadata and update it
+                    let existing = self.write_buffer_manager
+                        .get_collection(&collection_id)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
+                    
+                    let mut versioned = existing;
+                    versioned.version = Some(version as u32);
+                    versioned.timestamp = Utc::now().timestamp() as u32;
+                    // Update fields from metadata if needed
+                    
                     // Write to write buffer
                     self.write_buffer_manager
                         .upsert_collection(versioned.clone())
@@ -362,11 +368,31 @@ impl AtomicMetadataStore {
         {
             let mut version_store = self.version_store.write().await;
             for (collection_id, versioned_metadata) in version_updates {
+                // Convert VersionedCollectionMetadata back to Collection proto
+                let collection = crate::proto::proximadb::Collection {
+                    id: versioned_metadata.id.clone(),
+                    config: Some(crate::proto::proximadb::CollectionConfig {
+                        name: versioned_metadata.name.clone(),
+                        dimension: versioned_metadata.dimension as i32,
+                        distance_metric: 0, // TODO: Parse from string
+                        storage_engine: 0, // TODO: Parse from config
+                        ..Default::default()
+                    }),
+                    stats: Some(crate::proto::proximadb::CollectionStats {
+                        vector_count: versioned_metadata.vector_count as i64,
+                        index_size_bytes: 0,
+                        data_size_bytes: versioned_metadata.total_size_bytes as i64,
+                    }),
+                    created_at: versioned_metadata.timestamp as i64,
+                    updated_at: versioned_metadata.timestamp as i64,
+                    storage_assignment: None,
+                };
+                
                 let version_info = VersionInfo {
                     version,
                     transaction_id: *transaction_id,
                     committed_at: Utc::now(),
-                    metadata: versioned_metadata,
+                    metadata: collection,
                 };
 
                 version_store
@@ -580,7 +606,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 id: versioned.id,
                 config: Some(crate::proto::proximadb::CollectionConfig {
                     name: versioned.name,
-                    dimension: versioned.dimension as u32,
+                    dimension: versioned.dimension as i32,
                     distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
                     ..Default::default()
                 }),
@@ -661,7 +687,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     id: versioned.id,
                     config: Some(crate::proto::proximadb::CollectionConfig {
                         name: versioned.name,
-                        dimension: versioned.dimension as u32,
+                        dimension: versioned.dimension as i32,
                         distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
                         ..Default::default()
                     }),

@@ -1260,8 +1260,8 @@ mod block_utils {
         });
         
         stats.record_count = records.len() as u32;
-        stats.timestamp = max_timestamp;
-        stats.version_range = (min_timestamp, max_timestamp);
+        stats.timestamp = max_timestamp as i64;
+        stats.version_range = (min_timestamp as i64, max_timestamp as i64);
         
         stats
     }
@@ -1273,7 +1273,7 @@ mod block_utils {
             (Value::Number(a), Value::Number(b)) => {
                 let a_f64 = a.as_f64();
                 let b_f64 = b.as_f64();
-                a_f64.partial_cmp(&b_f64)
+                a_f64.partial_cmp(&b_f64).unwrap_or(std::cmp::Ordering::Equal)
             }
             (Value::String(a), Value::String(b)) => a.cmp(b),
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
@@ -2358,17 +2358,17 @@ impl UnifiedStorageEngine for SstStorage {
         // Step 2: Process extracted records using row-by-row storage approach
         info!("🔍 DEBUG SST: About to flush {} records to SSTable", filtered_records.len());
         let flush_result = self
-            .flush_sst_records_to_sstable(filtered_records, collection_id, params.collection_config.as_ref(), params.force, compression_config.as_ref())
+            .flush_sst_records_to_sstable(filtered_records, collection_id, params.collection_config.as_ref(), params.force, compression_config.map(|c| c.as_ref()).flatten())
             .await
             .context("Failed to flush records to SSTable with row-by-row storage")?;
         info!("🔍 DEBUG SST: Flush completed - success={}, entries_flushed={}, bytes_written={}", 
-            flush_result.success, flush_result.entries_flushed, flush_result.bytes_written);
+            flush_result.success, flush_result.entries_flushed.unwrap_or(0), flush_result.bytes_written.unwrap_or(0));
 
         info!(
             "✅ SST: Successfully flushed {} records to {} SSTable files ({} bytes)",
-            flush_result.entries_flushed,
-            flush_result.files_created,
-            flush_result.bytes_written
+            flush_result.entries_flushed.unwrap_or(0),
+            flush_result.files_created.unwrap_or(0),
+            flush_result.bytes_written.unwrap_or(0)
         );
 
         // Step 3: Notify EventLog for async AXIS indexing (synchronous acknowledgment)
@@ -2419,7 +2419,7 @@ impl UnifiedStorageEngine for SstStorage {
                 );
                 metrics.insert(
                     "extracted_records_count".to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(flush_result.entries_flushed)),
+                    serde_json::Value::Number(serde_json::Number::from(flush_result.entries_flushed.unwrap_or(0))),
                 );
                 metrics
             },
@@ -2506,7 +2506,7 @@ impl UnifiedStorageEngine for SstStorage {
             );
 
             let collection_dir = std::path::PathBuf::from(
-                collection_storage_url.strip_prefix("file://").unwrap_or(collection_storage_url)
+                collection_storage_url.strip_prefix("file://").unwrap_or(&collection_storage_url)
             );
             
             debug!("🔍 SST COMPACTION: Collection directory path: {}", collection_dir.display());
@@ -2611,8 +2611,8 @@ impl UnifiedStorageEngine for SstStorage {
                 info!(
                     "✅ SST COMPACTION: Completed for collection {} (deleted: {}, merged: {}, bytes written: {})",
                     collection_id, 
-                    result.entries_removed, 
-                    result.entries_processed, 
+                    result.entries_removed.unwrap_or(0), 
+                    result.entries_processed.unwrap_or(0), 
                     enhanced_stats.base_stats.bytes_written
                 );
                 
@@ -2687,8 +2687,23 @@ impl UnifiedStorageEngine for SstStorage {
                 .and_then(|n| n.to_str())
                 ;
             
+            // Create a zero-copy system for the reader
+            use crate::storage::engines::core::io::zero_copy::{ZeroCopyIOConfig, ZeroCopyIOSystem};
+            let zero_copy_config = ZeroCopyIOConfig::default();
+            let zero_copy_system = match ZeroCopyIOSystem::new(
+                zero_copy_config,
+                self.filesystem.clone(),
+                vec![],
+            ).await {
+                Ok(system) => Arc::new(system),
+                Err(e) => {
+                    warn!("Failed to create zero-copy system, skipping bloom filter optimization: {}", e);
+                    continue;
+                }
+            };
+            
             // Use unified SSTable reader with bloom filter
-            let reader = UnifiedSstableReader::new(self.filesystem.clone(), Default::default(), Default::default());
+            let reader = UnifiedSstableReader::new(self.filesystem.clone(), zero_copy_system, "sst_lookup".to_string());
             
             // Load metadata (includes bloom filter)
             if reader.load_metadata(&file_path).await.is_ok() {
@@ -2778,7 +2793,7 @@ impl UnifiedStorageEngine for SstStorage {
                 expected_latency_ms: 10,
             };
             
-            match Ok(strategy) {
+            match Ok::<ExecutionStrategy, anyhow::Error>(strategy) {
                 Ok(strategy) => {
                     debug!("📋 Using default SST search strategy");
                     
@@ -3042,7 +3057,7 @@ impl UnifiedStorageEngine for SstStorage {
         );
 
         // Count SSTable files instead of memtable utilization
-        let sstable_count = self.count_sstables_at_level(0).await;
+        let sstable_count = self.count_sstables_at_level(0).await.unwrap_or(0);
         metrics.insert(
             "sstable_count".to_string(),
             serde_json::Value::Number((sstable_count as u64).into()),
