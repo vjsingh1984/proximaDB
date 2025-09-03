@@ -1,0 +1,91 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+graph TB
+    subgraph "SST Hierarchical Structure"
+        
+        subgraph "Level 0: MemTable Flush"
+            L0_SST1[SST-001<br/>Recent writes<br/>4MB]
+            L0_SST2[SST-002<br/>Recent writes<br/>4MB]
+            L0_SST3[SST-003<br/>Recent writes<br/>4MB]
+        end
+        
+        subgraph "Level 1: Minor Compaction"
+            L1_SST1[SST-101<br/>Merged L0 files<br/>32MB]
+            L1_SST2[SST-102<br/>Merged L0 files<br/>32MB]
+        end
+        
+        subgraph "Level 2: Major Compaction"  
+            L2_SST1[SST-201<br/>Long-term storage<br/>256MB]
+            L2_SST2[SST-202<br/>Long-term storage<br/>256MB]
+        end
+        
+        subgraph "Bloom Filter Layer"
+            BF_L0[Bloom Filters L0<br/>95% false positive reduction]
+            BF_L1[Bloom Filters L1<br/>Cross-file deduplication]
+            BF_L2[Bloom Filters L2<br/>Historical data pruning]
+        end
+        
+        subgraph "Index Layer"
+            IDX_SPARSE[Sparse Index<br/>Every 4KB block]
+            IDX_DENSE[Dense Index<br/>Frequently accessed ranges]
+            IDX_BLOOM[Bloom Index<br/>ID existence checks]
+        end
+        
+        subgraph "Metadata Store"
+            META[File Metadata<br/>Size, Range, Stats]
+            OFFSET[Block Offsets<br/>Direct access pointers]
+            STATS[Column Statistics<br/>Min/Max/Null counts]
+        end
+    end
+    
+    %% Write Path
+    MEMTABLE[MemTable] --> L0_SST1
+    MEMTABLE --> L0_SST2
+    MEMTABLE --> L0_SST3
+    
+    %% Compaction Flow
+    L0_SST1 --> L1_SST1
+    L0_SST2 --> L1_SST1
+    L0_SST3 --> L1_SST2
+    
+    L1_SST1 --> L2_SST1
+    L1_SST2 --> L2_SST2
+    
+    %% Bloom Filter Association
+    L0_SST1 -.-> BF_L0
+    L1_SST1 -.-> BF_L1  
+    L2_SST1 -.-> BF_L2
+    
+    %% Index Association
+    L0_SST1 -.-> IDX_SPARSE
+    L1_SST1 -.-> IDX_DENSE
+    L2_SST1 -.-> IDX_BLOOM
+    
+    %% Metadata Association
+    L0_SST1 -.-> META
+    L1_SST1 -.-> OFFSET
+    L2_SST1 -.-> STATS
+    
+    %% Query Path
+    QUERY[Vector Query] --> BF_L0
+    QUERY --> BF_L1
+    QUERY --> BF_L2
+    
+    BF_L0 --> IDX_SPARSE
+    BF_L1 --> IDX_DENSE
+    BF_L2 --> IDX_BLOOM
+    
+    %% Direct Access
+    IDX_SPARSE --> L0_SST1
+    IDX_DENSE --> L1_SST1  
+    IDX_BLOOM --> L2_SST1
+    
+    %% Benefits Annotation
+    BENEFITS[85% S3 Cost Reduction<br/>95% False Positive Reduction<br/>Direct Offset Access<br/>MVCC Support]
+    
+    %% Styling
+    style L0_SST1 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style L1_SST1 fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style L2_SST1 fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style BF_L0 fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style IDX_SPARSE fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style BENEFITS fill:#ffebee,stroke:#d32f2f,stroke-width:2px,stroke-dasharray: 5 5

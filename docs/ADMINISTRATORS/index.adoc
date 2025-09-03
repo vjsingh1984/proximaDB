@@ -1,0 +1,749 @@
+= 🔧 Administrator Guide - ProximaDB
+:toc: left
+:toclevels: 2
+:imagesdir: ../DIAGRAMS
+:icons: font
+
+[.lead]
+**Complete operations guide for DevOps engineers and system administrators.**
+
+⏱️ **Reading time: 45-90 minutes** | 🎯 **Audience: DevOps, SRE, System Administrators**
+
+== 🚀 Production Deployment
+
+=== Quick Deployment Options
+
+[cols="1,2,1,2", options="header"]
+|===
+| Deployment Type | Best For | Setup Time | Complexity
+
+| **Docker Single Node**
+| Development, small workloads
+| 5 minutes
+| ⭐ Beginner
+
+| **Docker Compose**  
+| Multi-service applications  
+| 15 minutes
+| ⭐⭐ Intermediate
+
+| **Kubernetes**
+| Enterprise, high availability
+| 30-60 minutes  
+| ⭐⭐⭐ Advanced
+
+| **Cloud Managed**
+| Zero-ops, maximum reliability
+| 10 minutes
+| ⭐ Beginner
+|===
+
+=== Docker Single Node (Production Ready)
+
+[source,yaml]
+----
+# docker-compose.yml
+version: '3.8'
+services:
+  proximadb:
+    image: proximadb/proximadb:0.1.4
+    container_name: proximadb-server
+    ports:
+      - "5678:5678"   # REST API
+      - "5679:5679"   # gRPC API  
+      - "8080:8080"   # Admin UI
+    volumes:
+      - proximadb_data:/data
+      - proximadb_config:/config
+      - ./config.toml:/config/config.toml:ro
+    environment:
+      - PROXIMADB_LOG_LEVEL=info
+      - PROXIMADB_CONFIG=/config/config.toml
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  proximadb_data:
+  proximadb_config:
+----
+
+=== Kubernetes Production Deployment
+
+[source,yaml]
+----
+# proximadb-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proximadb
+  labels:
+    app: proximadb
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: proximadb
+  template:
+    metadata:
+      labels:
+        app: proximadb
+    spec:
+      containers:
+      - name: proximadb
+        image: proximadb/proximadb:0.1.4
+        ports:
+        - containerPort: 5678
+          name: rest
+        - containerPort: 5679  
+          name: grpc
+        - containerPort: 8080
+          name: admin
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1"
+          limits:
+            memory: "8Gi" 
+            cpu: "4"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5678
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5678
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: config
+        configMap:
+          name: proximadb-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: proximadb-pvc
+---
+apiVersion: v1
+kind: Service  
+metadata:
+  name: proximadb-service
+spec:
+  selector:
+    app: proximadb
+  ports:
+  - name: rest
+    port: 5678
+    targetPort: 5678
+  - name: grpc
+    port: 5679
+    targetPort: 5679  
+  - name: admin
+    port: 8080
+    targetPort: 8080
+  type: LoadBalancer
+----
+
+== ⚙️ Configuration Management
+
+=== Complete Configuration Reference
+link:configuration_reference.adoc[**→ Full Configuration Documentation**]
+
+=== Essential Production Settings
+
+[source,toml]
+----
+# /config/config.toml - Production configuration
+
+[server]
+bind_address = "0.0.0.0"
+http_port = 5678
+grpc_port = 5679
+admin_port = 8080
+max_concurrent_requests = 1000
+
+[storage]
+data_dir = "/data"
+default_engine = "sst"              # or "viper" for analytics
+wal_enabled = true
+wal_sync_interval = "1s"
+compaction_interval = "1h"
+
+[memory]
+total_memory_mb = 4096              # Adjust based on available RAM
+memtable_size_mb = 512
+cache_size_mb = 2048
+buffer_pool_size_mb = 1024
+
+[compute]  
+enable_gpu = true                   # Auto-detect and use GPU acceleration
+enable_simd = true                  # Auto-detect SIMD instructions
+worker_threads = 0                  # 0 = auto-detect CPU cores
+
+[security]
+enable_tls = true
+tls_cert_path = "/config/certs/server.crt"
+tls_key_path = "/config/certs/server.key"
+api_key_required = true
+jwt_secret = "${JWT_SECRET}"        # Use environment variable
+
+[logging]
+level = "info"                      # debug, info, warn, error
+format = "json"                     # json or text
+output = "/data/logs/proximadb.log"
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+enable_tracing = true
+jaeger_endpoint = "http://jaeger:14268"
+----
+
+=== Environment-Specific Configurations
+
+[cols="1,2,2", options="header"] 
+|===
+| Environment | Key Settings | Notes
+
+| **Development**
+| `log_level = "debug"`, `wal_sync_interval = "10s"`
+| Verbose logging, relaxed durability
+
+| **Staging**  
+| `log_level = "info"`, `enable_metrics = true`
+| Production-like with monitoring
+
+| **Production**
+| `log_level = "warn"`, `enable_tls = true`, `api_key_required = true`
+| Security enabled, minimal logging
+|===
+
+== 📊 Monitoring & Observability
+
+=== Complete Monitoring Guide
+link:monitoring_guide.adoc[**→ Full Monitoring Documentation**]
+
+=== Essential Metrics Dashboard
+
+==== Key Performance Indicators
+[source,promql]
+----
+# Request Rate
+rate(proximadb_requests_total[5m])
+
+# Request Latency (99th percentile)  
+histogram_quantile(0.99, rate(proximadb_request_duration_seconds_bucket[5m]))
+
+# Error Rate
+rate(proximadb_requests_total{status=~"5.."}[5m]) / rate(proximadb_requests_total[5m])
+
+# Memory Usage
+proximadb_memory_usage_bytes / proximadb_memory_limit_bytes
+
+# Storage Usage
+proximadb_storage_usage_bytes
+----
+
+==== Resource Utilization
+[source,promql]
+----
+# CPU Usage
+rate(proximadb_cpu_seconds_total[5m])
+
+# Background CPU (should be < 1%)
+proximadb_background_cpu_percentage
+
+# Cache Hit Rate (should be > 60%)
+proximadb_cache_hits_total / proximadb_cache_requests_total
+
+# Compaction Rate
+rate(proximadb_compactions_total[1h])
+----
+
+=== Grafana Dashboard Setup
+
+[source,json]
+----
+{
+  "dashboard": {
+    "title": "ProximaDB Operations",
+    "panels": [
+      {
+        "title": "Request Rate",
+        "type": "stat",
+        "targets": [{"expr": "rate(proximadb_requests_total[5m])"}]
+      },
+      {
+        "title": "P99 Latency", 
+        "type": "stat",
+        "targets": [{"expr": "histogram_quantile(0.99, rate(proximadb_request_duration_seconds_bucket[5m]))"}]
+      },
+      {
+        "title": "Memory Usage",
+        "type": "gauge", 
+        "targets": [{"expr": "proximadb_memory_usage_bytes / proximadb_memory_limit_bytes * 100"}]
+      }
+    ]
+  }
+}
+----
+
+=== Alerting Rules
+
+[source,yaml]
+----
+# alerting-rules.yaml
+groups:
+- name: proximadb
+  rules:
+  - alert: ProximaDBHighLatency
+    expr: histogram_quantile(0.99, rate(proximadb_request_duration_seconds_bucket[5m])) > 0.01
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "ProximaDB high latency detected"
+      
+  - alert: ProximaDBHighErrorRate
+    expr: rate(proximadb_requests_total{status=~"5.."}[5m]) / rate(proximadb_requests_total[5m]) > 0.05
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "ProximaDB error rate above 5%"
+      
+  - alert: ProximaDBHighMemoryUsage  
+    expr: proximadb_memory_usage_bytes / proximadb_memory_limit_bytes > 0.9
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "ProximaDB memory usage above 90%"
+----
+
+== 🔄 Operations Procedures
+
+=== Complete Operations Guide  
+link:operations_guide.adoc[**→ Full Operations Documentation**]
+
+=== Backup & Recovery
+
+==== Automated Backup Script
+[source,bash]
+----
+#!/bin/bash
+# backup.sh - Automated ProximaDB backup
+
+BACKUP_DIR="/backups/proximadb"
+DATA_DIR="/data"
+RETENTION_DAYS=7
+
+# Create timestamped backup
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_PATH="$BACKUP_DIR/backup_$TIMESTAMP"
+
+echo "Starting ProximaDB backup to $BACKUP_PATH"
+
+# Stop writes (optional - for consistent backup)
+curl -X POST http://localhost:5678/admin/readonly
+
+# Create backup
+mkdir -p "$BACKUP_PATH"
+cp -r "$DATA_DIR"/* "$BACKUP_PATH/"
+
+# Resume writes  
+curl -X POST http://localhost:5678/admin/readwrite
+
+# Compress backup
+tar -czf "$BACKUP_PATH.tar.gz" -C "$BACKUP_DIR" "backup_$TIMESTAMP"
+rm -rf "$BACKUP_PATH"
+
+# Cleanup old backups
+find "$BACKUP_DIR" -name "backup_*.tar.gz" -mtime +$RETENTION_DAYS -delete
+
+echo "Backup completed: $BACKUP_PATH.tar.gz"
+----
+
+==== Recovery Procedure
+[source,bash]
+----
+#!/bin/bash  
+# recovery.sh - ProximaDB recovery from backup
+
+BACKUP_FILE="$1"
+DATA_DIR="/data"
+
+if [ -z "$BACKUP_FILE" ]; then
+  echo "Usage: $0 <backup_file.tar.gz>"
+  exit 1
+fi
+
+echo "Starting ProximaDB recovery from $BACKUP_FILE"
+
+# Stop ProximaDB service
+systemctl stop proximadb  # or docker stop proximadb
+
+# Backup current data
+mv "$DATA_DIR" "${DATA_DIR}.old.$(date +%Y%m%d_%H%M%S)"
+
+# Extract backup
+mkdir -p "$DATA_DIR"
+tar -xzf "$BACKUP_FILE" -C "$DATA_DIR" --strip-components=1
+
+# Set permissions
+chown -R proximadb:proximadb "$DATA_DIR"
+
+# Start ProximaDB service  
+systemctl start proximadb  # or docker start proximadb
+
+echo "Recovery completed"
+----
+
+=== High Availability Setup
+
+==== Active-Passive Configuration
+[source,bash]
+----
+# Primary server configuration
+[replication]
+role = "primary"
+backup_endpoints = ["http://standby1:5678", "http://standby2:5678"]
+sync_interval = "30s"
+
+[storage]
+shared_storage = "s3://proximadb-cluster/data"
+----
+
+[source,bash]  
+----
+# Standby server configuration
+[replication]
+role = "standby"
+primary_endpoint = "http://primary:5678"
+sync_interval = "30s"
+
+[storage] 
+shared_storage = "s3://proximadb-cluster/data"
+----
+
+==== Load Balancer Configuration (HAProxy)
+[source,haproxy]
+----
+# haproxy.cfg
+global
+    daemon
+    
+defaults
+    mode http
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+
+frontend proximadb_frontend
+    bind *:80
+    bind *:443 ssl crt /etc/ssl/proximadb.pem
+    redirect scheme https if !{ ssl_fc }
+    default_backend proximadb_backend
+
+backend proximadb_backend
+    balance roundrobin
+    option httpchk GET /health
+    server primary 10.0.1.10:5678 check
+    server standby1 10.0.1.11:5678 check backup
+    server standby2 10.0.1.12:5678 check backup
+----
+
+== 🔒 Security & Compliance  
+
+=== Security Hardening Checklist
+
+==== Network Security
+- [ ] **TLS Encryption**: Enable TLS for all client connections
+- [ ] **Internal Communication**: Use TLS for cluster communication  
+- [ ] **Firewall Rules**: Restrict access to administrative ports
+- [ ] **VPC/Network Segmentation**: Isolate ProximaDB in private network
+
+==== Authentication & Authorization
+- [ ] **API Keys**: Require API keys for all requests
+- [ ] **JWT Tokens**: Use JWT for user session management
+- [ ] **Role-Based Access**: Configure user roles and permissions
+- [ ] **Audit Logging**: Enable comprehensive audit trails
+
+==== Data Protection  
+- [ ] **Encryption at Rest**: Enable storage encryption
+- [ ] **Backup Encryption**: Encrypt all backup files
+- [ ] **Key Management**: Use proper key rotation policies
+- [ ] **Data Retention**: Configure automatic data cleanup
+
+=== Compliance Features
+
+[cols="2,2,2", options="header"]
+|===
+| Requirement | ProximaDB Feature | Configuration
+
+| **GDPR - Data Deletion**
+| Vector deletion API, metadata cleanup
+| `enable_data_deletion = true`
+
+| **SOX - Audit Trails**  
+| Comprehensive event logging
+| `audit_level = "full"`
+
+| **HIPAA - Encryption**
+| TLS + storage encryption
+| `encryption_at_rest = true`
+|===
+
+== 🎯 Performance Tuning
+
+=== Resource Sizing Guide
+
+[cols="2,1,1,1,2", options="header"]
+|===
+| Workload | CPU Cores | Memory (GB) | Storage (GB) | Instance Type
+
+| **Development** 
+| 2-4
+| 4-8  
+| 100-500
+| t3.large
+
+| **Small Production**
+| 8-16
+| 16-32
+| 1-5TB
+| c5.2xlarge
+
+| **Large Production**  
+| 32-64
+| 64-128
+| 10-50TB
+| c5.9xlarge
+
+| **Analytics Heavy**
+| 16-32
+| 128-256  
+| 50-200TB
+| r5.8xlarge
+|===
+
+=== Performance Optimization
+
+==== Memory Optimization
+[source,toml]
+----
+[memory]
+# Allocate 70% of system RAM to ProximaDB
+total_memory_mb = 28672        # 28GB out of 40GB system
+
+# Optimize for your workload
+memtable_size_mb = 2048        # Larger = better write performance  
+cache_size_mb = 16384          # Larger = better read performance
+buffer_pool_size_mb = 8192     # For bulk operations
+----
+
+==== Storage Optimization  
+[source,toml]
+----
+[storage]
+# Choose engine based on workload
+default_engine = "sst"         # Real-time applications
+# default_engine = "viper"     # Analytics workloads
+
+# Optimize compaction
+compaction_interval = "30m"    # More frequent = lower space usage
+max_compaction_threads = 4     # Parallel compaction
+----
+
+==== Network Optimization
+[source,toml]
+----
+[server]
+# Increase for high-throughput applications  
+max_concurrent_requests = 2000
+keep_alive_timeout = "300s"
+read_timeout = "60s"
+write_timeout = "60s"
+----
+
+== 🚨 Troubleshooting Guide
+
+=== Common Issues & Solutions
+
+[cols="2,2,2,1", options="header"]
+|===
+| Symptom | Likely Cause | Solution | Priority
+
+| **High search latency (>10ms)**
+| Memory pressure, no indexing
+| Increase memory, enable HNSW index
+| High
+
+| **High memory usage**
+| Large vectors, no quantization
+| Enable INT8/binary quantization  
+| Medium
+
+| **Slow ingestion**  
+| Small batch sizes, sync writes
+| Use larger batches, async mode
+| Medium
+
+| **Connection timeouts**
+| Resource exhaustion
+| Scale vertically or horizontally
+| High
+
+| **Background CPU high (>5%)**
+| Aggressive compaction
+| Tune compaction intervals  
+| Low
+|===
+
+=== Diagnostic Commands
+
+[source,bash]
+----
+# Check system health
+curl http://localhost:5678/health
+
+# View detailed metrics
+curl http://localhost:5678/metrics
+
+# Check collection statistics  
+curl http://localhost:5678/collections/my_collection/stats
+
+# View active connections
+curl http://localhost:5678/admin/connections
+
+# Check compaction status
+curl http://localhost:5678/admin/compaction
+
+# View memory usage breakdown
+curl http://localhost:5678/admin/memory
+----
+
+=== Log Analysis
+
+[source,bash]
+----
+# Monitor real-time logs
+tail -f /data/logs/proximadb.log
+
+# Find performance issues
+grep "WARN\|ERROR" /data/logs/proximadb.log | tail -100
+
+# Analyze request patterns  
+grep "request_duration" /data/logs/proximadb.log | awk '{print $5}' | sort -n
+
+# Check for memory pressure
+grep "memory_pressure" /data/logs/proximadb.log
+----
+
+== 📋 Maintenance Procedures
+
+=== Regular Maintenance Tasks
+
+==== Daily
+- [ ] Check system health and key metrics
+- [ ] Review error logs for issues
+- [ ] Verify backup completion
+- [ ] Monitor resource utilization
+
+==== Weekly  
+- [ ] Analyze performance trends  
+- [ ] Review security logs
+- [ ] Update monitoring dashboards
+- [ ] Test disaster recovery procedures
+
+==== Monthly
+- [ ] Security patch updates
+- [ ] Capacity planning review  
+- [ ] Performance optimization review
+- [ ] Documentation updates
+
+=== Upgrade Procedures
+
+[source,bash]
+----
+#!/bin/bash
+# upgrade.sh - Safe ProximaDB upgrade
+
+NEW_VERSION="$1"
+CURRENT_VERSION=$(curl -s http://localhost:5678/version | jq -r '.version')
+
+echo "Upgrading ProximaDB from $CURRENT_VERSION to $NEW_VERSION"
+
+# 1. Backup before upgrade
+./backup.sh
+
+# 2. Download new version  
+docker pull proximadb/proximadb:$NEW_VERSION
+
+# 3. Rolling upgrade (zero downtime)
+docker-compose up -d --force-recreate --no-deps proximadb
+
+# 4. Health check
+sleep 30
+curl -f http://localhost:5678/health || {
+    echo "Upgrade failed, rolling back..."
+    docker-compose up -d --force-recreate --no-deps proximadb:$CURRENT_VERSION
+    exit 1
+}
+
+echo "Upgrade completed successfully"
+----
+
+== 📞 Support & Escalation
+
+=== Support Tiers
+
+[cols="1,2,1,2", options="header"]  
+|===
+| Issue Type | Contact Method | Response Time | Escalation Path
+
+| **Production Down**
+| Emergency hotline
+| < 1 hour  
+| On-call engineer → CTO
+
+| **Performance Issues**
+| Support ticket
+| < 4 hours
+| Support → Engineering  
+
+| **Configuration Help**
+| Community forum
+| < 24 hours
+| Community → Support
+
+| **Feature Requests**
+| GitHub issues
+| Best effort
+| Product team review
+|===
+
+=== Emergency Contacts
+* **Production Issues**: +1-800-PROXIMA  
+* **Security Incidents**: security@proximadb.com
+* **Support Tickets**: support@proximadb.com
+
+---
+
+[.text-center]
+⬅️ link:../NEW_README.adoc[Back to Documentation Hub] | ➡️ link:deployment_guide.adoc[Detailed Deployment Guide →]
+
+[.text-center]
+_Administrator guide last updated: 2025-09-03_

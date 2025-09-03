@@ -1,0 +1,392 @@
+= 👥 User Guide - ProximaDB
+:toc: left
+:toclevels: 2
+:imagesdir: ../DIAGRAMS
+:icons: font
+
+[.lead]
+**Complete guide for application developers and data scientists building with ProximaDB.**
+
+⏱️ **Reading time: 30-60 minutes** | 🎯 **Audience: App Developers, Data Scientists, Integration Engineers**
+
+== 🚀 Quick Start
+
+=== Installation & Setup (5 minutes)
+
+==== Option 1: Docker (Recommended)
+[source,bash]
+----
+# Start ProximaDB server
+docker run -d \
+  --name proximadb \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v proximadb_data:/data \
+  proximadb/proximadb:latest
+
+# Verify it's running
+curl http://localhost:5678/health
+# Expected: {"status":"healthy","version":"0.1.4"}
+----
+
+==== Option 2: Local Binary
+[source,bash]
+----
+# Download and run
+wget https://releases.proximadb.com/v0.1.4/proximadb-linux-x64.tar.gz
+tar -xzf proximadb-linux-x64.tar.gz
+./proximadb --config config.toml
+----
+
+=== Your First Vector Operation (5 minutes)
+
+==== Python SDK (Recommended for beginners)
+[source,python]
+----
+# Install SDK
+pip install proximadb-client
+
+# Basic operations
+from proximadb import ProximaDBClient
+import numpy as np
+
+# Connect
+client = ProximaDBClient("http://localhost:5678")
+
+# Create collection
+client.create_collection(
+    name="documents", 
+    dimension=384,
+    distance_metric="cosine"
+)
+
+# Insert vectors
+vectors = np.random.rand(100, 384)
+client.insert_vectors("documents", vectors)
+
+# Search
+query = np.random.rand(384)
+results = client.search("documents", query, top_k=5)
+print(f"Found {len(results)} similar vectors")
+----
+
+==== REST API (Universal compatibility)
+[source,bash]
+----
+# Create collection
+curl -X POST http://localhost:5678/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "test_collection",
+    "dimension": 384,
+    "distance_metric": "cosine"
+  }'
+
+# Insert vector
+curl -X POST http://localhost:5678/collections/test_collection/vectors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "doc1",
+    "vector": [0.1, 0.2, 0.3, ...],
+    "metadata": {"title": "Example document"}
+  }'
+
+# Search
+curl -X POST http://localhost:5678/collections/test_collection/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3, ...],
+    "top_k": 5
+  }'
+----
+
+== 📚 Core Concepts
+
+=== Collections
+Collections are containers for your vectors, similar to tables in a relational database.
+
+[source,python]
+----
+# Create with specific configuration
+client.create_collection(
+    name="products",
+    dimension=768,
+    distance_metric="dot_product",
+    storage_engine="sst",  # or "viper" for analytics
+    quantization="int8"    # for memory efficiency
+)
+----
+
+=== Vector Operations
+All operations support batch processing for efficiency.
+
+[source,python]
+----
+# Batch insert
+client.insert_vectors(
+    collection="products",
+    vectors=batch_vectors,
+    ids=batch_ids,
+    metadata=batch_metadata
+)
+
+# Batch search  
+results = client.batch_search(
+    collection="products",
+    queries=[query1, query2, query3],
+    top_k=10
+)
+----
+
+=== Search Options
+Customize search behavior for your use case.
+
+[source,python]
+----
+results = client.search(
+    collection="products",
+    vector=query_vector,
+    top_k=20,
+    filter={"category": "electronics"},  # Metadata filtering
+    include_metadata=True,               # Include metadata in results
+    include_vectors=False                # Exclude vectors to save bandwidth
+)
+----
+
+== 🛠️ API Reference
+
+=== Complete API Documentation
+link:api_reference.adoc[**→ Full API Reference**] - Detailed documentation for all endpoints
+
+=== Quick Reference by Protocol
+
+[cols="1,2,1", options="header"]
+|===
+| Protocol | Best For | Performance
+
+| **Python SDK** 
+| Rapid prototyping, data science workflows, simple integration
+| Good (convenience focus)
+
+| **REST API**
+| Web applications, microservices, universal compatibility  
+| Good (6K vectors/sec)
+
+| **gRPC** 
+| High-performance applications, streaming data, production systems
+| Excellent (17K vectors/sec)
+|===
+
+== 🎯 Tutorials & Examples
+
+=== Interactive Tutorials
+* link:tutorials/python_quickstart.adoc[**Python SDK Quickstart**] - 15 min tutorial
+* link:tutorials/rest_api_tutorial.adoc[**REST API Tutorial**] - Build a web app
+* link:tutorials/grpc_tutorial.adoc[**gRPC High-Performance Tutorial**] - Production optimization
+
+=== Practical Examples  
+* link:examples/semantic_search.adoc[**Semantic Search Engine**] - Build intelligent search
+* link:examples/recommendation_system.adoc[**Recommendation System**] - Product recommendations
+* link:examples/image_similarity.adoc[**Image Similarity**] - Visual search application
+* link:examples/document_clustering.adoc[**Document Clustering**] - Content organization
+
+=== Real-World Integration Patterns
+* link:examples/microservices_pattern.adoc[**Microservices Architecture**]
+* link:examples/batch_processing.adoc[**Batch Data Processing**]
+* link:examples/streaming_pipeline.adoc[**Real-time Streaming Pipeline**]
+
+== 🔍 Advanced Features
+
+=== Storage Engine Selection
+Choose the optimal engine for your workload:
+
+[source,python]
+----
+# For real-time applications (default)
+client.create_collection("realtime", storage_engine="sst")
+
+# For analytics workloads  
+client.create_collection("analytics", storage_engine="viper")
+
+# For ultra-low latency (beta)
+client.create_collection("gaming", storage_engine="prism") 
+----
+
+=== Quantization for Memory Optimization
+Reduce memory usage by 50-90% with smart quantization:
+
+[source,python]
+----
+# Automatic quantization (recommended)
+client.create_collection("efficient", quantization="auto")
+
+# Specific quantization levels
+client.create_collection("mobile", quantization="int8")    # 75% memory reduction
+client.create_collection("extreme", quantization="binary") # 95% memory reduction
+----
+
+=== Hardware Acceleration
+ProximaDB automatically detects and uses available hardware acceleration:
+
+* **SIMD Instructions**: AVX-512, AVX2, NEON (automatic)
+* **GPU Acceleration**: NVIDIA CUDA, AMD ROCm, Apple Metal (automatic)
+* **No Configuration Required**: Works out of the box
+
+== 🎨 Specialized Use Cases
+
+=== Semantic Search Applications
+link:semantic_search_guide.adoc[**→ Complete Semantic Search Guide**]
+
+Build intelligent search that understands meaning, not just keywords:
+
+[source,python]
+----
+# Create semantic search collection
+client.create_collection(
+    "documents",
+    dimension=384,  # Sentence transformer dimension
+    distance_metric="cosine"
+)
+
+# Index your content with embeddings
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+docs = ["Your document text here..."]
+embeddings = model.encode(docs)
+client.insert_vectors("documents", embeddings, metadata=docs)
+
+# Semantic search
+query = "find information about..."
+query_embedding = model.encode([query])
+results = client.search("documents", query_embedding[0], top_k=5)
+----
+
+=== Recommendation Systems
+[source,python]
+----
+# User-item recommendations
+client.create_collection(
+    "user_preferences", 
+    dimension=128,
+    distance_metric="dot_product"  # Good for recommendation scores
+)
+
+# Product similarity
+client.create_collection(
+    "products",
+    dimension=256, 
+    distance_metric="cosine"
+)
+----
+
+=== Image and Multimedia Search
+[source,python]
+----
+# Visual search collection
+client.create_collection(
+    "images",
+    dimension=2048,  # ResNet feature dimension
+    distance_metric="euclidean"
+)
+
+# Audio fingerprinting
+client.create_collection(
+    "audio_clips",
+    dimension=512,
+    distance_metric="manhattan"
+)
+----
+
+== 🐛 Troubleshooting & Best Practices
+
+=== Common Issues & Solutions
+
+[cols="2,2,2", options="header"]
+|===
+| Issue | Cause | Solution
+
+| **Slow search performance**
+| Large dataset without indexing
+| Enable appropriate indexing: `index_type="hnsw"`
+
+| **High memory usage**  
+| Full-precision vectors
+| Use quantization: `quantization="int8"`
+
+| **Connection timeouts**
+| Network/server overload
+| Implement connection pooling and retry logic
+|===
+
+=== Performance Optimization Tips
+
+1. **Choose the Right Protocol**
+   - Use gRPC for high-throughput applications (2.9x faster than REST)
+   - Use REST for web applications and simple integrations
+
+2. **Optimize Vector Dimensions**  
+   - Higher dimensions = better accuracy but more memory/compute
+   - Start with 384 dimensions, optimize based on your accuracy requirements
+
+3. **Batch Operations**
+   - Insert vectors in batches of 100-1000 for best throughput
+   - Use batch search for multiple queries
+
+4. **Storage Engine Selection**
+   - SST: Real-time applications, frequent updates
+   - VIPER: Read-heavy analytics, large datasets
+
+=== Monitoring Your Application
+
+[source,python]
+----
+# Check collection stats
+stats = client.get_collection_stats("my_collection")
+print(f"Vectors: {stats['vector_count']}")
+print(f"Memory usage: {stats['memory_mb']}MB")
+
+# Monitor search performance
+import time
+start = time.time()
+results = client.search("my_collection", query, top_k=10)
+print(f"Search took: {(time.time() - start) * 1000:.2f}ms")
+----
+
+== 📖 Learning Path
+
+=== Beginner (1-2 hours)
+1. ✅ Complete the link:getting_started.adoc[Getting Started guide]
+2. ✅ Try the link:tutorials/python_quickstart.adoc[Python SDK tutorial]  
+3. ✅ Build your first link:examples/semantic_search.adoc[semantic search app]
+
+=== Intermediate (4-6 hours)
+1. 🎯 Learn link:api_reference.adoc[advanced API features]
+2. 🎯 Experiment with different link:tutorials/storage_engines.adoc[storage engines]  
+3. 🎯 Optimize performance with link:tutorials/quantization.adoc[quantization]
+
+=== Advanced (8-12 hours)  
+1. 🚀 Implement link:tutorials/grpc_tutorial.adoc[high-performance gRPC client]
+2. 🚀 Design link:examples/microservices_pattern.adoc[production architecture]
+3. 🚀 Contribute to link:../CONTRIBUTORS/index.adoc[open source development]
+
+== 🤝 Community & Support
+
+=== Getting Help
+* **Documentation**: Start here in the user guide
+* **Community Forum**: link:https://discord.gg/proximadb[Join our Discord]  
+* **GitHub Issues**: link:https://github.com/vjsingh1984/proximadb/issues[Report bugs or request features]
+* **Stack Overflow**: Use tag `proximadb` for questions
+
+=== Contributing Examples
+Have a great use case or integration? Share it with the community:
+* link:../CONTRIBUTORS/contributing.adoc[Contribution guidelines]
+* link:https://github.com/vjsingh1984/proximadb/pulls[Submit a pull request]
+
+---
+
+[.text-center]
+⬅️ link:../NEW_README.adoc[Back to Documentation Hub] | ➡️ link:getting_started.adoc[Detailed Getting Started →]
+
+[.text-center]
+_User guide last updated: 2025-09-03_

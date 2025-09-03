@@ -1,0 +1,22 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+graph TB
+    Q[Query] --> H{Hardware Detection}
+    
+    H -->|CPU| SIMD{SIMD Available?}
+    SIMD -->|AVX-512| AVX512[AVX-512 Kernel]
+    SIMD -->|AVX2| AVX2[AVX2 Kernel]
+    SIMD -->|NEON| NEON[ARM NEON Kernel]
+    SIMD -->|No| SCALAR[Scalar Fallback]
+    
+    H -->|GPU| GPU{GPU Type}
+    GPU -->|NVIDIA| CUDA[CUDA Kernel]
+    GPU -->|AMD| ROCM[ROCm Kernel]
+    GPU -->|Apple| MPS[Metal Kernel]
+    
+    %% Styling
+    style AVX512 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style AVX2 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style NEON fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style CUDA fill:#ffecb3,stroke:#f57c00,stroke-width:2px
+    style ROCM fill:#ffecb3,stroke:#f57c00,stroke-width:2px
+    style MPS fill:#ffecb3,stroke:#f57c00,stroke-width:2px

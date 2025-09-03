@@ -419,10 +419,17 @@ impl SharedServices {
         };
         debug!("✅ SharedServices::new - WAL manager created successfully");
         
+        // Create AxisManager for index operations
+        debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
+        let axis_manager = Arc::new(
+            crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?
+        );
+        debug!("✅ SharedServices::new - AxisManager created successfully");
+        
         // Create VectorOperationsService with optimized architecture and two-stage search
         debug!("🔧 SharedServices::new - About to create VectorOperationsService with two-stage search...");
         let vector_operations_service = Arc::new(
-            VectorOperationsService::new(sst_engine, wal_manager)
+            VectorOperationsService::new(sst_engine, wal_manager, axis_manager)
         );
         
         info!("✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled");
@@ -484,13 +491,7 @@ impl SharedServices {
                         int8_threshold: 0.1,
                         pq_threshold: 0.05,
                     }),
-                    storage_config: metadata.storage_assignment.as_ref().map(|sa| {
-                        crate::proto::proximadb::StorageConfig {
-                            storage_location: Some(sa.base_location.clone()),
-                            enable_all_optimizations: Some(true),  // All optimizations on by default
-                            ..Default::default()
-                        }
-                    }),
+                    storage_config: None, // VersionedCollectionMetadata doesn't have storage_assignment field
                     primary_index: None,
                     auto_index_selection: Some(false),
                     description: None,
@@ -508,13 +509,8 @@ impl SharedServices {
                         data_size_bytes: metadata.total_size_bytes as i64,
                     }),
                     created_at: metadata.timestamp as i64,
-                    updated_at: metadata.updated_at.timestamp_millis(),
-                    storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
-                        crate::proto::proximadb::StorageAssignment {
-                            base_location: sa.base_location.clone(),
-                            assigned_at: sa.assigned_at.timestamp(),
-                        }
-                    }),
+                    updated_at: metadata.timestamp as i64, // VersionedCollectionMetadata doesn't have updated_at field
+                    storage_assignment: None, // VersionedCollectionMetadata doesn't have storage_assignment field
                 };
 
                 // Store the recovered collection in the metadata backend

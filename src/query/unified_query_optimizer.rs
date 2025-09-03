@@ -367,7 +367,7 @@ impl UnifiedQueryOptimizer {
         let cost_analysis = self.build_cost_analysis(&context, &query_analysis)?;
         
         // Step 3: Optimize execution order (KEY CONSOLIDATION POINT)
-        let execution_steps = self.optimize_execution_order(&cost_analysis, &query_analysis)?;
+        let execution_steps = self.optimize_execution_order(&cost_analysis, &query_analysis, &context)?;
         
         // Step 4: Configure resources
         let resource_allocation = self.allocate_resources(&context, &execution_steps)?;
@@ -659,10 +659,7 @@ pub enum Index {
 
 /// Index lookup parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexLookupParams {
-    pub ef_search: Option<usize>,
-    pub nprobe: Option<usize>,
-}
+pub struct IndexLookupParams {    pub ef_search: Option<usize>,    pub nprobe: Option<usize>,    pub query_vector: Option<Vec<f32>>,    pub top_k: usize,    pub filter: Option<FilterExpression>,}
 
 /// Bloom filter types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

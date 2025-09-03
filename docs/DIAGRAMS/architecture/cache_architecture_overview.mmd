@@ -1,0 +1,45 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+graph TB
+    subgraph "Hot Tier - Memory Cache"
+        HOT_L1[L1 Cache<br/>Recently Accessed<br/>< 100ms old]
+        HOT_L2[L2 Cache<br/>Frequently Accessed<br/>< 1 hour old]
+    end
+    
+    subgraph "Warm Tier - SSD Cache"
+        WARM[SSD Cache<br/>Recently Used<br/>1 hour - 24 hours]
+        WARM_INDEX[Index Cache<br/>Metadata & Bloom Filters]
+    end
+    
+    subgraph "Cold Tier - Object Storage"
+        COLD[Object Storage<br/>S3/Azure/GCS<br/>> 24 hours old]
+        COLD_COMPRESSED[Compressed Storage<br/>50-80% compression]
+    end
+    
+    subgraph "Cache Intelligence"
+        PREDICTOR[Access Pattern Predictor]
+        LRU[LRU Eviction Policy]
+        PREFETCH[Predictive Prefetching]
+    end
+    
+    %% Data Flow
+    CLIENT[Client Query] --> HOT_L1
+    HOT_L1 -->|Cache Miss| HOT_L2
+    HOT_L2 -->|Cache Miss| WARM
+    WARM -->|Cache Miss| COLD
+    
+    %% Intelligence Integration
+    PREDICTOR --> PREFETCH
+    PREFETCH --> HOT_L1
+    LRU --> HOT_L2
+    
+    %% Cache Population (reverse flow)
+    COLD -.->|Prefetch| WARM
+    WARM -.->|Promote| HOT_L2
+    HOT_L2 -.->|Promote| HOT_L1
+    
+    %% Styling
+    style HOT_L1 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style HOT_L2 fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style WARM fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style COLD fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style PREDICTOR fill:#fce4ec,stroke:#c2185b,stroke-width:2px

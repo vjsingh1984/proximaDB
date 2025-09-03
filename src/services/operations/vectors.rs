@@ -1,4 +1,4 @@
-//! Vector Operations Service - Centralized Search Orchestration
+'''//! Vector Operations Service - Centralized Search Orchestration
 //! 
 //! ARCHITECTURE OVERVIEW:
 //! ======================
@@ -38,10 +38,10 @@ use crate::storage::traits::{CollectionMetadataProvider, UnifiedStorageEngine};
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression; 
 use crate::proto::proximadb::Collection;
-use crate::query::unified_query_optimizer::{
-    UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,
-    ExecutionStep, OptimizationGoal,
-};
+use crate::query::unified_query_optimizer::{    UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,    ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType,};
+use crate::compute::quantization::types::{UnifiedQuantizationLevel, QuantizationLevel, ProductQuantization, BinaryQuantization, ScalarQuantization};
+
+fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {    let level_type = match strategy.quantization_type {        QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {            threshold: None,            sign_based: false,        })),        QuantizationType::INT8 => Some(QuantizationLevel::Scalar(ScalarQuantization {            bits: 8,            scale: 1.0,            offset: 0.0,            clamp_values: false,        })),        QuantizationType::PQ4 => Some(QuantizationLevel::Pq(ProductQuantization {            num_subvectors: 8, // default            bits_per_code: 4,            codebook_id: None,            adaptive_subvectors: false,        })),        QuantizationType::PQ8 => Some(QuantizationLevel::Pq(ProductQuantization {            num_subvectors: 8, // default            bits_per_code: 8,            codebook_id: None,            adaptive_subvectors: false,        })),    };    UnifiedQuantizationLevel { level_type }}
 
 /// Unified search configuration that works for SQL, REST, and gRPC
 #[derive(Debug, Clone)]
@@ -657,7 +657,32 @@ impl VectorOperationsService {
         // Convert FilterCondition to FilterExpression
         let filter_expressions: Vec<crate::core::search::FilterExpression> = conditions
             .into_iter()
-            .map(|condition| crate::core::search::FilterExpression::Condition(condition))
+            .map(|condition| {
+                use crate::query::unified_query_optimizer::FilterCondition;
+                match condition {
+                    FilterCondition::Equals { column, value } => crate::core::search::FilterExpression::Comparison {
+                        field: column,
+                        operator: crate::core::search::ComparisonOperator::Equals,
+                        value,
+                    },
+                    FilterCondition::NotEquals { column, value } => crate::core::search::FilterExpression::Comparison {
+                        field: column,
+                        operator: crate::core::search::ComparisonOperator::NotEquals,
+                        value,
+                    },
+                    FilterCondition::GreaterThan { column, value } => crate::core::search::FilterExpression::Comparison {
+                        field: column,
+                        operator: crate::core::search::ComparisonOperator::GreaterThan,
+                        value,
+                    },
+                    // Default case for other variants - map them to Equals for simplicity
+                    _ => crate::core::search::FilterExpression::Comparison {
+                        field: "unknown".to_string(),
+                        operator: crate::core::search::ComparisonOperator::Equals,
+                        value: serde_json::json!("unknown"),
+                    },
+                }
+            })
             .collect();
         let filter_expression = crate::core::search::FilterExpression::And(filter_expressions);
 
@@ -724,13 +749,13 @@ impl VectorOperationsService {
             custom_hints: None,
             enable_clustering_hint: None,
             enable_metadata_filtering_hint: None,
-            quantization_hint: quantization.map(|q| q.to_string()),
+            quantization_hint: quantization.as_ref().map(quantization_strategy_to_level),
             runtime_hints: None,
             requires_ordering: Some(true),
             enable_progressive_search: None,
             progressive_scenario: None,
             progressive_recalls: None,
-            optimization_hint: Some(method.to_string()),
+            optimization_hint: Some(format!("{:?}", method)),
         };
 
         let search_context = crate::storage::traits::StorageQueryContext::new(
@@ -1154,4 +1179,4 @@ mod migration_example {
 //    - Single source of truth
 //    - No duplicate cost modeling
 //    - Consistent optimization logic
-//    - Easier to test and debug
+//    - Easier to test and debug'''

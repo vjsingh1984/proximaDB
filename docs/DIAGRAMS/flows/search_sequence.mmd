@@ -1,0 +1,25 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+sequenceDiagram
+    participant C as Client
+    participant A as API Layer
+    participant Q as Query Optimizer
+    participant I as Index (AXIS)
+    participant S as Storage Engine
+    participant R as Result Merger
+    
+    C->>A: Search Request
+    A->>Q: Parse & Optimize
+    Q->>Q: Select Strategy
+    
+    alt Index Available
+        Q->>I: Query Index
+        I->>I: Find Candidates
+        I->>S: Fetch Vectors
+    else No Index
+        Q->>S: Scan Storage
+    end
+    
+    S->>R: Return Results
+    R->>R: Merge & Rank
+    R->>A: Top-K Results
+    A->>C: Response

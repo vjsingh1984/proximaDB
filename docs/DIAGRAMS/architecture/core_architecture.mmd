@@ -1,0 +1,52 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+graph TB
+    Client[Client Applications]
+    
+    subgraph "API Layer"
+        REST[REST API :5678]
+        GRPC[gRPC API :5679]
+    end
+    
+    subgraph "Service Layer"
+        UnifiedHandlers[Unified Handlers]
+        VectorOperationsService[VectorOperationsService]
+        CollectionService[CollectionService]
+    end
+    
+    subgraph "Compute Layer"
+        UnifiedDistanceCompute[UnifiedDistanceCompute]
+        UnifiedQuantizationEngine[UnifiedQuantizationEngine]
+        HardwareAcceleration[Hardware Acceleration SIMD/GPU]
+    end
+    
+    subgraph "Storage Layer"
+        StorageEngine[StorageEngine]
+        MemTable[MemTable]
+        SST[SST Engine]
+        VIPER[VIPER Engine]
+        WAL[Write-Ahead Log]
+        MetadataStore[Metadata Store]
+    end
+    
+    Client --> REST
+    Client --> GRPC
+    REST --> UnifiedHandlers
+    GRPC --> UnifiedHandlers
+    UnifiedHandlers --> VectorOperationsService
+    UnifiedHandlers --> CollectionService
+    VectorOperationsService --> StorageEngine
+    VectorOperationsService --> UnifiedDistanceCompute
+    VectorOperationsService --> UnifiedQuantizationEngine
+    CollectionService --> MetadataStore
+    StorageEngine --> MemTable
+    StorageEngine --> SST
+    StorageEngine --> VIPER
+    StorageEngine --> WAL
+    UnifiedDistanceCompute --> HardwareAcceleration
+    UnifiedQuantizationEngine --> HardwareAcceleration
+    
+    %% Styling
+    style Client fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style REST fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style GRPC fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style StorageEngine fill:#fce4ec,stroke:#c2185b,stroke-width:2px

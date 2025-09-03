@@ -1,0 +1,55 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+graph TB
+    subgraph "AXIS - Adaptive Index Intelligence System"
+        
+        subgraph "Tier 1: Hot Indexes (In-Memory)"
+            HNSW[HNSW Graph<br/>Recent vectors<br/>Sub-ms latency]
+            FLAT[FLAT Index<br/>Exact search<br/>High accuracy]
+        end
+        
+        subgraph "Tier 2: Warm Indexes (SSD)"  
+            IVF[IVF Clusters<br/>Partitioned vectors<br/>Balanced speed/accuracy]
+            PQ[Product Quantization<br/>Compressed vectors<br/>Memory efficient]
+        end
+        
+        subgraph "Tier 3: Cold Indexes (Object Storage)"
+            LSH[LSH Buckets<br/>Archived vectors<br/>Approximate search]
+            COMPRESSED[Compressed Indexes<br/>Long-term storage<br/>Cost optimized]
+        end
+        
+        subgraph "Intelligence Layer"
+            SCHEDULER[Index Scheduler<br/>Promotion/Demotion Logic]
+            OPTIMIZER[Query Optimizer<br/>Index Selection Strategy]
+            MONITOR[Performance Monitor<br/>Access Pattern Analysis]
+        end
+    end
+    
+    %% Query Flow
+    QUERY[Vector Query] --> OPTIMIZER
+    OPTIMIZER --> HNSW
+    OPTIMIZER --> IVF
+    OPTIMIZER --> LSH
+    
+    %% Intelligence Flow
+    MONITOR --> SCHEDULER
+    SCHEDULER --> HNSW
+    SCHEDULER --> IVF
+    SCHEDULER --> LSH
+    
+    %% Data Movement (Tiering)
+    HNSW -.->|Age Out| IVF
+    IVF -.->|Archive| LSH
+    LSH -.->|Access| IVF
+    IVF -.->|Promote| HNSW
+    
+    %% Results Aggregation
+    HNSW --> RESULTS[Merged Results<br/>Ranked by Relevance]
+    IVF --> RESULTS
+    LSH --> RESULTS
+    
+    %% Styling
+    style HNSW fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
+    style IVF fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style LSH fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style OPTIMIZER fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    style RESULTS fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px

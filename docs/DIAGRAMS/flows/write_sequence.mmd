@@ -1,0 +1,21 @@
+%%{init: {"theme":"neutral", "themeVariables": {"primaryColor":"#4A90E2","primaryBorderColor":"#2563eb","secondaryColor":"#5CB85C","tertiaryColor":"#F5A623","lineColor":"#64748b","background":"transparent","fontFamily":"-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif","fontSize":"14px"}}}%%
+sequenceDiagram
+    participant C as Client
+    participant A as API Layer
+    participant S as Service Layer
+    participant M as MemTable
+    participant W as WAL
+    participant E as Storage Engine
+    
+    C->>A: Insert Vector Request
+    A->>S: Validate & Route
+    S->>W: Write to WAL
+    W-->>S: ACK
+    S->>M: Insert to MemTable
+    M-->>S: Success
+    S-->>A: Response
+    A-->>C: 200 OK
+    
+    Note over M,E: Background Flush
+    M->>E: Flush when threshold reached
+    E->>E: Compress & Index
