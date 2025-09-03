@@ -295,9 +295,10 @@ impl NovaEngine {
     async fn parallel_column_read(&self, file_path: &str, column_indices: &[usize]) -> Result<Vec<Vec<u8>>> {
         // Use universal optimizer for parallel operations
         let optimizer = &self.universal_optimizer;
+        let file_path_owned = file_path.to_string();
         let read_operations: Vec<_> = column_indices.iter()
             .map(|&column_idx| {
-                let file_path = file_path.to_string();
+                let file_path = file_path_owned.clone();
                 let optimizer_clone = optimizer.clone();
                 async move {
                     // Simulate column-specific read (in production, use actual column reader)

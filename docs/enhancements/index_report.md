@@ -1,10 +1,8 @@
-# `index` Module Review Report
+# `index` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `axis/ultra_compact_vector.rs`
     *   **Line 225:** `self.vectors/* TODO: Fix Option::get() - use indexing or as_ref() */`
@@ -12,7 +10,11 @@ The following `// TODO:` comments indicate areas for future work, potential tech
 *   **File:** `axis/clustering.rs`
     *   **Line 403:** `// TODO: Trigger recomputation`
     *   **Line 517:** `// TODO: Implement hierarchical clustering`
+    *   **Line 518:** `Err(anyhow::anyhow!("Hierarchical clustering not yet implemented"))`
     *   **Line 527:** `// TODO: Implement DBSCAN`
+    *   **Line 528:** `Err(anyhow::anyhow!("DBSCAN clustering not yet implemented"))`
+*   **File:** `axis/storage/serialization.rs`
+    *   **Line 435:** `warn!("Delta application not yet implemented for production");`
 *   **File:** `axis/storage/ivf_posting_list_storage.rs`
     *   **Line 280:** `// TODO: Implement proper posting list storage backend`
 *   **File:** `axis/management/monitor.rs`
@@ -43,6 +45,20 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 400:** `// TODO: Implement ML-based refinement`
     *   **Line 412:** `// TODO: Use ML models for accurate prediction`
     *   **Line 473:** `// TODO: Get from actual storage`
+*   **File:** `axis/integration/tiering_manager.rs`
+    *   **Line 941:** `// Other tier types not yet implemented`
+    *   **Line 1117:** `#[ignore] // TODO: Fix test - API has changed`
+*   **File:** `axis/integration/memory_tracker.rs`
+    *   **Line 283:** `// TODO: Actual loading implementation would go here`
+*   **File:** `axis/integration/eventlog_consumer.rs`
+    *   **Line 542:** `// TODO: Implement actual deletion logic when needed`
+    *   **Line 543:** `warn!("[AXIS Consumer] Delete event processing not yet implemented for event {}", event_id);`
+    *   **Line 834:** `// TODO: Extract actual vector from List<Float32> column`
+    *   **Line 842:** `// TODO: Extract quantized vector`
+    *   **Line 879:** `metadata: Vec::new(), // TODO: Extract metadata columns`
+    *   **Line 1144:** `// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved`
+    *   **Line 1167:** `// TODO: Re-enable when arrow crates are restored`
+    *   **Line 1187:** `//                         // TODO: Restore Arrow processing when enabled`
 *   **File:** `axis/indexes/lsh_index.rs`
     *   **Line 393:** `// TODO: Implement remove method for ZeroOverheadCollection`
     *   **Line 526:** `// TODO: Load FP32 vectors from file paths and process them`
@@ -52,6 +68,7 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 554:** `// TODO: Load quantized vectors from file paths and process them`
     *   **Line 557:** `// TODO: Load FP32 vectors from file paths and process them`
     *   **Line 588:** `// TODO: Implement two-stage search with quantized filtering`
+    *   **Line 591:** `tracing::warn!("Quantized acceleration not yet implemented - using standard search");`
 *   **File:** `axis/indexes/ivf_unified.rs`
     *   **Line 931:** `// TODO: Replace with proper IndexBackend when fully implemented`
     *   **Line 1323:** `// TODO: Read FP32 vectors from flushed files in event.file_paths`
@@ -68,6 +85,7 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 1452:** `// TODO: Load both FP32 and quantized vectors`
     *   **Line 1460:** `/// TODO: Integrate with actual quantization module from storage engines`
     *   **Line 1493:** `// TODO: Implement two-stage search with quantized filtering`
+    *   **Line 1496:** `tracing::warn!("Quantized acceleration not yet implemented - using standard search");`
 *   **File:** `axis/indexes/hnsw_index.rs`
     *   **Line 114:** `/// TODO: Add partitioning - will use (collection_id, layer, node_id) in Phase 3`
     *   **Line 328:** `/// TODO: Implement more sophisticated heuristics for better graph connectivity`
@@ -76,27 +94,7 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 651:** `// TODO: Extract vectors from files listed in event.file_paths`
     *   **Line 668:** `/// TODO: Integrate with actual quantization module from storage engines`
     *   **Line 701:** `// TODO: Implement two-stage search with quantized filtering`
-*   **File:** `axis/integration/tiering_manager.rs`
-    *   **Line 1117:** `#[ignore] // TODO: Fix test - API has changed`
-*   **File:** `axis/integration/memory_tracker.rs`
-    *   **Line 283:** `// TODO: Actual loading implementation would go here`
-*   **File:** `axis/integration/eventlog_consumer.rs`
-    *   **Line 542:** `// TODO: Implement actual deletion logic when needed`
-    *   **Line 834:** `// TODO: Extract actual vector from List<Float32> column`
-    *   **Line 842:** `// TODO: Extract quantized vector`
-    *   **Line 879:** `metadata: Vec::new(), // TODO: Extract metadata columns`
-    *   **Line 1144:** `// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved`
-    *   **Line 1167:** `// TODO: Re-enable when arrow crates are restored`
-    *   **Line 1187:** `//                         // TODO: Restore Arrow processing when enabled`
-*   **File:** `axis/eventlog/service_adapter.rs`
-    *   **Line 197:** `// TODO: Add stats method to EventLogManager`
-*   **File:** `axis/eventlog/event_log.rs`
-    *   **Line 347:** `// TODO: Get from collection config`
-
-### Unimplemented Code
-
-The following `unimplemented!()` macros indicate code that is not yet implemented:
-
+    *   **Line 704:** `tracing::warn!("Quantized acceleration not yet implemented - using standard search");`
 *   **File:** `axis/eventlog/service_interface.rs`
     *   **Line 373:** `unimplemented!("gRPC client not yet implemented")`
     *   **Line 381:** `_ => unimplemented!("Remote get_event not yet implemented"),`
@@ -105,3 +103,7 @@ The following `unimplemented!()` macros indicate code that is not yet implemente
     *   **Line 413:** `_ => unimplemented!("Remote get_extraction_hints not yet implemented"),`
     *   **Line 426:** `_ => unimplemented!("gRPC get_health not yet implemented"),`
     *   **Line 439:** `_ => unimplemented!("gRPC get_next_batch not yet implemented"),`
+*   **File:** `axis/eventlog/service_adapter.rs`
+    *   **Line 197:** `// TODO: Add stats method to EventLogManager`
+*   **File:** `axis/eventlog/event_log.rs`
+    *   **Line 347:** `// TODO: Get from collection config`

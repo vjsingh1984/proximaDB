@@ -1,7 +1,3 @@
-# ProximaDB Core Architecture Diagrams
-
-## System Architecture
-```mermaid
 graph TB
     subgraph "Clients"
         C1[REST API Clients]
@@ -67,10 +63,6 @@ graph TB
     VIPER --> FS & S3 & AZURE & GCS
     UnifiedDistanceCompute --> HardwareAcceleration
     UnifiedQuantizationEngine --> HardwareAcceleration
-```
-
-## Data Flow
-```mermaid
 flowchart LR
     subgraph "Write Path"
         W1[Client Request] --> W2[Validate]
@@ -91,10 +83,6 @@ flowchart LR
         R6 --> R7[Rank Results]
         R7 --> R8[Return Top-K]
     end
-```
-
-## Storage Engine Selection
-```mermaid
 graph TD
     START[Workload Type] --> OLTP{OLTP?}
     OLTP -->|Yes| SST[SST Engine<br/>Row-based<br/>Fast writes]
@@ -105,10 +93,6 @@ graph TD
     MIXED -->|No| STREAM{Streaming?}
     STREAM -->|Yes| SWIFT[SWIFT Engine<br/>High throughput]
     STREAM -->|No| PRISM[PRISM Engine<br/>Memory optimized]
-```
-
-## Hardware Acceleration
-```mermaid
 graph LR
     REQ[Request] --> DETECT{Hardware?}
     DETECT --> CPU{CPU Type}
@@ -126,10 +110,6 @@ graph LR
     GPU -->|AMD| ROCM[ROCm Kernel]
     GPU -->|Apple| MPS[Metal Kernel]
     GPU -->|None| CPUONLY[CPU Only]
-```
-
-## Index Types (AXIS)
-```mermaid
 graph TB
     QUERY[Query] --> SIZE{Dataset Size}
     
@@ -142,10 +122,6 @@ graph TB
     IVF --> RESULT
     HNSW --> RESULT
     PQ --> RESULT
-```
-
-## Deployment Architecture
-```mermaid
 graph TB
     subgraph "Single Server"
         SINGLE[ProximaDB<br/>All components]
@@ -173,4 +149,3 @@ graph TB
         ROUTER --> SHARD2
         ROUTER --> SHARD3
     end
-```

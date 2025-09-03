@@ -538,7 +538,7 @@ impl PrismEngine {
         self.universal_optimizer.write_data_optimized(
             &file_url,
             &bytes,
-            StorageTier::Unflushed, // Memory cache is unflushed tier  
+            StorageTier::Memory, // Memory cache is unflushed tier  
         ).await
     }
     
@@ -862,10 +862,10 @@ impl UnifiedStorageEngine for PrismEngine {
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
-            entries_flushed: params.vector_records.len() as u64,
-            bytes_written: bytes_written as u64,
-            files_created: 0, // Memory-first, no files created
-            duration_ms: start_time.elapsed().as_millis() as u64,
+            entries_flushed: Some(params.vector_records.len() as u64),
+            bytes_written: Some(bytes_written as u64),
+            files_created: Some(0), // Memory-first, no files created
+            duration_ms: Some(start_time.elapsed().as_millis() as u64),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(), // TODO: Add PRISM-specific metrics
             compaction_triggered: false,
@@ -886,13 +886,13 @@ impl UnifiedStorageEngine for PrismEngine {
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_processed: 0, // TODO: Track actual entries
-            entries_removed: 0,
-            bytes_read: params.estimated_input_size as u64,
-            bytes_written: ((params.estimated_input_size * 90) / 100) as u64, // 10% reduction
-            input_files: 0, // Memory-based, no files
-            output_files: 0,
-            duration_ms: start_time.elapsed().as_millis() as u64,
+            entries_processed: Some(0), // TODO: Track actual entries
+            entries_removed: Some(0),
+            bytes_read: Some(params.estimated_input_size as u64),
+            bytes_written: Some(((params.estimated_input_size * 90) / 100) as u64), // 10% reduction
+            input_files: Some(0), // Memory-based, no files
+            output_files: Some(0),
+            duration_ms: Some(start_time.elapsed().as_millis() as u64),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(), // TODO: Add PRISM-specific metrics
         })

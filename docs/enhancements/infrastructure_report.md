@@ -1,10 +1,8 @@
-# `infrastructure` Module Review Report
+# `infrastructure` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `tier_data_movement.rs`
     *   **Line 34:** `// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved`

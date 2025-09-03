@@ -75,7 +75,7 @@ impl BincodeSerializationStrategy {
             mvcc_cleanup_interval_secs: config.performance.mvcc_cleanup_interval_secs,
             max_versions_per_key: config.memtable.mvcc_versions_retained,
         };
-        let memtable_manager = Arc::new(MemtableManager::new(memtable_config));
+        let memtable_manager = Arc::new(MemtableManager::new(memtable_config.clone()));
         
         // Create disk manager
         let wal_base_url = &config.multi_disk.data_directories[0];
@@ -86,7 +86,7 @@ impl BincodeSerializationStrategy {
             wal_base_url
         };
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
-            filesystem_factory,
+            filesystem_factory.clone(),
             wal_base_dir,
         ));
         
@@ -94,9 +94,16 @@ impl BincodeSerializationStrategy {
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
         
         // Create recovery manager
+        // Create a simple WAL behavior wrapper for recovery using cloned config
+        let wal_behavior_config = memtable_config.clone();
+        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(
+            wal_behavior_config,
+        ));
+        
         let recovery_manager = Arc::new(RecoveryManager::new(
-            disk_manager.clone(),
-            flush_coordinator.clone(),
+            config.clone(),
+            wal_behavior,
+            filesystem_factory.clone(),
         ));
         
         Ok(Self {
@@ -299,10 +306,10 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             return Ok(FlushResult {
                 success: true,
                 collections_affected: vec![],
-                entries_flushed: 0,
-                bytes_written: 0,
-                files_created: 0,
-                duration_ms: 0,
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
@@ -365,7 +372,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             entries_flushed: flush_result.entries_flushed,
             bytes_written: flush_result.bytes_written,
             files_created: flush_result.files_created,
-            duration_ms,
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: flush_result.engine_metrics,
             compaction_triggered: flush_result.compaction_triggered,
@@ -553,19 +560,19 @@ impl BincodeSerializationStrategy {
         let mut affected_collections = Vec::new();
         for collection_id in collections {
             let result = self.flush_collection(&collection_id).await?;
-            total_vectors += result.entries_flushed;
-            total_bytes += result.bytes_written;
-            total_duration += result.duration_ms;
+            total_vectors += result.entries_flushed.unwrap_or(0);
+            total_bytes += result.bytes_written.unwrap_or(0);
+            total_duration += result.duration_ms.unwrap_or(0);
             affected_collections.push(collection_id);
         }
         
         Ok(FlushResult {
             success: true,
             collections_affected: affected_collections,
-            entries_flushed: total_vectors,
-            bytes_written: total_bytes,
-            files_created: 0,
-            duration_ms: total_duration,
+            entries_flushed: Some(total_vectors),
+            bytes_written: Some(total_bytes),
+            files_created: Some(0),
+            duration_ms: Some(total_duration),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,

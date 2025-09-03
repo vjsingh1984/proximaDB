@@ -425,10 +425,6 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         match self.storage_engine {
             StorageEngine::SST => {
                 let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
-                azure: None,
-                gcs: None,
-                hdfs: None,
-                s3: None,
                     default_fs: Some("file://".to_string()),
                     local: None,
                     global_options: Default::default(),

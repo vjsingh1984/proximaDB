@@ -69,7 +69,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::collections::HashMap;
 use parking_lot::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::proto::proximadb::{CollectionConfig, Collection};

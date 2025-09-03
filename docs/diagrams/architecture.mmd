@@ -1,7 +1,3 @@
-# ProximaDB Architecture Diagrams
-
-## System Architecture
-```mermaid
 graph TB
     Client[Client Applications]
     
@@ -45,10 +41,6 @@ graph TB
     StorageEngine --> WAL
     UnifiedDistanceCompute --> HardwareAcceleration
     UnifiedQuantizationEngine --> HardwareAcceleration
-```
-
-## Write Path Flow
-```mermaid
 sequenceDiagram
     participant C as Client
     participant A as API Layer
@@ -69,10 +61,6 @@ sequenceDiagram
     Note over M,E: Background Flush
     M->>E: Flush when threshold reached
     E->>E: Compress & Index
-```
-
-## Search Path Flow
-```mermaid
 sequenceDiagram
     participant C as Client
     participant A as API Layer
@@ -97,10 +85,6 @@ sequenceDiagram
     R->>R: Merge & Rank
     R->>A: Top-K Results
     A->>C: Response
-```
-
-## Storage Engine Selection
-```mermaid
 graph LR
     W[Workload] --> D{Decision}
     
@@ -109,10 +93,6 @@ graph LR
     D -->|Mixed| NOVA[NOVA Engine<br/>Hybrid<br/>Adaptive]
     D -->|Stream| SWIFT[SWIFT Engine<br/>Hierarchical<br/>High throughput]
     D -->|Edge| PRISM[PRISM Engine<br/>LSM-tree<br/>Low memory]
-```
-
-## Hardware Acceleration
-```mermaid
 graph TB
     Q[Query] --> H{Hardware Detection}
     
@@ -126,10 +106,6 @@ graph TB
     GPU -->|NVIDIA| CUDA[CUDA Kernel]
     GPU -->|AMD| ROCM[ROCm Kernel]
     GPU -->|Apple| MPS[Metal Kernel]
-```
-
-## Data Tiering
-```mermaid
 graph TB
     subgraph "Hot Tier"
         HOT[In-Memory<br/>< 1 hour old]
@@ -147,10 +123,6 @@ graph TB
     WARM -->|Age| COLD
     COLD -.->|Access| WARM
     WARM -.->|Access| HOT
-```
-
-## Deployment Options
-```mermaid
 graph LR
     subgraph "Single Server"
         S1[ProximaDB<br/>All-in-one]
@@ -176,4 +148,3 @@ graph LR
         R --> SH1
         R --> SH2
     end
-```

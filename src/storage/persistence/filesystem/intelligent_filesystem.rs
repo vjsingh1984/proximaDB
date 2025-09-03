@@ -55,7 +55,6 @@ use async_trait::async_trait;
 use tracing::{debug, info, trace, warn};
 use tokio::sync::RwLock;
 
-use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::{
     FileSystem, FsResult, FilesystemError, FileMetadata, FileOptions, DirEntry
 };

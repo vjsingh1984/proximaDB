@@ -1,10 +1,8 @@
-# `server` Module Review Report
+# `server` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `builder.rs`
     *   **Line 472:** `// TODO: Initialize network layer based on config`

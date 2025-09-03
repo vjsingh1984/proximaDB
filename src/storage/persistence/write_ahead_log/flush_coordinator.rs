@@ -204,10 +204,10 @@ impl WALFlushCoordinator {
                 FlushResult {
                 success: true,
                 collections_affected: vec![collection_id.to_string()],
-                entries_flushed: 0,
-                bytes_written: 0,
-                files_created: 0,
-                duration_ms: 0,
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
@@ -345,16 +345,16 @@ impl WALFlushCoordinator {
 
         info!(
             "✅ Coordinator: Storage flush completed - {} entries, {} bytes, {} files",
-            storage_result.entries_flushed,
-            storage_result.bytes_written,
-            storage_result.files_created
+            storage_result.entries_flushed.unwrap_or(0),
+            storage_result.bytes_written.unwrap_or(0),
+            storage_result.files_created.unwrap_or(0)
         );
 
         // Step 5: ATOMIC WAL CLEANUP using BatchId coordination - Only if storage flush succeeded
-        if storage_result.success && storage_result.entries_flushed > 0 {
+        if storage_result.success && storage_result.entries_flushed.unwrap_or(0) > 0 {
             info!(
                 "🧹 Coordinator: Starting BatchId-coordinated cleanup for {} flushed entries, {} batch IDs",
-                storage_result.entries_flushed,
+                storage_result.entries_flushed.unwrap_or(0),
                 storage_result.flushed_batch_ids.len()
             );
 
@@ -397,10 +397,10 @@ impl WALFlushCoordinator {
             let _ = metrics.record_flush(
                 collection_id,
                 crate::metrics::FlushMetricsUpdate {
-                    vectors_flushed: storage_result.entries_flushed as i64,
-                    bytes_written: storage_result.bytes_written as i64,
-                    duration_ms: storage_result.duration_ms as i64,
-                    files_created: storage_result.files_created as i32,
+                    vectors_flushed: storage_result.entries_flushed.unwrap_or(0) as i64,
+                    bytes_written: storage_result.bytes_written.unwrap_or(0) as i64,
+                    duration_ms: storage_result.duration_ms.unwrap_or(0) as i64,
+                    files_created: storage_result.files_created.unwrap_or(0) as i32,
                     engine_type: engine_type_str,
                     timestamp: chrono::Utc::now().timestamp_millis(),
                 },

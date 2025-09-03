@@ -184,6 +184,7 @@ pub mod tests;
 
 // Zero-copy filesystem with intelligent caching
 pub use zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
+pub use local::LocalFileSystem;
 
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;

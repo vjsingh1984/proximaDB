@@ -95,10 +95,14 @@ impl ProtoSerializationStrategy {
         // Create flush coordinator
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
         
+        // Create WAL behavior wrapper
+        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new());
+        
         // Create recovery manager
         let recovery_manager = Arc::new(RecoveryManager::new(
-            disk_manager.clone(),
-            flush_coordinator.clone(),
+            config.clone(),
+            wal_behavior.clone(),
+            filesystem_factory.clone(),
         ));
         
         Ok(Self {

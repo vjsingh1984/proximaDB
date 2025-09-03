@@ -1,10 +1,8 @@
-# `api_handlers` Module Review Report
+# `api_handlers` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following `// TODO:` comments indicate areas for future work or missing features:
 
 *   **File:** `unified_handlers.rs`
     *   **Line 663:** `// TODO: Replace with actual metrics query service`

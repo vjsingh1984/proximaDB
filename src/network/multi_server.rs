@@ -436,7 +436,7 @@ impl SharedServices {
         // TODO: Add assignment service recovery after StorageEngine starts
         
         if false { // Disabled recovery code - will be moved to ProximaDB::new
-            let recovered_collections = std::collections::HashMap::<String, crate::storage::metadata::CollectionMetadata>::new();
+            let recovered_collections = std::collections::HashMap::<String, crate::storage::metadata::VersionedCollectionMetadata>::new();
             info!(
                 "📦 SharedServices: Restoring {} collections to metadata backend",
                 recovered_collections.len()
@@ -507,7 +507,7 @@ impl SharedServices {
                         index_size_bytes: metadata.total_size_bytes as i64,
                         data_size_bytes: metadata.total_size_bytes as i64,
                     }),
-                    created_at: metadata.timestamp.timestamp_millis(),
+                    created_at: metadata.timestamp as i64,
                     updated_at: metadata.updated_at.timestamp_millis(),
                     storage_assignment: metadata.storage_assignment.as_ref().map(|sa| {
                         crate::proto::proximadb::StorageAssignment {

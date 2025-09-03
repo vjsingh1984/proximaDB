@@ -1,10 +1,8 @@
-# `services` Module Review Report
+# `services` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `tests/index_first_search_tests.rs`
     *   **Line 102:** `// TODO: Create VectorOperationsService with mock collection service`
@@ -25,15 +23,9 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 280:** `distance_metric: None, // TODO: Add distance_metric parameter if needed`
     *   **Line 335:** `file_dependencies: Vec::new(), // TODO: Track file dependencies for invalidation`
     *   **Line 895:** `// TODO: Add RAPTOR engine check when it's added to proto StorageEngine enum`
+    *   **Line 976:** `// This would require iteration through SST files which is not yet implemented`
     *   **Line 990:** `// TODO: Implement compact_all in storage engine`
     *   **Line 1004:** `// TODO: Implement compact_collection in storage engine`
     *   **Line 1046:** `// TODO: Implement health_check in WAL manager`
     *   **Line 1049:** `// TODO: Implement health_check in storage engine`
     *   **Line 1065:** `// TODO: Implement list_unflushed_vectors in WAL manager`
-
-### Simulated Code (Unreachable)
-
-The following `unreachable!()` macros indicate code paths that are theoretically not reachable, often used as placeholders or for exhaustive matching in development, which might suggest incomplete logic or areas to be revisited:
-
-*   **File:** `search/comprehensive_test.rs`
-    *   **Line 100:** `_ => unreachable!(),`

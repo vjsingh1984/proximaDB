@@ -206,10 +206,10 @@ impl Flush {
             return Ok(crate::storage::traits::FlushResult {
                 success: true,
                 collections_affected: vec![collection_id.to_string()],
-                entries_flushed: 0,
-                bytes_written: 0,
-                files_created: 0,
-                duration_ms: 0,
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 compaction_triggered: false,
                 flushed_batch_ids: Vec::new(), // ✅ Empty for empty flush
@@ -391,10 +391,10 @@ impl Flush {
         Ok(crate::storage::traits::FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: vector_records.len() as u64,
-            bytes_written: data_size as u64,
-            files_created: 1,
-            duration_ms: 0, // Will be set by high-level flush() method
+            entries_flushed: Some(vector_records.len() as u64),
+            bytes_written: Some(data_size as u64),
+            files_created: Some(1),
+            duration_ms: Some(0), // Will be set by high-level flush() method
             completed_at: chrono::Utc::now(),
             flushed_batch_ids: batch_ids.iter().map(|_id| {
                 // Use compact BatchId for minimal storage overhead (10 bytes vs 100+ bytes)

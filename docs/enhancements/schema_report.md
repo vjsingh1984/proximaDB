@@ -1,12 +1,10 @@
-# `schema` Module Review Report
+# `schema` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
+The following items indicate areas for future work or missing features:
 
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
-
-*   **File:** `relational/mod.rs`
-    *   **Line 1:** `// TODO: Implement relational schema`
 *   **File:** `document/mod.rs`
     *   **Line 1:** `// TODO: Implement document schema`
+*   **File:** `relational/mod.rs`
+    *   **Line 1:** `// TODO: Implement relational schema`

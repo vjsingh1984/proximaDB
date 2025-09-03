@@ -1422,11 +1422,11 @@ impl UnifiedStorageEngine for RaptorEngine {
         
         Ok(FlushResult {
             success: true,
-            files_created: 1,
-            bytes_written: 0, // bytes_written is not available from flush()
-            duration_ms: start_time.elapsed().as_millis() as u64,
+            files_created: Some(1),
+            bytes_written: Some(0), // bytes_written is not available from flush()
+            duration_ms: Some(start_time.elapsed().as_millis() as u64),
             collections_affected: vec![],
-            entries_flushed: 0,
+            entries_flushed: Some(0),
             flushed_batch_ids: vec![],
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
@@ -1476,15 +1476,15 @@ impl UnifiedStorageEngine for RaptorEngine {
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_processed: 0,
-            entries_removed: 0,
-            bytes_read: 0,
-            bytes_written: 0,
-            input_files: 0,
-            output_files: 0,
+            entries_processed: Some(0),
+            entries_removed: Some(0),
+            bytes_read: Some(0),
+            bytes_written: Some(0),
+            input_files: Some(0),
+            output_files: Some(0),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
-            duration_ms: start_time.elapsed().as_millis() as u64,
+            duration_ms: Some(start_time.elapsed().as_millis() as u64),
         })
     }
     

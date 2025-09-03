@@ -1,10 +1,8 @@
-# `monitoring` Module Review Report
+# `monitoring` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `dashboard/mod.rs`
     *   **Line 361:** `let _since = params.since; // TODO: Use this for historical data`

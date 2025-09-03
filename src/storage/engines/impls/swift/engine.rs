@@ -448,10 +448,10 @@ impl UnifiedStorageEngine for SwiftEngine {
         Ok(FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: params.vector_records.len() as u64,
-            bytes_written: params.estimated_size as u64,
-            files_created: 1,
-            duration_ms,
+            entries_flushed: Some(params.vector_records.len() as u64),
+            bytes_written: Some(params.estimated_size as u64),
+            files_created: Some(1),
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
             compaction_triggered: false,
@@ -475,13 +475,13 @@ impl UnifiedStorageEngine for SwiftEngine {
             return Ok(CompactionResult {
                 success: true,
                 collections_affected: vec![collection_id.to_string()],
-                entries_processed: 0,
-                entries_removed: 0,
-                bytes_read: 0,
-                bytes_written: 0,
-                input_files: files.len() as u64,
-                output_files: files.len() as u64,
-                duration_ms,
+                entries_processed: Some(0),
+                entries_removed: Some(0),
+                bytes_read: Some(0),
+                bytes_written: Some(0),
+                input_files: Some(files.len() as u64),
+                output_files: Some(files.len() as u64),
+                duration_ms: Some(duration_ms),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
             });
@@ -515,13 +515,13 @@ impl UnifiedStorageEngine for SwiftEngine {
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_processed: 0, // TODO: Count actual entries
-            entries_removed: 0,
-            bytes_read: params.estimated_input_size as u64,
-            bytes_written: (params.estimated_input_size * 80 / 100) as u64, // 20% reduction
-            input_files: input_count,
-            output_files: output_count,
-            duration_ms,
+            entries_processed: Some(0), // TODO: Count actual entries
+            entries_removed: Some(0),
+            bytes_read: Some(params.estimated_input_size as u64),
+            bytes_written: Some((params.estimated_input_size * 80 / 100) as u64), // 20% reduction
+            input_files: Some(input_count),
+            output_files: Some(output_count),
+            duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
         })

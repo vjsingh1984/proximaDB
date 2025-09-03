@@ -293,8 +293,8 @@ impl CompactionCoordinator {
         let state = states.entry(collection_id.to_string()).or_default();
         
         // Update state based on flush result
-        state.files_needing_compaction += flush_result.files_created as usize;
-        state.uncompacted_size_bytes += flush_result.bytes_written;
+        state.files_needing_compaction += flush_result.files_created.unwrap_or(0) as usize;
+        state.uncompacted_size_bytes += flush_result.bytes_written.unwrap_or(0);
         state.flushes_since_compaction += 1;
         
         debug!(
@@ -311,7 +311,7 @@ impl CompactionCoordinator {
     /// Check if compaction should be triggered
     async fn should_trigger_compaction(&self, collection_id: &str) -> Result<bool> {
         let states = self.collection_states.read().await;
-        let default_state = CollectionCompactionState::default();
+        let _default_state = CollectionCompactionState::default();
         let state = states.get(collection_id);
         
         // Don't trigger if already in progress
@@ -485,13 +485,13 @@ impl CompactionCoordinator {
                     &crate::storage::traits::CompactionResult {
                         success: true,
                         collections_affected: vec![collection_id.to_string()],
-                        entries_processed: result.files_compacted, // Map files to entries
-                        entries_removed: 0, // Not tracked in WAL compaction
-                        bytes_read: result.bytes_reclaimed, // Approximate
-                        bytes_written: 0, // Not tracked
-                        input_files: result.files_compacted,
-                        output_files: 1, // Typically compacts to single file
-                        duration_ms: duration.as_millis() as u64,
+                        entries_processed: Some(result.files_compacted), // Map files to entries
+                        entries_removed: Some(0), // Not tracked in WAL compaction
+                        bytes_read: Some(result.bytes_reclaimed), // Approximate
+                        bytes_written: Some(0), // Not tracked
+                        input_files: Some(result.files_compacted),
+                        output_files: Some(1), // Typically compacts to single file
+                        duration_ms: Some(duration.as_millis() as u64),
                         completed_at: Utc::now(),
                         engine_metrics: HashMap::new(),
                     },
@@ -550,17 +550,17 @@ impl CompactionCoordinator {
             Ok(enhanced_result) => {
                 info!(
                     "✅ VIPER compaction completed: {} entries processed, {} bytes written, {} entries removed",
-                    enhanced_result.entries_processed, 
-                    enhanced_result.bytes_written,
-                    enhanced_result.entries_removed
+                    enhanced_result.entries_processed.unwrap_or(0), 
+                    enhanced_result.bytes_written.unwrap_or(0),
+                    enhanced_result.entries_removed.unwrap_or(0)
                 );
                 
                 // Convert storage::CompactionResult to local CompactionResult
                 Ok(CompactionResult {
                     success: true,
                     collections_affected: enhanced_result.collections_affected,
-                    files_compacted: enhanced_result.input_files,
-                    bytes_reclaimed: enhanced_result.bytes_written - enhanced_result.bytes_read,
+                    files_compacted: enhanced_result.input_files.unwrap_or(0),
+                    bytes_reclaimed: enhanced_result.bytes_written.unwrap_or(0).saturating_sub(enhanced_result.bytes_read.unwrap_or(0)),
                     duration_ms: 0,  // Will be filled by caller
                     completed_at: Utc::now(),
                     engine_type: "VIPER".to_string(),
@@ -592,17 +592,17 @@ impl CompactionCoordinator {
             Ok(enhanced_result) => {
                 info!(
                     "✅ LSM compaction completed: {} entries processed, {} bytes written, {} entries removed",
-                    enhanced_result.entries_processed, 
-                    enhanced_result.bytes_written,
-                    enhanced_result.entries_removed
+                    enhanced_result.entries_processed.unwrap_or(0), 
+                    enhanced_result.bytes_written.unwrap_or(0),
+                    enhanced_result.entries_removed.unwrap_or(0)
                 );
                 
                 // Convert storage::CompactionResult to local CompactionResult
                 Ok(CompactionResult {
                     success: true,
                     collections_affected: enhanced_result.collections_affected,
-                    files_compacted: enhanced_result.input_files,
-                    bytes_reclaimed: enhanced_result.bytes_written - enhanced_result.bytes_read,
+                    files_compacted: enhanced_result.input_files.unwrap_or(0),
+                    bytes_reclaimed: enhanced_result.bytes_written.unwrap_or(0).saturating_sub(enhanced_result.bytes_read.unwrap_or(0)),
                     duration_ms: 0,  // Will be filled by caller
                     completed_at: Utc::now(),
                     engine_type: "SST".to_string(),

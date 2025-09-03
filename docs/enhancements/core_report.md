@@ -1,11 +1,11 @@
-# `core` Module Review Report
+# `core` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
+The following items indicate areas for future work or missing features:
 
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
-
+*   **File:** `serialization/fixed_length.rs`
+    *   **Line 278:** `return Err(anyhow::anyhow!("Sparse format not yet implemented"));`
 *   **File:** `search/unified_progressive_pipeline.rs`
     *   **Line 229:** `// TODO: Convert custom_levels to SearchStage`
 *   **File:** `search/integrated_search_optimization.rs`
@@ -14,6 +14,7 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 388:** `// TODO: Get all_vectors from storage based on collection_id`
     *   **Line 787:** `// TODO: Implement cache lookup based on context`
     *   **Line 793:** `// TODO: Implement index-first search using AXIS`
+    *   **Line 794:** `Err(anyhow::anyhow!("Index-first search not yet implemented"))`
     *   **Line 799:** `// TODO: Track performance metrics`
     *   **Line 805:** `// TODO: Implement result caching`
 *   **File:** `search/index_based_filter.rs`

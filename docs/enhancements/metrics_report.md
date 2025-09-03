@@ -1,10 +1,8 @@
-# `metrics` Module Review Report
+# `metrics` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `aggregator.rs`
     *   **Line 144:** `total_bytes_read: 0, // TODO: Track read bytes`
@@ -16,10 +14,3 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 421:** `// TODO: Add set_metrics_updater to VectorOperationsService`
     *   **Line 425:** `// TODO: Add set_metrics_updater to FlushCoordinator`
     *   **Line 430:** `// TODO: Add set_metrics_updater to BackgroundMaintenanceManager`
-
-### Unimplemented Code
-
-The following `unimplemented!()` macros indicate code that is not yet implemented:
-
-*   **File:** `tests/integration_tests.rs`
-    *   **Line 131:** `unimplemented!("Mock filesystem factory not needed for integration tests")`

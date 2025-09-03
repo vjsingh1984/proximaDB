@@ -1,10 +1,8 @@
-# `src` Root Files Review Report
+# `src` Root Files Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `lib.rs`
     *   **Line 247:** `// TODO: When AssignmentService is added to SharedServices, call:`

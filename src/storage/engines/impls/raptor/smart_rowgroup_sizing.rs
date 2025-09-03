@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+// use std::collections::HashMap; // Unused import
 
 /// Cloud storage I/O characteristics for optimal row group sizing
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,16 +91,21 @@ pub struct SmartRowGroupSizer {
     /// Matrix Trinity overhead per vector (P² + P×K contribution)
     pub matrix_overhead_bytes: usize,
     /// Quantization enabled and level
-    pub quantization_config: Option<QuantizationConfig>,
+    pub quantization_config: Option<InternalQuantizationConfig>,
     /// Target query pattern (affects sizing strategy)
     pub query_pattern: QueryPattern,
 }
 
-// DEPRECATED: Replaced with proto-generated config
-pub use crate::proto::proximadb::QuantizationConfig;
+// Use unified quantization types instead of deprecated proto imports
+use crate::compute::quantization::types::{UnifiedQuantizationLevel, QuantizationLevel};
 
-// DEPRECATED: Replaced with proto-generated QuantizationLevel
-pub use crate::proto::proximadb::QuantizationLevel;
+/// Internal quantization config for sizing calculations
+#[derive(Debug, Clone)]
+pub struct InternalQuantizationConfig {
+    pub primary_level: UnifiedQuantizationLevel,
+    pub store_fp32: bool,
+    pub compression_ratio: f32,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryPattern {
@@ -181,12 +186,12 @@ impl SmartRowGroupSizer {
                 dimension * 4
             }
             Some(config) => {
-                let quantized_bytes = match config.primary_level {
-                    QuantizationLevel::Binary => dimension / 8,
-                    QuantizationLevel::INT8 => dimension,
-                    QuantizationLevel::PQ4 => dimension / 2,
-                    QuantizationLevel::PQ8 => dimension,
-                    QuantizationLevel::FP32 => dimension * 4,
+                let quantized_bytes = match &config.primary_level.level_type {
+                    Some(QuantizationLevel::Binary(_)) => dimension / 8,
+                    Some(QuantizationLevel::Scalar(scalar)) if scalar.bits == 8 => dimension,
+                    Some(QuantizationLevel::Pq(pq)) if pq.bits_per_code == 4 => dimension / 2,
+                    Some(QuantizationLevel::Pq(pq)) if pq.bits_per_code == 8 => dimension,
+                    _ => dimension * 4, // Default to FP32
                 };
                 
                 if config.store_fp32 {
@@ -305,7 +310,7 @@ impl SmartRowGroupSizer {
     }
     
     /// Configure quantization
-    pub fn with_quantization(mut self, config: QuantizationConfig) -> Self {
+    pub fn with_quantization(mut self, config: InternalQuantizationConfig) -> Self {
         self.quantization_config = Some(config);
         self
     }
@@ -341,8 +346,8 @@ impl CommonConfigurations {
     /// OpenAI embeddings (1536 dimensions) on S3
     pub fn openai_s3() -> SmartRowGroupSizer {
         SmartRowGroupSizer::for_s3_standard(1536, 200) // 200 bytes avg metadata
-            .with_quantization(QuantizationConfig {
-                primary_level: QuantizationLevel::PQ8,
+            .with_quantization(InternalQuantizationConfig {
+                primary_level: UnifiedQuantizationLevel::pq8(32),
                 store_fp32: true, // Dual storage for accuracy
                 compression_ratio: 4.0,
             })
@@ -352,8 +357,8 @@ impl CommonConfigurations {
     /// BERT embeddings (768 dimensions) on GCS
     pub fn bert_gcs() -> SmartRowGroupSizer {
         SmartRowGroupSizer::for_gcs_standard(768, 150)
-            .with_quantization(QuantizationConfig {
-                primary_level: QuantizationLevel::INT8,
+            .with_quantization(InternalQuantizationConfig {
+                primary_level: UnifiedQuantizationLevel::int8(),
                 store_fp32: false,
                 compression_ratio: 4.0,
             })
@@ -363,8 +368,8 @@ impl CommonConfigurations {
     /// High-dimensional research vectors (2048 dimensions) on ADLS
     pub fn research_adls() -> SmartRowGroupSizer {
         SmartRowGroupSizer::for_adls_gen2(2048, 500) // Larger metadata for research
-            .with_quantization(QuantizationConfig {
-                primary_level: QuantizationLevel::PQ4,
+            .with_quantization(InternalQuantizationConfig {
+                primary_level: UnifiedQuantizationLevel::pq4(16),
                 store_fp32: true,
                 compression_ratio: 8.0,
             })

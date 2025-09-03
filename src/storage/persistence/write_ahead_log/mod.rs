@@ -77,7 +77,6 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::core::bloom::BloomFilterStrategy;
-use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 
 use crate::compute::distance_computation::engine::{DistanceComputeProvider, UnifiedDistanceCompute};
 use crate::compute::distance_computation::DistanceMetric;

@@ -1,10 +1,8 @@
-# `network` Module Review Report
+# `network` Module Review Report - Feature Gaps
 
-## Identified Issues
+## Identified Feature Gaps
 
-### Tech Debt / Feature Gaps (TODOs)
-
-The following `// TODO:` comments indicate areas for future work, potential tech debt, or feature gaps:
+The following items indicate areas for future work or missing features:
 
 *   **File:** `multi_server.rs`
     *   **Line 334:** `// TODO: Use cloud_config from TOML for S3/GCS/Azure credentials`
@@ -23,4 +21,5 @@ The following `// TODO:` comments indicate areas for future work, potential tech
     *   **Line 1500:** `// TODO: Restore when QuantizationLevel and LevelType are available`
 *   **File:** `grpc/service.rs`
     *   **Line 66:** `// TODO: Configure cloud-specific filesystem settings`
+    *   **Line 548:** `Err(Status::unimplemented("Operation not yet implemented"))`
     *   **Line 1341:** `// TODO: Refactor to use trait abstractions or integration tests.`

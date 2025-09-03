@@ -187,13 +187,10 @@ impl PrismFastLanesSerializer {
         
         // Write IDs separately for efficient lookup
         for record in records {
-            if let Some(id) = &record.id {
-                let id_bytes = id.as_bytes();
-                result.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
-                result.extend_from_slice(id_bytes);
-            } else {
-                result.extend_from_slice(&0u16.to_le_bytes());
-            }
+            let id = &record.id;
+            let id_bytes = id.as_bytes();
+            result.extend_from_slice(&(id_bytes.len() as u16).to_le_bytes());
+            result.extend_from_slice(id_bytes);
         }
         
         Ok(result)

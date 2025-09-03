@@ -33,7 +33,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::storage::traits::CollectionMetadataProvider;
+use crate::storage::traits::{CollectionMetadataProvider, UnifiedStorageEngine};
 
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression; 
@@ -584,7 +584,6 @@ impl VectorOperationsService {
         );
         
         // Call the trait method through the Arc
-        use crate::storage::traits::UnifiedStorageEngine;
         let storage_results = self.storage_engine.search_vectors_unified(&search_context).await?;
         info!("✅ Stage 2 complete: Found {} vectors from storage", storage_results.len());
         
@@ -656,7 +655,11 @@ impl VectorOperationsService {
         let collection = self.get_or_load_collection(collection_id).await?;
 
         // Convert FilterCondition to FilterExpression
-        let filter_expression = crate::core::search::FilterExpression::And(conditions);
+        let filter_expressions: Vec<crate::core::search::FilterExpression> = conditions
+            .into_iter()
+            .map(|condition| crate::core::search::FilterExpression::Condition(condition))
+            .collect();
+        let filter_expression = crate::core::search::FilterExpression::And(filter_expressions);
 
         // Create a dummy search_params for filtering only
         let search_params = crate::core::search::SearchParams {
