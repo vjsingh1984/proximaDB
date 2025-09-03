@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use super::{
-    write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog, VersionedCollectionMetadata},
+    write_ahead_log::{AccessPattern, MetadataWALConfig, MetadataWriteAheadLog, VersionedCollectionMetadata},
     MetadataFilter, MetadataOperation, MetadataStorageStats,
     MetadataStoreInterface, SystemMetadata,
 };
@@ -291,7 +291,7 @@ impl AtomicMetadataStore {
                     let versioned = VersionedCollectionMetadata {
                         id: collection.id.clone(),
                         name: collection.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-                        dimension: collection.config.as_ref().map(|c| c.dimension as usize).unwrap_or(0),
+                        dimension: collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
                         distance_metric: collection.config.as_ref().map(|c| format!("{:?}", c.distance_metric)).unwrap_or_default(),
                         indexing_algorithm: "HNSW".to_string(), // Default
                         timestamp: Utc::now().timestamp() as u32,
@@ -302,7 +302,7 @@ impl AtomicMetadataStore {
                         description: None,
                         tags: Vec::new(),
                         owner: None,
-                        access_pattern: AccessPattern::Random, // Default
+                        access_pattern: AccessPattern::Normal, // Default
                         retention_policy: None,
                     };
 
@@ -373,7 +373,7 @@ impl AtomicMetadataStore {
                     id: versioned_metadata.id.clone(),
                     config: Some(crate::proto::proximadb::CollectionConfig {
                         name: versioned_metadata.name.clone(),
-                        dimension: versioned_metadata.dimension as i32,
+                        dimension: versioned_metadata.dimension as u32,
                         distance_metric: 0, // TODO: Parse from string
                         storage_engine: 0, // TODO: Parse from config
                         ..Default::default()
@@ -606,7 +606,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 id: versioned.id,
                 config: Some(crate::proto::proximadb::CollectionConfig {
                     name: versioned.name,
-                    dimension: versioned.dimension as i32,
+                    dimension: versioned.dimension,
                     distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
                     ..Default::default()
                 }),
@@ -687,7 +687,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     id: versioned.id,
                     config: Some(crate::proto::proximadb::CollectionConfig {
                         name: versioned.name,
-                        dimension: versioned.dimension as i32,
+                        dimension: versioned.dimension,
                         distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
                         ..Default::default()
                     }),

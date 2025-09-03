@@ -254,10 +254,10 @@ impl IndexConfig {
         };
 
         let hnsw_config = self.hnsw_config.as_ref().map(|h| crate::proto::proximadb::HnswConfig {
-            m: h.m as i32,
-            ef_construction: h.ef_construction as i32,
-            ef_search: h.ef_search as i32,
-            max_partition_size: h.max_partition_size as i32,
+            m: h.m as u32,
+            ef_construction: h.ef_construction as u32,
+            ef_search: h.ef_search as u32,
+            max_partition_size: h.max_partition_size as u32,
             adaptive_parameters: h.adaptive_parameters,
             use_simd: h.use_simd,
             memory_limit_mb: h.memory_limit_mb as i32,
@@ -269,11 +269,11 @@ impl IndexConfig {
         let ivf_config = self.ivf_config.as_ref().map(|i| crate::proto::proximadb::IvfConfig {
             n_lists: i.n_lists as i32,
             n_probe: i.n_probe as i32,
-            quantization_bits: i.quantization_bits as i32,
+            quantization_bits: i.quantization_bits as u32,
             use_pq: i.use_pq,
             pq_subspaces: i.pq_subspaces as i32,
             train_on_insert: i.train_on_insert,
-            min_train_size: i.min_train_size as i32,
+            min_train_size: i.min_train_size as u32,
         });
 
         let lsh_config = self.lsh_config.as_ref().map(|l| crate::proto::proximadb::LshConfig {
@@ -303,7 +303,7 @@ impl IndexConfig {
             },
             update_mode,
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as i64),
-            async_update_batch_size: self.async_update_batch_size.map(|b| b as i32),
+            async_update_batch_size: self.async_update_batch_size.map(|b| b as u32),
             enable_background_optimization: self.enable_background_optimization,
             hnsw_config,
             ivf_config,

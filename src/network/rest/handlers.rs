@@ -113,7 +113,7 @@ impl CollectionConfigJson {
     pub fn to_proto(&self) -> CollectionConfig {
         let mut config = CollectionConfig {
             name: self.name.clone(),
-            dimension: self.dimension,
+            dimension: self.dimension as u32,
             distance_metric: self.distance_metric.as_deref()
                 .and_then(|s| conversions::parse_distance_metric(s).ok())
                 .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine) as i32,
@@ -138,7 +138,7 @@ impl CollectionConfigJson {
     pub fn from_proto(proto: &CollectionConfig) -> Self {
         Self {
             name: proto.name.clone(),
-            dimension: proto.dimension,
+            dimension: proto.dimension as i32,
             distance_metric: Some(conversions::distance_metric_to_string(proto.distance_metric).to_owned()),
             storage_engine: Some(conversions::storage_engine_to_string(proto.storage_engine).to_owned()),
             filterable_columns: if proto.filterable_columns.is_empty() { None } else { Some(proto.filterable_columns.clone()) },
@@ -1227,13 +1227,13 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         algorithm,
         update_mode,
         async_update_timeout_ms: config.async_update_timeout_ms,
-        async_update_batch_size: config.async_update_batch_size,
+        async_update_batch_size: config.async_update_batch_size.map(|x| x as u32),
         enable_background_optimization: config.enable_background_optimization.unwrap_or(false),
         hnsw_config: config.hnsw_config.map(|c| HnswConfig {
-            m: c.m,
-            ef_construction: c.ef_construction,
-            ef_search: c.ef_search,
-            max_partition_size: c.max_partition_size,
+            m: c.m as u32,
+            ef_construction: c.ef_construction as u32,
+            ef_search: c.ef_search as u32,
+            max_partition_size: c.max_partition_size as u32,
             adaptive_parameters: c.adaptive_parameters,
             use_simd: c.use_simd,
             memory_limit_mb: c.memory_limit_mb,
@@ -1244,27 +1244,27 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         ivf_config: config.ivf_config.map(|c| IvfConfig {
             n_lists: c.n_lists,
             n_probe: c.n_probe,
-            quantization_bits: c.quantization_bits,
+            quantization_bits: c.quantization_bits as u32,
             use_pq: c.use_pq,
             pq_subspaces: c.pq_subspaces,
             train_on_insert: c.train_on_insert,
-            min_train_size: c.min_train_size,
+            min_train_size: c.min_train_size as u32,
         }),
         flat_config: config.flat_config.map(|c| FlatConfig {
             enable_simd: c.enable_simd,
-            batch_size: c.batch_size,
+            batch_size: c.batch_size as u32,
             enable_parallel_search: c.enable_parallel_search,
         }),
         pq_config: config.pq_config.map(|c| PqConfig {
             subvectors: c.subvectors,
-            bits_per_subvector: c.bits_per_subvector,
-            training_sample_count: c.training_sample_count,
+            bits_per_subvector: c.bits_per_subvector as u32,
+            training_sample_count: c.training_sample_count as u32,
             enable_reranking: c.enable_reranking,
         }),
         annoy_config: config.annoy_config.map(|c| AnnoyConfig {
             n_trees: c.n_trees,
             search_k: c.search_k,
-            max_leaf_size: c.max_leaf_size,
+            max_leaf_size: c.max_leaf_size as u32,
             enable_mmap: c.enable_mmap,
         }),
         lsh_config: config.lsh_config.map(|c| LshConfig {
@@ -1362,13 +1362,13 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
             _ => "synchronous",
         }.to_string(),
         async_update_timeout_ms: config.async_update_timeout_ms,
-        async_update_batch_size: config.async_update_batch_size,
+        async_update_batch_size: config.async_update_batch_size.map(|x| x as i32),
         enable_background_optimization: Some(config.enable_background_optimization),
         hnsw_config: config.hnsw_config.map(|c| RestHnswConfig {
-            m: c.m,
-            ef_construction: c.ef_construction,
-            ef_search: c.ef_search,
-            max_partition_size: c.max_partition_size,
+            m: c.m as i32,
+            ef_construction: c.ef_construction as i32,
+            ef_search: c.ef_search as i32,
+            max_partition_size: c.max_partition_size as i32,
             adaptive_parameters: c.adaptive_parameters,
             use_simd: c.use_simd,
             memory_limit_mb: c.memory_limit_mb,
@@ -1379,27 +1379,27 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
         ivf_config: config.ivf_config.map(|c| RestIvfConfig {
             n_lists: c.n_lists,
             n_probe: c.n_probe,
-            quantization_bits: c.quantization_bits,
+            quantization_bits: c.quantization_bits as i32,
             use_pq: c.use_pq,
             pq_subspaces: c.pq_subspaces,
             train_on_insert: c.train_on_insert,
-            min_train_size: c.min_train_size,
+            min_train_size: c.min_train_size as u32,
         }),
         flat_config: config.flat_config.map(|c| RestFlatConfig {
             enable_simd: c.enable_simd,
-            batch_size: c.batch_size,
+            batch_size: c.batch_size as u32,
             enable_parallel_search: c.enable_parallel_search,
         }),
         pq_config: config.pq_config.map(|c| RestPqConfig {
             subvectors: c.subvectors,
-            bits_per_subvector: c.bits_per_subvector,
-            training_sample_count: c.training_sample_count,
+            bits_per_subvector: c.bits_per_subvector as u32,
+            training_sample_count: c.training_sample_count as u32,
             enable_reranking: c.enable_reranking,
         }),
         annoy_config: config.annoy_config.map(|c| RestAnnoyConfig {
             n_trees: c.n_trees,
             search_k: c.search_k,
-            max_leaf_size: c.max_leaf_size,
+            max_leaf_size: c.max_leaf_size as u32,
             enable_mmap: c.enable_mmap,
         }),
         lsh_config: config.lsh_config.map(|c| RestLshConfig {
@@ -1678,7 +1678,7 @@ pub async fn list_collections(
             CollectionInfo {
                 id: c.id,
                 name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
-                dimension: config.map(|cfg| cfg.dimension).unwrap_or(0),
+                dimension: config.map(|cfg| cfg.dimension as i32).unwrap_or(0),
                 metric: match config.and_then(|cfg| Some(cfg.distance_metric)) {
                     Some(x) if x == DistanceMetric::Cosine as i32 => "cosine",
                     Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
@@ -1728,7 +1728,7 @@ pub async fn collection(
             let collection_info = CollectionInfo {
                 id: c.id,
                 name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
-                dimension: config.map(|cfg| cfg.dimension).unwrap_or(0),
+                dimension: config.map(|cfg| cfg.dimension as i32).unwrap_or(0),
                 metric: match config.and_then(|cfg| Some(cfg.distance_metric)) {
                     Some(x) if x == DistanceMetric::Cosine as i32 => "cosine",
                     Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",

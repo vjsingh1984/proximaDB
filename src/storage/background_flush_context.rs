@@ -177,7 +177,7 @@ impl BackgroundFlushContext {
         
         let config = CollectionConfig {
             name: self.collection_id.clone(),
-            dimension: self.dimension as i32,
+            dimension: self.dimension as u32,
             distance_metric: Self::distance_metric_to_proto(&self.distance_metric),
             storage_engine: Self::storage_engine_to_proto(&self.storage_engine),
             filterable_columns: self.filterable_columns.clone(),

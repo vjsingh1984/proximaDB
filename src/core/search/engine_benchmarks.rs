@@ -404,7 +404,7 @@ impl StorageEngineBenchmark {
             id: "benchmark_collection".to_string(),
             config: Some(crate::proto::proximadb::CollectionConfig {
                 name: "benchmark".to_string(),
-                dimension: dimension as i32,
+                dimension: dimension as u32,
                 distance_metric: DistanceMetric::Cosine as i32,
                 quantization: if enable_quantization {
                     Some(crate::proto::proximadb::QuantizationConfig {

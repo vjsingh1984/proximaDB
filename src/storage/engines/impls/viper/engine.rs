@@ -772,7 +772,7 @@ impl ViperEngine {
             id: collection_id.to_string(),
             config: Some(crate::proto::proximadb::CollectionConfig {
                 name: collection_id.to_string(),
-                dimension: query_vector.len() as i32,
+                dimension: query_vector.len() as u32,
                 distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
                 storage_engine: crate::proto::proximadb::StorageEngine::Viper as i32,
                 ..Default::default()

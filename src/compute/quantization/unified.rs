@@ -1144,13 +1144,11 @@ impl UnifiedQuantizationEngine {
         // Use platform-specific optimizations if available
         #[cfg(target_arch = "x86_64")]
         {
-            let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-            if caps.cpu.features.popcnt {
-                return a.iter()
-                    .zip(b.iter())
-                    .map(|(byte_a, byte_b)| (*byte_a ^ *byte_b).count_ones())
-                    .sum();
-            }
+            // Use optimized popcount implementation (Rust's count_ones uses POPCNT when available)
+            return a.iter()
+                .zip(b.iter())
+                .map(|(byte_a, byte_b)| (*byte_a ^ *byte_b).count_ones())
+                .sum();
         }
         
         // Fallback to generic implementation

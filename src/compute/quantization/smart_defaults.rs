@@ -234,7 +234,7 @@ impl QuantizationSmartDefaults {
             enable_binary: true,   // Enable binary for filtering
             enable_int8: true,     // Enable INT8 for ranking
             enable_pq: true,       // Enable PQ for large dimensions
-            pq_segments: num_subvectors as i32,
+            pq_segments: num_subvectors as u32,
             pq_bits: 8,
             pq_codebooks: vec![],
             binary_threshold: 0.3,
@@ -320,7 +320,7 @@ impl QuantizationSmartDefaults {
             enable_binary: true,   // Enable binary for aggressive filtering
             enable_int8: false,    // Skip INT8 in aggressive mode
             enable_pq: true,       // Enable PQ4 for aggressive compression
-            pq_segments: num_subvectors as i32,
+            pq_segments: num_subvectors as u32,
             pq_bits: 4,            // Use PQ4 for aggressive compression
             pq_codebooks: vec![],
             binary_threshold: 0.4,

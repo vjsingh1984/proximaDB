@@ -60,8 +60,8 @@ pub struct EmbeddingModelSpec {
     /// Model characteristics for optimization (stored once)
     ///
     /// Vector dimension produced by this model
-    #[prost(int32, tag = "10")]
-    pub dimension: i32,
+    #[prost(uint32, tag = "10")]
+    pub dimension: u32,
     /// Maximum input sequence length
     #[prost(float, optional, tag = "11")]
     pub max_sequence_length: ::core::option::Option<f32>,
@@ -199,23 +199,23 @@ pub struct ChunkContext {
     #[prost(string, tag = "2")]
     pub document_title: ::prost::alloc::string::String,
     /// Position in document (0-based)
-    #[prost(int32, tag = "3")]
-    pub chunk_index: i32,
+    #[prost(uint32, tag = "3")]
+    pub chunk_index: u32,
     /// Total chunks from parent
-    #[prost(int32, tag = "4")]
-    pub total_chunks: i32,
+    #[prost(uint32, tag = "4")]
+    pub total_chunks: u32,
     /// Character offset start
-    #[prost(int32, tag = "5")]
-    pub char_start: i32,
+    #[prost(uint32, tag = "5")]
+    pub char_start: u32,
     /// Character offset end
-    #[prost(int32, tag = "6")]
-    pub char_end: i32,
+    #[prost(uint32, tag = "6")]
+    pub char_end: u32,
     /// Token offset start
-    #[prost(int32, tag = "7")]
-    pub token_start: i32,
+    #[prost(uint32, tag = "7")]
+    pub token_start: u32,
     /// Token offset end
-    #[prost(int32, tag = "8")]
-    pub token_end: i32,
+    #[prost(uint32, tag = "8")]
+    pub token_end: u32,
     /// Context before chunk (max 200 chars)
     #[prost(string, tag = "9")]
     pub preceding_text: ::prost::alloc::string::String,
@@ -232,17 +232,17 @@ pub struct ChunkContext {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MediaMetadata {
     /// Image/video width
-    #[prost(int32, tag = "1")]
-    pub width: i32,
+    #[prost(uint32, tag = "1")]
+    pub width: u32,
     /// Image/video height
-    #[prost(int32, tag = "2")]
-    pub height: i32,
+    #[prost(uint32, tag = "2")]
+    pub height: u32,
     /// Audio/video duration
-    #[prost(int32, tag = "3")]
-    pub duration_ms: i32,
+    #[prost(uint32, tag = "3")]
+    pub duration_ms: u32,
     /// Audio/video bitrate
-    #[prost(int32, tag = "4")]
-    pub bitrate: i32,
+    #[prost(uint32, tag = "4")]
+    pub bitrate: u32,
     /// Codec information
     #[prost(string, tag = "5")]
     pub codec: ::prost::alloc::string::String,
@@ -440,9 +440,9 @@ pub struct CollectionConfig {
     /// Collection name (min 8 chars)
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
-    /// Vector dimension
-    #[prost(int32, tag = "2")]
-    pub dimension: i32,
+    /// Vector dimension (u16 internally, but proto lacks uint16)
+    #[prost(uint32, tag = "2")]
+    pub dimension: u32,
     /// Distance metric for similarity
     #[prost(enumeration = "DistanceMetric", tag = "3")]
     pub distance_metric: i32,
@@ -516,8 +516,8 @@ pub struct IndexConfig {
     #[prost(int64, optional, tag = "4")]
     pub async_update_timeout_ms: ::core::option::Option<i64>,
     /// Batch size for async updates
-    #[prost(int32, optional, tag = "5")]
-    pub async_update_batch_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "5")]
+    pub async_update_batch_size: ::core::option::Option<u32>,
     /// Background index optimization
     #[prost(bool, tag = "6")]
     pub enable_background_optimization: bool,
@@ -585,17 +585,17 @@ pub struct IndexConfig {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HnswConfig {
     /// Number of bi-directional links (default: 16)
-    #[prost(int32, tag = "1")]
-    pub m: i32,
+    #[prost(uint32, tag = "1")]
+    pub m: u32,
     /// Size of candidate set during construction (default: 200)
-    #[prost(int32, tag = "2")]
-    pub ef_construction: i32,
+    #[prost(uint32, tag = "2")]
+    pub ef_construction: u32,
     /// Search parameter for recall (default: 50)
-    #[prost(int32, tag = "3")]
-    pub ef_search: i32,
+    #[prost(uint32, tag = "3")]
+    pub ef_search: u32,
     /// Maximum vectors per partition (default: 100000)
-    #[prost(int32, tag = "4")]
-    pub max_partition_size: i32,
+    #[prost(uint32, tag = "4")]
+    pub max_partition_size: u32,
     /// Dynamic parameter tuning (default: true)
     #[prost(bool, tag = "5")]
     pub adaptive_parameters: bool,
@@ -627,8 +627,8 @@ pub struct IvfConfig {
     #[prost(int32, tag = "2")]
     pub n_probe: i32,
     /// Bits for quantization (default: 8)
-    #[prost(int32, tag = "3")]
-    pub quantization_bits: i32,
+    #[prost(uint32, tag = "3")]
+    pub quantization_bits: u32,
     /// Use product quantization (default: false)
     #[prost(bool, tag = "4")]
     pub use_pq: bool,
@@ -639,8 +639,8 @@ pub struct IvfConfig {
     #[prost(bool, tag = "6")]
     pub train_on_insert: bool,
     /// Minimum size to trigger training (default: 1000)
-    #[prost(int32, tag = "7")]
-    pub min_train_size: i32,
+    #[prost(uint32, tag = "7")]
+    pub min_train_size: u32,
 }
 /// Flat/Brute-force index configuration
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -651,8 +651,8 @@ pub struct FlatConfig {
     #[prost(bool, tag = "1")]
     pub enable_simd: bool,
     /// Batch size for distance calculations (default: 1000)
-    #[prost(int32, tag = "2")]
-    pub batch_size: i32,
+    #[prost(uint32, tag = "2")]
+    pub batch_size: u32,
     /// Parallel search execution (default: true)
     #[prost(bool, tag = "3")]
     pub enable_parallel_search: bool,
@@ -666,11 +666,11 @@ pub struct PqConfig {
     #[prost(int32, tag = "1")]
     pub subvectors: i32,
     /// Bits per subvector (default: 8)
-    #[prost(int32, tag = "2")]
-    pub bits_per_subvector: i32,
+    #[prost(uint32, tag = "2")]
+    pub bits_per_subvector: u32,
     /// Training samples (default: 10000)
-    #[prost(int32, tag = "3")]
-    pub training_sample_count: i32,
+    #[prost(uint32, tag = "3")]
+    pub training_sample_count: u32,
     /// Enable full-precision reranking (default: true)
     #[prost(bool, tag = "4")]
     pub enable_reranking: bool,
@@ -687,8 +687,8 @@ pub struct AnnoyConfig {
     #[prost(int32, tag = "2")]
     pub search_k: i32,
     /// Maximum leaf size (default: 100)
-    #[prost(int32, tag = "3")]
-    pub max_leaf_size: i32,
+    #[prost(uint32, tag = "3")]
+    pub max_leaf_size: u32,
     /// Memory-map index files (default: true)
     #[prost(bool, tag = "4")]
     pub enable_mmap: bool,
@@ -726,8 +726,8 @@ pub struct CompressionConfig {
     #[prost(enumeration = "CompressionAlgorithm", tag = "1")]
     pub algorithm: i32,
     /// Algorithm-specific level (e.g., ZSTD 1-22)
-    #[prost(int32, optional, tag = "2")]
-    pub level: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub level: ::core::option::Option<u32>,
     /// Enable adaptive compression based on data (default: false)
     #[prost(bool, tag = "3")]
     pub adaptive: bool,
@@ -748,8 +748,8 @@ pub struct CompressionConfig {
     /// SST-specific block sizing (KB format for better granularity)
     ///
     /// SST block size in KB (256-16384, default 2048 = 2MB)
-    #[prost(int32, optional, tag = "8")]
-    pub block_size_kb: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "8")]
+    pub block_size_kb: ::core::option::Option<u32>,
     /// Auto-adjust based on vector dimensions (default: false)
     #[prost(bool, optional, tag = "9")]
     pub dynamic_block_sizing: ::core::option::Option<bool>,
@@ -1042,10 +1042,10 @@ pub struct CacheConfig {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ParquetWriterSettings {
-    #[prost(int32, optional, tag = "1")]
-    pub row_group_size: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "2")]
-    pub page_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "1")]
+    pub row_group_size: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub page_size: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "3")]
     pub enable_bloom_filters: ::core::option::Option<bool>,
     #[prost(float, optional, tag = "4")]
@@ -1060,8 +1060,8 @@ pub struct ParquetWriterSettings {
     pub enable_column_index: ::core::option::Option<bool>,
     #[prost(bool, optional, tag = "9")]
     pub enable_offset_index: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "10")]
-    pub page_index_granularity: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "10")]
+    pub page_index_granularity: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "11")]
     pub enable_dictionary: ::core::option::Option<bool>,
     #[prost(float, optional, tag = "12")]
@@ -1072,16 +1072,16 @@ pub struct ParquetWriterSettings {
     pub enable_byte_stream_split: ::core::option::Option<bool>,
     #[prost(bool, optional, tag = "15")]
     pub enable_pq_sorting: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "16")]
-    pub pq_sorting_segments: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "17")]
-    pub pq_sorting_codebook_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "16")]
+    pub pq_sorting_segments: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "17")]
+    pub pq_sorting_codebook_size: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "18")]
     pub enable_native_metadata: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "19")]
-    pub metadata_inference_samples: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "20")]
-    pub write_batch_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "19")]
+    pub metadata_inference_samples: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "20")]
+    pub write_batch_size: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "21")]
     pub id_less_storage: ::core::option::Option<bool>,
 }
@@ -1110,8 +1110,8 @@ pub struct FooterCacheSettings {
     pub warming_interval_seconds: ::core::option::Option<i64>,
     #[prost(bool, optional, tag = "10")]
     pub enable_compression: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "11")]
-    pub compression_level: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "11")]
+    pub compression_level: ::core::option::Option<u32>,
 }
 /// Hybrid writer settings for adaptive performance
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1125,28 +1125,28 @@ pub struct HybridWriterSettings {
     pub initial_mode: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bool, optional, tag = "3")]
     pub enable_auto_switch: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "4")]
-    pub mode_switch_threshold: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "5")]
-    pub pattern_window_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "4")]
+    pub mode_switch_threshold: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "5")]
+    pub pattern_window_size: ::core::option::Option<u32>,
     #[prost(float, optional, tag = "6")]
     pub streaming_threshold: ::core::option::Option<f32>,
-    #[prost(int32, optional, tag = "7")]
-    pub batch_threshold: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "8")]
-    pub max_buffer_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "7")]
+    pub batch_threshold: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "8")]
+    pub max_buffer_size: ::core::option::Option<u32>,
     #[prost(int64, optional, tag = "9")]
     pub buffer_time_limit_seconds: ::core::option::Option<i64>,
     #[prost(bool, optional, tag = "10")]
     pub enable_concurrent_writes: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "11")]
-    pub max_concurrent_writers: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "11")]
+    pub max_concurrent_writers: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "12")]
     pub optimize_row_group_size: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "13")]
-    pub min_row_group_size: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "14")]
-    pub max_row_group_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "13")]
+    pub min_row_group_size: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "14")]
+    pub max_row_group_size: ::core::option::Option<u32>,
 }
 /// SST-specific engine settings
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1159,14 +1159,14 @@ pub struct SstEngineSettings {
     pub bloom_filter_fpp: ::core::option::Option<f32>,
     #[prost(enumeration = "CompressionAlgorithm", optional, tag = "3")]
     pub compression: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "4")]
-    pub compression_level: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "4")]
+    pub compression_level: ::core::option::Option<u32>,
     #[prost(int64, optional, tag = "5")]
     pub write_buffer_size: ::core::option::Option<i64>,
-    #[prost(int32, optional, tag = "6")]
-    pub max_write_buffers: ::core::option::Option<i32>,
-    #[prost(int32, optional, tag = "7")]
-    pub block_size_kb: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "6")]
+    pub max_write_buffers: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "7")]
+    pub block_size_kb: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "8")]
     pub dynamic_block_sizing: ::core::option::Option<bool>,
 }
@@ -1182,8 +1182,8 @@ pub struct ViperEngineSettings {
     pub enable_columnar_compression: ::core::option::Option<bool>,
     #[prost(bool, optional, tag = "3")]
     pub enable_vector_quantization: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "4")]
-    pub vector_chunk_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "4")]
+    pub vector_chunk_size: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "5")]
     pub enable_lazy_loading: ::core::option::Option<bool>,
 }
@@ -1197,8 +1197,8 @@ pub struct NovaEngineSettings {
     /// Additional NOVA-specific overrides
     #[prost(bool, optional, tag = "2")]
     pub enable_real_time_mode: ::core::option::Option<bool>,
-    #[prost(int32, optional, tag = "3")]
-    pub streaming_buffer_size: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "3")]
+    pub streaming_buffer_size: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "4")]
     pub prefer_low_latency: ::core::option::Option<bool>,
 }
@@ -1267,11 +1267,11 @@ pub struct QuantizationConfig {
     /// Product Quantization specific settings (used when enable_pq=true)
     ///
     /// Number of PQ segments/subvectors (default: 8)
-    #[prost(int32, tag = "17")]
-    pub pq_segments: i32,
+    #[prost(uint32, tag = "17")]
+    pub pq_segments: u32,
     /// Bits per PQ code (default: 8)
-    #[prost(int32, tag = "18")]
-    pub pq_bits: i32,
+    #[prost(uint32, tag = "18")]
+    pub pq_bits: u32,
     /// Pre-trained codebooks (optional)
     #[prost(bytes = "vec", repeated, tag = "19")]
     pub pq_codebooks: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,

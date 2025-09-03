@@ -876,7 +876,7 @@ impl VectorOperationsService {
                 version: None,
                 timestamp: None,
                 updated_at: None,
-                expires_at: scored_result.expires_at,
+                expires_at: scored_result.expires_at.map(|dt| dt.timestamp() as u32),
                 source: None,
                 expanded_context: Vec::new(),
                 semantic_similarity: None,

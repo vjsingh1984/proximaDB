@@ -284,7 +284,7 @@ message EmbeddingModelSpec {
   optional string provider = 4;               // Provider (openai, huggingface, cohere, etc.)
   
   // Model characteristics for optimization (stored once)
-  int32 dimension = 10;                       // Vector dimension produced by this model
+  uint32 dimension = 10;                      // Vector dimension produced by this model
   optional float max_sequence_length = 11;    // Maximum input sequence length
   optional string normalization = 12;         // "l2", "none", "mean", etc.
   optional bool supports_batch = 13;          // Whether model supports batch processing
@@ -358,12 +358,12 @@ message StructuredContent {
 message ChunkContext {
   string document_id = 1;              // Parent document ID (mandatory)
   string document_title = 2;           // Parent document title
-  int32 chunk_index = 3;               // Position in document (0-based)
-  int32 total_chunks = 4;              // Total chunks from parent
-  int32 char_start = 5;                // Character offset start
-  int32 char_end = 6;                  // Character offset end
-  int32 token_start = 7;               // Token offset start
-  int32 token_end = 8;                 // Token offset end
+  uint32 chunk_index = 3;              // Position in document (0-based)
+  uint32 total_chunks = 4;             // Total chunks from parent
+  uint32 char_start = 5;               // Character offset start
+  uint32 char_end = 6;                 // Character offset end
+  uint32 token_start = 7;              // Token offset start
+  uint32 token_end = 8;                // Token offset end
   string preceding_text = 9;           // Context before chunk (max 200 chars)
   string following_text = 10;          // Context after chunk (max 200 chars)
   repeated string section_path = 11;   // ["Chapter 1", "Section 2", "Paragraph 3"]
@@ -371,10 +371,10 @@ message ChunkContext {
 
 // Media-specific metadata (images, audio, video)
 message MediaMetadata {
-  int32 width = 1;                     // Image/video width
-  int32 height = 2;                    // Image/video height
-  int32 duration_ms = 3;               // Audio/video duration
-  int32 bitrate = 4;                   // Audio/video bitrate
+  uint32 width = 1;                    // Image/video width
+  uint32 height = 2;                   // Image/video height
+  uint32 duration_ms = 3;              // Audio/video duration
+  uint32 bitrate = 4;                  // Audio/video bitrate
   string codec = 5;                    // Codec information
   map<string, string> exif = 6;        // EXIF/metadata tags
 }
@@ -475,7 +475,7 @@ message CollectionConfig {
   // CORE CONFIGURATION (Required)
   // ============================================================================
   string name = 1;                                      // Collection name (min 8 chars)
-  int32 dimension = 2;                                  // Vector dimension
+  uint32 dimension = 2;                                 // Vector dimension (u16 internally, but proto lacks uint16)
   DistanceMetric distance_metric = 3;                   // Distance metric for similarity
   
   // ============================================================================
@@ -518,7 +518,7 @@ message IndexConfig {
   IndexingAlgorithm algorithm = 2;                 // Algorithm for this specific index
   IndexUpdateMode update_mode = 3;                 // Sync/async index updates
   optional int64 async_update_timeout_ms = 4;      // Timeout for async updates
-  optional int32 async_update_batch_size = 5;      // Batch size for async updates
+  optional uint32 async_update_batch_size = 5;     // Batch size for async updates
   bool enable_background_optimization = 6;         // Background index optimization
   
   // Algorithm-specific configurations
@@ -572,10 +572,10 @@ enum VectorRepresentation {
 
 // HNSW algorithm configuration
 message HnswConfig {
-  int32 m = 1;                                     // Number of bi-directional links (default: 16)
-  int32 ef_construction = 2;                       // Size of candidate set during construction (default: 200)
-  int32 ef_search = 3;                             // Search parameter for recall (default: 50)
-  int32 max_partition_size = 4;                    // Maximum vectors per partition (default: 100000)
+  uint32 m = 1;                                    // Number of bi-directional links (default: 16)
+  uint32 ef_construction = 2;                      // Size of candidate set during construction (default: 200)
+  uint32 ef_search = 3;                            // Search parameter for recall (default: 50)
+  uint32 max_partition_size = 4;                   // Maximum vectors per partition (default: 100000)
   bool adaptive_parameters = 5;                    // Dynamic parameter tuning (default: true)
   bool use_simd = 6;                              // SIMD optimizations (default: true)
   int32 memory_limit_mb = 7;                      // Memory limit per partition (default: 512)
@@ -588,25 +588,25 @@ message HnswConfig {
 message IvfConfig {
   int32 n_lists = 1;                              // Number of clusters (default: sqrt(N))
   int32 n_probe = 2;                              // Number of clusters to search (default: 1)
-  int32 quantization_bits = 3;                    // Bits for quantization (default: 8)
+  uint32 quantization_bits = 3;                   // Bits for quantization (default: 8)
   bool use_pq = 4;                                // Use product quantization (default: false)
   int32 pq_subspaces = 5;                         // PQ subspaces (default: 8)
   bool train_on_insert = 6;                       // Retrain on every insert (default: false)
-  int32 min_train_size = 7;                       // Minimum size to trigger training (default: 1000)
+  uint32 min_train_size = 7;                      // Minimum size to trigger training (default: 1000)
 }
 
 // Flat/Brute-force index configuration
 message FlatConfig {
   bool enable_simd = 1;                           // Use SIMD optimizations (default: true)
-  int32 batch_size = 2;                           // Batch size for distance calculations (default: 1000)
+  uint32 batch_size = 2;                          // Batch size for distance calculations (default: 1000)
   bool enable_parallel_search = 3;                // Parallel search execution (default: true)
 }
 
 // Product Quantization index configuration
 message PqConfig {
   int32 subvectors = 1;                           // Number of subvectors (default: 8)
-  int32 bits_per_subvector = 2;                   // Bits per subvector (default: 8)
-  int32 training_sample_count = 3;                // Training samples (default: 10000)
+  uint32 bits_per_subvector = 2;                  // Bits per subvector (default: 8)
+  uint32 training_sample_count = 3;               // Training samples (default: 10000)
   bool enable_reranking = 4;                      // Enable full-precision reranking (default: true)
 }
 
@@ -614,7 +614,7 @@ message PqConfig {
 message AnnoyConfig {
   int32 n_trees = 1;                              // Number of trees (default: 10)
   int32 search_k = 2;                             // Search parameter (default: -1)
-  int32 max_leaf_size = 3;                        // Maximum leaf size (default: 100)
+  uint32 max_leaf_size = 3;                       // Maximum leaf size (default: 100)
   bool enable_mmap = 4;                           // Memory-map index files (default: true)
 }
 
@@ -676,7 +676,7 @@ enum DataDensity {
 // Compression configuration for collections
 message CompressionConfig {
   CompressionAlgorithm algorithm = 1;     // Compression algorithm to use
-  optional int32 level = 2;               // Algorithm-specific level (e.g., ZSTD 1-22)
+  optional uint32 level = 2;              // Algorithm-specific level (e.g., ZSTD 1-22)
   bool adaptive = 3;                      // Enable adaptive compression based on data (default: false)
   optional float min_ratio = 4;           // Minimum compression ratio (e.g., 1.5 = 50% reduction)
   
@@ -686,7 +686,7 @@ message CompressionConfig {
   optional string normalization_method = 7; // "mean", "trimmed_mean", "median" - for quantized only
   
   // SST-specific block sizing (KB format for better granularity)
-  optional int32 block_size_kb = 8;       // SST block size in KB (256-16384, default 2048 = 2MB)
+  optional uint32 block_size_kb = 8;      // SST block size in KB (256-16384, default 2048 = 2MB)
   optional bool dynamic_block_sizing = 9; // Auto-adjust based on vector dimensions (default: false)
 }
 
@@ -854,8 +854,8 @@ enum CacheEvictionPolicy {
 
 // Parquet writer settings - matches TOML configuration
 message ParquetWriterSettings {
-  optional int32 row_group_size = 1;
-  optional int32 page_size = 2;
+  optional uint32 row_group_size = 1;
+  optional uint32 page_size = 2;
   optional bool enable_bloom_filters = 3;
   optional float bloom_filter_fpp = 4;
   repeated string bloom_filter_columns = 5;
@@ -863,17 +863,17 @@ message ParquetWriterSettings {
   optional bool enable_page_index = 7;
   optional bool enable_column_index = 8;
   optional bool enable_offset_index = 9;
-  optional int32 page_index_granularity = 10;
+  optional uint32 page_index_granularity = 10;
   optional bool enable_dictionary = 11;
   optional float dictionary_threshold = 12;
   optional bool enable_delta_encoding = 13;
   optional bool enable_byte_stream_split = 14;
   optional bool enable_pq_sorting = 15;
-  optional int32 pq_sorting_segments = 16;
-  optional int32 pq_sorting_codebook_size = 17;
+  optional uint32 pq_sorting_segments = 16;
+  optional uint32 pq_sorting_codebook_size = 17;
   optional bool enable_native_metadata = 18;
-  optional int32 metadata_inference_samples = 19;
-  optional int32 write_batch_size = 20;
+  optional uint32 metadata_inference_samples = 19;
+  optional uint32 write_batch_size = 20;
   optional bool id_less_storage = 21;
 }
 
@@ -889,7 +889,7 @@ message FooterCacheSettings {
   optional int64 prefetch_threshold = 8;
   optional int64 warming_interval_seconds = 9;
   optional bool enable_compression = 10;
-  optional int32 compression_level = 11;
+  optional uint32 compression_level = 11;
 }
 
 // Hybrid writer settings for adaptive performance
@@ -897,17 +897,17 @@ message HybridWriterSettings {
   optional bool enable = 1;
   optional string initial_mode = 2;  // "streaming", "batch", "adaptive"
   optional bool enable_auto_switch = 3;
-  optional int32 mode_switch_threshold = 4;
-  optional int32 pattern_window_size = 5;
+  optional uint32 mode_switch_threshold = 4;
+  optional uint32 pattern_window_size = 5;
   optional float streaming_threshold = 6;
-  optional int32 batch_threshold = 7;
-  optional int32 max_buffer_size = 8;
+  optional uint32 batch_threshold = 7;
+  optional uint32 max_buffer_size = 8;
   optional int64 buffer_time_limit_seconds = 9;
   optional bool enable_concurrent_writes = 10;
-  optional int32 max_concurrent_writers = 11;
+  optional uint32 max_concurrent_writers = 11;
   optional bool optimize_row_group_size = 12;
-  optional int32 min_row_group_size = 13;
-  optional int32 max_row_group_size = 14;
+  optional uint32 min_row_group_size = 13;
+  optional uint32 max_row_group_size = 14;
 }
 
 // SST-specific engine settings
@@ -915,10 +915,10 @@ message SstEngineSettings {
   optional bool enable_bloom_filters = 1;
   optional float bloom_filter_fpp = 2;
   optional CompressionAlgorithm compression = 3;
-  optional int32 compression_level = 4;
+  optional uint32 compression_level = 4;
   optional int64 write_buffer_size = 5;
-  optional int32 max_write_buffers = 6;
-  optional int32 block_size_kb = 7;
+  optional uint32 max_write_buffers = 6;
+  optional uint32 block_size_kb = 7;
   optional bool dynamic_block_sizing = 8;
 }
 
@@ -928,7 +928,7 @@ message ViperEngineSettings {
   // Additional VIPER-specific overrides
   optional bool enable_columnar_compression = 2;
   optional bool enable_vector_quantization = 3;
-  optional int32 vector_chunk_size = 4;
+  optional uint32 vector_chunk_size = 4;
   optional bool enable_lazy_loading = 5;
 }
 
@@ -937,7 +937,7 @@ message NovaEngineSettings {
   optional bool inherit_global_settings = 1;
   // Additional NOVA-specific overrides
   optional bool enable_real_time_mode = 2;
-  optional int32 streaming_buffer_size = 3;
+  optional uint32 streaming_buffer_size = 3;
   optional bool prefer_low_latency = 4;
 }
 
@@ -992,8 +992,8 @@ message QuantizationConfig {
   bool enable_pq = 16;                   // Enable product quantization (default: follows strategy)
   
   // Product Quantization specific settings (used when enable_pq=true)
-  int32 pq_segments = 17;                // Number of PQ segments/subvectors (default: 8)
-  int32 pq_bits = 18;                    // Bits per PQ code (default: 8)
+  uint32 pq_segments = 17;               // Number of PQ segments/subvectors (default: 8)
+  uint32 pq_bits = 18;                   // Bits per PQ code (default: 8)
   repeated bytes pq_codebooks = 19;      // Pre-trained codebooks (optional)
   
   // Thresholds for progressive search stages

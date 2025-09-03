@@ -417,7 +417,7 @@ impl RecoveryManager {
         if flush_result.success {
             debug!(
                 "✅ Successfully flushed {} vectors from WAL file {} - marking for deletion_info",
-                flush_result.entries_flushed, file_info.file_path.display()
+                flush_result.entries_flushed.unwrap_or(0), file_info.file_path.display()
             );
             
             // Delete the WAL file since data is now safely in storage engine

@@ -96,7 +96,7 @@ impl AvroSerializationStrategy {
         // Create recovery manager
         let recovery_manager = Arc::new(RecoveryManager::new(
             config.clone(),
-            Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::default()),
+            Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default())),
             filesystem_factory.clone(),
         ));
         

@@ -271,10 +271,10 @@ impl OptimizedFlushCoordinator {
         let base_result = FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: processed_vectors.len() as u64,
-            bytes_written: processed_vectors.len() as u64 * 512, // Estimate
-            files_created: 1,
-            duration_ms: 0, // Will be set by caller
+            entries_flushed: Some(processed_vectors.len() as u64),
+            bytes_written: Some(processed_vectors.len() as u64 * 512), // Estimate
+            files_created: Some(1),
+            duration_ms: Some(0), // Will be set by caller
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,

@@ -459,7 +459,7 @@ impl SharedServices {
                 // Convert storage metadata to proto collection format
                 let collection_config = crate::proto::proximadb::CollectionConfig {
                     name: metadata.name.clone(),
-                    dimension: metadata.dimension as i32,
+                    dimension: metadata.dimension as u32,
                     distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default
                     storage_engine: crate::proto::proximadb::StorageEngine::Viper as i32, // Default
                     filterable_columns: vec![],

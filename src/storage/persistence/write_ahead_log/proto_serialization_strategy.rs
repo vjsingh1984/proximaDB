@@ -96,7 +96,7 @@ impl ProtoSerializationStrategy {
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
         
         // Create WAL behavior wrapper
-        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new());
+        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
         
         // Create recovery manager
         let recovery_manager = Arc::new(RecoveryManager::new(

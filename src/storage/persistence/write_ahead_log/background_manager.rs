@@ -177,11 +177,11 @@ impl BackgroundMaintenanceManager {
                         let _ = metrics.record_compaction(
                             &context.collection_id,
                             crate::metrics::CompactionMetricsUpdate {
-                                files_before: result.input_files as i32,
-                                files_after: result.output_files as i32,
-                                bytes_before: result.bytes_read as i64,  // Use bytes_read instead
-                                bytes_after: result.bytes_written as i64,  // Use bytes_written instead
-                                duration_ms: result.duration_ms as i64,
+                                files_before: result.input_files.unwrap_or(0) as i32,
+                                files_after: result.output_files.unwrap_or(0) as i32,
+                                bytes_before: result.bytes_read.unwrap_or(0) as i64,  // Use bytes_read instead
+                                bytes_after: result.bytes_written.unwrap_or(0) as i64,  // Use bytes_written instead
+                                duration_ms: result.duration_ms.unwrap_or(0) as i64,
                                 timestamp: chrono::Utc::now().timestamp_millis(),
                             },
                         ).await;
@@ -190,7 +190,7 @@ impl BackgroundMaintenanceManager {
                     
                     // Return file list for compatibility - for VIPER this would be the compacted files
                     // Since the UnifiedStorageEngine doesn't return file paths, we'll return a placeholder
-                    Ok(vec![format!("compacted_collection_{}_{}files", context.collection_id, result.output_files)])
+                    Ok(vec![format!("compacted_collection_{}_{}files", context.collection_id, result.output_files.unwrap_or(0))])
                 } else {
                     warn!(
                         "❌ [COMPACTION] {} compaction failed for collection {}",
