@@ -1,4 +1,4 @@
-'''//! Vector Operations Service - Centralized Search Orchestration
+//! Vector Operations Service - Centralized Search Orchestration
 //! 
 //! ARCHITECTURE OVERVIEW:
 //! ======================
@@ -38,10 +38,39 @@ use crate::storage::traits::{CollectionMetadataProvider, UnifiedStorageEngine};
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression; 
 use crate::proto::proximadb::Collection;
-use crate::query::unified_query_optimizer::{    UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,    ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType,};
+use crate::query::unified_query_optimizer::{
+    UnifiedQueryOptimizer, UnifiedQueryContext, UnifiedExecutionPlan,
+    ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType,
+};
 use crate::compute::quantization::types::{UnifiedQuantizationLevel, QuantizationLevel, ProductQuantization, BinaryQuantization, ScalarQuantization};
 
-fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {    let level_type = match strategy.quantization_type {        QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {            threshold: None,            sign_based: false,        })),        QuantizationType::INT8 => Some(QuantizationLevel::Scalar(ScalarQuantization {            bits: 8,            scale: 1.0,            offset: 0.0,            clamp_values: false,        })),        QuantizationType::PQ4 => Some(QuantizationLevel::Pq(ProductQuantization {            num_subvectors: 8, // default            bits_per_code: 4,            codebook_id: None,            adaptive_subvectors: false,        })),        QuantizationType::PQ8 => Some(QuantizationLevel::Pq(ProductQuantization {            num_subvectors: 8, // default            bits_per_code: 8,            codebook_id: None,            adaptive_subvectors: false,        })),    };    UnifiedQuantizationLevel { level_type }}
+fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQuantizationLevel {
+    let level_type = match strategy.quantization_type {
+        QuantizationType::Binary => Some(QuantizationLevel::Binary(BinaryQuantization {
+            threshold: None,
+            sign_based: false,
+        })),
+        QuantizationType::INT8 => Some(QuantizationLevel::Scalar(ScalarQuantization {
+            bits: 8,
+            scale: 1.0,
+            offset: 0.0,
+            clamp_values: false,
+        })),
+        QuantizationType::PQ4 => Some(QuantizationLevel::Pq(ProductQuantization {
+            num_subvectors: 8, // default
+            bits_per_code: 4,
+            codebook_id: None,
+            adaptive_subvectors: false,
+        })),
+        QuantizationType::PQ8 => Some(QuantizationLevel::Pq(ProductQuantization {
+            num_subvectors: 8, // default
+            bits_per_code: 8,
+            codebook_id: None,
+            adaptive_subvectors: false,
+        })),
+    };
+    UnifiedQuantizationLevel { level_type }
+}
 
 /// Unified search configuration that works for SQL, REST, and gRPC
 #[derive(Debug, Clone)]
@@ -802,11 +831,47 @@ impl VectorOperationsService {
             optimization_hint: Some(format!("IndexLookup:{:?}", index_type)),
         };
 
+        // Convert SearchParams to HybridQuery for AxisManager
+        let vector_query = if let Some(vectors) = search_params.query_vectors {
+            if let Some(vector) = vectors.first() {
+                Some(crate::index::axis::management::manager::VectorQuery::Dense {
+                    vector: vector.clone(),
+                    similarity_threshold: 0.0,
+                })
+            } else {
+                None
+            }
+        } else if let Some(vector) = search_params.vector {
+            Some(crate::index::axis::management::manager::VectorQuery::Dense {
+                vector,
+                similarity_threshold: 0.0,
+            })
+        } else {
+            None
+        };
+
+        let hybrid_query = crate::index::axis::management::manager::HybridQuery {
+            collection_id: collection_id.to_string(),
+            vector_query,
+            metadata_filters: Vec::new(), // TODO: Convert from filter_expression
+            id_filters: Vec::new(),
+            top_k: search_params.top_k.unwrap_or(10),
+            include_expired: search_params.include_expired.unwrap_or(false),
+        };
+
         // Perform index lookup using axis_index_manager
-        let results = self.axis_index_manager.search(
-            collection_id,
-            search_params,
-        ).await?;
+        let query_result = self.axis_index_manager.query(hybrid_query).await?;
+
+        // Convert QueryResult to Vec<InternalSearchResult>
+        let results: Vec<crate::core::search::InternalSearchResult> = query_result.results
+            .into_iter()
+            .map(|scored_result| crate::core::search::InternalSearchResult {
+                id: scored_result.id,
+                score: scored_result.score,
+                vector: None, // AXIS doesn't return vectors by default
+                metadata: None, // AXIS metadata would need to be fetched separately
+            })
+            .collect();
 
         debug!("✅ Index lookup returned {} results", results.len());
         Ok(results)
@@ -1179,4 +1244,4 @@ mod migration_example {
 //    - Single source of truth
 //    - No duplicate cost modeling
 //    - Consistent optimization logic
-//    - Easier to test and debug'''
+//    - Easier to test and debug

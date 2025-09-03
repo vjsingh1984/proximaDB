@@ -1,8 +1,10 @@
 = ProximaDB Documentation Hub
 :toc: left
 :toclevels: 2
-:imagesdir: DIAGRAMS
+:imagesdir: DIAGRAMS/images
 :icons: font
+
+image::proximadb-logo.svg[ProximaDB Logo, width=400, align=center]
 
 [.lead]
 **High-performance vector database with sub-millisecond search at scale.**

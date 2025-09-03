@@ -1,8 +1,10 @@
 = 🏗️ Technical Architecture - ProximaDB
 :toc: left
 :toclevels: 3
-:imagesdir: ../DIAGRAMS
+:imagesdir: ../DIAGRAMS/images
 :icons: font
+
+image::proximadb-logo.svg[ProximaDB Logo, width=300, align=center]
 
 [.lead]  
 **Comprehensive architecture guide for system architects and senior developers.**
@@ -42,7 +44,7 @@ ProximaDB is engineered as a **zero-infrastructure-tax** vector database, delive
 
 === High-Level System Architecture
 
-image::architecture/core_architecture.mmd[ProximaDB System Architecture,width=900,align=center]
+link:../DIAGRAMS/architecture/core_architecture.mmd[View Core Architecture Diagram]
 
 == 🏛️ System Components Deep Dive
 
@@ -185,6 +187,7 @@ ProximaDB's pluggable storage architecture allows optimal engine selection per w
 
 ===== Production Engines (✅ Ready)
 
+image::../../logos/sst-engine-logo.svg[SST Engine, width=100, float=right]
 **SST Engine - Real-Time OLTP**
 [source,rust]
 ----
@@ -202,6 +205,7 @@ pub struct SstEngine {
 // - Write-optimized with background compaction
 ----
 
+image::../../logos/viper-engine-logo.svg[VIPER Engine, width=100, float=right]
 **VIPER Engine - Analytics OLAP**  
 [source,rust]
 ----
@@ -221,18 +225,21 @@ pub struct ViperEngine {
 
 ===== Advanced Engines (🚧 Beta)
 
+image::../../logos/prism-engine-logo.svg[PRISM Engine, width=100, float=right]
 **PRISM Engine - Ultra-Low Latency**
 - Memory-first architecture with intelligent tiering
 - 0.3ms P99 latency for cached data
 - Progressive quantization for memory optimization
 - 75-96% memory savings vs. full-precision storage
 
+image::../../logos/swift-engine-logo.svg[SWIFT Engine, width=100, float=right]
 **SWIFT Engine - High Throughput**  
 - Hierarchical block structure for O(log n) ID lookups
 - 12K writes/sec with optimized batch processing
 - Adaptive block sizing based on access patterns
 - Hardware-aware data layout optimization
 
+image::../../logos/raptor-engine-logo.svg[RAPTOR Engine, width=100, float=right]
 **RAPTOR Engine - Graph-Based Search**
 - Row-aligned storage with integrated HNSW indexing  
 - Bloom filter optimization (200x memory vs. B-tree)
@@ -240,6 +247,8 @@ pub struct ViperEngine {
 - Distance computation in `select_rowgroups_by_clustering`
 
 ===== Research Engine (🔬 Experimental)
+
+image::../../logos/nova-engine-logo.svg[NOVA Engine, width=100, float=right]
 
 **NOVA Engine - Advanced Analytics**
 - Enhanced columnar format with hierarchical statistics

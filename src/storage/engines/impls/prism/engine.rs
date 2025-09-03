@@ -538,7 +538,7 @@ impl PrismEngine {
         self.universal_optimizer.write_data_optimized(
             &file_url,
             &bytes,
-            StorageTier::Memory, // Memory cache is unflushed tier  
+            crate::core::search::multi_tier_deduplication::StorageTier::Unflushed, // Memory cache is unflushed tier  
         ).await
     }
     

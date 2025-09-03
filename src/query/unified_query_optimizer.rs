@@ -409,6 +409,7 @@ impl UnifiedQueryOptimizer {
         &self,
         cost_analysis: &CostAnalysis,
         query_analysis: &QueryAnalysis,
+        context: &UnifiedQueryContext<'_>,
     ) -> Result<Vec<ExecutionStep>> {
         let mut steps = Vec::new();
         

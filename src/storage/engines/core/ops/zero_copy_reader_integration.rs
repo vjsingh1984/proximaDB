@@ -48,6 +48,7 @@ impl ZeroCopyReaderIntegration {
                 collection_id.to_string(),
                 "SST".to_string(),
             )
+            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         // 3. Create enhanced reader with zero-copy filesystem
@@ -74,6 +75,7 @@ impl ZeroCopyReaderIntegration {
                 collection_id.to_string(),
                 "VIPER".to_string(),
             )
+            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         Ok(EnhancedParquetReader::new(Arc::new(zero_copy_fs)))
@@ -99,6 +101,7 @@ impl ZeroCopyReaderIntegration {
                 collection_id.to_string(),
                 "SWIFT".to_string(),
             )
+            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         Ok(EnhancedSwiftReader::new(Arc::new(zero_copy_fs)))
@@ -135,6 +138,7 @@ impl ZeroCopyReaderIntegration {
                     collection_id.to_string(),
                     engine_type.to_string(),
                 )
+                .await
                 .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
             // Create appropriate reader type
