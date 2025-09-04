@@ -1,0 +1,1446 @@
+= Unified Operations Design: Flush, Compaction, and Re-quantization
+:toc:
+:toc-placement!:
+:sectanchors:
+:sectlinks:
+
+[abstract]
+== Abstract
+
+This document specifies the unified design for coordinating flush, compaction, and re-quantization operations in ProximaDB. It establishes a robust locking mechanism, automatic evaluation criteria, and integration patterns to ensure data consistency while maximizing throughput.
+
+toc::[]
+
+== Overview
+
+=== Problem Statement
+
+ProximaDB's storage engines need to coordinate three critical background operations:
+
+1. **Flush**: Moving data from memtable to persistent storage (SST/Parquet files)
+2. **Compaction**: Merging and optimizing storage files to improve read performance
+3. **Re-quantization**: Updating PQ codebooks when data distribution changes
+
+These operations must:
+- Avoid conflicts and data corruption
+- Maximize concurrent throughput where possible
+- Maintain consistency guarantees
+- Operate efficiently at scale
+
+=== Design Goals
+
+* **Correctness**: Prevent concurrent modifications that could corrupt data
+* **Performance**: Allow parallel operations where safe
+* **Automation**: Intelligent triggering of re-quantization
+* **Flexibility**: Support both automatic and manual operation modes
+* **Observability**: Clear metrics and monitoring
+
+== Architecture
+
+=== Core Components
+
+[source,rust]
+----
+// Central coordination system with future cloud delegation support
+pub struct UnifiedOperationCoordinator {
+    lock_manager: Arc<GlobalLockManager>,
+    flush_manager: Arc<FlushManager>,
+    compaction_manager: Arc<CompactionManager>,
+    requantization_manager: Arc<RequantizationManager>,
+    delegation_manager: Arc<OperationDelegationManager>, // Future: Spot instance delegation
+    metrics: Arc<OperationMetrics>,
+}
+
+// Future cloud delegation manager (preparation for multi-node)
+pub struct OperationDelegationManager {
+    execution_mode: ExecutionMode,
+    spot_instance_pool: Option<SpotInstancePool>,
+    cost_optimizer: CostOptimizer,
+    delegation_policy: DelegationPolicy,
+}
+
+pub enum ExecutionMode {
+    LocalOnly,           // Current: Single-node execution
+    HybridDelegation,    // Future: Delegate heavy operations to spot instances
+    FullyDistributed,    // Future: Multi-node cluster with spot workers
+}
+----
+
+=== Locking Architecture
+
+==== Lock Types
+
+[cols="1,1,3,2"]
+|===
+| Operation | Lock Mode | Scope | Duration
+
+| Flush
+| Shared/Exclusive
+| Collection + Level
+| ~5-30 seconds
+
+| Minor Compaction
+| Exclusive
+| Collection + Level Range
+| ~30-60 seconds
+
+| Major Compaction
+| Exclusive
+| Collection (all levels)
+| ~2-10 minutes
+
+| Re-quantization
+| Exclusive
+| Collection (all data)
+| ~5-30 minutes
+|===
+
+==== Lock Compatibility Matrix
+
+[cols="1,1,1,1,1"]
+|===
+| | Flush | Minor Compact | Major Compact | Re-quantize
+
+| Flush
+| ✓ (different levels)
+| ✗
+| ✗
+| ✗
+
+| Minor Compact
+| ✗
+| ✗
+| ✗
+| ✗
+
+| Major Compact
+| ✗
+| ✗
+| ✗
+| ✗
+
+| Re-quantize
+| ✗
+| ✗
+| ✗
+| ✗
+|===
+
+=== Operation Flow
+
+==== Flush Operation
+
+[source,rust]
+----
+async fn flush_with_coordination(
+    &self,
+    collection_id: &str,
+    level: StorageLevel,
+) -> Result<FlushResult> {
+    // 1. Check if flush is needed
+    let flush_decision = self.flush_manager
+        .evaluate_flush_need(collection_id, level)
+        .await?;
+    
+    if !flush_decision.should_flush {
+        return Ok(FlushResult::skipped(flush_decision.reason));
+    }
+    
+    // 2. Acquire appropriate lock
+    let lock_mode = if level == StorageLevel::L0 {
+        LockMode::Shared  // L0 flushes can be concurrent
+    } else {
+        LockMode::Exclusive  // Higher levels need exclusivity
+    };
+    
+    let _guard = self.lock_manager
+        .acquire(collection_id, OperationType::Flush(level), lock_mode)
+        .await?;
+    
+    // 3. Perform flush
+    let result = self.flush_manager
+        .execute_flush(collection_id, level)
+        .await?;
+    
+    // 4. Trigger compaction check
+    self.compaction_manager
+        .check_and_schedule(collection_id, level)
+        .await?;
+    
+    Ok(result)
+}
+----
+
+==== Compaction Operation
+
+[source,rust]
+----
+async fn compact_with_coordination(
+    &self,
+    collection_id: &str,
+    compaction_type: CompactionType,
+) -> Result<CompactionResult> {
+    // 1. Evaluate compaction need
+    let decision = self.compaction_manager
+        .evaluate_compaction_need(collection_id, compaction_type)
+        .await?;
+    
+    if !decision.should_compact {
+        return Ok(CompactionResult::skipped(decision.reason));
+    }
+    
+    // 2. Acquire exclusive lock
+    let _guard = self.lock_manager
+        .acquire(
+            collection_id,
+            OperationType::Compaction(compaction_type),
+            LockMode::Exclusive
+        )
+        .await?;
+    
+    // 3. Execute compaction
+    let result = self.compaction_manager
+        .execute_compaction(collection_id, compaction_type)
+        .await?;
+    
+    // 4. Evaluate re-quantization need (post-compaction)
+    if compaction_type == CompactionType::Major {
+        self.requantization_manager
+            .evaluate_and_schedule(collection_id)
+            .await?;
+    }
+    
+    Ok(result)
+}
+----
+
+==== Re-quantization Operation
+
+[source,rust]
+----
+async fn requantize_with_coordination(
+    &self,
+    collection_id: &str,
+    trigger: RequantizationTrigger,
+) -> Result<RequantizationResult> {
+    // 1. Comprehensive evaluation
+    let evaluation = self.requantization_manager
+        .evaluate_need(collection_id, trigger)
+        .await?;
+    
+    if !evaluation.should_requantize {
+        return Ok(RequantizationResult::skipped(evaluation.reason));
+    }
+    
+    // 2. Wait for safe window (no active operations)
+    self.wait_for_safe_window(collection_id).await?;
+    
+    // 3. Acquire exclusive collection-wide lock
+    let _guard = self.lock_manager
+        .acquire(
+            collection_id,
+            OperationType::Requantization,
+            LockMode::Exclusive
+        )
+        .await?;
+    
+    // 4. Pause all background operations
+    self.pause_background_operations(collection_id).await?;
+    
+    // 5. Execute re-quantization
+    let result = self.requantization_manager
+        .execute_requantization(collection_id, evaluation.config)
+        .await?;
+    
+    // 6. Resume operations
+    self.resume_background_operations(collection_id).await?;
+    
+    Ok(result)
+}
+----
+
+== Re-quantization Strategy
+
+=== Evaluation Criteria
+
+==== Automatic Triggers
+
+1. **Quality Degradation**
+   - Monitor average quantization error
+   - Trigger when error exceeds threshold (e.g., 15%)
+
+2. **Distribution Drift**
+   - Track statistical properties of new vs. training data
+   - Use KL divergence or similar metrics
+   - Trigger at significant drift (e.g., KL > 0.2)
+
+3. **Volume-based**
+   - Track ratio of new vectors to training set size
+   - Trigger when new_vectors / training_vectors > 0.5
+
+4. **Time-based**
+   - Periodic evaluation (e.g., every 7 days)
+   - Prevents indefinite codebook staleness
+
+==== Evaluation Implementation
+
+[source,rust]
+----
+pub struct RequantizationEvaluator {
+    quality_threshold: f32,        // Default: 0.85
+    drift_threshold: f32,          // Default: 0.2
+    volume_ratio_threshold: f32,   // Default: 0.5
+    max_age_days: u32,            // Default: 7
+}
+
+impl RequantizationEvaluator {
+    async fn evaluate_need(
+        &self,
+        collection_id: &str,
+        stats: &CollectionStats,
+    ) -> RequantizationDecision {
+        // 1. Check quality metrics
+        if stats.current_quality < self.quality_threshold {
+            return RequantizationDecision::needed(
+                RequantizationReason::QualityDegradation {
+                    current: stats.current_quality,
+                    threshold: self.quality_threshold,
+                },
+                RequantizationUrgency::High,
+            );
+        }
+        
+        // 2. Check distribution drift
+        let drift = self.calculate_drift(stats).await;
+        if drift > self.drift_threshold {
+            return RequantizationDecision::needed(
+                RequantizationReason::DistributionDrift { drift },
+                RequantizationUrgency::Medium,
+            );
+        }
+        
+        // 3. Check volume ratio
+        let volume_ratio = stats.new_vectors as f32 / stats.training_vectors as f32;
+        if volume_ratio > self.volume_ratio_threshold {
+            return RequantizationDecision::needed(
+                RequantizationReason::VolumeThreshold { volume_ratio },
+                RequantizationUrgency::Low,
+            );
+        }
+        
+        // 4. Check age
+        if stats.codebook_age_days > self.max_age_days {
+            return RequantizationDecision::needed(
+                RequantizationReason::Scheduled,
+                RequantizationUrgency::Low,
+            );
+        }
+        
+        RequantizationDecision::not_needed()
+    }
+}
+----
+
+=== Integration Points
+
+==== Post-Compaction Evaluation
+
+Major compaction is an ideal time to evaluate re-quantization:
+
+1. Data is already being processed
+2. Files are consolidated
+3. System is already under maintenance load
+
+[source,rust]
+----
+impl CompactionManager {
+    async fn post_compaction_hook(
+        &self,
+        collection_id: &str,
+        compaction_result: &CompactionResult,
+    ) -> Result<()> {
+        // Only evaluate after major compaction
+        if compaction_result.compaction_type != CompactionType::Major {
+            return Ok(());
+        }
+        
+        // Evaluate re-quantization need
+        let decision = self.requantization_evaluator
+            .evaluate_need(collection_id, &compaction_result.stats)
+            .await?;
+        
+        match decision.urgency {
+            RequantizationUrgency::High => {
+                // Execute immediately
+                self.requantization_manager
+                    .execute_now(collection_id)
+                    .await?;
+            }
+            RequantizationUrgency::Medium => {
+                // Schedule for next maintenance window
+                self.scheduler
+                    .schedule_requantization(collection_id, Duration::from_secs(3600))
+                    .await?;
+            }
+            RequantizationUrgency::Low => {
+                // Add to low-priority queue
+                self.low_priority_queue
+                    .enqueue(collection_id)
+                    .await?;
+            }
+        }
+        
+        Ok(())
+    }
+}
+----
+
+==== Background Manager Integration with Future Cloud Delegation
+
+[source,rust]
+----
+pub struct EnhancedBackgroundManager {
+    operation_cycle: Duration,  // Default: 60 seconds
+    delegation_manager: Arc<OperationDelegationManager>,
+    
+    async fn run_maintenance_cycle(&self) -> Result<()> {
+        for collection_id in self.get_active_collections().await? {
+            // Sequential execution with proper coordination
+            
+            // 1. Flush phase (always local - low latency requirement)
+            self.try_flush(collection_id).await?;
+            
+            // 2. Compaction phase (delegatable in future)
+            if self.should_compact(collection_id).await? {
+                let compaction_result = match self.delegation_manager.should_delegate_compaction(&collection_id).await {
+                    true => self.delegate_compaction(collection_id).await?,  // Future: Spot instance
+                    false => self.try_compact(collection_id).await?,        // Current: Local execution
+                };
+                
+                // 3. Re-quantization evaluation (post-compaction)
+                if compaction_result.was_major {
+                    self.evaluate_requantization(collection_id).await?;
+                }
+            }
+            
+            // 4. Independent re-quantization check (highly delegatable)
+            if self.should_requantize(collection_id).await? {
+                match self.delegation_manager.should_delegate_requantization(&collection_id).await {
+                    true => self.delegate_requantization(collection_id).await?,  // Future: Spot instance
+                    false => self.execute_requantization(collection_id).await?,  // Current: Local
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    // Future: Delegate operations to spot instances
+    async fn delegate_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
+        self.delegation_manager
+            .submit_compaction_job(collection_id)
+            .await
+    }
+    
+    async fn delegate_requantization(&self, collection_id: &str) -> Result<RequantizationResult> {
+        self.delegation_manager
+            .submit_requantization_job(collection_id)
+            .await
+    }
+}
+----
+
+== Cloud Cost Optimization Strategy (Future)
+
+=== Spot Instance Delegation Architecture
+
+This section outlines the future architecture for delegating heavy operations to spot instances while maintaining the current single-node design.
+
+==== Delegation Decision Matrix
+
+[cols="2,1,1,1,2"]
+|===
+| Operation | Latency Sensitivity | CPU Intensity | Delegatable | Delegation Criteria
+
+| Flush
+| High
+| Low
+| ❌
+| Always local - critical path
+
+| Minor Compaction
+| Medium
+| Medium
+| ⚠️
+| Only if >100MB data
+
+| Major Compaction
+| Low
+| High
+| ✅
+| Ideal for spot instances
+
+| Re-quantization
+| Very Low
+| Very High
+| ✅
+| Perfect for spot instances
+
+| Index Rebuild
+| Low
+| High
+| ✅
+| Batch multiple collections
+|===
+
+==== Spot Instance Pool Management
+
+[source,rust]
+----
+pub struct SpotInstancePool {
+    // Pool configuration
+    min_instances: usize,        // 0 for on-demand only
+    max_instances: usize,        // Maximum concurrent spot instances
+    instance_types: Vec<InstanceType>,
+    
+    // Cost optimization
+    max_price_per_hour: f64,     // Bid price limit
+    fallback_to_on_demand: bool, // If spot unavailable
+    
+    // Operation batching
+    batch_timeout: Duration,      // Wait time to batch operations
+    min_batch_size: usize,       // Minimum ops to justify spot launch
+    
+    // State management
+    active_instances: HashMap<InstanceId, InstanceState>,
+    pending_operations: PriorityQueue<DelegatedOperation>,
+}
+
+pub struct DelegatedOperation {
+    operation_id: Uuid,
+    operation_type: OperationType,
+    collection_ids: Vec<String>,  // Batch multiple collections
+    priority: OperationPriority,
+    deadline: Option<Instant>,
+    estimated_duration: Duration,
+    estimated_cost: f64,
+}
+----
+
+==== Cost-Aware Scheduling
+
+[source,rust]
+----
+impl CostOptimizer {
+    async fn evaluate_delegation_cost(
+        &self,
+        operation: &DelegatedOperation,
+    ) -> CostEvaluation {
+        let local_cost = self.estimate_local_cost(operation);
+        let spot_cost = self.estimate_spot_cost(operation).await;
+        let on_demand_cost = self.estimate_on_demand_cost(operation);
+        
+        CostEvaluation {
+            local_cost,
+            spot_cost,
+            on_demand_cost,
+            recommendation: self.recommend_execution_mode(
+                local_cost,
+                spot_cost,
+                on_demand_cost,
+                operation.deadline,
+            ),
+            savings_potential: local_cost - spot_cost.min(on_demand_cost),
+        }
+    }
+    
+    fn recommend_execution_mode(
+        &self,
+        local_cost: f64,
+        spot_cost: f64,
+        on_demand_cost: f64,
+        deadline: Option<Instant>,
+    ) -> ExecutionRecommendation {
+        // Urgent operations stay local
+        if deadline.map(|d| d < Instant::now() + Duration::from_secs(300)).unwrap_or(false) {
+            return ExecutionRecommendation::Local;
+        }
+        
+        // Cost threshold for delegation (e.g., save at least $0.10)
+        let min_savings_threshold = 0.10;
+        
+        if spot_cost < local_cost - min_savings_threshold {
+            ExecutionRecommendation::SpotInstance
+        } else if on_demand_cost < local_cost - min_savings_threshold * 2.0 {
+            ExecutionRecommendation::OnDemandInstance
+        } else {
+            ExecutionRecommendation::Local
+        }
+    }
+}
+----
+
+==== MapReduce-Style Distributed Compute
+
+Leverage existing reader/writer modules for distributed operations partitioned by collection_id:
+
+[source,rust]
+----
+pub struct DistributedComputeFramework {
+    // MapReduce-style job management
+    job_scheduler: Arc<JobScheduler>,
+    partition_manager: Arc<PartitionManager>,
+    
+    // Reuse existing I/O modules
+    readers: HashMap<StorageEngine, Arc<dyn UnifiedReader>>,
+    writers: HashMap<StorageEngine, Arc<dyn UnifiedWriter>>,
+}
+
+impl DistributedComputeFramework {
+    /// Submit distributed compaction job partitioned by collection
+    async fn submit_distributed_compaction(
+        &self,
+        collections: Vec<String>,
+    ) -> Result<JobHandle> {
+        // Map phase: Partition by collection_id
+        let partitions = self.partition_manager
+            .partition_by_collection(collections)
+            .await?;
+        
+        // Create map tasks - one per collection
+        let map_tasks: Vec<MapTask> = partitions
+            .into_iter()
+            .map(|partition| MapTask {
+                task_id: Uuid::new_v4(),
+                collection_id: partition.collection_id,
+                operation: OperationType::Compaction,
+                input_spec: InputSpec {
+                    reader: self.get_reader(partition.storage_engine),
+                    file_paths: partition.input_files,
+                    format: partition.data_format,
+                },
+                output_spec: OutputSpec {
+                    writer: self.get_writer(partition.storage_engine),
+                    output_path: partition.output_path,
+                    compression: partition.compression_config,
+                },
+            })
+            .collect();
+        
+        // Submit to spot instances or local workers
+        self.job_scheduler
+            .submit_mapreduce_job(MapReduceJob {
+                job_id: Uuid::new_v4(),
+                map_tasks,
+                reduce_tasks: vec![], // Compaction doesn't need reduce
+                partitioner: CollectionPartitioner,
+                combiner: None,
+            })
+            .await
+    }
+    
+    /// Submit distributed re-quantization with map-reduce pattern
+    async fn submit_distributed_requantization(
+        &self,
+        collections: Vec<String>,
+        quantization_config: QuantizationConfig,
+    ) -> Result<JobHandle> {
+        // Map phase: Process vectors per collection
+        let map_tasks = self.create_quantization_map_tasks(collections).await?;
+        
+        // Reduce phase: Aggregate codebooks if needed
+        let reduce_tasks = if quantization_config.shared_codebook {
+            vec![ReduceTask {
+                task_id: Uuid::new_v4(),
+                operation: OperationType::CodebookAggregation,
+                input_partitions: map_tasks.iter().map(|t| t.task_id).collect(),
+                output_spec: self.create_codebook_output_spec(),
+            }]
+        } else {
+            vec![] // Per-collection codebooks, no reduction needed
+        };
+        
+        self.job_scheduler
+            .submit_mapreduce_job(MapReduceJob {
+                job_id: Uuid::new_v4(),
+                map_tasks,
+                reduce_tasks,
+                partitioner: CollectionPartitioner,
+                combiner: Some(Box::new(QuantizationCombiner)),
+            })
+            .await
+    }
+}
+
+/// Collection-based partitioner for distributed operations
+pub struct CollectionPartitioner;
+
+impl Partitioner for CollectionPartitioner {
+    fn partition(&self, key: &str, num_partitions: usize) -> usize {
+        // Hash collection_id to determine partition
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        (hasher.finish() as usize) % num_partitions
+    }
+    
+    fn ensure_collection_locality(&self, collection_id: &str) -> PartitionConstraint {
+        // Ensure all data for a collection goes to same worker
+        PartitionConstraint::SinglePartition(self.partition(collection_id, usize::MAX))
+    }
+}
+
+/// Reuse existing reader/writer modules for distributed I/O
+impl MapTask {
+    async fn execute(&self) -> Result<MapOutput> {
+        // Use existing unified reader for input
+        let reader = self.input_spec.reader.clone();
+        let records = reader
+            .read_collection_data(&self.collection_id, &self.input_spec.file_paths)
+            .await?;
+        
+        // Process based on operation type
+        let processed = match self.operation {
+            OperationType::Compaction => {
+                self.compact_records(records).await?
+            }
+            OperationType::Requantization => {
+                self.requantize_vectors(records).await?
+            }
+            _ => records,
+        };
+        
+        // Use existing unified writer for output
+        let writer = self.output_spec.writer.clone();
+        writer
+            .write_collection_data(&self.collection_id, &self.output_spec.output_path, processed)
+            .await?;
+        
+        Ok(MapOutput {
+            task_id: self.task_id,
+            collection_id: self.collection_id.clone(),
+            records_processed: processed.len(),
+            output_path: self.output_spec.output_path.clone(),
+        })
+    }
+}
+----
+
+==== Intelligent Operation Batching
+
+[source,rust]
+----
+impl OperationBatcher {
+    async fn batch_operations_for_delegation(&self) -> Vec<OperationBatch> {
+        let mut batches = Vec::new();
+        
+        // Group by collection_id for perfect partitioning
+        let grouped = self.pending_operations
+            .group_by(|op| op.collection_id.clone());
+        
+        for (collection_id, ops) in grouped {
+            // Each collection becomes a separate batch (MapReduce partition)
+            batches.push(OperationBatch {
+                batch_id: Uuid::new_v4(),
+                collection_id,
+                operations: ops.to_vec(),
+                partition_key: self.compute_partition_key(&collection_id),
+                estimated_duration: self.estimate_batch_duration(&ops),
+                recommended_worker: self.select_worker_type(&ops),
+                can_parallelize: true, // Collections are independent
+            });
+        }
+        
+        // Optimize batch assignment to workers
+        self.optimize_batch_assignment(&mut batches).await;
+        
+        batches
+    }
+    
+    /// Optimize assignment to minimize data movement
+    async fn optimize_batch_assignment(&self, batches: &mut Vec<OperationBatch>) {
+        for batch in batches {
+            // Prefer workers with data locality
+            let data_location = self.get_data_location(&batch.collection_id).await;
+            batch.preferred_worker = Some(WorkerPreference {
+                zone: data_location.zone,
+                instance_type: self.select_instance_for_size(batch.data_size),
+                spot_preference: batch.operations.iter().all(|op| op.is_deferrable()),
+            });
+        }
+    }
+}
+----
+
+==== Data Transfer Optimization
+
+[source,rust]
+----
+pub struct DataTransferOptimizer {
+    async fn optimize_data_transfer(
+        &self,
+        operation: &DelegatedOperation,
+        target_instance: &InstanceInfo,
+    ) -> TransferStrategy {
+        let data_size = self.estimate_data_size(operation).await;
+        let network_cost = self.calculate_network_cost(data_size, target_instance);
+        
+        if network_cost > self.cost_threshold {
+            // Use direct S3/GCS access instead of data transfer
+            TransferStrategy::DirectCloudStorage {
+                presigned_urls: self.generate_presigned_urls(operation).await,
+                iam_role: self.get_temporary_role(target_instance),
+            }
+        } else if data_size > 1_000_000_000 { // 1GB
+            // Use parallel multi-part transfer
+            TransferStrategy::ParallelTransfer {
+                chunk_size: 64 * 1024 * 1024, // 64MB chunks
+                parallelism: 8,
+            }
+        } else {
+            // Simple direct transfer
+            TransferStrategy::Direct
+        }
+    }
+}
+----
+
+==== Failure Handling and Fallback
+
+[source,rust]
+----
+impl DelegationFailureHandler {
+    async fn handle_delegation_failure(
+        &self,
+        operation: DelegatedOperation,
+        error: DelegationError,
+    ) -> Result<RecoveryAction> {
+        match error {
+            DelegationError::SpotTermination => {
+                // Spot instance was reclaimed
+                if operation.progress > 0.8 {
+                    // Nearly complete - finish locally
+                    RecoveryAction::ResumeLocally(operation.checkpoint)
+                } else {
+                    // Retry with on-demand or local
+                    RecoveryAction::RetryWithFallback
+                }
+            }
+            DelegationError::NetworkTimeout => {
+                // Check if operation completed despite timeout
+                if self.verify_remote_completion(&operation).await? {
+                    RecoveryAction::MarkComplete
+                } else {
+                    RecoveryAction::RetryWithBackoff
+                }
+            }
+            DelegationError::CostExceeded => {
+                // Cost limit reached
+                RecoveryAction::AbortAndReschedule
+            }
+            _ => RecoveryAction::RetryLocally,
+        }
+    }
+}
+----
+
+=== Configuration for Cloud Deployment
+
+[source,yaml]
+----
+cloud_operations:
+  delegation:
+    enabled: false  # Currently disabled (single-node)
+    mode: "local_only"  # Options: local_only, hybrid, distributed
+    
+  spot_instances:
+    enabled: false  # Future capability
+    regions: ["us-west-2", "us-east-1"]
+    instance_types: ["c5.2xlarge", "c5.4xlarge", "c5d.9xlarge"]
+    max_spot_price: 0.50  # $/hour
+    min_savings_threshold: 0.10  # Minimum $ saved to justify delegation
+    
+  batching:
+    compaction_batch_size: 10  # Collections per batch
+    requantization_batch_size: 5
+    batch_wait_time: 300s  # Wait up to 5 minutes to batch
+    
+  cost_limits:
+    max_hourly_spend: 10.00
+    max_daily_spend: 100.00
+    max_monthly_spend: 2000.00
+    
+  data_transfer:
+    prefer_direct_s3: true  # Avoid data transfer costs
+    use_vpc_endpoints: true  # Reduce NAT gateway costs
+    compression: "zstd"  # Compress before transfer
+    
+  monitoring:
+    track_savings: true
+    alert_on_cost_overrun: true
+    report_frequency: "daily"
+----
+
+=== MapReduce Execution Model
+
+==== Data Locality Optimization
+
+[source,rust]
+----
+pub struct DataLocalityManager {
+    // Track where collection data resides
+    collection_locations: DashMap<String, DataLocation>,
+    
+    async fn optimize_job_placement(
+        &self,
+        job: &MapReduceJob,
+    ) -> HashMap<TaskId, WorkerAssignment> {
+        let mut assignments = HashMap::new();
+        
+        for task in &job.map_tasks {
+            // Find optimal worker based on data location
+            let data_loc = self.collection_locations
+                .get(&task.collection_id)
+                .map(|l| l.clone());
+            
+            let worker = match data_loc {
+                Some(loc) if loc.is_local => {
+                    // Data is on main node - execute locally
+                    WorkerAssignment::Local
+                }
+                Some(loc) if loc.is_s3 => {
+                    // Data in S3 - any spot instance in same region works
+                    WorkerAssignment::SpotInRegion(loc.region)
+                }
+                Some(loc) if loc.is_distributed => {
+                    // Data spread across nodes - use closest worker
+                    WorkerAssignment::NearestWorker(loc.primary_zone)
+                }
+                _ => WorkerAssignment::AnyAvailable,
+            };
+            
+            assignments.insert(task.task_id, worker);
+        }
+        
+        assignments
+    }
+}
+----
+
+==== Collection-Aware Job Scheduling
+
+[source,rust]
+----
+impl JobScheduler {
+    /// Schedule jobs with collection affinity
+    async fn schedule_with_affinity(
+        &self,
+        jobs: Vec<MapReduceJob>,
+    ) -> Result<Vec<ScheduledJob>> {
+        // Group jobs by collection for co-location
+        let mut collection_jobs: HashMap<String, Vec<MapReduceJob>> = HashMap::new();
+        
+        for job in jobs {
+            for task in &job.map_tasks {
+                collection_jobs
+                    .entry(task.collection_id.clone())
+                    .or_default()
+                    .push(job.clone());
+            }
+        }
+        
+        // Schedule with affinity constraints
+        let mut scheduled = Vec::new();
+        for (collection_id, jobs) in collection_jobs {
+            // All jobs for same collection go to same worker set
+            let worker_pool = self.assign_worker_pool(&collection_id).await?;
+            
+            for job in jobs {
+                scheduled.push(ScheduledJob {
+                    job,
+                    worker_pool: worker_pool.clone(),
+                    affinity_group: collection_id.clone(),
+                    priority: self.calculate_priority(&collection_id),
+                });
+            }
+        }
+        
+        Ok(scheduled)
+    }
+}
+----
+
+==== Efficient Data Shuffling
+
+[source,rust]
+----
+pub struct ShuffleManager {
+    /// Minimize shuffle by keeping collection data together
+    async fn shuffle_for_reduce(
+        &self,
+        map_outputs: Vec<MapOutput>,
+    ) -> HashMap<ReduceTaskId, Vec<ShuffleInput>> {
+        let mut shuffle_map = HashMap::new();
+        
+        // Group by collection_id to minimize network transfer
+        let by_collection: HashMap<String, Vec<MapOutput>> = 
+            map_outputs.into_iter()
+                .group_by(|o| o.collection_id.clone())
+                .collect();
+        
+        for (collection_id, outputs) in by_collection {
+            // All outputs for a collection go to same reducer
+            let reducer_id = self.select_reducer(&collection_id);
+            
+            shuffle_map
+                .entry(reducer_id)
+                .or_insert_with(Vec::new)
+                .extend(outputs.into_iter().map(|o| ShuffleInput {
+                    data_path: o.output_path,
+                    collection_id: collection_id.clone(),
+                    partition_key: self.compute_partition_key(&collection_id),
+                    compression: o.compression_used,
+                }));
+        }
+        
+        shuffle_map
+    }
+}
+----
+
+=== Migration Path to Cloud Delegation
+
+==== Phase 1: Current Implementation (Single-node)
+- All operations execute locally
+- No delegation infrastructure  
+- Simple locking mechanism
+- Direct reader/writer access
+
+==== Phase 2: MapReduce Foundation (3-6 months)
+- Abstract operations into map/reduce tasks
+- Add collection-based partitioning
+- Implement job serialization
+- Create unified reader/writer interfaces
+- Add checkpointing for long-running operations
+
+==== Phase 3: Local MapReduce Testing (6-9 months)
+- Run MapReduce jobs locally with thread pool
+- Test collection partitioning strategies
+- Optimize reader/writer modules for batch operations
+- Implement job recovery from checkpoints
+- Add metrics for job execution
+
+==== Phase 4: Spot Instance Integration (9-12 months)
+- Deploy worker nodes on spot instances
+- Implement remote job submission
+- Add data locality tracking
+- Create shuffle optimization
+- Test with re-quantization jobs
+
+==== Phase 5: Production Rollout (12-15 months)
+- Enable for major compactions
+- Add automatic failover to on-demand
+- Implement cost-aware scheduling
+- Monitor and tune performance
+- Scale to thousands of collections
+
+==== Phase 6: Advanced Optimization (15+ months)
+- Multi-region job distribution
+- Predictive resource allocation
+- ML-based cost optimization
+- Cross-collection job fusion
+- Adaptive partitioning strategies
+
+== Implementation Status
+
+=== Completed Components ✅
+
+* Basic flush and compaction operations
+* WAL-based recovery
+* Background manager framework
+* Storage engine traits
+
+=== In Progress 🚧
+
+* Unified lock manager
+* Re-quantization evaluator
+* Operation metrics collection
+
+=== Planned 📋
+
+* Re-quantization executor
+* Automated scheduling system
+* Advanced drift detection
+* GPU-accelerated re-quantization
+
+== Configuration
+
+=== Default Settings
+
+[source,yaml]
+----
+operations:
+  flush:
+    memtable_size_threshold: 64MB
+    time_threshold: 300s
+    level_0_parallelism: 4
+    
+  compaction:
+    minor_file_threshold: 4
+    major_file_threshold: 10
+    size_ratio: 1.5
+    
+  requantization:
+    quality_threshold: 0.85
+    drift_threshold: 0.2
+    volume_ratio_threshold: 0.5
+    max_codebook_age_days: 7
+    sample_size: 100000
+    
+  coordination:
+    lock_timeout: 60s
+    operation_timeout: 3600s
+    max_retry_attempts: 3
+----
+
+== Monitoring and Observability
+
+=== Key Metrics
+
+[cols="2,1,3"]
+|===
+| Metric | Type | Description
+
+| operation_duration_ms
+| Histogram
+| Duration of each operation type
+
+| operation_lock_wait_ms
+| Histogram
+| Time spent waiting for locks
+
+| requantization_quality_score
+| Gauge
+| Current quantization quality per collection
+
+| distribution_drift_score
+| Gauge
+| Current drift from training distribution
+
+| operations_blocked_total
+| Counter
+| Operations blocked due to locking
+
+| requantization_triggers_total
+| Counter
+| Re-quantization triggers by reason
+|===
+
+=== Alerts
+
+1. **Quality Alert**: Trigger when quality < 0.75
+2. **Drift Alert**: Trigger when drift > 0.3
+3. **Lock Contention**: Alert on excessive lock wait times
+4. **Operation Failure**: Alert on repeated operation failures
+
+== Testing Strategy
+
+=== Unit Tests
+
+* Lock compatibility matrix validation
+* Evaluation criteria thresholds
+* State machine transitions
+
+=== Integration Tests
+
+* Concurrent operation scenarios
+* Failure recovery paths
+* Performance under load
+
+=== Chaos Testing
+
+* Random operation failures
+* Lock timeout scenarios
+* Resource exhaustion
+
+== Migration Path
+
+=== Phase 1: Lock Manager (Week 1)
+- Implement GlobalLockManager
+- Integrate with existing operations
+- Add metrics
+
+=== Phase 2: Evaluation System (Week 2)
+- Implement RequantizationEvaluator
+- Add collection statistics tracking
+- Wire up decision logic
+
+=== Phase 3: Execution (Week 3)
+- Implement RequantizationExecutor
+- Integrate with storage engines
+- Add progress tracking
+
+=== Phase 4: Automation (Week 4)
+- Enable automatic triggering
+- Tune thresholds based on testing
+- Production rollout
+
+== API Specification
+
+=== Manual Control Endpoints
+
+[source,http]
+----
+# Trigger re-quantization
+POST /api/v1/collections/{collection_id}/requantize
+{
+  "strategy": "full|incremental",
+  "force": false,
+  "sample_size": 100000
+}
+
+# Get operation status
+GET /api/v1/collections/{collection_id}/operations
+
+# Cancel operation
+DELETE /api/v1/collections/{collection_id}/operations/{operation_id}
+----
+
+=== Configuration API
+
+[source,http]
+----
+# Update thresholds
+PUT /api/v1/collections/{collection_id}/config/operations
+{
+  "requantization": {
+    "quality_threshold": 0.85,
+    "auto_trigger": true
+  }
+}
+----
+
+== Cost-Benefit Analysis for Cloud Delegation
+
+=== Estimated Cost Savings
+
+[cols="2,1,1,1,2"]
+|===
+| Scenario | Local Cost/Hour | Spot Cost/Hour | Savings | Annual Savings (1000 collections)
+
+| Major Compaction (10GB)
+| $0.50
+| $0.15
+| 70%
+| $3,066
+
+| Re-quantization (1M vectors)
+| $2.00
+| $0.40
+| 80%
+| $14,016
+
+| Batch Re-quantization (10 collections)
+| $20.00
+| $2.00
+| 90%
+| $157,680
+
+| Index Rebuild
+| $1.00
+| $0.25
+| 75%
+| $6,570
+
+| **Total Annual Savings**
+| 
+| 
+| 
+| **$181,332**
+|===
+
+=== Instance Type Recommendations
+
+[cols="2,2,1,1,2"]
+|===
+| Operation Type | Recommended Instance | vCPUs | Memory | Spot Discount
+
+| Compaction (I/O heavy)
+| c5d.4xlarge
+| 16
+| 32GB
+| 70-90%
+
+| Re-quantization (CPU heavy)
+| c5.9xlarge
+| 36
+| 72GB
+| 60-80%
+
+| Batch Operations
+| c5.24xlarge
+| 96
+| 192GB
+| 70-85%
+
+| GPU Re-quantization
+| p3.2xlarge
+| 8
+| 61GB
+| 50-70%
+|===
+
+=== Operational Benefits
+
+1. **Scalability**: Handle thousands of collections without upgrading main instance
+2. **Cost Efficiency**: 70-90% savings on heavy background operations
+3. **Performance Isolation**: Keep latency-sensitive operations on main node
+4. **Elastic Capacity**: Scale up during maintenance windows, scale down during peak traffic
+5. **Failure Resilience**: Spot termination doesn't affect primary operations
+
+== API and Service Layer Enhancements (Technical Debt)
+
+=== Arrow IPC Integration for Vector Operations Service
+
+==== Current State
+The Vector Operations Service currently uses protobuf for all data serialization, which works well for individual vector operations but can be inefficient for bulk operations.
+
+==== Proposed Enhancement
+Implement Arrow IPC (Inter-Process Communication) format at the service/API layer for efficient bulk data transfer.
+
+==== Design Principles
+1. **Service Layer Responsibility**: Arrow IPC belongs at the API/service boundary, NOT in storage engines
+2. **Storage Engine Independence**: Storage engines should continue returning `VectorRecord` or iterators
+3. **Protocol Choice**: Arrow IPC is for wire protocol and bulk data transfer, not internal storage
+
+==== Implementation Architecture
+
+[source,rust]
+----
+// Enhanced VectorOperationsService with Arrow IPC support
+pub struct VectorOperationsService {
+    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    arrow_exporter: Arc<ArrowExporter>,  // NEW
+    arrow_importer: Arc<ArrowImporter>,  // NEW
+}
+
+impl VectorOperationsService {
+    // Bulk export API using Arrow IPC
+    pub async fn export_vectors_arrow(
+        &self,
+        collection_id: &str,
+        filter: Option<FilterExpression>,
+        batch_size: usize,
+    ) -> Result<impl Stream<Item = Result<RecordBatch>>> {
+        // Get iterator from storage engine
+        let vector_iter = self.storage_engine
+            .scan_vectors(collection_id, filter)
+            .await?;
+        
+        // Convert to Arrow RecordBatch stream
+        self.arrow_exporter.create_stream(
+            vector_iter,
+            batch_size,
+            ArrowFormat::IPC,  // Or Parquet for files
+        ).await
+    }
+    
+    // Bulk import API using Arrow IPC
+    pub async fn import_vectors_arrow(
+        &self,
+        collection_id: &str,
+        arrow_stream: impl Stream<Item = Result<RecordBatch>>,
+    ) -> Result<ImportResult> {
+        // Convert Arrow batches to VectorRecords
+        let vector_stream = self.arrow_importer
+            .convert_stream(arrow_stream)
+            .await?;
+        
+        // Use existing storage engine bulk insert
+        self.storage_engine
+            .bulk_insert_stream(collection_id, vector_stream)
+            .await
+    }
+    
+    // Streaming search results in Arrow format
+    pub async fn search_vectors_arrow(
+        &self,
+        query: &VectorQuery,
+        format: ArrowFormat,
+    ) -> Result<impl Stream<Item = Result<RecordBatch>>> {
+        // Execute search using existing pipeline
+        let results = self.search_vectors_unified(query).await?;
+        
+        // Convert to Arrow for efficient transfer
+        self.arrow_exporter.convert_results(
+            results,
+            format,
+            query.include_vectors,
+            query.include_metadata,
+        ).await
+    }
+}
+
+pub enum ArrowFormat {
+    IPC,        // For streaming/RPC
+    Parquet,    // For file export
+    Feather,    // For DataFrame compatibility
+}
+----
+
+==== Use Cases
+
+1. **Bulk Export Operations**
+   - Export entire collections for backup
+   - Data migration between clusters
+   - Integration with data lakes (export to Parquet)
+
+2. **High-Volume Client Operations**
+   - Python/Java clients using Arrow for zero-copy
+   - Batch processing pipelines
+   - Analytics workloads
+
+3. **Streaming Results**
+   - Large search result sets (>10K vectors)
+   - Continuous query subscriptions
+   - Real-time data feeds
+
+4. **Inter-Service Communication**
+   - Future distributed ProximaDB clusters
+   - Microservice architectures
+   - Cross-datacenter replication
+
+==== Benefits
+
+1. **Zero-Copy Transfer**: Arrow's columnar format enables zero-copy between processes
+2. **Language Interoperability**: Native support in Python, Java, Go, Rust
+3. **Compression**: Built-in compression for network transfer
+4. **Schema Evolution**: Arrow schemas support versioning
+5. **Streaming**: Efficient streaming of large datasets
+
+==== Implementation Priority
+
+* **Phase 1**: Add Arrow export API for bulk operations
+* **Phase 2**: Implement Arrow import for bulk ingestion
+* **Phase 3**: Support streaming search results in Arrow format
+* **Phase 4**: Optimize Python/Java SDKs to use Arrow natively
+
+==== Technical Debt Notes
+
+This enhancement is marked as technical debt because:
+1. Current protobuf serialization works but is suboptimal for bulk operations
+2. Many modern data tools expect Arrow/Parquet format
+3. Would significantly improve Python SDK performance
+4. Enables future distributed architecture
+
+== Conclusion
+
+This unified design provides:
+
+1. **Robust coordination** through hierarchical locking
+2. **Intelligent automation** via comprehensive evaluation
+3. **Performance optimization** by minimizing conflicts
+4. **Production readiness** with monitoring and controls
+5. **Future-proof architecture** ready for cloud delegation and cost optimization
+6. **Clear technical debt tracking** for service layer enhancements like Arrow IPC
+
+The system balances automation with manual control, allowing operators to tune behavior based on workload characteristics while maintaining strong consistency guarantees. The architecture is designed to evolve from single-node to distributed cloud deployment without major rewrites, enabling significant cost savings as the system scales.
