@@ -585,7 +585,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
             StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
             StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
-            StorageEngineStrategy::Lynx => true, // LYNX supports collection-level ops
+            StorageEngineStrategy::Helix => true, // HELIX supports collection-level ops
         }
     }
 
@@ -602,7 +602,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
             StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
             StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
-            StorageEngineStrategy::Lynx => true, // LYNX provides atomic guarantees
+            StorageEngineStrategy::Helix => true, // HELIX provides atomic guarantees
         }
     }
 
@@ -922,8 +922,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 32 * 1024 * 1024) // 32MB default
             }
-            StorageEngineStrategy::Lynx => {
-                // LYNX: locality-aware flushing
+            StorageEngineStrategy::Helix => {
+                // HELIX: locality-aware flushing
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
             }
@@ -997,8 +997,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false))
             }
-            StorageEngineStrategy::Lynx => {
-                // LYNX: locality-aware compaction
+            StorageEngineStrategy::Helix => {
+                // HELIX: locality-aware compaction
                 let stats = self.get_engine_stats().await?;
                 Ok(stats
                     .engine_specific

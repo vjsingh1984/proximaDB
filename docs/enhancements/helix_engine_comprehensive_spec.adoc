@@ -541,7 +541,7 @@ impl UnifiedStorageEngine for HELIXEngine {
 }
 ```
 
-### 6.2. Lynx-Specific Extensions
+### 6.2. HELIX-Specific Extensions
 
 - **Clustering Control**: APIs for PCA model management and re-clustering triggers
 - **Liquid Clustering**: Adaptive clustering based on query patterns
@@ -554,7 +554,7 @@ impl UnifiedStorageEngine for HELIXEngine {
 Configuration via existing `CollectionMetadata` and proto messages:
 
 ```proto
-message LynxEngineConfig {
+message HelixEngineConfig {
     // Compaction settings
     uint32 level0_file_num_compaction_trigger = 1;  // Default: 4
     uint32 max_levels = 2;                          // Default: 7
@@ -601,24 +601,24 @@ Integration with unified metrics framework (similar to VIPER/SST):
 
 ```rust
 // Compaction metrics
-lynx_compaction_duration_seconds{level="1"}
-lynx_compaction_bytes_written{level="1"}
-lynx_compaction_clustering_quality{level="1"}
+helix_compaction_duration_seconds{level="1"}
+helix_compaction_bytes_written{level="1"}
+helix_compaction_clustering_quality{level="1"}
 
 // Query metrics  
-lynx_query_pruning_ratio
-lynx_fastlane_blocks_scanned
-lynx_hilbert_range_efficiency
+helix_query_pruning_ratio
+helix_fastlane_blocks_scanned
+helix_hilbert_range_efficiency
 
 // PCA metrics
-lynx_pca_model_version
-lynx_pca_projection_latency_us
-lynx_pca_model_drift_score
+helix_pca_model_version
+helix_pca_projection_latency_us
+helix_pca_model_drift_score
 
 // Storage metrics
-lynx_sstable_count{level="0"}
-lynx_sstable_size_bytes{level="0"}
-lynx_bloom_filter_hits
+helix_sstable_count{level="0"}
+helix_sstable_size_bytes{level="0"}
+helix_bloom_filter_hits
 ```
 
 ### 8.2. Dashboard Integration
@@ -640,13 +640,13 @@ lynx_bloom_filter_hits
 
 1. **Learned Indexes**: ML-based index structures for predicting data locations
 2. **GPU-Accelerated Compaction**: Offload PCA and Hilbert computations to GPU
-3. **Distributed Lynx**: Sharded LSM tree across multiple nodes
+3. **Distributed HELIX**: Sharded LSM tree across multiple nodes
 4. **Quantum-Resistant Hashing**: Future-proof Hilbert key generation
 5. **Neural Clustering**: Deep learning models for optimal data placement
 
 ### 9.3. Integration Opportunities
 
 1. **AXIS Co-optimization**: Joint optimization of storage clustering and in-memory indexes
-2. **Cross-Engine Federation**: Query planning across Lynx, VIPER, SST engines
-3. **Tiered Storage**: Automatic data migration between Lynx levels and cold storage
+2. **Cross-Engine Federation**: Query planning across HELIX, VIPER, SST engines
+3. **Tiered Storage**: Automatic data migration between HELIX levels and cold storage
 4. **Real-time Analytics**: Streaming ingestion with continuous clustering
