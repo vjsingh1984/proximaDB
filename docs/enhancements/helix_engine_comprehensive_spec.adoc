@@ -370,8 +370,8 @@ graph TD
     end
 
     subgraph Level 1 - Clustered Output
-        H[SSTable L1-A<br/>Hilbert Range<br/>[0x0000..0x7FFF]]
-        I[SSTable L1-B<br/>Hilbert Range<br/>[0x8000..0xFFFF]]
+        H[SSTable L1-A<br/>Hilbert Range<br/>0x0000..0x7FFF]
+        I[SSTable L1-B<br/>Hilbert Range<br/>0x8000..0xFFFF]
     end
 
     subgraph AXIS Integration
