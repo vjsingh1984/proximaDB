@@ -2186,12 +2186,6 @@ impl UnifiedStorageEngine for SstStorage {
         &self.filesystem
     }
 
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService> {
-        None
-    }
-
     /// SST-specific flush implementation - Extract records from WAL vector record batches
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         info!("🚀 SST FLUSH START");

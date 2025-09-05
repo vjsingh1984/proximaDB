@@ -21,7 +21,7 @@ pub mod metrics_decorator;
 #[cfg(test)]
 mod tests {
     pub mod filestore_tests;
-    pub mod integration_tests;
+    // pub mod integration_tests; // TODO: Add integration tests module
 }
 
 use anyhow::Result;

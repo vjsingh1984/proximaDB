@@ -439,12 +439,6 @@ impl UnifiedStorageEngine for SwiftEngine {
         &self.filesystem
     }
 
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService> {
-        None // SWIFT doesn't use collection service directly
-    }
-
     // =============================================================================
     // CORE OPERATIONS
     // =============================================================================

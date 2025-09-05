@@ -73,11 +73,9 @@ impl StorageEngineFactory {
                 info!("Creating RAPTOR engine");
                 Self::create_raptor_default()
             }
-            StorageEngineStrategy::Lynx => {
-                // LYNX: Experimental locality-aware engine
-                // For now, use RAPTOR as a fallback
-                info!("Creating LYNX engine (falling back to RAPTOR for now)");
-                Self::create_raptor_default()
+            StorageEngineStrategy::Helix => {
+                info!("Creating HELIX engine");
+                Self::create_helix()
             }
         }
     }
@@ -144,6 +142,27 @@ impl StorageEngineFactory {
     }
 
     /// Create NOVA engine (Next-gen Optimized Vector Analytics)
+    fn create_helix() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating HELIX storage engine");
+        // HELIX needs async initialization
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(async {
+            use crate::storage::engines::impls::helix::{HelixEngine, HelixConfig};
+            
+            let config = HelixConfig::default();
+            let data_dir = std::path::PathBuf::from("/tmp/helix_data");
+            
+            HelixEngine::new(
+                "default".to_string(),
+                config,
+                data_dir,
+                None, // No EventLog for now
+            )
+            .await
+        })?;
+        Ok(Arc::new(engine))
+    }
+
     fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
@@ -269,8 +288,8 @@ impl StorageEngineFactory {
                 Self::create_viper()
             }
             WorkloadType::Experimental => {
-                info!("Experimental workload, using RAPTOR for cloud-optimized features");
-                Self::create_raptor_default()
+                info!("Experimental workload, using HELIX for PCA + Hilbert clustering");
+                Self::create_helix()
             }
         }
     }

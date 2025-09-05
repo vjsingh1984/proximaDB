@@ -89,8 +89,8 @@ pub enum StorageEngineStrategy {
     Nova,
     /// RAPTOR: Rapid Access Parallel Tiered Object Retrieval (Experimental)
     Raptor,
-    /// LYNX: Locality-aware Yggdrasil-style Neighbor Exploration (Experimental)
-    Lynx,
+    /// HELIX: High-Efficiency Locality-Indexed eXecution (PCA + Hilbert clustering)
+    Helix,
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     Hybrid,
 }
@@ -657,44 +657,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn get_filesystem_factory(&self)
     -> &crate::storage::persistence::filesystem::FilesystemFactory;
 
-    /// Get collection service for IndexConfig retrieval - to be implemented by each engine
-    /// IndexConfig should be handled by AXIS indexing service
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService>;
 
-    /// Get collection's IndexConfig from collection service
-    async fn get_native_index_config(
-        &self,
-        collection_id: &str,
-    ) -> Result<crate::index::config::IndexConfig> {
-        if let Some(collection_service) = self.get_collection_service() {
-            match collection_service.native_index_config(collection_id).await {
-                Ok(Some(config)) => {
-                    tracing::debug!("📋 Retrieved IndexConfig for collection: {}", collection_id);
-                    Ok(config)
-                }
-                Ok(None) => {
-                    tracing::warn!("⚠️ Collection not found for IndexConfig: {}", collection_id);
-                    // Return default IndexConfig as fallback
-                    Ok(crate::index::config::IndexConfig::default())
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "❌ Failed to retrieve IndexConfig for collection {}: {}",
-                        collection_id,
-                        e
-                    );
-                    // Return default IndexConfig as fallback
-                    Ok(crate::index::config::IndexConfig::default())
-                }
-            }
-        } else {
-            tracing::warn!("⚠️ Collection service not available, using default IndexConfig");
-            // Default implementation: return default IndexConfig
-            Ok(crate::index::config::IndexConfig::default())
-        }
-    }
 
     /// Ensure staging directory exists for the given operation type
     /// operation_type: "__flush" for flush operations, "__compact" for compaction operations

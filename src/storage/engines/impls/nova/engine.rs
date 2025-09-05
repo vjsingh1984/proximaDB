@@ -495,12 +495,6 @@ impl UnifiedStorageEngine for NovaEngine {
         &self.filesystem
     }
 
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService> {
-        None // NOVA doesn't use collection service directly
-    }
-
     // CORE OPERATIONS
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         let start_time = std::time::Instant::now();

@@ -1988,13 +1988,6 @@ impl UnifiedStorageEngine for ViperEngine {
         &self.filesystem
     }
 
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService> {
-        // Since we store it as Arc<RwLock<Option<Arc<CollectionService>>>>, we can't return a reference
-        // This method would need to be redesigned to work with the async pattern
-        None
-    }
     /// Convenient compact_collection method for CompactionCoordinator integration
     /// Returns enhanced result with vector tracking for AXIS integration
     /// Compact a specific collection - returns standard CompactionResult

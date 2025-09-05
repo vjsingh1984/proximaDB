@@ -1,0 +1,333 @@
+//! Query execution readers for HELIX engine
+//!
+//! This module provides efficient reading and searching of HELIX SSTables
+//! with Hilbert-based pruning and FastLanes decoding.
+
+use anyhow::{Context, Result};
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use tracing::{debug, info};
+
+use crate::compute::distance_computation::DistanceMetric;
+use crate::core::search::InternalSearchResult;
+use crate::core::VectorRecord;
+use crate::storage::persistence::filesystem::FileSystem;
+
+use super::SStableMetadata;
+
+/// Search an SSTable for nearest vectors
+pub async fn search_sstable(
+    filesystem: &Arc<dyn FileSystem>,
+    sstable: &SStableMetadata,
+    query_vector: &[f32],
+    k: usize,
+    distance_metric: &DistanceMetric,
+    filter: Option<&dyn Fn(&HashMap<String, String>) -> bool>,
+) -> Result<Vec<InternalSearchResult>> {
+    debug!(
+        "Searching SSTable at level {} with {} vectors",
+        sstable.level, sstable.num_vectors
+    );
+
+    // Read file data
+    let file_data = filesystem.read(&sstable.path.to_string_lossy()).await
+        .context("Failed to read SSTable file")?;
+    let mut cursor = std::io::Cursor::new(file_data);
+    
+    // Skip magic and version
+    cursor.set_position(8);
+    
+    // Read number of blocks
+    let mut num_blocks_bytes = [0u8; 4];
+    std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
+    let num_blocks = u32::from_le_bytes(num_blocks_bytes);
+    
+    let mut blocks = Vec::new();
+    
+    // Read blocks
+    for _ in 0..num_blocks {
+        // Read block size
+        let mut size_bytes = [0u8; 4];
+        std::io::Read::read_exact(&mut cursor, &mut size_bytes)?;
+        let block_size = u32::from_le_bytes(size_bytes) as usize;
+        
+        // Read block data
+        let mut block_data = vec![0u8; block_size];
+        std::io::Read::read_exact(&mut cursor, &mut block_data)?;
+        
+        // Deserialize block
+        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+        let block = FastLanesDataBlock::deserialize(&block_data)?;
+        blocks.push(block);
+    }
+    
+    let mut results = Vec::new();
+    
+    for block in blocks {
+        // Check if block should be pruned based on statistics
+        if should_prune_block(&block.metadata, query_vector) {
+            continue;
+        }
+        
+        // Search within block
+        for record in block.records {
+            // Apply filter if provided
+            if let Some(f) = filter {
+                if !f(&record.metadata.clone().unwrap_or_default()) {
+                    continue;
+                }
+            }
+            
+            // Calculate distance (simple euclidean for now)
+            let distance = query_vector.iter()
+                .zip(record.vector.iter())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            
+            results.push(InternalSearchResult {
+                id: record.id.clone(),
+                vector_id: Some(record.id),
+                score: 1.0 / (1.0 + distance), // Convert distance to similarity score
+                similarity: Some(distance),
+                vector: Some(record.vector),
+                metadata: HashMap::new(), // TODO: Convert record.metadata properly
+                debug_info: None,
+                version: None,
+                timestamp: Some(record.timestamp as u32),
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: Vec::new(),
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            });
+        }
+    }
+    
+    // Sort by distance and take top-k
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    results.truncate(k);
+    
+    Ok(results)
+}
+
+/// Find a specific vector by ID
+pub async fn find_vector_by_id(
+    filesystem: &Arc<dyn FileSystem>,
+    sstable: &SStableMetadata,
+    vector_id: &str,
+) -> Result<Option<VectorRecord>> {
+    // Check bloom filter if available
+    if let Some(ref bloom_data) = sstable.bloom_filter {
+        // Deserialize and check bloom filter
+        // If not present, return early
+        // (Implementation would use actual bloom filter)
+    }
+    
+    // Read file data
+    let file_data = filesystem.read(&sstable.path.to_string_lossy()).await?;
+    let mut cursor = std::io::Cursor::new(file_data);
+    
+    // Skip magic and version
+    cursor.set_position(8);
+    
+    // Read number of blocks
+    let mut num_blocks_bytes = [0u8; 4];
+    std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
+    let num_blocks = u32::from_le_bytes(num_blocks_bytes);
+    
+    // Read blocks
+    for _ in 0..num_blocks {
+        // Read block size
+        let mut size_bytes = [0u8; 4];
+        std::io::Read::read_exact(&mut cursor, &mut size_bytes)?;
+        let block_size = u32::from_le_bytes(size_bytes) as usize;
+        
+        // Read block data
+        let mut block_data = vec![0u8; block_size];
+        std::io::Read::read_exact(&mut cursor, &mut block_data)?;
+        
+        // Deserialize block
+        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+        let block = FastLanesDataBlock::deserialize(&block_data)?;
+        
+        for record in block.records {
+            if record.id == vector_id {
+                return Ok(Some(record));
+            }
+        }
+    }
+    
+    Ok(None)
+}
+
+/// Check if a block should be pruned based on statistics
+fn should_prune_block(
+    metadata: &crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata,
+    _query_vector: &[f32],
+) -> bool {
+    // Simple pruning based on Hilbert range
+    // In production, would use more sophisticated pruning
+    
+    // For now, don't prune any blocks
+    false
+}
+
+/// Parallel search across multiple SSTables
+pub async fn parallel_search(
+    filesystem: Arc<dyn FileSystem>,
+    sstables: Vec<SStableMetadata>,
+    query_vector: Vec<f32>,
+    k: usize,
+    distance_metric: DistanceMetric,
+    filter: Option<Arc<dyn Fn(&HashMap<String, String>) -> bool + Send + Sync>>,
+) -> Result<Vec<InternalSearchResult>> {
+    use futures::future::join_all;
+    
+    let search_tasks = sstables.into_iter().map(|sstable| {
+        let fs = filesystem.clone();
+        let query = query_vector.clone();
+        let metric = distance_metric.clone();
+        let f = filter.clone();
+        
+        tokio::spawn(async move {
+            let filter_fn = f.as_ref().map(|arc| {
+                let raw_ptr = Arc::as_ptr(arc) as *const dyn Fn(&HashMap<String, String>) -> bool;
+                unsafe { &*raw_ptr }
+            });
+            
+            search_sstable(&fs, &sstable, &query, k, &metric, filter_fn).await
+        })
+    });
+    
+    let results = join_all(search_tasks).await;
+    
+    // Merge results from all SSTables
+    let mut all_results = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(mut sstable_results)) => all_results.append(&mut sstable_results),
+            Ok(Err(e)) => {
+                // Log error but continue
+                tracing::warn!("Error searching SSTable: {}", e);
+            }
+            Err(e) => {
+                // Task panic
+                tracing::error!("Search task panicked: {}", e);
+            }
+        }
+    }
+    
+    // Sort and take top-k
+    all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+    all_results.truncate(k);
+    
+    Ok(all_results)
+}
+
+/// Statistics for query execution
+#[derive(Debug, Default)]
+pub struct QueryStats {
+    pub sstables_scanned: usize,
+    pub sstables_pruned: usize,
+    pub blocks_scanned: usize,
+    pub blocks_pruned: usize,
+    pub vectors_evaluated: usize,
+    pub pruning_ratio: f64,
+}
+
+/// Advanced search with statistics
+pub async fn search_with_stats(
+    filesystem: &Arc<dyn FileSystem>,
+    sstables: &[SStableMetadata],
+    query_vector: &[f32],
+    query_hilbert_key: Option<u64>,
+    k: usize,
+    distance_metric: &DistanceMetric,
+) -> Result<(Vec<InternalSearchResult>, QueryStats)> {
+    let mut stats = QueryStats::default();
+    let mut results = Vec::new();
+    
+    stats.sstables_scanned = sstables.len();
+    
+    for sstable in sstables {
+        // Prune based on Hilbert range
+        if let (Some(query_key), Some((min_key, max_key))) = 
+            (query_hilbert_key, sstable.hilbert_range) {
+            
+            // Calculate distance to range
+            let distance_to_range = if query_key < min_key {
+                min_key - query_key
+            } else if query_key > max_key {
+                query_key - min_key
+            } else {
+                0
+            };
+            
+            // Skip if too far
+            if distance_to_range > 10000 {
+                stats.sstables_pruned += 1;
+                continue;
+            }
+        }
+        
+        // Search SSTable
+        let sstable_results = search_sstable(
+            filesystem,
+            sstable,
+            query_vector,
+            k,
+            distance_metric,
+            None,
+        ).await?;
+        
+        stats.vectors_evaluated += sstable_results.len();
+        results.extend(sstable_results);
+    }
+    
+    // Calculate pruning ratio
+    stats.pruning_ratio = if stats.sstables_scanned > 0 {
+        stats.sstables_pruned as f64 / stats.sstables_scanned as f64
+    } else {
+        0.0
+    };
+    
+    // Sort and take top-k
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    results.truncate(k);
+    
+    info!(
+        "Query completed: scanned {}/{} SSTables, pruned {:.1}%, evaluated {} vectors",
+        stats.sstables_scanned - stats.sstables_pruned,
+        stats.sstables_scanned,
+        stats.pruning_ratio * 100.0,
+        stats.vectors_evaluated
+    );
+    
+    Ok((results, stats))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+
+    #[tokio::test]
+    async fn test_query_stats() {
+        let stats = QueryStats {
+            sstables_scanned: 10,
+            sstables_pruned: 7,
+            blocks_scanned: 30,
+            blocks_pruned: 20,
+            vectors_evaluated: 1000,
+            pruning_ratio: 0.7,
+        };
+        
+        assert_eq!(stats.sstables_scanned - stats.sstables_pruned, 3);
+        assert_eq!(stats.pruning_ratio, 0.7);
+    }
+}

@@ -1136,10 +1136,6 @@ impl UnifiedStorageEngine for PrismEngine {
         &self.filesystem_factory
     }
 
-    fn get_collection_service(&self) -> Option<&CollectionService> {
-        None
-    }
-
     async fn get_collection_storage_url(&self, collection_id: &str) -> Result<String> {
         Ok(format!(
             "{}/collections/{}",

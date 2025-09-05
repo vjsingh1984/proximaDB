@@ -1801,12 +1801,6 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Would return actual filesystem factory
         unimplemented!("Filesystem factory not yet implemented")
     }
-
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService> {
-        None // RAPTOR doesn't have direct access to collection service
-    }
 }
 
 // Helper structures

@@ -63,6 +63,24 @@ cache_size_mb = 512  # Increased for better columnar performance
 enable_quantization = true  # Two-stage search optimization
 quantization_type = "int8"  # INT8 quantization for memory efficiency
 
+# HELIX engine configuration (experimental clustering engine)
+[storage.helix]
+# Compaction settings
+compaction_threads = 4
+level0_file_num_compaction_trigger = 4
+max_levels = 7
+size_ratio = 10.0
+
+# PCA clustering settings
+pca_dimensions = 16                      # Dimensionality reduction target
+pca_retrain_interval_hours = 24         # How often to retrain PCA model
+enable_liquid_clustering = true         # Adaptive query-based clustering
+
+# Performance settings
+fastlane_block_size = 128               # FastLanes block size
+block_cache_size_mb = 1024              # Block cache for hot data
+bloom_filter_bits_per_key = 10         # Bloom filter precision
+
 [logging]
 level = "info"
 file_path = "./log/proximadb.log"

@@ -508,7 +508,7 @@ mod tests {
             let matrix_memory_mb = (k * k * 4) as f64 / 1_048_576.0;
 
             println!("{} collection (k={}):", name, k);
-            println!("  Distance calculations: {:,}", num_distances);
+            println!("  Distance calculations: {}", num_distances);
             println!("  Estimated time: {:.2} ms", estimated_ms);
             println!("  Matrix memory: {:.2} MB", matrix_memory_mb);
 
