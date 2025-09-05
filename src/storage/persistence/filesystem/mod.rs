@@ -366,7 +366,7 @@ pub struct RetryConfig {
 
 /// Storage tier type for intelligent data placement
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum StorageTier {
+pub enum FileStorageTier {
     /// In-memory storage (fastest)
     Memory,
     /// NVMe SSD storage (microsecond latency)
@@ -391,43 +391,43 @@ pub enum StorageTier {
     GcsHDD,
 }
 
-impl StorageTier {
+impl FileStorageTier {
     /// Get expected latency in microseconds
     pub fn expected_latency_us(&self) -> u64 {
         match self {
-            StorageTier::Memory => 1,                 // <1μs
-            StorageTier::NVMe => 100,                 // 100μs
-            StorageTier::SSD => 1_000,                // 1ms
-            StorageTier::HDD => 10_000,               // 10ms
-            StorageTier::S3Express => 5_000,          // 5ms
-            StorageTier::S3Standard => 50_000,        // 50ms
-            StorageTier::S3GlacierInstant => 100_000, // 100ms
-            StorageTier::AzurePremium => 500,         // 500μs
-            StorageTier::AzureStandard => 2_000,      // 2ms
-            StorageTier::GcsSSD => 800,               // 800μs
-            StorageTier::GcsHDD => 15_000,            // 15ms
+            FileStorageTier::Memory => 1,                 // <1μs
+            FileStorageTier::NVMe => 100,                 // 100μs
+            FileStorageTier::SSD => 1_000,                // 1ms
+            FileStorageTier::HDD => 10_000,               // 10ms
+            FileStorageTier::S3Express => 5_000,          // 5ms
+            FileStorageTier::S3Standard => 50_000,        // 50ms
+            FileStorageTier::S3GlacierInstant => 100_000, // 100ms
+            FileStorageTier::AzurePremium => 500,         // 500μs
+            FileStorageTier::AzureStandard => 2_000,      // 2ms
+            FileStorageTier::GcsSSD => 800,               // 800μs
+            FileStorageTier::GcsHDD => 15_000,            // 15ms
         }
     }
 
     /// Get optimal I/O size in bytes for this tier
     pub fn optimal_io_size(&self) -> usize {
         match self {
-            StorageTier::Memory => 64 * 1024,                 // 64KB
-            StorageTier::NVMe => 128 * 1024,                  // 128KB
-            StorageTier::SSD => 256 * 1024,                   // 256KB
-            StorageTier::HDD => 1024 * 1024,                  // 1MB
-            StorageTier::S3Express => 512 * 1024,             // 512KB
-            StorageTier::S3Standard => 1024 * 1024,           // 1MB
-            StorageTier::S3GlacierInstant => 4 * 1024 * 1024, // 4MB
-            StorageTier::AzurePremium => 256 * 1024,          // 256KB
-            StorageTier::AzureStandard => 512 * 1024,         // 512KB
-            StorageTier::GcsSSD => 256 * 1024,                // 256KB
-            StorageTier::GcsHDD => 2 * 1024 * 1024,           // 2MB
+            FileStorageTier::Memory => 64 * 1024,                 // 64KB
+            FileStorageTier::NVMe => 128 * 1024,                  // 128KB
+            FileStorageTier::SSD => 256 * 1024,                   // 256KB
+            FileStorageTier::HDD => 1024 * 1024,                  // 1MB
+            FileStorageTier::S3Express => 512 * 1024,             // 512KB
+            FileStorageTier::S3Standard => 1024 * 1024,           // 1MB
+            FileStorageTier::S3GlacierInstant => 4 * 1024 * 1024, // 4MB
+            FileStorageTier::AzurePremium => 256 * 1024,          // 256KB
+            FileStorageTier::AzureStandard => 512 * 1024,         // 512KB
+            FileStorageTier::GcsSSD => 256 * 1024,                // 256KB
+            FileStorageTier::GcsHDD => 2 * 1024 * 1024,           // 2MB
         }
     }
 
     /// Check if this tier is faster than another
-    pub fn is_faster_than(&self, other: &StorageTier) -> bool {
+    pub fn is_faster_than(&self, other: &FileStorageTier) -> bool {
         self.expected_latency_us() < other.expected_latency_us()
     }
 }
@@ -436,7 +436,7 @@ impl StorageTier {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierConfig {
     /// Storage tier type
-    pub tier: StorageTier,
+    pub tier: FileStorageTier,
 
     /// Base URL for this tier (e.g., "file:///mnt/nvme", "s3://bucket")
     pub base_url: String,
@@ -812,7 +812,7 @@ impl Default for FilesystemConfig {
 pub struct FilesystemFactory {
     config: FilesystemConfig,
     filesystems: HashMap<String, Arc<dyn FileSystem>>,
-    tier_mapping: HashMap<StorageTier, String>,
+    tier_mapping: HashMap<FileStorageTier, String>,
 }
 
 impl std::fmt::Debug for FilesystemFactory {
@@ -1312,14 +1312,14 @@ impl FilesystemFactory {
         }
 
         // Add default mappings if not configured
-        if !self.tier_mapping.contains_key(&StorageTier::Memory) {
+        if !self.tier_mapping.contains_key(&FileStorageTier::Memory) {
             self.tier_mapping
-                .insert(StorageTier::Memory, "memory://".to_string());
+                .insert(FileStorageTier::Memory, "memory://".to_string());
         }
     }
 
     /// Get filesystem URL for a specific storage tier
-    pub fn get_tier_url(&self, tier: StorageTier, relative_path: &str) -> FsResult<String> {
+    pub fn get_tier_url(&self, tier: FileStorageTier, relative_path: &str) -> FsResult<String> {
         let base_url = self.tier_mapping.get(&tier).ok_or_else(|| {
             FilesystemError::Config(format!("No filesystem configured for tier {:?}", tier))
         })?;
@@ -1335,8 +1335,8 @@ impl FilesystemFactory {
     /// Promote data from one tier to another
     pub async fn promote_data(
         &self,
-        from_tier: StorageTier,
-        to_tier: StorageTier,
+        from_tier: FileStorageTier,
+        to_tier: FileStorageTier,
         relative_path: &str,
     ) -> FsResult<()> {
         if !to_tier.is_faster_than(&from_tier) {
@@ -1359,8 +1359,8 @@ impl FilesystemFactory {
     /// Demote data from one tier to another
     pub async fn demote_data(
         &self,
-        from_tier: StorageTier,
-        to_tier: StorageTier,
+        from_tier: FileStorageTier,
+        to_tier: FileStorageTier,
         relative_path: &str,
     ) -> FsResult<()> {
         if from_tier.is_faster_than(&to_tier) {
@@ -1381,24 +1381,24 @@ impl FilesystemFactory {
     }
 
     /// Get optimal tier for data based on access patterns
-    pub fn suggest_tier(&self, access_frequency: f64, data_size_bytes: u64) -> StorageTier {
+    pub fn suggest_tier(&self, access_frequency: f64, data_size_bytes: u64) -> FileStorageTier {
         // Simple heuristic: hot data → fast tiers, cold data → slow tiers
         if access_frequency > 100.0 {
             // Very hot: >100 accesses per hour
             if data_size_bytes < 100 * 1024 * 1024 {
-                StorageTier::Memory
+                FileStorageTier::Memory
             } else {
-                StorageTier::NVMe
+                FileStorageTier::NVMe
             }
         } else if access_frequency > 10.0 {
             // Warm: 10-100 accesses per hour
-            StorageTier::SSD
+            FileStorageTier::SSD
         } else if access_frequency > 1.0 {
             // Cool: 1-10 accesses per hour
-            StorageTier::HDD
+            FileStorageTier::HDD
         } else {
             // Cold: <1 access per hour
-            StorageTier::S3Standard
+            FileStorageTier::S3Standard
         }
     }
 

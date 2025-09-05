@@ -58,7 +58,7 @@ use tracing::{debug, info};
 
 use crate::infrastructure::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
 use crate::infrastructure::tier_policy_engine::{
-    CollectionStorageConfig, CollectionStorageLimits, GlobalTier, SmartTierPolicy, StorageTier,
+    CollectionStorageConfig, CollectionStorageLimits, GlobalTier, SmartTierPolicy, InfrastructureTier,
     WorkloadMetrics, WorkloadPattern,
 };
 
@@ -211,7 +211,7 @@ pub struct PromotionCriteria {
     /// Time window for frequency calculation
     pub frequency_window: Duration,
     /// Minimum tier for promotion consideration
-    pub min_promotion_tier: StorageTier,
+    pub min_promotion_tier: InfrastructureTier,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -221,7 +221,7 @@ pub struct DemotionCriteria {
     /// Memory pressure threshold (0.0-1.0)
     pub memory_pressure_threshold: f64,
     /// Minimum tier (won't demote below this)
-    pub min_tier: StorageTier,
+    pub min_tier: InfrastructureTier,
 }
 
 /// Workload detection configuration for hybrid backends
@@ -574,10 +574,10 @@ impl AdaptiveStoreFactory {
         let collection_config = CollectionStorageConfig {
             collection_id: config.collection_id.clone(),
             base_location: "/tmp".to_string(),
-            durable_baseline: StorageTier::HardDisk {
+            durable_baseline: InfrastructureTier::HardDisk {
                 mount_path: "/mnt/hdd".to_string(),
             },
-            max_acceleration_tier: Some(StorageTier::Memory),
+            max_acceleration_tier: Some(InfrastructureTier::Memory),
             storage_limits: CollectionStorageLimits {
                 max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
                 max_local_disk_bytes: None,
@@ -587,11 +587,11 @@ impl AdaptiveStoreFactory {
 
         // Create default available tiers
         let available_tiers = vec![
-            StorageTier::Memory,
-            StorageTier::NvmeSsd {
+            InfrastructureTier::Memory,
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            StorageTier::HardDisk {
+            InfrastructureTier::HardDisk {
                 mount_path: "/mnt/hdd".to_string(),
             },
         ];
@@ -651,12 +651,12 @@ impl AdaptiveStoreFactory {
                         promotion_criteria: PromotionCriteria {
                             min_access_frequency: 100,
                             frequency_window: Duration::from_secs(3600),
-                            min_promotion_tier: StorageTier::Memory,
+                            min_promotion_tier: InfrastructureTier::Memory,
                         },
                         demotion_criteria: DemotionCriteria {
                             max_idle_time: Duration::from_secs(7200),
                             memory_pressure_threshold: 0.85,
-                            min_tier: StorageTier::HardDisk {
+                            min_tier: InfrastructureTier::HardDisk {
                                 mount_path: "/mnt/hdd".to_string(),
                             },
                         },
@@ -698,12 +698,12 @@ impl AdaptiveStoreFactory {
                         promotion_criteria: PromotionCriteria {
                             min_access_frequency: 10,
                             frequency_window: Duration::from_secs(300),
-                            min_promotion_tier: StorageTier::Memory,
+                            min_promotion_tier: InfrastructureTier::Memory,
                         },
                         demotion_criteria: DemotionCriteria {
                             max_idle_time: Duration::from_secs(1800),
                             memory_pressure_threshold: 0.9,
-                            min_tier: StorageTier::HardDisk {
+                            min_tier: InfrastructureTier::HardDisk {
                                 mount_path: "/mnt/hdd".to_string(),
                             },
                         },
@@ -1609,12 +1609,12 @@ mod tests {
                     promotion_criteria: PromotionCriteria {
                         min_access_frequency: 10,
                         frequency_window: Duration::from_secs(60),
-                        min_promotion_tier: StorageTier::Memory,
+                        min_promotion_tier: InfrastructureTier::Memory,
                     },
                     demotion_criteria: DemotionCriteria {
                         max_idle_time: Duration::from_secs(300),
                         memory_pressure_threshold: 0.8,
-                        min_tier: StorageTier::NvmeSsd {
+                        min_tier: InfrastructureTier::NvmeSsd {
                             mount_path: "/mnt/nvme".to_string(),
                         },
                     },

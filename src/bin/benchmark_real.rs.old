@@ -3,10 +3,10 @@
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
-use proximadb::index::axis::ivf_unified::{
+use proximadb::index::axis::indexes::ivf_unified::{
     CentroidConfig, IvfClusteringMethod, PostingListConfig, UnifiedIvfConfig, UnifiedIvfIndex,
 };
-use proximadb::index::axis::lsh_index::{AxisLshConfig, AxisLshIndex};
+use proximadb::index::axis::indexes::lsh_index::{AxisLshConfig, AxisLshIndex};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -152,16 +152,15 @@ async fn benchmark_indexing() {
             // Add vectors
             for (i, vec) in vectors.iter().enumerate() {
                 let record = VectorRecord {
-                    id: Some(format!("vec_{}", i)),
+                    id: format!("vec_{}", i),
                     vector: vec.clone(),
                     metadata: vec![],
                     timestamp: 0,
                     updated_at: Some(0),
                     expires_at: Some(0),
                     version: Some(1),
-                    // rank removed -  Some(0),
-                    similarity: Some(0.0),
-                    similarity: Some(0.0),
+                    quantized_vector: None,
+                    source: None,
                 };
                 if let Err(e) = index.add(format!("vec_{}", i), Arc::new(record)).await {
                     error!("  LSH add failed: {}", e);

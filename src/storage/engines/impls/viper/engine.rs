@@ -40,7 +40,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::search::UnifiedSearchEngine;
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::StorageTier;
+use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::traits::{InternalCollectionProvider, FlushResult, UnifiedStorageEngine};
 // Schema now uses shared ColumnarSchema from columnar module
 use super::compaction::Compaction;
@@ -354,7 +354,7 @@ impl ViperEngine {
         &self,
         file_path: &str,
         file_size_bytes: u64,
-    ) -> Result<StorageTier> {
+    ) -> Result<FileStorageTier> {
         // Use universal optimizer for storage tier optimization
         self.universal_optimizer
             .optimize_storage_tier(file_path, file_size_bytes as usize)
@@ -365,7 +365,7 @@ impl ViperEngine {
     async fn compress_parquet_optimized(
         &self,
         data: &[u8],
-        tier: StorageTier,
+        tier: FileStorageTier,
         _column_type: &str,
     ) -> Result<Vec<u8>> {
         // Delegate to universal optimizer's tier-aware compression
@@ -472,7 +472,7 @@ impl ViperEngine {
             .write_data_optimized(
                 &cache_key,
                 stats,
-                StorageTier::Memory, // Statistics are frequently accessed
+                FileStorageTier::Memory, // Statistics are frequently accessed
             )
             .await
     }

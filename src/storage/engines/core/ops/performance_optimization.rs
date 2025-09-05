@@ -21,7 +21,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::{CompressionAlgorithm, StandardCompression};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, StorageTier};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, FileStorageTier};
 
 /// Global memory pool configuration
 pub struct MemoryPoolConfig {
@@ -370,7 +370,7 @@ impl UniversalPerformanceOptimizer {
         &self,
         file_url: &str,
         data: &[u8],
-        tier: StorageTier,
+        tier: FileStorageTier,
     ) -> Result<()> {
         // Compress data based on tier strategy
         let compressed_data = self.compress_for_tier(data, tier).await?;
@@ -469,74 +469,74 @@ impl UniversalPerformanceOptimizer {
         &self,
         key: &str,
         data_size_bytes: usize,
-    ) -> Result<StorageTier> {
+    ) -> Result<FileStorageTier> {
         let access_frequency = self.get_access_frequency(key).await;
 
         match self.optimization_strategy {
             UniversalOptimizationStrategy::PerformanceFirst => {
                 // Keep frequently accessed data in fast tier
                 if access_frequency > 0.1 {
-                    Ok(StorageTier::NVMe)
+                    Ok(FileStorageTier::NVMe)
                 } else {
-                    Ok(StorageTier::SSD)
+                    Ok(FileStorageTier::SSD)
                 }
             }
             UniversalOptimizationStrategy::MemoryEfficient => {
                 // Optimize for memory usage
                 if data_size_bytes < 32 * 1024 * 1024 {
                     // < 32MB
-                    Ok(StorageTier::NVMe)
+                    Ok(FileStorageTier::NVMe)
                 } else {
-                    Ok(StorageTier::HDD)
+                    Ok(FileStorageTier::HDD)
                 }
             }
             UniversalOptimizationStrategy::CostOptimized => {
                 // Aggressive cost optimization
                 if access_frequency > self.io_config.tiered_storage_threshold {
-                    Ok(StorageTier::NVMe)
+                    Ok(FileStorageTier::NVMe)
                 } else {
-                    Ok(StorageTier::HDD)
+                    Ok(FileStorageTier::HDD)
                 }
             }
             UniversalOptimizationStrategy::Balanced => {
                 // Balance performance and cost
                 if access_frequency > 0.3 && data_size_bytes < 64 * 1024 * 1024 {
-                    Ok(StorageTier::NVMe)
+                    Ok(FileStorageTier::NVMe)
                 } else if access_frequency > 0.1 {
-                    Ok(StorageTier::SSD)
+                    Ok(FileStorageTier::SSD)
                 } else {
-                    Ok(StorageTier::HDD)
+                    Ok(FileStorageTier::HDD)
                 }
             }
             UniversalOptimizationStrategy::Custom(_) => {
                 // Default to balanced for custom strategies
-                Ok(StorageTier::SSD)
+                Ok(FileStorageTier::SSD)
             }
         }
     }
 
     /// Tier-aware compression optimization
-    pub async fn compress_for_tier(&self, data: &[u8], tier: StorageTier) -> Result<Vec<u8>> {
+    pub async fn compress_for_tier(&self, data: &[u8], tier: FileStorageTier) -> Result<Vec<u8>> {
         use crate::core::compression::{CompressionContext, CompressionProvider};
 
         let (algorithm, level) = match tier {
-            StorageTier::Memory | StorageTier::NVMe => {
+            FileStorageTier::Memory | FileStorageTier::NVMe => {
                 // Fast compression for hot tier
                 (CompressionAlgorithm::Lz4, 1) // Fastest
             }
-            StorageTier::SSD | StorageTier::AzurePremium | StorageTier::GcsSSD => {
+            FileStorageTier::SSD | FileStorageTier::AzurePremium | FileStorageTier::GcsSSD => {
                 // Balanced compression
                 (CompressionAlgorithm::Snappy, 3)
             }
-            StorageTier::HDD
-            | StorageTier::S3Standard
-            | StorageTier::AzureStandard
-            | StorageTier::GcsHDD
-            | StorageTier::S3GlacierInstant => {
+            FileStorageTier::HDD
+            | FileStorageTier::S3Standard
+            | FileStorageTier::AzureStandard
+            | FileStorageTier::GcsHDD
+            | FileStorageTier::S3GlacierInstant => {
                 // Maximum compression for cost savings
                 (CompressionAlgorithm::Zstd, 9)
             }
-            StorageTier::S3Express => {
+            FileStorageTier::S3Express => {
                 // Balanced for S3 Express
                 (CompressionAlgorithm::Snappy, 2)
             }
@@ -834,6 +834,6 @@ mod tests {
             .optimize_storage_tier("test_key", 1024)
             .await
             .unwrap();
-        assert!(matches!(tier, StorageTier::HDD)); // Should default to HDD for cost optimization
+        assert!(matches!(tier, FileStorageTier::HDD)); // Should default to HDD for cost optimization
     }
 }

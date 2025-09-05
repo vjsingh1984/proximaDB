@@ -32,7 +32,7 @@ use crate::index::axis::types::ClusterAssignment;
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
-use crate::storage::persistence::filesystem::{FileOptions, FileSystem, StorageTier};
+use crate::storage::persistence::filesystem::{FileOptions, FileSystem, FileStorageTier};
 
 // Universal performance optimization imports
 use crate::core::compression::{CompressionAlgorithm, CompressionContext, StandardCompression};
@@ -210,11 +210,11 @@ impl RaptorEngine {
             buffer_size: Some(tier.optimal_io_size()),
             encryption: None,
             storage_class: match &tier {
-                StorageTier::S3Express => Some("EXPRESS_ONEZONE".to_string()),
-                StorageTier::S3Standard => Some("STANDARD".to_string()),
-                StorageTier::S3GlacierInstant => Some("GLACIER_IR".to_string()),
-                StorageTier::AzurePremium => Some("Premium_LRS".to_string()),
-                StorageTier::AzureStandard => Some("Standard_LRS".to_string()),
+                FileStorageTier::S3Express => Some("EXPRESS_ONEZONE".to_string()),
+                FileStorageTier::S3Standard => Some("STANDARD".to_string()),
+                FileStorageTier::S3GlacierInstant => Some("GLACIER_IR".to_string()),
+                FileStorageTier::AzurePremium => Some("Premium_LRS".to_string()),
+                FileStorageTier::AzureStandard => Some("Standard_LRS".to_string()),
                 _ => None,
             },
             metadata: None,
@@ -482,7 +482,7 @@ impl RaptorEngine {
         &self,
         file_path: &str,
         access_frequency: f32,
-    ) -> Result<StorageTier> {
+    ) -> Result<FileStorageTier> {
         // Estimate file size for tier optimization decision
         let estimated_size = 1024 * 1024; // Default 1MB if size unknown
         self.universal_optimizer
@@ -787,13 +787,13 @@ impl RaptorEngine {
     fn is_cloud_storage(&self) -> bool {
         matches!(
             self.tier_config.tier,
-            StorageTier::S3Express
-                | StorageTier::S3Standard
-                | StorageTier::S3GlacierInstant
-                | StorageTier::AzurePremium
-                | StorageTier::AzureStandard
-                | StorageTier::GcsSSD
-                | StorageTier::GcsHDD
+            FileStorageTier::S3Express
+                | FileStorageTier::S3Standard
+                | FileStorageTier::S3GlacierInstant
+                | FileStorageTier::AzurePremium
+                | FileStorageTier::AzureStandard
+                | FileStorageTier::GcsSSD
+                | FileStorageTier::GcsHDD
         )
     }
 
@@ -1447,21 +1447,21 @@ impl RaptorEngine {
         registry.active_files.len() >= self.config.compaction_threshold_files
     }
 
-    fn determine_storage_tier(base_path: &str) -> StorageTier {
+    fn determine_storage_tier(base_path: &str) -> FileStorageTier {
         if base_path.starts_with("s3://") {
             if base_path.contains("express") {
-                StorageTier::S3Express
+                FileStorageTier::S3Express
             } else if base_path.contains("glacier") {
-                StorageTier::S3GlacierInstant
+                FileStorageTier::S3GlacierInstant
             } else {
-                StorageTier::S3Standard
+                FileStorageTier::S3Standard
             }
         } else if base_path.starts_with("gs://") {
-            StorageTier::GcsSSD
+            FileStorageTier::GcsSSD
         } else if base_path.starts_with("azure://") {
-            StorageTier::AzurePremium
+            FileStorageTier::AzurePremium
         } else {
-            StorageTier::NVMe
+            FileStorageTier::NVMe
         }
     }
 

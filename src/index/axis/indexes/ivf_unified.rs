@@ -30,7 +30,7 @@ use crate::infrastructure::adaptive_structures::{
     AdaptiveStore, AdaptiveStoreConfig, BackendType, DemotionCriteria, EvictionPolicy,
     IndexStructure, MetricsConfig, PromotionCriteria, TierConfig, UnifiedTierPolicy,
 };
-use crate::infrastructure::tier_policy_engine::StorageTier;
+use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 // VectorRecord eliminated - using ZeroOverheadVector for optimal memory
 use crate::index::axis::clustering::{AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig};
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
@@ -919,14 +919,14 @@ impl UnifiedIvfIndex {
                     promotion_criteria: PromotionCriteria {
                         min_access_frequency: config.posting_list_config.promotion_threshold as u64,
                         frequency_window: Duration::from_secs(300),
-                        min_promotion_tier: StorageTier::Memory,
+                        min_promotion_tier: InfrastructureTier::Memory,
                     },
                     demotion_criteria: DemotionCriteria {
                         max_idle_time: Duration::from_secs(
                             config.posting_list_config.demotion_threshold as u64,
                         ),
                         memory_pressure_threshold: 0.85,
-                        min_tier: StorageTier::Memory,
+                        min_tier: InfrastructureTier::Memory,
                     },
                     reload_strategy: crate::infrastructure::adaptive_structures::ReloadStrategy {
                         load_on_startup: false,

@@ -67,7 +67,8 @@
 //!    - Cache-friendly compressed representations
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::storage::persistence::filesystem::StorageTier;
+use crate::storage::persistence::filesystem::FileStorageTier;
+use crate::core::search::multi_tier_deduplication::DataFreshnessTier;
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
@@ -632,7 +633,7 @@ impl PrismEngine {
             .write_data_optimized(
                 &file_url,
                 &bytes,
-                StorageTier::Unflushed, // Memory cache is unflushed tier
+                FileStorageTier::Memory, // Memory cache tier
             )
             .await
     }
@@ -669,7 +670,7 @@ impl PrismEngine {
         &self,
         _access_frequency: f32,
         vector_size_bytes: usize,
-    ) -> Result<StorageTier> {
+    ) -> Result<DataFreshnessTier> {
         // Use universal optimizer's storage tier optimization
         let key = format!("prism_vector_{}", vector_size_bytes);
         let infrastructure_tier = self
@@ -677,10 +678,10 @@ impl PrismEngine {
             .optimize_storage_tier(&key, vector_size_bytes)
             .await?;
 
-        // Convert from storage::persistence::filesystem::StorageTier to multi_tier_deduplication::StorageTier
-        use crate::storage::persistence::filesystem::StorageTier as FsStorageTier;
+        // Convert from storage::persistence::filesystem::FileStorageTier to multi_tier_deduplication::DataFreshnessTier
+        use crate::storage::persistence::filesystem::FileStorageTier as FsStorageTier;
         let tier = match infrastructure_tier {
-            FsStorageTier::Memory => StorageTier::Unflushed,
+            FsStorageTier::Memory => DataFreshnessTier::Unflushed,
             FsStorageTier::NVMe
             | FsStorageTier::SSD
             | FsStorageTier::HDD
@@ -690,7 +691,7 @@ impl PrismEngine {
             | FsStorageTier::AzurePremium
             | FsStorageTier::AzureStandard
             | FsStorageTier::GcsSSD
-            | FsStorageTier::GcsHDD => StorageTier::Compacted,
+            | FsStorageTier::GcsHDD => DataFreshnessTier::Compacted,
         };
 
         Ok(tier)

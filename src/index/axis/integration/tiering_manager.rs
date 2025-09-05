@@ -29,7 +29,7 @@
 //! │                                                                  │
 //! │ GlobalTier ↔ AccessPatternTracker                        │
 //! │       ↓                     ↓                                    │
-//! │ StorageTier Hierarchy    Pattern Analysis                        │
+//! │ InfrastructureTier Hierarchy    Pattern Analysis                        │
 //! │ (Memory→NVMe→Cloud)      (Heat Scoring)                         │
 //! │       ↓                     ↓                                    │
 //! │ AdaptiveStore.IndexBackend                                       │
@@ -53,7 +53,7 @@ use crate::index::axis::storage::format_strategy::{IndexFormatStrategy, IndexSer
 use crate::index::axis::storage::serialization::IndexSerializer;
 use crate::infrastructure::adaptive_structures::{AdaptiveStore, IndexBackend};
 use crate::infrastructure::tier_policy_engine::{
-    AccessPatternMetrics, GlobalTier, SmartTierPolicy, StorageTier, WorkloadMetrics,
+    AccessPatternMetrics, GlobalTier, SmartTierPolicy, InfrastructureTier, WorkloadMetrics,
     WorkloadPattern, WorkloadType,
 };
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
@@ -93,7 +93,7 @@ pub struct CollectionTieringConstraints {
     pub no_cloud_collections: Vec<String>,
 
     /// Maximum tier per collection
-    pub max_tier_per_collection: std::collections::HashMap<String, StorageTier>,
+    pub max_tier_per_collection: std::collections::HashMap<String, InfrastructureTier>,
 
     /// Custom workload patterns per collection
     pub workload_overrides: std::collections::HashMap<String, WorkloadPattern>,
@@ -129,10 +129,10 @@ pub struct IndexSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexTierPreference {
     /// Preferred tier for this index type
-    pub preferred_tier: StorageTier,
+    pub preferred_tier: InfrastructureTier,
 
     /// Minimum tier (won't go below this)
-    pub minimum_tier: StorageTier,
+    pub minimum_tier: InfrastructureTier,
 
     /// Access pattern boost factor for this index type
     pub access_pattern_boost: f64,
@@ -169,26 +169,26 @@ impl Default for AxisTieringConfig {
             },
             index_type_settings: IndexSettings {
                 hnsw_preferences: IndexTierPreference {
-                    preferred_tier: StorageTier::Memory,
-                    minimum_tier: StorageTier::NvmeSsd {
+                    preferred_tier: InfrastructureTier::Memory,
+                    minimum_tier: InfrastructureTier::NvmeSsd {
                         mount_path: "/fast".to_string(),
                     },
                     access_pattern_boost: 1.5,
                 },
                 ivf_preferences: IndexTierPreference {
-                    preferred_tier: StorageTier::NvmeSsd {
+                    preferred_tier: InfrastructureTier::NvmeSsd {
                         mount_path: "/fast".to_string(),
                     },
-                    minimum_tier: StorageTier::HardDisk {
+                    minimum_tier: InfrastructureTier::HardDisk {
                         mount_path: "/data".to_string(),
                     },
                     access_pattern_boost: 1.2,
                 },
                 lsh_preferences: IndexTierPreference {
-                    preferred_tier: StorageTier::HardDisk {
+                    preferred_tier: InfrastructureTier::HardDisk {
                         mount_path: "/data".to_string(),
                     },
-                    minimum_tier: StorageTier::CloudStandard {
+                    minimum_tier: InfrastructureTier::CloudStandard {
                         provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                             bucket: "proximadb-indexes".to_string(),
                             storage_class:
@@ -260,8 +260,8 @@ pub struct AxisTieringManager {
 #[derive(Debug, Clone)]
 struct TierOperation {
     collection_id: String,
-    from_tier: StorageTier,
-    to_tier: StorageTier,
+    from_tier: InfrastructureTier,
+    to_tier: InfrastructureTier,
     start_time: Instant,
     operation_type: TierOperationType,
 }
@@ -361,7 +361,7 @@ impl AxisTieringManager {
 
         for (collection_id, state) in collection_states {
             let tier = self.extract_tier_from_state(&state)?;
-            if matches!(tier, StorageTier::Memory) {
+            if matches!(tier, InfrastructureTier::Memory) {
                 memory_collections.push(collection_id);
             }
         }
@@ -394,7 +394,7 @@ impl AxisTieringManager {
             }
 
             // Demote to NVMe
-            let target_tier = StorageTier::NvmeSsd {
+            let target_tier = InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             };
 
@@ -578,10 +578,10 @@ impl AxisTieringManager {
         &self,
         collection_id: &str,
         current_state: &CollectionTierState,
-        global_recommendation: &StorageTier,
+        global_recommendation: &InfrastructureTier,
         _access_patterns: &AccessPatternMetrics,
         workload_metrics: &WorkloadMetrics,
-    ) -> anyhow::Result<Option<StorageTier>> {
+    ) -> anyhow::Result<Option<InfrastructureTier>> {
         // Check collection-specific constraints
         if let Some(constraints) = &self.config.collection_constraints {
             // Memory pinned collections
@@ -589,12 +589,12 @@ impl AxisTieringManager {
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
             {
-                if !matches!(global_recommendation, StorageTier::Memory) {
+                if !matches!(global_recommendation, InfrastructureTier::Memory) {
                     debug!(
                         "Collection {} is memory-pinned, keeping in mem",
                         collection_id
                     );
-                    return Ok(Some(StorageTier::Memory));
+                    return Ok(Some(InfrastructureTier::Memory));
                 }
             }
 
@@ -605,15 +605,15 @@ impl AxisTieringManager {
             {
                 if matches!(
                     global_recommendation,
-                    StorageTier::CloudStandard { .. }
-                        | StorageTier::CloudInfrequentAccess { .. }
-                        | StorageTier::CloudArchive { .. }
+                    InfrastructureTier::CloudStandard { .. }
+                        | InfrastructureTier::CloudInfrequentAccess { .. }
+                        | InfrastructureTier::CloudArchive { .. }
                 ) {
                     debug!(
                         "Collection {} cannot go to cloud, using HDD instead",
                         collection_id
                     );
-                    return Ok(Some(StorageTier::HardDisk {
+                    return Ok(Some(InfrastructureTier::HardDisk {
                         mount_path: "/data".to_string(),
                     }));
                 }
@@ -653,9 +653,9 @@ impl AxisTieringManager {
     async fn apply_index_type_preferences(
         &self,
         _collection_id: &str,
-        global_recommendation: &StorageTier,
+        global_recommendation: &InfrastructureTier,
         workload_metrics: &WorkloadMetrics,
-    ) -> anyhow::Result<Option<StorageTier>> {
+    ) -> anyhow::Result<Option<InfrastructureTier>> {
         // Use workload pattern as a proxy for index type
         let preference = match workload_metrics.pattern {
             WorkloadPattern::ReadHeavy => &self.config.index_type_settings.hnsw_preferences,
@@ -707,7 +707,7 @@ impl AxisTieringManager {
             let current_tier = self.extract_tier_from_state(&current_state)?;
 
             // Check if already at fastest tier
-            if matches!(current_tier, StorageTier::Memory) {
+            if matches!(current_tier, InfrastructureTier::Memory) {
                 continue;
             }
 
@@ -724,7 +724,7 @@ impl AxisTieringManager {
             }
 
             // Check memory pressure before promoting to memory
-            if matches!(target_tier, StorageTier::Memory) {
+            if matches!(target_tier, InfrastructureTier::Memory) {
                 let memory_stats = self.memory_tracker.memory_stats().await;
                 let memory_pressure = memory_stats.memory_usage_percentage / 100.0;
                 if memory_pressure > 0.8 {
@@ -809,10 +809,10 @@ impl AxisTieringManager {
     }
 
     /// Get promotion target (one tier faster)
-    fn get_promotion_target(&self, current_tier: &StorageTier) -> anyhow::Result<StorageTier> {
+    fn get_promotion_target(&self, current_tier: &InfrastructureTier) -> anyhow::Result<InfrastructureTier> {
         match current_tier {
-            StorageTier::CloudArchive { .. } | StorageTier::CloudDeepArchive { .. } => {
-                Ok(StorageTier::CloudStandard {
+            InfrastructureTier::CloudArchive { .. } | InfrastructureTier::CloudDeepArchive { .. } => {
+                Ok(InfrastructureTier::CloudStandard {
                     provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                         bucket: "proximadb-promoted".to_string(),
                         storage_class:
@@ -822,32 +822,32 @@ impl AxisTieringManager {
                     region: "us-east-1".to_string(),
                 })
             }
-            StorageTier::CloudStandard { .. } | StorageTier::CloudInfrequentAccess { .. } => {
-                Ok(StorageTier::HardDisk {
+            InfrastructureTier::CloudStandard { .. } | InfrastructureTier::CloudInfrequentAccess { .. } => {
+                Ok(InfrastructureTier::HardDisk {
                     mount_path: "/data".to_string(),
                 })
             }
-            StorageTier::HardDisk { .. } => Ok(StorageTier::NvmeSsd {
+            InfrastructureTier::HardDisk { .. } => Ok(InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             }),
-            StorageTier::NvmeSsd { .. } => Ok(StorageTier::Memory),
-            StorageTier::Memory => Err(anyhow::anyhow!("Already at fastest tier")),
+            InfrastructureTier::NvmeSsd { .. } => Ok(InfrastructureTier::Memory),
+            InfrastructureTier::Memory => Err(anyhow::anyhow!("Already at fastest tier")),
             _ => {
-                Ok(StorageTier::Memory) // Default to memory
+                Ok(InfrastructureTier::Memory) // Default to memory
             }
         }
     }
 
     /// Get demotion target (one tier slower)
-    fn get_demotion_target(&self, current_tier: &StorageTier) -> anyhow::Result<StorageTier> {
+    fn get_demotion_target(&self, current_tier: &InfrastructureTier) -> anyhow::Result<InfrastructureTier> {
         match current_tier {
-            StorageTier::Memory => Ok(StorageTier::NvmeSsd {
+            InfrastructureTier::Memory => Ok(InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             }),
-            StorageTier::NvmeSsd { .. } => Ok(StorageTier::HardDisk {
+            InfrastructureTier::NvmeSsd { .. } => Ok(InfrastructureTier::HardDisk {
                 mount_path: "/data".to_string(),
             }),
-            StorageTier::HardDisk { .. } => Ok(StorageTier::CloudStandard {
+            InfrastructureTier::HardDisk { .. } => Ok(InfrastructureTier::CloudStandard {
                 provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                     bucket: "proximadb-demoted".to_string(),
                     storage_class:
@@ -856,7 +856,7 @@ impl AxisTieringManager {
                 },
                 region: "us-east-1".to_string(),
             }),
-            StorageTier::CloudStandard { .. } => Ok(StorageTier::CloudInfrequentAccess {
+            InfrastructureTier::CloudStandard { .. } => Ok(InfrastructureTier::CloudInfrequentAccess {
                 provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                     bucket: "proximadb-cold".to_string(),
                     storage_class:
@@ -873,7 +873,7 @@ impl AxisTieringManager {
     async fn is_promotion_allowed(
         &self,
         collection_id: &str,
-        target_tier: &StorageTier,
+        target_tier: &InfrastructureTier,
     ) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Check max tier constraint
@@ -890,7 +890,7 @@ impl AxisTieringManager {
     async fn is_demotion_allowed(
         &self,
         collection_id: &str,
-        target_tier: &StorageTier,
+        target_tier: &InfrastructureTier,
     ) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Memory pinned collections cannot be demoted from memory
@@ -898,7 +898,7 @@ impl AxisTieringManager {
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
             {
-                if !matches!(target_tier, StorageTier::Memory) {
+                if !matches!(target_tier, InfrastructureTier::Memory) {
                     return Ok(false);
                 }
             }
@@ -910,10 +910,10 @@ impl AxisTieringManager {
             {
                 if matches!(
                     target_tier,
-                    StorageTier::CloudStandard { .. }
-                        | StorageTier::CloudInfrequentAccess { .. }
-                        | StorageTier::CloudArchive { .. }
-                        | StorageTier::CloudDeepArchive { .. }
+                    InfrastructureTier::CloudStandard { .. }
+                        | InfrastructureTier::CloudInfrequentAccess { .. }
+                        | InfrastructureTier::CloudArchive { .. }
+                        | InfrastructureTier::CloudDeepArchive { .. }
                 ) {
                     return Ok(false);
                 }
@@ -926,7 +926,7 @@ impl AxisTieringManager {
     async fn is_at_slowest_allowed_tier(
         &self,
         collection_id: &str,
-        current_tier: &StorageTier,
+        current_tier: &InfrastructureTier,
     ) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // No-cloud collections: HDD is slowest
@@ -934,14 +934,14 @@ impl AxisTieringManager {
                 .no_cloud_collections
                 .contains(&collection_id.to_string())
             {
-                return Ok(matches!(current_tier, StorageTier::HardDisk { .. }));
+                return Ok(matches!(current_tier, InfrastructureTier::HardDisk { .. }));
             }
         }
 
         // Default: CloudArchive is slowest we typically use
         Ok(matches!(
             current_tier,
-            StorageTier::CloudArchive { .. } | StorageTier::CloudDeepArchive { .. }
+            InfrastructureTier::CloudArchive { .. } | InfrastructureTier::CloudDeepArchive { .. }
         ))
     }
 
@@ -949,7 +949,7 @@ impl AxisTieringManager {
     async fn execute_tier_change(
         &self,
         collection_id: &str,
-        target_tier: StorageTier,
+        target_tier: InfrastructureTier,
     ) -> anyhow::Result<()> {
         let current_state = self
             .collection_state_manager
@@ -1014,8 +1014,8 @@ impl AxisTieringManager {
     async fn perform_tier_transition(
         &self,
         collection_id: &str,
-        _current_tier: &StorageTier,
-        target_tier: &StorageTier,
+        _current_tier: &InfrastructureTier,
+        target_tier: &InfrastructureTier,
     ) -> anyhow::Result<()> {
         // Use GlobalTier's rebalance_collection_tiers (the actual existing method)
         // Create a SmartTierPolicy for index workload
@@ -1035,12 +1035,12 @@ impl AxisTieringManager {
 
         // Update collection state to reflect the tier change
         match target_tier {
-            StorageTier::Memory => {
+            InfrastructureTier::Memory => {
                 self.collection_state_manager
                     .transition_to_memory(collection_id)
                     .await?;
             }
-            StorageTier::NvmeSsd { mount_path } | StorageTier::HardDisk { mount_path } => {
+            InfrastructureTier::NvmeSsd { mount_path } | InfrastructureTier::HardDisk { mount_path } => {
                 self.collection_state_manager
                     .transition_to_disk(collection_id, mount_path.clone())
                     .await?;
@@ -1055,12 +1055,12 @@ impl AxisTieringManager {
     }
 
     /// Choose appropriate format for a storage tier
-    fn choose_format_for_tier(&self, tier: &StorageTier) -> IndexSerializationFormat {
+    fn choose_format_for_tier(&self, tier: &InfrastructureTier) -> IndexSerializationFormat {
         match tier {
-            StorageTier::Memory | StorageTier::NvmeSsd { .. } => {
+            InfrastructureTier::Memory | InfrastructureTier::NvmeSsd { .. } => {
                 self.config.format_preferences.hot_tier_format
             }
-            StorageTier::HardDisk { .. } => self.config.format_preferences.warm_tier_format,
+            InfrastructureTier::HardDisk { .. } => self.config.format_preferences.warm_tier_format,
             _ => self.config.format_preferences.cold_tier_format,
         }
     }
@@ -1069,7 +1069,7 @@ impl AxisTieringManager {
     async fn handle_format_conversion(
         &self,
         collection_id: &str,
-        _target_tier: &StorageTier,
+        _target_tier: &InfrastructureTier,
         target_format: &IndexSerializationFormat,
     ) -> anyhow::Result<()> {
         debug!(
@@ -1087,17 +1087,17 @@ impl AxisTieringManager {
     }
 
     /// Extract tier from collection state
-    fn extract_tier_from_state(&self, state: &CollectionTierState) -> anyhow::Result<StorageTier> {
+    fn extract_tier_from_state(&self, state: &CollectionTierState) -> anyhow::Result<InfrastructureTier> {
         match state {
-            CollectionTierState::Memory { .. } => Ok(StorageTier::Memory),
+            CollectionTierState::Memory { .. } => Ok(InfrastructureTier::Memory),
             CollectionTierState::Disk { disk_location, .. } => {
                 // Determine tier based on disk location
                 if disk_location.to_string_lossy().contains("nvme") {
-                    Ok(StorageTier::NvmeSsd {
+                    Ok(InfrastructureTier::NvmeSsd {
                         mount_path: disk_location.to_string_lossy().to_string(),
                     })
                 } else {
-                    Ok(StorageTier::HardDisk {
+                    Ok(InfrastructureTier::HardDisk {
                         mount_path: disk_location.to_string_lossy().to_string(),
                     })
                 }
@@ -1106,7 +1106,7 @@ impl AxisTieringManager {
                 // Map cloud storage type to tier
                 use crate::index::axis::integration::collection_state::CloudStorageType;
                 match storage_type {
-                    CloudStorageType::S3Standard | CloudStorageType::S3Express => Ok(StorageTier::CloudStandard { 
+                    CloudStorageType::S3Standard | CloudStorageType::S3Express => Ok(InfrastructureTier::CloudStandard { 
                         provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                             bucket: "proximadb-indexes".to_string(),
                             storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
@@ -1114,7 +1114,7 @@ impl AxisTieringManager {
                         },
                         region: "us-west-2".to_string()
                     }),
-                    CloudStorageType::S3Glacier => Ok(StorageTier::CloudArchive { 
+                    CloudStorageType::S3Glacier => Ok(InfrastructureTier::CloudArchive { 
                         provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                             bucket: "proximadb-indexes".to_string(),
                             storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
@@ -1123,7 +1123,7 @@ impl AxisTieringManager {
                         region: "us-west-2".to_string()
                     }),
                     CloudStorageType::GCSStandard | CloudStorageType::GCSNearline | CloudStorageType::GCSArchive => {
-                        Ok(StorageTier::CloudStandard { 
+                        Ok(InfrastructureTier::CloudStandard { 
                             provider: crate::infrastructure::tier_policy_engine::CloudProvider::GoogleCloud {
                                 bucket: "proximadb-indexes".to_string(),
                                 storage_class: crate::infrastructure::tier_policy_engine::GcsStorageClass::Standard,
@@ -1133,7 +1133,7 @@ impl AxisTieringManager {
                         })
                     },
                     CloudStorageType::AzureHot | CloudStorageType::AzureCool | CloudStorageType::AzureArchive => {
-                        Ok(StorageTier::CloudStandard { 
+                        Ok(InfrastructureTier::CloudStandard { 
                             provider: crate::infrastructure::tier_policy_engine::CloudProvider::AzureBlob {
                                 account: "proximadb".to_string(),
                                 container: "indexes".to_string(),
@@ -1152,16 +1152,16 @@ impl AxisTieringManager {
     }
 
     /// Get tier ordering for comparison (lower number = faster tier)
-    fn tier_order(&self, tier: &StorageTier) -> u8 {
+    fn tier_order(&self, tier: &InfrastructureTier) -> u8 {
         match tier {
-            StorageTier::Memory => 0,
-            StorageTier::NvmeSsd { .. } => 1,
-            StorageTier::HardDisk { .. } => 2,
-            StorageTier::CloudExpressOneZone { .. } => 3,
-            StorageTier::CloudStandard { .. } => 4,
-            StorageTier::CloudInfrequentAccess { .. } => 5,
-            StorageTier::CloudArchive { .. } => 6,
-            StorageTier::CloudDeepArchive { .. } => 7,
+            InfrastructureTier::Memory => 0,
+            InfrastructureTier::NvmeSsd { .. } => 1,
+            InfrastructureTier::HardDisk { .. } => 2,
+            InfrastructureTier::CloudExpressOneZone { .. } => 3,
+            InfrastructureTier::CloudStandard { .. } => 4,
+            InfrastructureTier::CloudInfrequentAccess { .. } => 5,
+            InfrastructureTier::CloudArchive { .. } => 6,
+            InfrastructureTier::CloudDeepArchive { .. } => 7,
         }
     }
 
@@ -1198,17 +1198,17 @@ impl Clone for AxisTieringManager {
 }
 
 impl AxisTieringManager {
-    /// Convert tier level (1-4) to StorageTier enum
-    fn tier_level_to_storage_tier(&self, tier_level: u8) -> StorageTier {
+    /// Convert tier level (1-4) to InfrastructureTier enum
+    fn tier_level_to_storage_tier(&self, tier_level: u8) -> InfrastructureTier {
         match tier_level {
-            1 => StorageTier::Memory,
-            2 => StorageTier::NvmeSsd {
+            1 => InfrastructureTier::Memory,
+            2 => InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            3 => StorageTier::HardDisk {
+            3 => InfrastructureTier::HardDisk {
                 mount_path: "/mnt/hdd".to_string(),
             },
-            _ => StorageTier::CloudStandard {
+            _ => InfrastructureTier::CloudStandard {
                 provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                     bucket: "proximadb-indexes".to_string(),
                     storage_class:
@@ -1251,9 +1251,9 @@ mod tests {
             active_operations: Arc::new(DashMap::new()),
         };
 
-        let memory = StorageTier::Memory;
-        let nvme = StorageTier::NvmeSsd { mount_path: "/fast".to_string() };
-        let cloud = StorageTier::CloudStandard {
+        let memory = InfrastructureTier::Memory;
+        let nvme = InfrastructureTier::NvmeSsd { mount_path: "/fast".to_string() };
+        let cloud = InfrastructureTier::CloudStandard {
             provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                 bucket: "proximadb-indexes".to_string(),
                 storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,

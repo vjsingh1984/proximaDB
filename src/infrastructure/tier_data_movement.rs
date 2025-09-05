@@ -27,7 +27,7 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::infrastructure::tier_policy_engine::StorageTier;
+use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
@@ -67,16 +67,16 @@ impl TierDataMovement {
     }
 
     /// Get the native format for a tier
-    pub fn get_tier_format(&self, tier: &StorageTier) -> TierDataFormat {
+    pub fn get_tier_format(&self, tier: &InfrastructureTier) -> TierDataFormat {
         match tier {
-            StorageTier::Memory => TierDataFormat::Bincode,
-            StorageTier::NvmeSsd { .. }
-            | StorageTier::HardDisk { .. }
-            | StorageTier::CloudExpressOneZone { .. }
-            | StorageTier::CloudStandard { .. }
-            | StorageTier::CloudInfrequentAccess { .. }
-            | StorageTier::CloudArchive { .. }
-            | StorageTier::CloudDeepArchive { .. } => match self.storage_engine {
+            InfrastructureTier::Memory => TierDataFormat::Bincode,
+            InfrastructureTier::NvmeSsd { .. }
+            | InfrastructureTier::HardDisk { .. }
+            | InfrastructureTier::CloudExpressOneZone { .. }
+            | InfrastructureTier::CloudStandard { .. }
+            | InfrastructureTier::CloudInfrequentAccess { .. }
+            | InfrastructureTier::CloudArchive { .. }
+            | InfrastructureTier::CloudDeepArchive { .. } => match self.storage_engine {
                 StorageEngineType::SST => TierDataFormat::SST,
                 StorageEngineType::VIPER => TierDataFormat::VIPER,
             },
@@ -87,8 +87,8 @@ impl TierDataMovement {
     pub async fn promote_data(
         &self,
         items: Vec<String>, // Vector IDs to promote
-        from_tier: &StorageTier,
-        to_tier: &StorageTier,
+        from_tier: &InfrastructureTier,
+        to_tier: &InfrastructureTier,
     ) -> Result<PromotionResult> {
         let from_format = self.get_tier_format(from_tier);
         let to_format = self.get_tier_format(to_tier);
@@ -121,8 +121,8 @@ impl TierDataMovement {
     pub async fn demote_data(
         &self,
         items: Vec<String>, // Vector IDs to demote
-        from_tier: &StorageTier,
-        to_tier: &StorageTier,
+        from_tier: &InfrastructureTier,
+        to_tier: &InfrastructureTier,
     ) -> Result<DemotionResult> {
         let from_format = self.get_tier_format(from_tier);
         let to_format = self.get_tier_format(to_tier);
@@ -156,7 +156,7 @@ impl TierDataMovement {
     async fn read_from_tier(
         &self,
         ids: &[String],
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
         format: &TierDataFormat,
     ) -> Result<Vec<VectorRecord>> {
         match format {
@@ -179,7 +179,7 @@ impl TierDataMovement {
     async fn write_to_tier(
         &self,
         vectors: Vec<VectorRecord>,
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
         format: &TierDataFormat,
     ) -> Result<usize> {
         match format {
@@ -202,7 +202,7 @@ impl TierDataMovement {
     async fn read_from_memory_tier(
         &self,
         ids: &[String],
-        _tier: &StorageTier,
+        _tier: &InfrastructureTier,
     ) -> Result<Vec<VectorRecord>> {
         debug!(
             "Reading {} vectors from memory tier using bincode",
@@ -220,7 +220,7 @@ impl TierDataMovement {
     async fn write_to_memory_tier(
         &self,
         vectors: Vec<VectorRecord>,
-        _tier: &StorageTier,
+        _tier: &InfrastructureTier,
     ) -> Result<usize> {
         debug!(
             "Writing {} vectors to memory tier using bincode",
@@ -242,7 +242,7 @@ impl TierDataMovement {
     async fn read_from_sst_tier(
         &self,
         ids: &[String],
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
     ) -> Result<Vec<VectorRecord>> {
         let path = self.get_tier_path(tier)?;
         debug!("Reading {} vectors from SST at {}", ids.len(), path);
@@ -288,7 +288,7 @@ impl TierDataMovement {
     async fn write_to_sst_tier(
         &self,
         vectors: Vec<VectorRecord>,
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
     ) -> Result<usize> {
         let path = self.get_tier_path(tier)?;
         debug!("Writing {} vectors to SST at {}", vectors.len(), path);
@@ -327,7 +327,7 @@ impl TierDataMovement {
     async fn read_from_viper_tier(
         &self,
         ids: &[String],
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
     ) -> Result<Vec<VectorRecord>> {
         let path = self.get_tier_path(tier)?;
         debug!("Reading {} vectors from VIPER at {}", ids.len(), path);
@@ -361,7 +361,7 @@ impl TierDataMovement {
     async fn write_to_viper_tier(
         &self,
         vectors: Vec<VectorRecord>,
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
     ) -> Result<usize> {
         let path = self.get_tier_path(tier)?;
         debug!("Writing {} vectors to VIPER at {}", vectors.len(), path);
@@ -376,7 +376,7 @@ impl TierDataMovement {
     }
 
     /// Remove vectors from a tier
-    async fn remove_from_tier(&self, ids: &[String], tier: &StorageTier) -> Result<()> {
+    async fn remove_from_tier(&self, ids: &[String], tier: &InfrastructureTier) -> Result<()> {
         debug!("Removing {} vectors from {:?}", ids.len(), tier);
 
         // In production, this would:
@@ -387,20 +387,20 @@ impl TierDataMovement {
     }
 
     /// Get the storage path for a tier
-    fn get_tier_path(&self, tier: &StorageTier) -> Result<String> {
+    fn get_tier_path(&self, tier: &InfrastructureTier) -> Result<String> {
         match tier {
-            StorageTier::Memory => Err(anyhow!("Memory tier has no file path")),
-            StorageTier::NvmeSsd { mount_path } => {
+            InfrastructureTier::Memory => Err(anyhow!("Memory tier has no file path")),
+            InfrastructureTier::NvmeSsd { mount_path } => {
                 Ok(format!("{}/{}", mount_path, self.collection_id))
             }
-            StorageTier::HardDisk { mount_path } => {
+            InfrastructureTier::HardDisk { mount_path } => {
                 Ok(format!("{}/{}", mount_path, self.collection_id))
             }
-            StorageTier::CloudExpressOneZone { provider, .. }
-            | StorageTier::CloudStandard { provider, .. }
-            | StorageTier::CloudInfrequentAccess { provider, .. }
-            | StorageTier::CloudArchive { provider, .. }
-            | StorageTier::CloudDeepArchive { provider, .. } => {
+            InfrastructureTier::CloudExpressOneZone { provider, .. }
+            | InfrastructureTier::CloudStandard { provider, .. }
+            | InfrastructureTier::CloudInfrequentAccess { provider, .. }
+            | InfrastructureTier::CloudArchive { provider, .. }
+            | InfrastructureTier::CloudDeepArchive { provider, .. } => {
                 // Extract bucket/container from provider
                 match provider {
                     crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
@@ -414,7 +414,7 @@ impl TierDataMovement {
     }
 
     /// Estimate bytes used by items in a tier
-    fn estimate_tier_bytes(&self, ids: &[String], _tier: &StorageTier) -> usize {
+    fn estimate_tier_bytes(&self, ids: &[String], _tier: &InfrastructureTier) -> usize {
         // Rough estimate: 1KB per vector + overhead
         ids.len() * 1024
     }
@@ -443,13 +443,13 @@ mod tests {
 
         // Memory always uses bincode
         assert!(matches!(
-            movement.get_tier_format(&StorageTier::Memory),
+            movement.get_tier_format(&InfrastructureTier::Memory),
             TierDataFormat::Bincode
         ));
 
         // Disk tiers use engine format
         assert!(matches!(
-            movement.get_tier_format(&StorageTier::NvmeSsd {
+            movement.get_tier_format(&InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string()
             }),
             TierDataFormat::SST
@@ -459,7 +459,7 @@ mod tests {
         let viper_movement =
             TierDataMovement::new("test_collection".to_string(), StorageEngineType::VIPER);
         assert!(matches!(
-            viper_movement.get_tier_format(&StorageTier::HardDisk {
+            viper_movement.get_tier_format(&InfrastructureTier::HardDisk {
                 mount_path: "/mnt/disk".to_string()
             }),
             TierDataFormat::VIPER

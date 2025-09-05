@@ -28,7 +28,7 @@
 //! - Reuses existing policy engine infrastructure
 
 use crate::index::axis::integration::collection_state::TierLevel;
-use crate::infrastructure::tier_policy_engine::{GlobalTier, StorageTier, WorkloadPattern};
+use crate::infrastructure::tier_policy_engine::{GlobalTier, InfrastructureTier, WorkloadPattern};
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
 
 use anyhow::Result;
@@ -87,7 +87,7 @@ pub struct AxisTierRecommendation {
     pub recommended_tier: TierLevel,
 
     /// Unified storage tier mapping
-    pub storage_tier: StorageTier,
+    pub storage_tier: InfrastructureTier,
 
     /// Confidence score (0.0-1.0)
 
@@ -253,13 +253,13 @@ impl AxisTieringIntegration {
         }
     }
 
-    pub fn map_axis_tier_to_storage(&self, axis_tier: &TierLevel) -> StorageTier {
+    pub fn map_axis_tier_to_storage(&self, axis_tier: &TierLevel) -> InfrastructureTier {
         match axis_tier {
-            TierLevel::Memory => StorageTier::Memory,
-            TierLevel::Disk => StorageTier::NvmeSsd {
+            TierLevel::Memory => InfrastructureTier::Memory,
+            TierLevel::Disk => InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            TierLevel::Cloud => StorageTier::CloudStandard {
+            TierLevel::Cloud => InfrastructureTier::CloudStandard {
                 provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                     bucket: "proximadb-axis-standard".to_string(),
                     storage_class:

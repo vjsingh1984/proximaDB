@@ -224,7 +224,7 @@ pub enum ComparisonOperator {
 // Re-export main types
 pub use multi_tier_deduplication::{
     DeduplicationStats, DeduplicationStorageEngine, MetadataFilter, MultiTierDeduplicator,
-    StorageTier, TieredSearchCandidate,
+    DataFreshnessTier, TieredSearchCandidate,
 };
 
 // Filter types are already defined above, no need to re-export

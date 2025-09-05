@@ -2,7 +2,7 @@
 // Implements UnifiedStorageEngine trait for integration with ProximaDB
 
 use crate::core::compression::StandardCompression;
-use crate::core::search::StorageTier;
+use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
@@ -375,7 +375,7 @@ impl NovaEngine {
         &self,
         file_path: &str,
         row_group_stats: &super::hierarchical_stats::EnhancedRowGroupStats,
-    ) -> Result<StorageTier> {
+    ) -> Result<DataFreshnessTier> {
         // Use common utility for consistent vector size estimation
         // Default configuration since NovaEngine doesn't have config field
         let dimension = 1536; // Default dimension
@@ -396,22 +396,22 @@ impl NovaEngine {
 
         // Convert from filesystem::StorageTier to multi_tier_deduplication::StorageTier
         let tier = match infrastructure_tier {
-            crate::storage::persistence::filesystem::StorageTier::Memory => StorageTier::Unflushed,
-            crate::storage::persistence::filesystem::StorageTier::NVMe => StorageTier::Flushed,
-            crate::storage::persistence::filesystem::StorageTier::SSD => StorageTier::Flushed,
-            _ => StorageTier::Compacted,
+            crate::storage::persistence::filesystem::FileStorageTier::Memory => DataFreshnessTier::Unflushed,
+            crate::storage::persistence::filesystem::FileStorageTier::NVMe => DataFreshnessTier::Flushed,
+            crate::storage::persistence::filesystem::FileStorageTier::SSD => DataFreshnessTier::Flushed,
+            _ => DataFreshnessTier::Compacted,
         };
 
         Ok(tier)
     }
 
     /// Compression optimization using unified compression module (delegates to universal optimizer)
-    async fn compress_parquet_optimized(&self, data: &[u8], tier: StorageTier) -> Result<Vec<u8>> {
+    async fn compress_parquet_optimized(&self, data: &[u8], tier: DataFreshnessTier) -> Result<Vec<u8>> {
         // Convert from multi_tier_deduplication::StorageTier to filesystem::StorageTier
         let fs_tier = match tier {
-            StorageTier::Unflushed => crate::storage::persistence::filesystem::StorageTier::Memory,
-            StorageTier::Flushed => crate::storage::persistence::filesystem::StorageTier::NVMe,
-            StorageTier::Compacted => crate::storage::persistence::filesystem::StorageTier::SSD,
+            DataFreshnessTier::Unflushed => crate::storage::persistence::filesystem::FileStorageTier::Memory,
+            DataFreshnessTier::Flushed => crate::storage::persistence::filesystem::FileStorageTier::NVMe,
+            DataFreshnessTier::Compacted => crate::storage::persistence::filesystem::FileStorageTier::SSD,
         };
 
         // Use universal optimizer's tier-aware compression

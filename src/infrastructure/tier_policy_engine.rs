@@ -108,9 +108,9 @@ pub struct CostMetrics {
     pub total_monthly_cost: f64,
 }
 
-/// Complete tier hierarchy from fastest to most cost-effective
+/// Complete infrastructure tier hierarchy from fastest to most cost-effective
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum StorageTier {
+pub enum InfrastructureTier {
     /// L1: System memory (RAM) - fastest acceleration tier
     Memory,
 
@@ -151,30 +151,30 @@ pub enum StorageTier {
     },
 }
 
-impl StorageTier {
+impl InfrastructureTier {
     /// Get tier level (lower = faster, higher = more durable/cheaper)
     pub fn tier_level(&self) -> u8 {
         match self {
-            StorageTier::Memory => 1,
-            StorageTier::NvmeSsd { .. } => 2,
-            StorageTier::HardDisk { .. } => 3,
-            StorageTier::CloudExpressOneZone { .. } => 4,
-            StorageTier::CloudStandard { .. } => 5,
-            StorageTier::CloudInfrequentAccess { .. } => 6,
-            StorageTier::CloudArchive { .. } => 7,
-            StorageTier::CloudDeepArchive { .. } => 8,
+            InfrastructureTier::Memory => 1,
+            InfrastructureTier::NvmeSsd { .. } => 2,
+            InfrastructureTier::HardDisk { .. } => 3,
+            InfrastructureTier::CloudExpressOneZone { .. } => 4,
+            InfrastructureTier::CloudStandard { .. } => 5,
+            InfrastructureTier::CloudInfrequentAccess { .. } => 6,
+            InfrastructureTier::CloudArchive { .. } => 7,
+            InfrastructureTier::CloudDeepArchive { .. } => 8,
         }
     }
 
     /// Check if this tier is faster than another (lower level number)
-    pub fn is_faster_than(&self, other: &StorageTier) -> bool {
+    pub fn is_faster_than(&self, other: &InfrastructureTier) -> bool {
         self.tier_level() < other.tier_level()
     }
 
     /// Check if this tier is at or above baseline durability
     /// Note: For tiering purposes, faster tiers (like Memory) are allowed even if less durable,
     /// as long as data is also stored at the baseline tier
-    pub fn meets_durability(&self, baseline: &StorageTier) -> bool {
+    pub fn meets_durability(&self, baseline: &InfrastructureTier) -> bool {
         // A tier meets durability if it's at the same level or slower (more durable)
         // than the baseline. Faster tiers don't meet durability requirements on their own
         self.tier_level() >= baseline.tier_level()
@@ -241,10 +241,10 @@ pub struct CollectionStorageConfig {
     pub base_location: String,
 
     /// Durable store baseline tier - indexes can use faster tiers above this
-    pub durable_baseline: StorageTier,
+    pub durable_baseline: InfrastructureTier,
 
     /// Maximum allowed tier for acceleration (optional constraint)
-    pub max_acceleration_tier: Option<StorageTier>,
+    pub max_acceleration_tier: Option<InfrastructureTier>,
 
     /// Collection-specific storage limits
     pub storage_limits: CollectionStorageLimits,
@@ -270,33 +270,33 @@ impl CollectionStorageConfig {
             || base_location.starts_with("azure://")
         {
             // Cloud base location -> Allow acceleration up to local disk
-            StorageTier::CloudStandard {
+            InfrastructureTier::CloudStandard {
                 provider: Self::parse_cloud_provider(&base_location)?,
                 region: "us-east-1".to_string(), // Default region
             }
         } else if base_location.starts_with("/mnt/disk") || base_location.starts_with("/data") {
             // HDD base location -> Allow acceleration up to memory + NVMe
-            StorageTier::HardDisk {
+            InfrastructureTier::HardDisk {
                 mount_path: base_location.clone(),
             }
         } else if base_location.starts_with("/mnt/nvme") {
             // NVMe base location -> Allow memory acceleration only
-            StorageTier::NvmeSsd {
+            InfrastructureTier::NvmeSsd {
                 mount_path: base_location.clone(),
             }
         } else {
             // Memory-only base location -> No additional tiers
-            StorageTier::Memory
+            InfrastructureTier::Memory
         };
 
         let max_acceleration_tier = match &durable_baseline {
-            StorageTier::CloudStandard { .. } => Some(StorageTier::HardDisk {
+            InfrastructureTier::CloudStandard { .. } => Some(InfrastructureTier::HardDisk {
                 mount_path: "/mnt/index-cache_info".to_string(),
             }),
-            StorageTier::HardDisk { .. } => Some(StorageTier::Memory),
-            StorageTier::NvmeSsd { .. } => Some(StorageTier::Memory),
-            StorageTier::Memory => None, // No acceleration above memory
-            _ => Some(StorageTier::HardDisk {
+            InfrastructureTier::HardDisk { .. } => Some(InfrastructureTier::Memory),
+            InfrastructureTier::NvmeSsd { .. } => Some(InfrastructureTier::Memory),
+            InfrastructureTier::Memory => None, // No acceleration above memory
+            _ => Some(InfrastructureTier::HardDisk {
                 mount_path: "/mnt/index-cache_info".to_string(),
             }),
         };
@@ -363,7 +363,7 @@ impl CollectionStorageConfig {
     }
 
     /// Check if a tier is allowed for acceleration based on baseline
-    pub fn is_tier_allowed(&self, tier: &StorageTier) -> bool {
+    pub fn is_tier_allowed(&self, tier: &InfrastructureTier) -> bool {
         // The baseline is always allowed
         if tier == &self.durable_baseline {
             return true;
@@ -386,27 +386,27 @@ impl CollectionStorageConfig {
     }
 
     /// Get available tiers for this collection (sorted by speed)
-    pub fn available_tiers(&self) -> Vec<StorageTier> {
+    pub fn available_tiers(&self) -> Vec<InfrastructureTier> {
         let all_tiers = vec![
-            StorageTier::Memory,
-            StorageTier::NvmeSsd {
+            InfrastructureTier::Memory,
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            StorageTier::HardDisk {
+            InfrastructureTier::HardDisk {
                 mount_path: "/mnt/disk".to_string(),
             },
             // Only include cloud tiers if baseline is cloud-based
             match &self.durable_baseline {
-                StorageTier::CloudStandard { provider, region }
-                | StorageTier::CloudArchive { provider, region }
-                | StorageTier::CloudExpressOneZone { provider, region }
-                | StorageTier::CloudInfrequentAccess { provider, region } => {
-                    StorageTier::CloudExpressOneZone {
+                InfrastructureTier::CloudStandard { provider, region }
+                | InfrastructureTier::CloudArchive { provider, region }
+                | InfrastructureTier::CloudExpressOneZone { provider, region }
+                | InfrastructureTier::CloudInfrequentAccess { provider, region } => {
+                    InfrastructureTier::CloudExpressOneZone {
                         provider: provider.clone(),
                         region: region.clone(),
                     }
                 }
-                _ => StorageTier::HardDisk {
+                _ => InfrastructureTier::HardDisk {
                     mount_path: "/mnt/cache_info".to_string(),
                 },
             },
@@ -430,10 +430,10 @@ pub struct SmartTierPolicy {
     collection_config: CollectionStorageConfig,
 
     /// Available storage tiers filtered by collection constraints
-    available_tiers: Vec<StorageTier>,
+    available_tiers: Vec<InfrastructureTier>,
 
     /// Tier configuration with capacity limits and costs
-    tier_configs: HashMap<StorageTier, TierConfig>,
+    tier_configs: HashMap<InfrastructureTier, TierConfig>,
 
     /// Access pattern rules for intelligent placement
     placement_rules: Vec<PlacementRule>,
@@ -511,7 +511,7 @@ pub struct PlacementRule {
     condition: PlacementCondition,
 
     /// Target tier for matching data
-    target_tier: StorageTier,
+    target_tier: InfrastructureTier,
 
     /// Rule priority (higher = evaluated first)
     priority: u8,
@@ -837,10 +837,10 @@ impl Default for ServerTierConfig {
 #[derive(Debug)]
 pub struct GlobalTier {
     /// All available storage tiers on this server
-    available_tiers: Vec<StorageTier>,
+    available_tiers: Vec<InfrastructureTier>,
 
     /// Global tier configurations (capacity, cost, latency)
-    tier_configs: HashMap<StorageTier, TierConfig>,
+    tier_configs: HashMap<InfrastructureTier, TierConfig>,
 
     /// Rule-based policy engine (scalable, not per-collection)
     rule_based_policy: RuleBasedTierPolicy,
@@ -873,7 +873,7 @@ pub struct GlobalMemory {
 #[derive(Debug)]
 pub struct GlobalMetricsCollector {
     /// Cross-collection tier usage metrics
-    tier_usage_stats: HashMap<StorageTier, TierUsageStats>,
+    tier_usage_stats: HashMap<InfrastructureTier, TierUsageStats>,
 
     /// Collection performance metrics
     collection_metrics: HashMap<String, CollectionTierMetrics>,
@@ -894,7 +894,7 @@ pub struct TierUsageStats {
 #[derive(Debug, Clone)]
 pub struct CollectionTierMetrics {
     pub collection_id: String,
-    pub tier_distribution: HashMap<StorageTier, usize>, // bytes per tier
+    pub tier_distribution: HashMap<InfrastructureTier, usize>, // bytes per tier
     pub access_patterns: AccessPatternMetrics,
     pub cost_metrics: CostMetrics,
 }
@@ -1091,7 +1091,7 @@ impl GlobalTier {
         access_frequency: f64,
         age_days: u32,
         priority: Option<u8>,
-    ) -> Result<StorageTier> {
+    ) -> Result<InfrastructureTier> {
         let policy = self
             .collection_policies
             .get(collection_id)
@@ -1179,20 +1179,20 @@ impl GlobalTier {
     }
 
     /// Detect all available storage tiers on this server
-    fn detect_available_tiers(server_config: &ServerTierConfig) -> Vec<StorageTier> {
-        let mut tiers = vec![StorageTier::Memory]; // Memory always available
+    fn detect_available_tiers(server_config: &ServerTierConfig) -> Vec<InfrastructureTier> {
+        let mut tiers = vec![InfrastructureTier::Memory]; // Memory always available
 
         // Check for NVMe SSDs based on server config
         if let Some(nvme_path) = &server_config.base_nvme_path {
             if std::path::Path::new(nvme_path).exists() {
-                tiers.push(StorageTier::NvmeSsd {
+                tiers.push(InfrastructureTier::NvmeSsd {
                     mount_path: nvme_path.clone(),
                 });
             }
         } else if std::path::Path::new("/mnt/nvme").exists()
             || std::path::Path::new("/dev/nvme0n1").exists()
         {
-            tiers.push(StorageTier::NvmeSsd {
+            tiers.push(InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             });
         }
@@ -1203,7 +1203,7 @@ impl GlobalTier {
             || std::path::Path::new("/mnt/disk").exists()
             || std::path::Path::new("/data").exists()
         {
-            tiers.push(StorageTier::HardDisk {
+            tiers.push(InfrastructureTier::HardDisk {
                 mount_path: server_config.base_disk_path.clone(),
             });
         }
@@ -1215,26 +1215,26 @@ impl GlobalTier {
     }
 
     /// Create default tier configurations based on detected hardware
-    fn create_default_tier_configs(tiers: &[StorageTier]) -> HashMap<StorageTier, TierConfig> {
+    fn create_default_tier_configs(tiers: &[InfrastructureTier]) -> HashMap<InfrastructureTier, TierConfig> {
         let mut configs = HashMap::new();
 
         for tier in tiers {
             let config = match tier {
-                StorageTier::Memory => TierConfig {
+                InfrastructureTier::Memory => TierConfig {
                     max_capacity_bytes: Self::detect_memory_capacity(),
                     cost_per_gb_per_month: 100.0, // $100/GB/month (expensive but fast)
                     access_latency: Duration::from_micros(100),
                     retrieval_latency: None,
                     min_storage_duration: None,
                 },
-                StorageTier::NvmeSsd { .. } => TierConfig {
+                InfrastructureTier::NvmeSsd { .. } => TierConfig {
                     max_capacity_bytes: Self::detect_nvme_capacity(),
                     cost_per_gb_per_month: 10.0, // $10/GB/month
                     access_latency: Duration::from_millis(1),
                     retrieval_latency: None,
                     min_storage_duration: None,
                 },
-                StorageTier::HardDisk { .. } => TierConfig {
+                InfrastructureTier::HardDisk { .. } => TierConfig {
                     max_capacity_bytes: Self::detect_hdd_capacity(),
                     cost_per_gb_per_month: 2.0, // $2/GB/month
                     access_latency: Duration::from_millis(10),
@@ -1333,21 +1333,21 @@ impl SmartTierPolicy {
     /// Create constrained index policy that respects server capabilities
     pub fn for_index_workload_constrained(
         collection_config: CollectionStorageConfig,
-        server_available_tiers: &[StorageTier],
-        _server_tier_configs: &HashMap<StorageTier, TierConfig>,
+        server_available_tiers: &[InfrastructureTier],
+        _server_tier_configs: &HashMap<InfrastructureTier, TierConfig>,
     ) -> Self {
         // Filter server tiers by collection constraints
-        let _available_tiers: Vec<StorageTier> = server_available_tiers
+        let _available_tiers: Vec<InfrastructureTier> = server_available_tiers
             .iter()
             .filter(|tier| collection_config.is_tier_allowed(tier))
             .cloned()
             .collect();
         let available_tiers = vec![
-            StorageTier::Memory,
-            StorageTier::NvmeSsd {
+            InfrastructureTier::Memory,
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            StorageTier::CloudStandard {
+            InfrastructureTier::CloudStandard {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-index-standard".to_string(),
                     storage_class: AwsStorageClass::Standard,
@@ -1355,7 +1355,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudInfrequentAccess {
+            InfrastructureTier::CloudInfrequentAccess {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-index-ia".to_string(),
                     storage_class: AwsStorageClass::StandardIA,
@@ -1363,7 +1363,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudArchive {
+            InfrastructureTier::CloudArchive {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-index-archive".to_string(),
                     storage_class: AwsStorageClass::Glacier,
@@ -1386,7 +1386,7 @@ impl SmartTierPolicy {
                         max_accesses_per_day: None,
                     },
                 ]),
-                target_tier: StorageTier::Memory,
+                target_tier: InfrastructureTier::Memory,
                 priority: 90,
             },
             // Medium size, moderate access -> NVMe
@@ -1401,7 +1401,7 @@ impl SmartTierPolicy {
                         max_accesses_per_day: Some(100.0),
                     },
                 ]),
-                target_tier: StorageTier::NvmeSsd {
+                target_tier: InfrastructureTier::NvmeSsd {
                     mount_path: "/mnt/nvme".to_string(),
                 },
                 priority: 80,
@@ -1412,7 +1412,7 @@ impl SmartTierPolicy {
                     min_age_days: Some(90),
                     max_age_days: None,
                 },
-                target_tier: StorageTier::CloudArchive {
+                target_tier: InfrastructureTier::CloudArchive {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-index-archive".to_string(),
                         storage_class: AwsStorageClass::Glacier,
@@ -1428,7 +1428,7 @@ impl SmartTierPolicy {
                     min_bytes: Some(100 * 1024 * 1024),
                     max_bytes: None,
                 },
-                target_tier: StorageTier::CloudStandard {
+                target_tier: InfrastructureTier::CloudStandard {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-index-standard".to_string(),
                         storage_class: AwsStorageClass::Standard,
@@ -1444,7 +1444,7 @@ impl SmartTierPolicy {
 
         // Memory tier config
         tier_configs.insert(
-            StorageTier::Memory,
+            InfrastructureTier::Memory,
             TierConfig {
                 max_capacity_bytes: Some(4 * 1024 * 1024 * 1024), // 4GB default
                 cost_per_gb_per_month: 100.0,                     // Expensive per GB but fast
@@ -1456,7 +1456,7 @@ impl SmartTierPolicy {
 
         // NVMe SSD config
         tier_configs.insert(
-            StorageTier::NvmeSsd {
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
             TierConfig {
@@ -1494,8 +1494,8 @@ impl SmartTierPolicy {
     /// Create optimized policy for cache workloads
     pub fn for_cache_workload_constrained(
         collection_config: CollectionStorageConfig,
-        _server_available_tiers: &[StorageTier],
-        _server_tier_configs: &HashMap<StorageTier, TierConfig>,
+        _server_available_tiers: &[InfrastructureTier],
+        _server_tier_configs: &HashMap<InfrastructureTier, TierConfig>,
     ) -> Self {
         // Same as for_cache_workload but with collection constraints
         let mut policy = Self::for_cache_workload();
@@ -1505,11 +1505,11 @@ impl SmartTierPolicy {
 
     pub fn for_cache_workload() -> Self {
         let available_tiers = vec![
-            StorageTier::Memory,
-            StorageTier::NvmeSsd {
+            InfrastructureTier::Memory,
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/cache-nvme".to_string(),
             },
-            StorageTier::CloudExpressOneZone {
+            InfrastructureTier::CloudExpressOneZone {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-cache-express".to_string(),
                     storage_class: AwsStorageClass::ExpressOneZone,
@@ -1517,7 +1517,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudStandard {
+            InfrastructureTier::CloudStandard {
                 provider: CloudProvider::GoogleCloud {
                     bucket: "proximadb-cache-standard".to_string(),
                     storage_class: GcsStorageClass::Standard,
@@ -1534,7 +1534,7 @@ impl SmartTierPolicy {
                     min_accesses_per_day: Some(1000.0),
                     max_accesses_per_day: None,
                 },
-                target_tier: StorageTier::Memory,
+                target_tier: InfrastructureTier::Memory,
                 priority: 95,
             },
             // Warm data -> NVMe
@@ -1543,7 +1543,7 @@ impl SmartTierPolicy {
                     min_accesses_per_day: Some(50.0),
                     max_accesses_per_day: Some(1000.0),
                 },
-                target_tier: StorageTier::NvmeSsd {
+                target_tier: InfrastructureTier::NvmeSsd {
                     mount_path: "/mnt/cache-nvme".to_string(),
                 },
                 priority: 85,
@@ -1560,7 +1560,7 @@ impl SmartTierPolicy {
                         max_age_days: Some(7),
                     },
                 ]),
-                target_tier: StorageTier::CloudExpressOneZone {
+                target_tier: InfrastructureTier::CloudExpressOneZone {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-cache-express".to_string(),
                         storage_class: AwsStorageClass::ExpressOneZone,
@@ -1580,7 +1580,7 @@ impl SmartTierPolicy {
             collection_config: CollectionStorageConfig {
                 collection_id: "cache_info".to_string(),
                 base_location: "/tmp/cache_info".to_string(),
-                durable_baseline: StorageTier::Memory,
+                durable_baseline: InfrastructureTier::Memory,
                 max_acceleration_tier: None,
                 storage_limits: CollectionStorageLimits {
                     max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
@@ -1608,8 +1608,8 @@ impl SmartTierPolicy {
     /// Create hybrid policy that adapts based on workload patterns
     pub fn for_hybrid_workload_constrained(
         collection_config: CollectionStorageConfig,
-        _server_available_tiers: &[StorageTier],
-        _server_tier_configs: &HashMap<StorageTier, TierConfig>,
+        _server_available_tiers: &[InfrastructureTier],
+        _server_tier_configs: &HashMap<InfrastructureTier, TierConfig>,
     ) -> Self {
         // Same as for_hybrid_workload but with collection constraints
         let mut policy = Self::for_hybrid_workload();
@@ -1619,14 +1619,14 @@ impl SmartTierPolicy {
 
     pub fn for_hybrid_workload() -> Self {
         let available_tiers = vec![
-            StorageTier::Memory,
-            StorageTier::NvmeSsd {
+            InfrastructureTier::Memory,
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/hybrid-nvme".to_string(),
             },
-            StorageTier::HardDisk {
+            InfrastructureTier::HardDisk {
                 mount_path: "/mnt/hybrid-hdd".to_string(),
             },
-            StorageTier::CloudExpressOneZone {
+            InfrastructureTier::CloudExpressOneZone {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-hybrid-express".to_string(),
                     storage_class: AwsStorageClass::ExpressOneZone,
@@ -1634,7 +1634,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-east-1".to_string(),
             },
-            StorageTier::CloudStandard {
+            InfrastructureTier::CloudStandard {
                 provider: CloudProvider::AzureBlob {
                     account: "proximadb".to_string(),
                     container: "hybrid-standard".to_string(),
@@ -1642,7 +1642,7 @@ impl SmartTierPolicy {
                 },
                 region: "eastus".to_string(),
             },
-            StorageTier::CloudInfrequentAccess {
+            InfrastructureTier::CloudInfrequentAccess {
                 provider: CloudProvider::GoogleCloud {
                     bucket: "proximadb-hybrid-nearline".to_string(),
                     storage_class: GcsStorageClass::Nearline,
@@ -1650,7 +1650,7 @@ impl SmartTierPolicy {
                 },
                 region: "us-central1".to_string(),
             },
-            StorageTier::CloudArchive {
+            InfrastructureTier::CloudArchive {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-hybrid-glacier".to_string(),
                     storage_class: AwsStorageClass::Glacier,
@@ -1674,7 +1674,7 @@ impl SmartTierPolicy {
                         max_bytes: Some(10 * 1024 * 1024),
                     },
                 ]),
-                target_tier: StorageTier::Memory,
+                target_tier: InfrastructureTier::Memory,
                 priority: 100,
             },
             // Hot, medium-size data -> NVMe
@@ -1689,7 +1689,7 @@ impl SmartTierPolicy {
                         max_bytes: Some(100 * 1024 * 1024),
                     },
                 ]),
-                target_tier: StorageTier::NvmeSsd {
+                target_tier: InfrastructureTier::NvmeSsd {
                     mount_path: "/mnt/hybrid-nvme".to_string(),
                 },
                 priority: 90,
@@ -1706,7 +1706,7 @@ impl SmartTierPolicy {
                         max_bytes: None,
                     },
                 ]),
-                target_tier: StorageTier::HardDisk {
+                target_tier: InfrastructureTier::HardDisk {
                     mount_path: "/mnt/hybrid-hdd".to_string(),
                 },
                 priority: 80,
@@ -1723,7 +1723,7 @@ impl SmartTierPolicy {
                         max_accesses_per_day: Some(50.0),
                     },
                 ]),
-                target_tier: StorageTier::CloudExpressOneZone {
+                target_tier: InfrastructureTier::CloudExpressOneZone {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-hybrid-express".to_string(),
                         storage_class: AwsStorageClass::ExpressOneZone,
@@ -1745,7 +1745,7 @@ impl SmartTierPolicy {
                         max_accesses_per_day: Some(10.0),
                     },
                 ]),
-                target_tier: StorageTier::CloudStandard {
+                target_tier: InfrastructureTier::CloudStandard {
                     provider: CloudProvider::AzureBlob {
                         account: "proximadb".to_string(),
                         container: "hybrid-standard".to_string(),
@@ -1761,7 +1761,7 @@ impl SmartTierPolicy {
                     min_age_days: Some(90),
                     max_age_days: None,
                 },
-                target_tier: StorageTier::CloudArchive {
+                target_tier: InfrastructureTier::CloudArchive {
                     provider: CloudProvider::AwsS3 {
                         bucket: "proximadb-hybrid-glacier".to_string(),
                         storage_class: AwsStorageClass::Glacier,
@@ -1781,7 +1781,7 @@ impl SmartTierPolicy {
             collection_config: CollectionStorageConfig {
                 collection_id: "default".to_string(),
                 base_location: "/tmp".to_string(),
-                durable_baseline: StorageTier::Memory,
+                durable_baseline: InfrastructureTier::Memory,
                 max_acceleration_tier: None,
                 storage_limits: CollectionStorageLimits {
                     max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB default
@@ -1814,7 +1814,7 @@ impl SmartTierPolicy {
         age_days: u32,
         collection_id: &str,
         priority: Option<u8>,
-    ) -> StorageTier {
+    ) -> InfrastructureTier {
         // Evaluate placement rules in priority order
         let mut sorted_rules = self.placement_rules.clone();
         sorted_rules.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
@@ -1834,14 +1834,14 @@ impl SmartTierPolicy {
 
         // Default fallback based on workload type
         match self.workload_type {
-            WorkloadType::Index { .. } => StorageTier::NvmeSsd {
+            WorkloadType::Index { .. } => InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            WorkloadType::Cache { .. } => StorageTier::Memory,
-            WorkloadType::Mixed { .. } => StorageTier::NvmeSsd {
+            WorkloadType::Cache { .. } => InfrastructureTier::Memory,
+            WorkloadType::Mixed { .. } => InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            WorkloadType::Hybrid { .. } => StorageTier::CloudStandard {
+            WorkloadType::Hybrid { .. } => InfrastructureTier::CloudStandard {
                 provider: CloudProvider::AwsS3 {
                     bucket: "proximadb-default".to_string(),
                     storage_class: AwsStorageClass::Standard,
@@ -1969,7 +1969,7 @@ impl SmartTierPolicy {
     }
 
     /// Get estimated cost for storing data in a specific tier
-    pub fn storage_cost(&self, tier: &StorageTier, size_bytes: usize, duration_days: u32) -> f64 {
+    pub fn storage_cost(&self, tier: &InfrastructureTier, size_bytes: usize, duration_days: u32) -> f64 {
         if let Some(config) = self.tier_configs.get(tier) {
             let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
             let months = duration_days as f64 / 30.0;
@@ -1977,35 +1977,35 @@ impl SmartTierPolicy {
         } else {
             // Default cost estimates if not configured
             match tier {
-                StorageTier::Memory => {
+                InfrastructureTier::Memory => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 100.0 * (duration_days as f64 / 30.0) // $100/GB/month for memory
                 }
-                StorageTier::NvmeSsd { .. } => {
+                InfrastructureTier::NvmeSsd { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 10.0 * (duration_days as f64 / 30.0) // $10/GB/month for NVMe
                 }
-                StorageTier::HardDisk { .. } => {
+                InfrastructureTier::HardDisk { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 2.0 * (duration_days as f64 / 30.0) // $2/GB/month for HDD
                 }
-                StorageTier::CloudExpressOneZone { .. } => {
+                InfrastructureTier::CloudExpressOneZone { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.16 * (duration_days as f64 / 30.0) // AWS S3 Express One Zone
                 }
-                StorageTier::CloudStandard { .. } => {
+                InfrastructureTier::CloudStandard { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.023 * (duration_days as f64 / 30.0) // AWS S3 Standard
                 }
-                StorageTier::CloudInfrequentAccess { .. } => {
+                InfrastructureTier::CloudInfrequentAccess { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.0125 * (duration_days as f64 / 30.0) // AWS S3 IA
                 }
-                StorageTier::CloudArchive { .. } => {
+                InfrastructureTier::CloudArchive { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.004 * (duration_days as f64 / 30.0) // AWS S3 Glacier
                 }
-                StorageTier::CloudDeepArchive { .. } => {
+                InfrastructureTier::CloudDeepArchive { .. } => {
                     let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
                     gb * 0.00099 * (duration_days as f64 / 30.0) // AWS S3 Deep Archive
                 }
@@ -2014,20 +2014,20 @@ impl SmartTierPolicy {
     }
 
     /// Get expected access latency for a tier
-    pub fn access_latency(&self, tier: &StorageTier) -> Duration {
+    pub fn access_latency(&self, tier: &InfrastructureTier) -> Duration {
         if let Some(config) = self.tier_configs.get(tier) {
             config.access_latency
         } else {
             // Default latency estimates
             match tier {
-                StorageTier::Memory => Duration::from_micros(100),
-                StorageTier::NvmeSsd { .. } => Duration::from_millis(1),
-                StorageTier::HardDisk { .. } => Duration::from_millis(10),
-                StorageTier::CloudExpressOneZone { .. } => Duration::from_millis(5),
-                StorageTier::CloudStandard { .. } => Duration::from_millis(50),
-                StorageTier::CloudInfrequentAccess { .. } => Duration::from_millis(100),
-                StorageTier::CloudArchive { .. } => Duration::from_secs(300), // 5 minutes
-                StorageTier::CloudDeepArchive { .. } => Duration::from_secs(43200), // 12 hours
+                InfrastructureTier::Memory => Duration::from_micros(100),
+                InfrastructureTier::NvmeSsd { .. } => Duration::from_millis(1),
+                InfrastructureTier::HardDisk { .. } => Duration::from_millis(10),
+                InfrastructureTier::CloudExpressOneZone { .. } => Duration::from_millis(5),
+                InfrastructureTier::CloudStandard { .. } => Duration::from_millis(50),
+                InfrastructureTier::CloudInfrequentAccess { .. } => Duration::from_millis(100),
+                InfrastructureTier::CloudArchive { .. } => Duration::from_secs(300), // 5 minutes
+                InfrastructureTier::CloudDeepArchive { .. } => Duration::from_secs(43200), // 12 hours
             }
         }
     }
@@ -2042,7 +2042,7 @@ mod tests {
         let collection_config = CollectionStorageConfig {
             collection_id: "test".to_string(),
             base_location: "/tmp/test".to_string(),
-            durable_baseline: StorageTier::Memory,
+            durable_baseline: InfrastructureTier::Memory,
             max_acceleration_tier: None,
             storage_limits: CollectionStorageLimits {
                 max_memory_bytes: Some(1024 * 1024 * 1024), // 1GB
@@ -2050,7 +2050,7 @@ mod tests {
                 max_monthly_cost_usd: None,
             },
         };
-        let available_tiers = vec![StorageTier::Memory];
+        let available_tiers = vec![InfrastructureTier::Memory];
         let tier_configs = HashMap::new();
         let policy = SmartTierPolicy::for_index_workload_constrained(
             collection_config,
@@ -2066,7 +2066,7 @@ mod tests {
             "test_collection",
             Some(5),
         );
-        assert_eq!(tier, StorageTier::Memory);
+        assert_eq!(tier, InfrastructureTier::Memory);
 
         // Large, old data -> Archive
         let tier = policy.determine_placement(
@@ -2077,7 +2077,7 @@ mod tests {
             Some(3),
         );
         match tier {
-            StorageTier::CloudArchive { .. } => {}
+            InfrastructureTier::CloudArchive { .. } => {}
             _ => panic!("Expected CloudArchive tier for old, large data"),
         }
     }
@@ -2094,7 +2094,7 @@ mod tests {
             "cache_collection",
             Some(8),
         );
-        assert_eq!(tier, StorageTier::Memory);
+        assert_eq!(tier, InfrastructureTier::Memory);
     }
 
     #[test]
@@ -2155,13 +2155,13 @@ mod tests {
                 Some(8),     // High priority
             )
             .unwrap();
-        assert_eq!(tier, StorageTier::Memory);
+        assert_eq!(tier, InfrastructureTier::Memory);
 
         // Disk collection: Similar data -> Memory (acceleration above disk baseline)
         let tier = global_manager
             .determine_placement("disk_collection", 1024 * 1024, 200.0, 1, Some(8))
             .unwrap();
-        assert_eq!(tier, StorageTier::Memory);
+        assert_eq!(tier, InfrastructureTier::Memory);
 
         // Cache collection: Can be more aggressive with memory
         // Access frequency > 1000 should go to Memory tier
@@ -2174,7 +2174,7 @@ mod tests {
                 Some(8),
             )
             .unwrap();
-        assert_eq!(tier, StorageTier::Memory);
+        assert_eq!(tier, InfrastructureTier::Memory);
     }
 
     #[test]
@@ -2190,11 +2190,11 @@ mod tests {
 
         assert!(matches!(
             config.durable_baseline,
-            StorageTier::CloudStandard { .. }
+            InfrastructureTier::CloudStandard { .. }
         ));
         assert!(matches!(
             config.max_acceleration_tier,
-            Some(StorageTier::HardDisk { .. })
+            Some(InfrastructureTier::HardDisk { .. })
         ));
 
         // Local disk base location
@@ -2206,15 +2206,15 @@ mod tests {
 
         assert!(matches!(
             config.durable_baseline,
-            StorageTier::HardDisk { .. }
+            InfrastructureTier::HardDisk { .. }
         ));
         assert!(matches!(
             config.max_acceleration_tier,
-            Some(StorageTier::Memory)
+            Some(InfrastructureTier::Memory)
         ));
 
         // Test tier allowance
-        assert!(config.is_tier_allowed(&StorageTier::Memory)); // Allowed (faster than baseline)
+        assert!(config.is_tier_allowed(&InfrastructureTier::Memory)); // Allowed (faster than baseline)
         assert!(config.is_tier_allowed(&config.durable_baseline)); // Baseline always allowed
 
         // Test index path generation
@@ -2266,36 +2266,36 @@ mod tests {
     fn test_tier_level_hierarchy() {
         // Test tier level ordering (lower = faster)
         assert!(
-            StorageTier::Memory.tier_level()
-                < StorageTier::NvmeSsd {
+            InfrastructureTier::Memory.tier_level()
+                < InfrastructureTier::NvmeSsd {
                     mount_path: "/test".to_string()
                 }
                 .tier_level()
         );
         assert!(
-            StorageTier::NvmeSsd {
+            InfrastructureTier::NvmeSsd {
                 mount_path: "/test".to_string()
             }
             .tier_level()
-                < StorageTier::HardDisk {
+                < InfrastructureTier::HardDisk {
                     mount_path: "/test".to_string()
                 }
                 .tier_level()
         );
 
         // Test faster-than comparison
-        assert!(StorageTier::Memory.is_faster_than(&StorageTier::HardDisk {
+        assert!(InfrastructureTier::Memory.is_faster_than(&InfrastructureTier::HardDisk {
             mount_path: "/test".to_string()
         }));
         assert!(
-            !StorageTier::HardDisk {
+            !InfrastructureTier::HardDisk {
                 mount_path: "/test".to_string()
             }
-            .is_faster_than(&StorageTier::Memory)
+            .is_faster_than(&InfrastructureTier::Memory)
         );
 
         // Test durability requirement
-        let baseline = StorageTier::CloudStandard {
+        let baseline = InfrastructureTier::CloudStandard {
             provider: CloudProvider::AwsS3 {
                 bucket: "test".to_string(),
                 storage_class: AwsStorageClass::Standard,
@@ -2305,9 +2305,9 @@ mod tests {
         };
 
         assert!(baseline.meets_durability(&baseline)); // Meets itself
-        assert!(!StorageTier::Memory.meets_durability(&baseline)); // Memory doesn't meet cloud durability
+        assert!(!InfrastructureTier::Memory.meets_durability(&baseline)); // Memory doesn't meet cloud durability
         assert!(
-            StorageTier::CloudArchive {
+            InfrastructureTier::CloudArchive {
                 provider: CloudProvider::AwsS3 {
                     bucket: "archive".to_string(),
                     storage_class: AwsStorageClass::Glacier,

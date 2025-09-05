@@ -854,6 +854,22 @@ impl UnifiedDistanceCompute {
         }
     }
 
+    /// Calculate distance using the default metric with rich results
+    /// 
+    /// Returns a SimilarityResult with raw value, normalized score, and rank value.
+    /// This method uses the metric the engine was initialized with.
+    pub fn calculate(&self, vec_a: &[f32], vec_b: &[f32]) -> SimilarityResult {
+        self.calculate_distance(vec_a, vec_b, &self.system_default)
+    }
+
+    /// Calculate raw distance value using the default metric
+    /// 
+    /// Returns just the raw distance value for simpler use cases.
+    /// This is a convenience method for when you only need the distance number.
+    pub fn distance(&self, vec_a: &[f32], vec_b: &[f32]) -> f32 {
+        self.calculate_distance(vec_a, vec_b, &self.system_default).raw_value
+    }
+
     /// Get system default distance metric
     pub fn system_default(&self) -> &DistanceMetric {
         &self.system_default

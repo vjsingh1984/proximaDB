@@ -4,7 +4,7 @@
 mod tests {
     use super::super::*;
     use crate::core::hardware_capabilities;
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig, StorageTier};
+    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig, FileStorageTier};
     use std::sync::Arc;
     use tokio;
 
@@ -46,7 +46,7 @@ mod tests {
         
         // Test tier selection based on access patterns
         let hot_tier = optimizer.optimize_storage_tier("hot_key", 1024).await.unwrap();
-        assert!(matches!(hot_tier, StorageTier::Hot));
+        assert!(matches!(hot_tier, FileStorageTier::Hot));
         
         // Update access stats to simulate low frequency
         optimizer.update_access_stats("cold_key", 1024).await;
@@ -54,7 +54,7 @@ mod tests {
         
         let cold_tier = optimizer.optimize_storage_tier("cold_key", 100 * 1024 * 1024).await.unwrap();
         // For balanced strategy with large size and low access, should be warm or cold
-        assert!(matches!(cold_tier, StorageTier::Warm | StorageTier::Cold));
+        assert!(matches!(cold_tier, FileStorageTier::Warm | FileStorageTier::Cold));
     }
 
     #[tokio::test]
@@ -96,15 +96,15 @@ mod tests {
         let test_data = vec![0u8; 1024]; // Compressible data
         
         // Test hot tier compression (LZ4 - fast)
-        let hot_compressed = optimizer.compress_for_tier(&test_data, StorageTier::Hot).await.unwrap();
+        let hot_compressed = optimizer.compress_for_tier(&test_data, FileStorageTier::Hot).await.unwrap();
         assert!(hot_compressed.len() < test_data.len());
         
         // Test warm tier compression (Snappy - balanced)
-        let warm_compressed = optimizer.compress_for_tier(&test_data, StorageTier::Warm).await.unwrap();
+        let warm_compressed = optimizer.compress_for_tier(&test_data, FileStorageTier::Warm).await.unwrap();
         assert!(warm_compressed.len() < test_data.len());
         
         // Test cold tier compression (Zstd - maximum)
-        let cold_compressed = optimizer.compress_for_tier(&test_data, StorageTier::Cold).await.unwrap();
+        let cold_compressed = optimizer.compress_for_tier(&test_data, FileStorageTier::Cold).await.unwrap();
         assert!(cold_compressed.len() < test_data.len());
         // Cold should achieve better compression than hot
         assert!(cold_compressed.len() <= hot_compressed.len());
@@ -119,7 +119,7 @@ mod tests {
         let test_data = vec![1, 2, 3, 4, 5];
         
         // Write data (should cache)
-        optimizer.write_data_optimized(test_url, &test_data, StorageTier::Hot).await.unwrap();
+        optimizer.write_data_optimized(test_url, &test_data, FileStorageTier::Hot).await.unwrap();
         
         // Read should hit cache
         let read_data = optimizer.read_data_optimized(test_url).await.unwrap();
@@ -138,7 +138,7 @@ mod tests {
         for i in 0..100 {
             let url = format!("memory://test/file_{}.bin", i);
             let data = vec![i as u8; 1024];
-            optimizer.write_data_optimized(&url, &data, StorageTier::Hot).await.unwrap();
+            optimizer.write_data_optimized(&url, &data, FileStorageTier::Hot).await.unwrap();
         }
         
         // Trigger eviction

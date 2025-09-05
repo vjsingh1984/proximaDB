@@ -18,14 +18,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::core::search::integrated_search_optimization::SearchCostEstimator;
+use proximadb::core::search::integrated_search_optimization::SearchCostEstimator;
 use proximadb::core::search::engine_benchmarks::{
     BenchmarkConfig, EngineBenchmarkResults, StorageEngineBenchmark,
 };
 use proximadb::storage::traits::UnifiedStorageEngine;
 
 // Import all storage engines
-use proximadb::storage::engines::{
+use proximadb::storage::engines::impls::{
     nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
     swift::SwiftEngine, viper::ViperEngine,
 };

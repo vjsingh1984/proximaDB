@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::infrastructure::tier_policy_engine::StorageTier;
+use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 
@@ -81,15 +81,15 @@ pub enum PostingListStorage {
 impl PostingListStorage {
     /// Create storage backend based on tier and engine type
     pub fn new(
-        tier: &StorageTier,
+        tier: &InfrastructureTier,
         collection_id: String,
         engine_type: StorageEngineType,
     ) -> Result<Self> {
         match tier {
-            StorageTier::Memory => Ok(PostingListStorage::Memory {
+            InfrastructureTier::Memory => Ok(PostingListStorage::Memory {
                 cache: Arc::new(dashmap::DashMap::new()),
             }),
-            StorageTier::NvmeSsd { mount_path } | StorageTier::HardDisk { mount_path } => {
+            InfrastructureTier::NvmeSsd { mount_path } | InfrastructureTier::HardDisk { mount_path } => {
                 match engine_type {
                     StorageEngineType::SST => Ok(PostingListStorage::SstDisk {
                         base_path: mount_path.clone(),
@@ -101,11 +101,11 @@ impl PostingListStorage {
                     }),
                 }
             }
-            StorageTier::CloudExpressOneZone { provider, .. }
-            | StorageTier::CloudStandard { provider, .. }
-            | StorageTier::CloudInfrequentAccess { provider, .. }
-            | StorageTier::CloudArchive { provider, .. }
-            | StorageTier::CloudDeepArchive { provider, .. } => {
+            InfrastructureTier::CloudExpressOneZone { provider, .. }
+            | InfrastructureTier::CloudStandard { provider, .. }
+            | InfrastructureTier::CloudInfrequentAccess { provider, .. }
+            | InfrastructureTier::CloudArchive { provider, .. }
+            | InfrastructureTier::CloudDeepArchive { provider, .. } => {
                 let bucket = match provider {
                     crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                         bucket,
@@ -382,12 +382,12 @@ impl TieredPostingListManager {
         cloud_bucket: Option<String>,
     ) -> Result<Self> {
         let memory_storage =
-            PostingListStorage::new(&StorageTier::Memory, collection_id.clone(), engine_type)?;
+            PostingListStorage::new(&InfrastructureTier::Memory, collection_id.clone(), engine_type)?;
 
         let disk_storage = disk_path
             .map(|path| {
                 PostingListStorage::new(
-                    &StorageTier::NvmeSsd { mount_path: path },
+                    &InfrastructureTier::NvmeSsd { mount_path: path },
                     collection_id.clone(),
                     engine_type,
                 )
@@ -396,7 +396,7 @@ impl TieredPostingListManager {
 
         let cloud_storage = cloud_bucket.map(|bucket| {
             PostingListStorage::new(
-                &StorageTier::CloudStandard {
+                &InfrastructureTier::CloudStandard {
                     provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 { 
                         bucket,
                         storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,

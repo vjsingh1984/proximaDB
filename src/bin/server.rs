@@ -139,7 +139,8 @@
 
 use clap::Parser;
 use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
-use proximadb::{ConfigLoader, ProximaDB};
+use proximadb::{ProximaDB};
+use proximadb::core::ConfigLoader;
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
@@ -263,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .or_else(|_| args.log_level.clone().ok_or(()))
         .unwrap_or_else(|_| {
             // If config has a log level, use it, otherwise default to info
-            if config.monitoring.log_level.is_none()
+            if config.monitoring.log_level.is_empty()
                 || config.monitoring.log_level == "debug"
                 || config.monitoring.log_level == "trace"
             {
@@ -308,7 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Initialize hardware capabilities detection early with configuration
     info!("🔧 Initializing hardware detection...");
-    let hardware_config = config.hardware.clone().clone();
+    let hardware_config = config.hardware.clone().unwrap_or_default();
     if let Err(e) = initialize_hardware_capabilities(hardware_config) {
         warn!("⚠️ Hardware capability detection failed: {}", e);
         info!("Continuing with CPU-only mode");

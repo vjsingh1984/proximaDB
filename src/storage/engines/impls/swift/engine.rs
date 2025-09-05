@@ -1,11 +1,11 @@
 // SWIFT Engine: Storage With Instant Fast Traversal - zero-overhead vector storage
 // Implements UnifiedStorageEngine trait for integration with ProximaDB
 
-use crate::core::search::StorageTier;
+use crate::core::search::DataFreshnessTier;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
-use crate::storage::persistence::filesystem::StorageTier as FilesystemStorageTier;
+use crate::storage::persistence::filesystem::FileStorageTier;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -256,7 +256,7 @@ impl SwiftEngine {
         &self,
         _access_frequency: f32,
         superblock_size_bytes: usize,
-    ) -> Result<StorageTier> {
+    ) -> Result<DataFreshnessTier> {
         // Use universal optimizer's storage tier optimization
         let file_key = format!("hierarchical_superblock_{}", superblock_size_bytes);
         let optimizer_tier = self
@@ -266,17 +266,17 @@ impl SwiftEngine {
 
         // Convert from filesystem::StorageTier to core::search::StorageTier
         let core_tier = match optimizer_tier {
-            FilesystemStorageTier::Memory => StorageTier::Unflushed,
-            FilesystemStorageTier::NVMe => StorageTier::Flushed,
-            FilesystemStorageTier::SSD => StorageTier::Flushed,
-            FilesystemStorageTier::HDD => StorageTier::Compacted,
-            FilesystemStorageTier::S3Express => StorageTier::Compacted,
-            FilesystemStorageTier::S3Standard => StorageTier::Compacted,
-            FilesystemStorageTier::S3GlacierInstant => StorageTier::Compacted,
-            FilesystemStorageTier::AzurePremium => StorageTier::Flushed,
-            FilesystemStorageTier::AzureStandard => StorageTier::Compacted,
-            FilesystemStorageTier::GcsSSD => StorageTier::Flushed,
-            FilesystemStorageTier::GcsHDD => StorageTier::Compacted,
+            FileStorageTier::Memory => DataFreshnessTier::Unflushed,
+            FileStorageTier::NVMe => DataFreshnessTier::Flushed,
+            FileStorageTier::SSD => DataFreshnessTier::Flushed,
+            FileStorageTier::HDD => DataFreshnessTier::Compacted,
+            FileStorageTier::S3Express => DataFreshnessTier::Compacted,
+            FileStorageTier::S3Standard => DataFreshnessTier::Compacted,
+            FileStorageTier::S3GlacierInstant => DataFreshnessTier::Compacted,
+            FileStorageTier::AzurePremium => DataFreshnessTier::Flushed,
+            FileStorageTier::AzureStandard => DataFreshnessTier::Compacted,
+            FileStorageTier::GcsSSD => DataFreshnessTier::Flushed,
+            FileStorageTier::GcsHDD => DataFreshnessTier::Compacted,
         };
 
         Ok(core_tier)
@@ -315,12 +315,12 @@ impl SwiftEngine {
     }
 
     /// Hierarchical compression optimization using unified compression module (delegates to universal optimizer)
-    async fn compress_hierarchical_data(&self, data: &[u8], tier: StorageTier) -> Result<Vec<u8>> {
+    async fn compress_hierarchical_data(&self, data: &[u8], tier: DataFreshnessTier) -> Result<Vec<u8>> {
         // Convert from core::search::StorageTier to filesystem::StorageTier
         let fs_tier = match tier {
-            StorageTier::Unflushed => crate::storage::persistence::filesystem::StorageTier::Memory,
-            StorageTier::Flushed => crate::storage::persistence::filesystem::StorageTier::NVMe,
-            StorageTier::Compacted => crate::storage::persistence::filesystem::StorageTier::SSD,
+            DataFreshnessTier::Unflushed => crate::storage::persistence::filesystem::FileStorageTier::Memory,
+            DataFreshnessTier::Flushed => crate::storage::persistence::filesystem::FileStorageTier::NVMe,
+            DataFreshnessTier::Compacted => crate::storage::persistence::filesystem::FileStorageTier::SSD,
         };
 
         // Use universal optimizer's tier-aware compression

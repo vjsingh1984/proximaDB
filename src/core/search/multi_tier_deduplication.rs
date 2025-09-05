@@ -22,7 +22,7 @@ use std::collections::HashMap;
 pub struct TieredSearchCandidate {
     pub vector_record: VectorRecord,
     pub similarity: f32,
-    pub tier: StorageTier,
+    pub tier: DataFreshnessTier,
     pub engine: DeduplicationStorageEngine,
     pub timestamp: DateTime<Utc>,
     pub sequence: u64,
@@ -30,9 +30,9 @@ pub struct TieredSearchCandidate {
     pub file_path: Option<String>,
 }
 
-/// Storage tier hierarchy for deduplication priority
+/// Data freshness tier hierarchy for deduplication priority
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum StorageTier {
+pub enum DataFreshnessTier {
     Compacted = 0, // Lowest priority - final compacted storage
     Flushed = 1,   // Medium priority - flushed but not compacted
     Unflushed = 2, // Highest priority - WAL data in memtable
@@ -459,7 +459,7 @@ mod tests {
                 similarity: None,
             },
             similarity: 0.5,
-            tier: StorageTier::Compacted,
+            tier: DataFreshnessTier::Compacted,
             engine: DeduplicationStorageEngine::VIPER,
             timestamp: now,
             sequence: 100,
@@ -481,7 +481,7 @@ mod tests {
                 similarity: None,
             },
             similarity: 0.4,
-            tier: StorageTier::Flushed,
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
             timestamp: now,
             sequence: 200,
@@ -503,7 +503,7 @@ mod tests {
                 similarity: None,
             },
             similarity: 0.3,
-            tier: StorageTier::Unflushed,
+            tier: DataFreshnessTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: now,
             sequence: 300,
@@ -517,7 +517,7 @@ mod tests {
         let final_results = deduplicator.get_final_results(10);
 
         assert_eq!(final_results.len(), 1);
-        assert_eq!(final_results[0].tier, StorageTier::Unflushed);
+        assert_eq!(final_results[0].tier, DataFreshnessTier::Unflushed);
         assert_eq!(final_results[0].vector_record.version, Some(3));
         assert_eq!(final_results[0].score, 0.3);
     }
@@ -542,7 +542,7 @@ mod tests {
                 similarity: None,
             },
             similarity: 0.5,
-            tier: StorageTier::Unflushed,
+            tier: DataFreshnessTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: now,
             sequence: 100,
@@ -563,7 +563,7 @@ mod tests {
                 similarity: None,
             },
             similarity: 0.4,
-            tier: StorageTier::Unflushed,
+            tier: DataFreshnessTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: now,
             sequence: 100, // Same sequence
@@ -605,7 +605,7 @@ mod tests {
                     similarity: None,
                 },
                 similarity: i as f32,
-                tier: StorageTier::Unflushed,
+                tier: DataFreshnessTier::Unflushed,
                 engine: DeduplicationStorageEngine::WAL,
                 timestamp: now,
                 sequence: 100 + i as u64,
@@ -650,7 +650,7 @@ mod tests {
                     similarity: None,
                 },
                 similarity: (5 - i) as f32, // Reverse scores - best results come last
-                tier: StorageTier::Unflushed,
+                tier: DataFreshnessTier::Unflushed,
                 engine: DeduplicationStorageEngine::WAL,
                 timestamp: now,
                 sequence: 100 + i as u64,

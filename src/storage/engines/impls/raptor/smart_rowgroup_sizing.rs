@@ -15,11 +15,11 @@ pub struct CloudIOProfile {
     /// Latency per I/O operation in microseconds
     pub latency_per_io_us: u32,
     /// Storage tier (Hot/Warm/Cold affects I/O patterns)
-    pub storage_tier: StorageTier,
+    pub storage_tier: DataTemperatureTier,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum StorageTier {
+pub enum DataTemperatureTier {
     Hot,  // S3 Standard, GCS Standard, ADLS Hot
     Warm, // S3 IA, GCS Nearline, ADLS Cool
     Cold, // S3 Glacier IR, GCS Coldline, ADLS Archive
@@ -32,7 +32,7 @@ impl Default for CloudIOProfile {
             optimal_io_size_bytes: 2 * 1024 * 1024, // 2MB - sweet spot for S3
             max_sequential_iops: 5500,              // S3 Standard throughput
             latency_per_io_us: 20_000,              // ~20ms typical S3 latency
-            storage_tier: StorageTier::Hot,
+            storage_tier: DataTemperatureTier::Hot,
         }
     }
 }
@@ -44,7 +44,7 @@ impl CloudIOProfile {
             optimal_io_size_bytes: 2 * 1024 * 1024, // 2MB
             max_sequential_iops: 5500,
             latency_per_io_us: 20_000,
-            storage_tier: StorageTier::Hot,
+            storage_tier: DataTemperatureTier::Hot,
         }
     }
 
@@ -54,7 +54,7 @@ impl CloudIOProfile {
             optimal_io_size_bytes: 4 * 1024 * 1024, // 4MB - GCS prefers larger chunks
             max_sequential_iops: 10000,
             latency_per_io_us: 15_000, // ~15ms typical GCS latency
-            storage_tier: StorageTier::Hot,
+            storage_tier: DataTemperatureTier::Hot,
         }
     }
 
@@ -64,7 +64,7 @@ impl CloudIOProfile {
             optimal_io_size_bytes: 2 * 1024 * 1024, // 2MB
             max_sequential_iops: 8000,
             latency_per_io_us: 25_000, // ~25ms typical ADLS latency
-            storage_tier: StorageTier::Hot,
+            storage_tier: DataTemperatureTier::Hot,
         }
     }
 
@@ -74,7 +74,7 @@ impl CloudIOProfile {
             optimal_io_size_bytes: 64 * 1024, // 64KB - much smaller chunks optimal
             max_sequential_iops: 500_000,
             latency_per_io_us: 100, // ~0.1ms NVMe latency
-            storage_tier: StorageTier::Hot,
+            storage_tier: DataTemperatureTier::Hot,
         }
     }
 }
@@ -266,9 +266,9 @@ impl SmartRowGroupSizer {
 
         // Add transfer time based on size
         let transfer_time_ms = match self.io_profile.storage_tier {
-            StorageTier::Hot => (bytes as f32 / (100.0 * 1024.0 * 1024.0)) * 1000.0, // 100MB/s
-            StorageTier::Warm => (bytes as f32 / (50.0 * 1024.0 * 1024.0)) * 1000.0, // 50MB/s
-            StorageTier::Cold => (bytes as f32 / (10.0 * 1024.0 * 1024.0)) * 1000.0, // 10MB/s
+            DataTemperatureTier::Hot => (bytes as f32 / (100.0 * 1024.0 * 1024.0)) * 1000.0, // 100MB/s
+            DataTemperatureTier::Warm => (bytes as f32 / (50.0 * 1024.0 * 1024.0)) * 1000.0, // 50MB/s
+            DataTemperatureTier::Cold => (bytes as f32 / (10.0 * 1024.0 * 1024.0)) * 1000.0, // 10MB/s
         };
 
         base_latency + transfer_time_ms

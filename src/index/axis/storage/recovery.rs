@@ -25,7 +25,7 @@ use crate::index::axis::integration::tiering_manager::AxisTieringManager;
 use crate::index::axis::storage::serialization::{
     DeltaManager, Index, IndexCheckpoint, IndexDelta, IndexSerializer, SerializationError,
 };
-use crate::storage::persistence::filesystem::{FilesystemFactory, StorageTier};
+use crate::storage::persistence::filesystem::{FilesystemFactory, FileStorageTier};
 use dashmap::DashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -419,7 +419,7 @@ impl IndexRecoveryManager {
             let disk_path = format!("axis/indexes/{}/index.bin", collection_id);
             let disk_url = self
                 .filesystem
-                .get_tier_url(StorageTier::SSD, &disk_path)
+                .get_tier_url(FileStorageTier::SSD, &disk_path)
                 .map_err(|e| {
                     SerializationError::Io(std::io::Error::new(std::io::ErrorKind::Other, e))
                 })?;

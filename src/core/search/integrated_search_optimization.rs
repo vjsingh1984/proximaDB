@@ -18,6 +18,9 @@ use tracing::{debug, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+
+// Re-export for public use
+pub use crate::compute::quantization::unified::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
 use crate::core::search::{
     FilterExpression, InternalSearchResult, SearchParams,
     metadata_filter_pushdown::MetadataFilterPushdown,
@@ -178,10 +181,10 @@ pub struct PerformanceTracker {
 
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
-    index_search_times: HashMap<Index, PerformanceStats>,
-    progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
-    direct_search_times: HashMap<usize, PerformanceStats>, // by dataset size
-    hardware_profile: HardwareProfile,
+    pub index_search_times: HashMap<Index, PerformanceStats>,
+    pub progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
+    pub direct_search_times: HashMap<usize, PerformanceStats>, // by dataset size
+    pub hardware_profile: HardwareProfile,
 }
 
 /// Performance statistics for cost estimation

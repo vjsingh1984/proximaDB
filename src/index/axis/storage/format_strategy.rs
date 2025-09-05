@@ -54,18 +54,18 @@ pub struct IndexFormatStrategy;
 impl IndexFormatStrategy {
     /// Select format based on storage tier and access pattern
     pub fn select_format(
-        tier: &crate::storage::persistence::filesystem::StorageTier,
+        tier: &crate::storage::persistence::filesystem::FileStorageTier,
         access_frequency: f64,
         data_size_bytes: u64,
     ) -> IndexSerializationFormat {
-        use crate::storage::persistence::filesystem::StorageTier;
+        use crate::storage::persistence::filesystem::FileStorageTier;
 
         match tier {
             // Memory tier always uses fast Bincode
-            StorageTier::Memory => IndexSerializationFormat::Bincode,
+            FileStorageTier::Memory => IndexSerializationFormat::Bincode,
 
             // NVMe/SSD use Bincode for hot data, compressed for warm
-            StorageTier::NVMe | StorageTier::SSD => {
+            FileStorageTier::NVMe | FileStorageTier::SSD => {
                 if access_frequency > 100.0 {
                     IndexSerializationFormat::Bincode
                 } else {
@@ -74,15 +74,15 @@ impl IndexFormatStrategy {
             }
 
             // HDD uses compressed Bincode for space efficiency
-            StorageTier::HDD => IndexSerializationFormat::BincodeCompressed,
+            FileStorageTier::HDD => IndexSerializationFormat::BincodeCompressed,
 
             // Cloud storage uses Avro WITH compression for schema evolution
-            StorageTier::S3Express => IndexSerializationFormat::AvroSnappy, // Fast access
-            StorageTier::S3Standard => IndexSerializationFormat::AvroZstd,  // Balanced
-            StorageTier::S3GlacierInstant => IndexSerializationFormat::AvroZstd, // Max compression
+            FileStorageTier::S3Express => IndexSerializationFormat::AvroSnappy, // Fast access
+            FileStorageTier::S3Standard => IndexSerializationFormat::AvroZstd,  // Balanced
+            FileStorageTier::S3GlacierInstant => IndexSerializationFormat::AvroZstd, // Max compression
 
             // Azure/GCP follow similar patterns
-            StorageTier::AzurePremium | StorageTier::AzureStandard => {
+            FileStorageTier::AzurePremium | FileStorageTier::AzureStandard => {
                 if data_size_bytes > 100 * 1024 * 1024 {
                     // >100MB
                     IndexSerializationFormat::Avro
@@ -91,8 +91,8 @@ impl IndexFormatStrategy {
                 }
             }
 
-            StorageTier::GcsSSD => IndexSerializationFormat::AvroSnappy,
-            StorageTier::GcsHDD => IndexSerializationFormat::AvroZstd,
+            FileStorageTier::GcsSSD => IndexSerializationFormat::AvroSnappy,
+            FileStorageTier::GcsHDD => IndexSerializationFormat::AvroZstd,
         }
     }
 
@@ -273,13 +273,13 @@ impl FormatRecommender {
     /// Recommend format based on comprehensive analysis
     pub fn recommend(
         &self,
-        tier: &crate::storage::persistence::filesystem::StorageTier,
+        tier: &crate::storage::persistence::filesystem::FileStorageTier,
         access_frequency: f64,
         data_size_bytes: u64,
         is_ephemeral: bool,
         expected_lifetime_hours: f64,
     ) -> (IndexSerializationFormat, String) {
-        use crate::storage::persistence::filesystem::StorageTier;
+        use crate::storage::persistence::filesystem::FileStorageTier;
 
         // Ephemeral instances should use fast formats
         if is_ephemeral {
@@ -300,7 +300,7 @@ impl FormatRecommender {
         // Hot data in fast storage
         if access_frequency > self.hot_threshold {
             match tier {
-                StorageTier::Memory | StorageTier::NVMe => {
+                FileStorageTier::Memory | FileStorageTier::NVMe => {
                     return (
                         IndexSerializationFormat::Bincode,
                         "Hot data in fast tier - using Bincode".to_string(),
@@ -318,13 +318,13 @@ impl FormatRecommender {
         // Large indexes in cloud storage
         if data_size_bytes > self.large_size_threshold {
             match tier {
-                StorageTier::S3Standard | StorageTier::S3GlacierInstant => {
+                FileStorageTier::S3Standard | FileStorageTier::S3GlacierInstant => {
                     return (
                         IndexSerializationFormat::AvroZstd,
                         "Large index in cloud - using Avro+zstd for compression and schema evolution".to_string()
                     );
                 }
-                StorageTier::AzureStandard | StorageTier::GcsHDD => {
+                FileStorageTier::AzureStandard | FileStorageTier::GcsHDD => {
                     return (
                         IndexSerializationFormat::AvroZstd,
                         "Large index in cloud - using Avro+zstd for maximum compression"
@@ -424,13 +424,13 @@ mod tests {
 
     #[test]
     fn test_format_recommendation() {
-        use crate::storage::persistence::filesystem::StorageTier;
+        use crate::storage::persistence::filesystem::FileStorageTier;
 
         let recommender = FormatRecommender::default();
 
         // Hot data in memory
         let (format, _reason) = recommender.recommend(
-            &StorageTier::Memory,
+            &FileStorageTier::Memory,
             150.0,       // High frequency
             1024 * 1024, // 1MB
             false,
@@ -440,7 +440,7 @@ mod tests {
 
         // Large data in cloud
         let (format, _reason) = recommender.recommend(
-            &StorageTier::S3Standard,
+            &FileStorageTier::S3Standard,
             10.0,              // Low frequency
             200 * 1024 * 1024, // 200MB
             false,
@@ -450,7 +450,7 @@ mod tests {
 
         // Ephemeral instance
         let (format, _reason) = recommender.recommend(
-            &StorageTier::NVMe,
+            &FileStorageTier::NVMe,
             50.0,
             50 * 1024 * 1024,
             true, // Ephemeral

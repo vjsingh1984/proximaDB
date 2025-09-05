@@ -20,6 +20,10 @@ members = [
 name = "proximadb-server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "proximadb-bench"
+path = "src/bin/proximadb-bench-consolidated.rs"
+
 
 
 [dependencies]
