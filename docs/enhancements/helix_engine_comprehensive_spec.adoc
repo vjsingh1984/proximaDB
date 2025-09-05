@@ -350,6 +350,8 @@ The compaction process is where HELIX's clustering magic happens. Unlike during 
 - Maintains optimal clustering as data distribution evolves
 - Balances clustering quality vs. compaction cost
 
+The following diagram illustrates the complete compaction flow from unsorted Level 0 files to clustered Level 1 output:
+
 [source, mermaid]
 ----
 graph TD
