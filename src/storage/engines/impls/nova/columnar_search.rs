@@ -807,7 +807,7 @@ impl NovaColumnarSearch {
             // Compute distance and get proper SimilarityResult
             let similarity_result =
                 self.distance_compute
-                    .calculate_distance(query_vector, &vector, distance_metric);
+                    .calculate_distance(query_vector, &vector, &distance_metric);
 
             let vector_id = id_col.map(|arr| arr.value(row_idx).to_string());
 
@@ -956,7 +956,7 @@ fn compute_pq_distance(table: &[Vec<f32>], column: &ArrayRef, row_idx: usize) ->
 fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f32>> {
     // Try Float32Array first
     if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>() {
-        if !float_array.is_null(row_idx) {
+        if row_idx < float_array.len() && float_array.value(row_idx).is_finite() {
             // For now, return a placeholder
             // In production, would properly extract the vector
             return Ok(vec![float_array.value(row_idx); 768]);
@@ -1003,7 +1003,7 @@ impl From<&ColumnarSearchConfig> for ProgressiveSearchConfig {
 impl From<&ColumnarSearchConfig> for StreamingConfig {
     fn from(config: &ColumnarSearchConfig) -> Self {
         StreamingConfig {
-            max_memory_bytes: config.memory_budget,
+            max_memory_bytes: config.memory_budget.unwrap_or(1024 * 1024 * 1024),
             prefetch_queue_size: 2,
             max_concurrent_processors: 4,
             processing_timeout: std::time::Duration::from_secs(30),
@@ -1021,7 +1021,7 @@ impl ColumnarSearchConfig {
             // Parse parameters from JSON
             let mut config = Self::default();
 
-            if let Some(mode) = params.get("search_mode").and_then(|v| v.as_deref()) {
+            if let Some(mode) = params.get("search_mode").and_then(|v| v.as_str()) {
                 config.search_mode = match mode {
                     "progressive" => SearchMode::Progressive,
                     "streaming" => SearchMode::Streaming,

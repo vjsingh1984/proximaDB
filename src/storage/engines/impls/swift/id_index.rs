@@ -136,7 +136,7 @@ impl IdIndex {
         let mut results = Vec::new();
 
         for (id, loc) in map.iter() {
-            if id >= start && id <= end {
+            if id.as_str() >= start && id.as_str() <= end {
                 results.push((id.clone(), loc.clone()));
             }
         }
@@ -221,7 +221,7 @@ impl IdIndex {
         match node {
             BPlusNode::Leaf { .. } => 1,
             BPlusNode::Internal { children, .. } => {
-                1 + children.iter().map(|c| self.node_height(c)).max()
+                1 + children.iter().map(|c| self.node_height(c)).max().unwrap_or(0)
             }
         }
     }

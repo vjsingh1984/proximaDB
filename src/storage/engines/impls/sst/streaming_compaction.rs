@@ -47,7 +47,11 @@ impl Ord for MergeRecord {
         self.record
             .id
             .cmp(&other.record.id)
-            .then_with(|| other.record.version.cmp(&self.record.version.unwrap_or(0)))
+            .then_with(|| {
+                let self_version = self.record.version.unwrap_or(0);
+                let other_version = other.record.version.unwrap_or(0);
+                other_version.cmp(&self_version)
+            })
             .then_with(|| other.sequence.cmp(&self.sequence))
     }
 }
@@ -90,7 +94,7 @@ impl FastVectorSerialization {
                 let mut result = Vec::with_capacity(byte_len + 4); // +4 for length prefix
 
                 // Write length prefix for variable dimensions
-                result.extend_from_slice(&(vector.len() as u32).to_le_bytes());
+                result.extend_from_slice(&(vector.len()).to_le_bytes());
 
                 // Direct memory copy - fastest for variable dimensions
                 unsafe {

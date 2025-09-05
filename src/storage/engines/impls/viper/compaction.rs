@@ -510,7 +510,7 @@ impl Compaction {
         let vector_dimensions = collection_config
             .as_ref()
             .and_then(|collection| collection.config.as_ref())
-            .map(|config| config.dimension as usize)
+            .map(|config| config.dimension)
             .ok_or_else(|| {
                 error!("CRITICAL: Collection config missing for collection {} during compaction. Cannot proceed without vector dimensions!", collection_id);
                 anyhow::anyhow!("Collection config with dimension is required for compaction")
@@ -524,7 +524,7 @@ impl Compaction {
         self.compact_parquet_files_with_config(
             collection_id,
             input_files,
-            vector_dimensions,
+            vector_dimensions as usize,
             collection_config.cloned(),
         )
         .await
@@ -1230,7 +1230,7 @@ impl Compaction {
                 // Get dimension from collection metadata config - REQUIRED
                 let dimension = collection_config.as_ref()
                     .and_then(|c| c.config.as_ref())
-                    .map(|cfg| cfg.dimension as usize)
+                    .map(|cfg| cfg.dimension)
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "Collection dimension not found in config for compaction. \
@@ -1240,7 +1240,7 @@ impl Compaction {
 
                 // Create StreamingParquetWriter with temp file
                 let mut writer =
-                    StreamingParquetWriter::new(&temp_file_path, dimension, writer_config)?;
+                    StreamingParquetWriter::new(&temp_file_path, dimension as usize, writer_config)?;
 
                 // Convert RecordData to VectorRecord for writing
                 let vector_records: Vec<VectorRecord> = file_records

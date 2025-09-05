@@ -22,7 +22,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// ProximaDB gRPC service implementing optimized zero-copy patterns
-/// - Collection operations: Use dedicated CollectionService with FilestoreMetadataBackend
+/// - Collection operations: Use dedicated CollectionService with UniversalMetadataBackend
 /// - Vector inserts: Zero-copy Avro binary for WAL performance  
 /// - Vector mutations: Regular gRPC for flexibility
 /// - Vector search: Smart payload selection (compact gRPC vs Avro binary)
@@ -35,8 +35,8 @@ impl ProximaDbGrpcService {
     async fn create_collection_service(
         metadata_config: Option<crate::core::config::MetadataBackendConfig>,
     ) -> Arc<CollectionService> {
-        use crate::storage::metadata::backends::filestore_backend::{
-            FilestoreMetadataBackend, FilestoreMetadataConfig,
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
         };
 
         // Configure filestore based on provided config or use defaults
@@ -46,7 +46,7 @@ impl ProximaDbGrpcService {
                 config.storage_url
             );
 
-            let filestore_config = FilestoreMetadataConfig {
+            let filestore_config = UniversalMetadataConfig {
                 storage_url: config.storage_url.clone(),
                 compression: true,
                 enable_snapshots: true,
@@ -73,7 +73,7 @@ impl ProximaDbGrpcService {
         } else {
             info!("📂 Using default metadata backend configuration");
             (
-                FilestoreMetadataConfig::default(),
+                UniversalMetadataConfig::default(),
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
         };
@@ -86,14 +86,14 @@ impl ProximaDbGrpcService {
                 .expect("Failed to create FilesystemFactory"),
         );
 
-        let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+        let universal_backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
-                .expect("Failed to create FilestoreMetadataBackend"),
+                .expect("Failed to create UniversalMetadataBackend"),
         );
 
         Arc::new(
-            CollectionService::new(filestore_backend, Default::default())
+            CollectionService::new(universal_backend, Default::default())
                 .await
                 .expect("Failed to create CollectionService"),
         )
@@ -676,7 +676,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     .or(Some(req.top_k as usize));
                 search_params.accuracy_threshold = proto_params.accuracy_threshold;
                 search_params.include_expired = proto_params.include_expired;
-                search_params.timeout_ms = proto_params.timeout_ms;
+                search_params.timeout_ms = proto_params.timeout_ms.map(|x| x as u64);
                 search_params.enable_two_stage = proto_params.enable_two_stage;
                 search_params.enable_clustering_hint = proto_params.enable_clustering_hint;
                 search_params.enable_metadata_filtering_hint =
@@ -923,7 +923,7 @@ impl ProximaDb for ProximaDbGrpcService {
                     .or(Some(req.top_k as usize));
                 search_params.accuracy_threshold = proto_params.accuracy_threshold;
                 search_params.include_expired = proto_params.include_expired;
-                search_params.timeout_ms = proto_params.timeout_ms;
+                search_params.timeout_ms = proto_params.timeout_ms.map(|x| x as u64);
                 search_params.enable_two_stage = proto_params.enable_two_stage;
                 search_params.enable_clustering_hint = proto_params.enable_clustering_hint;
                 search_params.enable_metadata_filtering_hint =

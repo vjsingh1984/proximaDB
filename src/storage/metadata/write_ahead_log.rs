@@ -98,7 +98,7 @@ impl Default for MetadataWALConfig {
 pub struct VersionedCollectionMetadata {
     pub id: String,
     pub name: String,
-    pub dimension: u32, // Aligned with proto
+    pub dimension: usize, // Aligned with proto
     pub distance_metric: String,
     pub indexing_algorithm: String,
     pub timestamp: u32, // Seconds since epoch (when last modified)

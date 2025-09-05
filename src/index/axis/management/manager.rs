@@ -3,7 +3,80 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! AXIS Index Manager - Central coordinator for adaptive indexing
+//! # AXIS Index Manager - Adaptive eXperimental Index System
+//! 
+//! This module implements the central coordination layer for ProximaDB's adaptive
+//! indexing system. AXIS dynamically selects and migrates between different index
+//! types based on workload patterns, data characteristics, and query requirements.
+//! 
+//! ## Architecture
+//! 
+//! ```text
+//! ┌─────────────────────────────────────────────┐
+//! │            AXIS Manager                      │
+//! ├─────────────────────────────────────────────┤
+//! │  Monitoring  →  Analysis  →  Adaptation     │
+//! │      ↓            ↓            ↓            │
+//! │  Metrics    Workload      Migration         │
+//! │  Collection  Patterns      Engine           │
+//! ├─────────────────────────────────────────────┤
+//! │        Index Selection Strategy             │
+//! │    ┌──────┬──────┬──────┬──────┐          │
+//! │    │ HNSW │ IVF  │ LSH  │ Flat │          │
+//! │    └──────┴──────┴──────┴──────┘          │
+//! └─────────────────────────────────────────────┘
+//! ```
+//! 
+//! ## Key Features
+//! 
+//! ### 1. **Adaptive Index Selection**
+//! - Monitors query patterns and data distribution
+//! - Automatically selects optimal index type
+//! - Seamless migration between index types
+//! 
+//! ### 2. **Performance Monitoring**
+//! - Real-time tracking of index performance
+//! - Query latency and throughput metrics
+//! - Resource utilization monitoring
+//! 
+//! ### 3. **Index Migration Engine**
+//! - Zero-downtime index migrations
+//! - Incremental index building
+//! - Rollback capabilities
+//! 
+//! ### 4. **Clustering Engine**
+//! - Automatic data clustering for IVF indexes
+//! - Centroid optimization
+//! - Balanced cluster distribution
+//! 
+//! ## Usage Example
+//! 
+//! ```rust
+//! use proximadb::index::axis::AxisManager;
+//! use proximadb::index::axis::AxisConfig;
+//! 
+//! # async fn example() -> anyhow::Result<()> {
+//! // Create AXIS manager with adaptive configuration
+//! let config = AxisConfig {
+//!     enable_adaptive_indexing: true,
+//!     migration_threshold: 0.8,
+//!     monitoring_interval_ms: 5000,
+//!     ..Default::default()
+//! };
+//! 
+//! let axis_manager = AxisManager::new(config).await?;
+//! 
+//! // AXIS automatically adapts to workload patterns
+//! axis_manager.start_monitoring().await?;
+//! 
+//! // Manual strategy override if needed
+//! axis_manager.set_collection_strategy(
+//!     "high_traffic_collection",
+//!     IndexSelectionStrategy::Hnsw
+//! ).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -12,7 +85,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
-use crate::storage::traits::CollectionMetadataProvider;
+use crate::storage::traits::InternalCollectionProvider;
 
 use crate::core::{String, VectorId, VectorRecord};
 use crate::index::axis::management::{
@@ -31,15 +104,32 @@ use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, S
 // use crate::storage::engines::impls::viper::QuantizationMethod;
 
 /// Central manager for AXIS with adaptive capabilities
+/// 
+/// The `AxisManager` coordinates all indexing operations in ProximaDB, providing
+/// a unified interface for vector indexing with automatic adaptation based on
+/// workload characteristics.
+/// 
+/// # Components
+/// 
+/// - **Core Indexes**: Global ID, metadata, dense/sparse vector indexes
+/// - **Adaptive Engine**: Monitors and adapts to workload patterns
+/// - **Migration Engine**: Handles index type transitions
+/// - **Performance Monitor**: Tracks metrics and performance
+/// - **Clustering Engine**: Manages IVF clustering operations
+/// 
+/// # Thread Safety
+/// 
+/// All operations are thread-safe through internal synchronization using
+/// `Arc<RwLock>` for shared state and `DashMap` for concurrent collections.
 pub struct AxisManager {
-    /// Core index components
+    /// Core index components for different data types
     global_id_index: Arc<GlobalIdIndex>,
     metadata_index: Arc<MetadataIndex>,
     dense_vector_index: Arc<DenseVectorIndex>,
     sparse_vector_index: Arc<SparseVectorIndex>,
     join_engine: Arc<JoinEngine>,
 
-    /// Adaptive intelligence components
+    /// Adaptive intelligence components for workload optimization
     adaptive_engine: Arc<AdaptiveIndexEngine>,
     migration_engine: Arc<IndexMigrationEngine>,
     performance_monitor: Arc<PerformanceMonitor>,

@@ -593,22 +593,25 @@ impl SstableWriter {
         // The SST writer has a quantization_engine field that can be used for
         // quantization before creating blocks, but for now we keep FP32 vectors
         // and let FastLanes handle the encoding optimization
-        let mut data_block = FastLanesDataBlock::new(block_id, current_block.to_vec());
+        // Create compression config for the block
+        let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
+        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), compression_config);
+        data_block.block_id = block_id;
 
         // Set block-level bloom filter
         // Convert Vec<u8> bloom filters to SstableBloomFilter
-        data_block.block_bloom_filter = if let Some(key_bloom) = block_key_bloom {
+        data_block.block_bloom_filter = if let Some(ref key_bloom) = block_key_bloom {
             Some(super::bloom_filter::SstableBloomFilter::new(
                 self.bloom_config.clone(),
-                key_bloom,
+                key_bloom.clone(),
                 Vec::new(),
                 super::bloom_filter::BloomFilterStats::default(),
             ))
-        } else if let Some(metadata_bloom) = block_metadata_bloom {
+        } else if let Some(ref metadata_bloom) = block_metadata_bloom {
             Some(super::bloom_filter::SstableBloomFilter::new(
                 self.bloom_config.clone(),
                 Vec::new(),
-                metadata_bloom,
+                metadata_bloom.clone(),
                 super::bloom_filter::BloomFilterStats::default(),
             ))
         } else {
@@ -671,9 +674,9 @@ impl SstableWriter {
 
         // Add enhanced index entry for first record in block
         if let Some(first_record) = current_block.first() {
-            let first_id = first_record.id.as_ref().clone();
+            let first_id = first_record.id.clone();
             index_entries.push(IndexEntry {
-                key: first_id.cloned().unwrap_or_else(|| "unknown".to_string()),
+                key: first_id,
                 offset: 0, // Will be calculated during read
                 size: block_size,
                 block_id,
@@ -682,8 +685,8 @@ impl SstableWriter {
                 metadata_min_values,
                 metadata_max_values,
                 metadata_null_counts,
-                block_key_bloom: block_key_bloom.clone(),
-                block_metadata_bloom: block_metadata_bloom.clone(),
+                block_key_bloom,
+                block_metadata_bloom,
                 vector_format,
             });
         }
@@ -723,9 +726,7 @@ impl SstableWriter {
 
         let mut bloom = BloomFilterFactory::create(&config);
         for record in block_records {
-            if let Some(ref id) = record.id {
-                bloom.insert(id.as_bytes());
-            }
+            bloom.insert(record.id.as_bytes());
         }
 
         bloom.serialize().ok()
@@ -770,18 +771,18 @@ impl SstableWriter {
         }
 
         let total_vectors = dimensions.len();
-        if let Some((&dominant_dim, &count)) =
-            dimension_counts.iter().max_by_key(|(_, &count)| count)
+        if let Some((dominant_dim, count)) =
+            dimension_counts.iter().max_by_key(|(_, count)| **count)
         {
-            let dominance_ratio = count as f64 / total_vectors as f64;
+            let dominance_ratio = *count as f64 / total_vectors as f64;
 
-            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(dominant_dim) {
+            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(*dominant_dim) {
                 super::VectorFormat::Fixed {
-                    dimension: dominant_dim,
+                    dimension: *dominant_dim,
                 }
-            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(dominant_dim) {
+            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(*dominant_dim) {
                 super::VectorFormat::Mixed {
-                    dominant_dimension: dominant_dim,
+                    dominant_dimension: *dominant_dim,
                 }
             } else {
                 super::VectorFormat::Variable
@@ -809,22 +810,25 @@ impl SstableWriter {
             self.build_block_bloom_filters(current_block, block_id);
 
         // Create FastLanesDataBlock with hierarchical metadata
-        let mut data_block = FastLanesDataBlock::new(block_id, current_block.to_vec());
+        // Create compression config for the block
+        let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
+        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), compression_config);
+        data_block.block_id = block_id;
 
         // Set block-level bloom filter (combines key and metadata blooms into one)
         // Convert Vec<u8> bloom filters to SstableBloomFilter
-        data_block.block_bloom_filter = if let Some(key_bloom) = block_key_bloom {
+        data_block.block_bloom_filter = if let Some(ref key_bloom) = block_key_bloom {
             Some(super::bloom_filter::SstableBloomFilter::new(
                 self.bloom_config.clone(),
-                key_bloom,
+                key_bloom.clone(),
                 Vec::new(),
                 super::bloom_filter::BloomFilterStats::default(),
             ))
-        } else if let Some(metadata_bloom) = block_metadata_bloom {
+        } else if let Some(ref metadata_bloom) = block_metadata_bloom {
             Some(super::bloom_filter::SstableBloomFilter::new(
                 self.bloom_config.clone(),
                 Vec::new(),
-                metadata_bloom,
+                metadata_bloom.clone(),
                 super::bloom_filter::BloomFilterStats::default(),
             ))
         } else {
@@ -903,8 +907,8 @@ impl SstableWriter {
                 metadata_max_values,
                 metadata_null_counts,
                 // NEW: Hierarchical bloom filters (reuse from FastLanesDataBlock)
-                block_key_bloom: block_key_bloom.clone(),
-                block_metadata_bloom: block_metadata_bloom.clone(),
+                block_key_bloom,
+                block_metadata_bloom,
                 // NEW: Vector format optimization
                 vector_format,
                 // REMOVED: compression_ratio field
@@ -969,18 +973,18 @@ impl SstableWriter {
         }
 
         let total_vectors = dimensions.len();
-        if let Some((&dominant_dim, &count)) =
-            dimension_counts.iter().max_by_key(|(_, &count)| count)
+        if let Some((dominant_dim, count)) =
+            dimension_counts.iter().max_by_key(|(_, count)| **count)
         {
-            let dominance_ratio = count as f64 / total_vectors as f64;
+            let dominance_ratio = *count as f64 / total_vectors as f64;
 
-            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(dominant_dim) {
+            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(*dominant_dim) {
                 super::VectorFormat::Fixed {
-                    dimension: dominant_dim,
+                    dimension: *dominant_dim,
                 }
-            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(dominant_dim) {
+            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(*dominant_dim) {
                 super::VectorFormat::Mixed {
-                    dominant_dimension: dominant_dim,
+                    dominant_dimension: *dominant_dim,
                 }
             } else {
                 super::VectorFormat::Variable
@@ -1056,9 +1060,7 @@ impl SstableWriter {
 
         let mut bloom = BloomFilterFactory::create(&config);
         for record in block_records {
-            if let Some(id) = &record.id {
-                bloom.insert(id.as_bytes());
-            }
+            bloom.insert(record.id.as_bytes());
         }
 
         bloom.serialize().ok()
@@ -1114,18 +1116,18 @@ impl SstableWriter {
         }
 
         let total_vectors = all_dimensions.len();
-        if let Some((&dominant_dim, &count)) =
-            dimension_counts.iter().max_by_key(|(_, &count)| count)
+        if let Some((dominant_dim, count)) =
+            dimension_counts.iter().max_by_key(|(_, count)| **count)
         {
-            let dominance_ratio = count as f64 / total_vectors as f64;
+            let dominance_ratio = *count as f64 / total_vectors as f64;
 
-            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(dominant_dim) {
+            if dominance_ratio >= 0.95 && Self::is_supported_fixed_dimension(*dominant_dim) {
                 super::VectorFormat::Fixed {
-                    dimension: dominant_dim,
+                    dimension: *dominant_dim,
                 }
-            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(dominant_dim) {
+            } else if dominance_ratio >= 0.7 && Self::is_supported_fixed_dimension(*dominant_dim) {
                 super::VectorFormat::Mixed {
-                    dominant_dimension: dominant_dim,
+                    dominant_dimension: *dominant_dim,
                 }
             } else {
                 super::VectorFormat::Variable
@@ -1251,7 +1253,7 @@ impl SstableWriter {
             FastLanesScheme::RunLength
         } else if has_small_range {
             FastLanesScheme::FrameOfReference {
-                reference: overall_min_val,
+                reference: overall_min_val as i64,
                 bits: 16, // Use 16 bits for small ranges
             }
         } else if has_deltas {

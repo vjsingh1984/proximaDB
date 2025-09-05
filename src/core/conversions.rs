@@ -292,7 +292,7 @@ pub fn convert_metadata_from_proto(
 /// Build a CollectionConfig from JSON parameters
 pub fn build_collection_config(
     name: String,
-    dimension: u32,
+    dimension: usize,
     distance_metric: Option<String>,
     storage_engine: Option<String>,
     indexing_algorithm: Option<String>,
@@ -391,7 +391,7 @@ pub fn build_vector_search_request(
     VectorSearchRequest {
         collection_id,
         queries: vec![query],
-        top_k: top_k as i32,
+        top_k: top_k as u32,
         distance_metric_override: None,
         search_params: None,
         include_fields: Some(crate::proto::proximadb::IncludeFields {

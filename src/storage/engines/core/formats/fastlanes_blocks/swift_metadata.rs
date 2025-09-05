@@ -134,6 +134,16 @@ impl EngineMetadata for SwiftMetadata {
                 // Mixed query - use average selectivity
                 0.5
             }
+            
+            QueryType::VectorSearch => {
+                // Vector search requires scanning all segments
+                1.0
+            }
+            
+            QueryType::FullScan => {
+                // Full scan always processes everything
+                1.0
+            }
         }
     }
 
@@ -158,6 +168,8 @@ impl EngineMetadata for SwiftMetadata {
             QueryType::SimilaritySearch => true, // Supports but not optimized
             QueryType::MetadataFilter => true,   // Supports metadata filtering
             QueryType::Batch => true,            // Supports batch operations
+            QueryType::VectorSearch => true,     // Supports vector search
+            QueryType::FullScan => true,         // Supports full scan
         }
     }
 
@@ -199,7 +211,8 @@ impl SwiftMetadata {
                 required_segments
             }
 
-            QueryType::SimilaritySearch | QueryType::MetadataFilter | QueryType::Batch => {
+            QueryType::SimilaritySearch | QueryType::MetadataFilter | QueryType::Batch
+            | QueryType::VectorSearch | QueryType::FullScan => {
                 // Need all segments for these query types
                 (0..self.segments.len() as u32).collect()
             }
@@ -342,7 +355,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         }
 
         // 4. Variable data size + data
-        serialized.extend_from_slice(&(metadata.variable_data.len() as u32).to_le_bytes());
+        serialized.extend_from_slice(&(metadata.variable_data.len()).to_le_bytes());
         serialized.extend_from_slice(&metadata.variable_data);
 
         trace!(
@@ -495,6 +508,11 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
             QueryType::Batch => {
                 // Conservative approach for batch queries
+                false
+            }
+            
+            QueryType::VectorSearch | QueryType::FullScan => {
+                // Can't skip for vector search or full scan
                 false
             }
         }

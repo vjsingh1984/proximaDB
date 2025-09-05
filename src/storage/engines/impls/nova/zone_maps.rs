@@ -381,14 +381,16 @@ impl AdvancedZoneMap {
                 let end_dim = ((group + 1) * dimensions_per_group).min(dimension);
 
                 if start_dim < dimension {
-                    grouped_dimensions.extend(start_dim..end_dim);
+                    for dim in start_dim..end_dim {
+                        grouped_dimensions.push(dim as u32);
+                    }
                 }
             }
 
             // Create zone map for this level
             let zone_vectors: Vec<Vec<f32>> = vectors
                 .iter()
-                .map(|v| grouped_dimensions.iter().map(|&i| v[i]).collect())
+                .map(|v| grouped_dimensions.iter().map(|&i| v[i as usize]).collect())
                 .collect();
 
             let zone_map = ZoneMap::from_vectors(&zone_vectors)?;
@@ -793,7 +795,7 @@ impl QueryCharacteristics {
             .enumerate()
             .map(|(i, &v)| (i, v.abs()))
             .collect();
-        indexed_values.sort_by(|a, b| b.1.partial_cmp(&a.1));
+        indexed_values.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let dominant_count = (query.len() / 10).max(1);
         let dominant_dimensions = indexed_values
@@ -817,9 +819,10 @@ impl SelectivityModel {
         match self.model_type {
             ModelType::Linear => {
                 // Simple linear model: selectivity = a * norm + b * sparsity + c
-                let norm_factor = self.parameters.get("norm").unwrap_or(&0.0);
-                let sparsity_factor = self.parameters.get("sparsity").unwrap_or(&0.0);
-                let intercept = self.parameters.get("intercept").unwrap_or(&0.5);
+                // Assuming parameters are stored as [norm_factor, sparsity_factor, intercept]
+                let norm_factor = self.parameters.get(0).unwrap_or(&0.0);
+                let sparsity_factor = self.parameters.get(1).unwrap_or(&0.0);
+                let intercept = self.parameters.get(2).unwrap_or(&0.5);
 
                 (norm_factor * characteristics.norm
                     + sparsity_factor * characteristics.sparsity

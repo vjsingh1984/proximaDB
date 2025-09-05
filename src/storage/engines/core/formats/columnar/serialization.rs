@@ -379,7 +379,7 @@ impl ColumnarSerializer {
 
         // Transparent quantization if configured
         let (binary_array, int8_arrays, pq_array, quant_stats) =
-            if let (Some(ref engine), Some(ref quant_config)) =
+            if let (Some(engine), Some(quant_config)) =
                 (&self.quantization_engine, &self.config.quantization)
             {
                 let quant_start = std::time::Instant::now();
@@ -741,9 +741,9 @@ impl ColumnarSerializer {
             let quantized_size = quantized_data
                 .iter()
                 .map(|d| {
-                    d.primary.as_ref().map(|p| p.data.len())
-                        + d.filter.as_ref().map(|f| f.data.len())
-                        + d.fast.as_ref().map(|f| f.data.len())
+                    d.primary.as_ref().map(|p| p.data.len()).unwrap_or(0)
+                        + d.filter.as_ref().map(|f| f.data.len()).unwrap_or(0)
+                        + d.fast.as_ref().map(|f| f.data.len()).unwrap_or(0)
                 })
                 .sum::<usize>();
 

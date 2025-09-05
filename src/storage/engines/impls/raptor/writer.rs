@@ -2571,7 +2571,7 @@ impl RaptorWriter {
                             metadata_item::Value::ListValue(list) => {
                                 // Serialize list as length-prefixed items
                                 let mut bytes = Vec::new();
-                                bytes.extend(&(list.values.len() as u32).to_le_bytes());
+                                bytes.extend(&(list.values.len()).to_le_bytes());
                                 for v in &list.values {
                                     // Recursive serialization
                                     bytes.extend(&[0]); // Placeholder
@@ -3130,7 +3130,7 @@ impl RaptorWriter {
                 _ => {
                     // Product quantization or other: store as-is for now
                     for row in &page.rows {
-                        encoded.extend(&(row.quantized_vector.len() as u32).to_le_bytes());
+                        encoded.extend(&(row.quantized_vector.len()).to_le_bytes());
                         encoded.extend(&row.quantized_vector);
                     }
                 }
@@ -4271,7 +4271,7 @@ impl RaptorWriter {
         // Step 4: Create the columnar centroids structure
         let columnar_centroids = ColumnarCentroids {
             count: num_centroids as u32,
-            dimension: dimension as u32,
+            dimension: dimension,
             rowgroup_ids,
             transposed_data,
             encoding_metadata,
@@ -4312,7 +4312,7 @@ impl RaptorWriter {
                         })
                         .collect()
                 })
-                .clone(),
+                .unwrap_or_else(Vec::new),
             total_centroids: columnar_centroids.count, // K centroids = K rowgroups
             version: 1,
             checksum: 0, // TODO: Compute actual checksum
@@ -4857,7 +4857,7 @@ impl RaptorWriter {
                     let value_bytes = value.as_bytes();
                     encoded.extend(&(value_bytes.len() as u32).to_le_bytes());
                     encoded.extend(value_bytes);
-                    encoded.extend(&(column.values.len() as u32).to_le_bytes()); // count
+                    encoded.extend(&(column.values.len()).to_le_bytes()); // count
                 }
             }
         }

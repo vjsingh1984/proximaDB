@@ -529,7 +529,11 @@ impl UnifiedColumnarWriter {
         let mut builder = WriterProperties::builder()
             .set_compression(self.config.parquet_compression)
             .set_dictionary_enabled(self.config.enable_dictionary)
-            .set_statistics_enabled(self.config.enable_column_statistics)
+            .set_statistics_enabled(if self.config.enable_column_statistics {
+                parquet::file::properties::EnabledStatistics::Chunk
+            } else {
+                parquet::file::properties::EnabledStatistics::None
+            })
             .set_max_row_group_size(self.config.row_group_size)
             .set_data_page_size_limit(self.config.page_size);
 

@@ -17,9 +17,7 @@ use crate::monitoring::MetricsCollector;
 use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
 use crate::storage::StorageEngine;
-use crate::storage::metadata::backends::filestore_backend::{
-    FilestoreMetadataBackend, FilestoreMetadataConfig,
-};
+use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
@@ -318,55 +316,21 @@ impl SharedServices {
             storage_config.metadata_url
         );
 
-        let filestore_config = FilestoreMetadataConfig {
-            storage_url: storage_config.metadata_url.clone(),
-            compression: true,
-            enable_snapshots: true,
-            snapshot_threshold: 1000,
-            keep_snapshots: 5,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        // SharedServices handles cloud vs local filesystem logic
-        let filesystem_config = if storage_config.metadata_url.starts_with("s3://")
-            || storage_config.metadata_url.starts_with("gcs://")
-            || storage_config.metadata_url.starts_with("adls://")
-        {
-            info!("☁️ SharedServices: Configuring cloud filesystem for metadata_info");
-            // TODO: Use cloud_config from TOML for S3/GCS/Azure credentials
-            crate::storage::persistence::filesystem::FilesystemConfig::default()
-        } else {
-            info!("📁 SharedServices: Configuring local filesystem for metadata_info");
-
-            // IMPORTANT: For file:// URLs, we should NOT set a root_dir because:
-            // 1. The filestore backend uses full URLs like "file://./demo_metadata/current"
-            // 2. Setting root_dir causes the LocalFileSystem to prepend the root to these paths
-            // 3. This results in duplicated paths like "./demo_metadata/./demo_metadata/current"
-            //
-            // The LocalFileSystem should work with URLs as-is without any root directory.
-            info!(
-                "📂 SharedServices: Using default filesystem config without root_dir to prevent path duplication"
-            );
-
-            // Use default config - no root_dir set
-            crate::storage::persistence::filesystem::FilesystemConfig::default()
-        };
-
+        // Create metadata backend based on URL from config
+        // Supports file://, s3://, gs://, adls://, rocksdb://
+        // The MetadataBackendFactory handles all filesystem routing internally
         info!(
-            "📁 SharedServices: Unified metadata backend URL: {}",
-            filestore_config.storage_url
+            "📁 SharedServices: Creating metadata backend from URL: {}",
+            storage_config.metadata_url
         );
-
-        // SharedServices creates the unified metadata backend for all protocols
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
-
-        let filestore_backend =
-            Arc::new(FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?);
-        debug!("✅ SharedServices: Filestore metadata backend created successfully");
+        
+        let metadata_backend = Arc::from(
+            MetadataBackendFactory::create_from_url(&storage_config.metadata_url).await?
+        );
+        debug!("✅ SharedServices: Metadata backend created successfully");
 
         let collection_service =
-            Arc::new(CollectionService::new(filestore_backend, storage_config.clone()).await?);
+            Arc::new(CollectionService::new(metadata_backend, storage_config.clone()).await?);
         debug!("✅ SharedServices: CollectionService created successfully");
 
         // Collection service will be injected into StorageEngine by ProximaDB::new
@@ -450,6 +414,7 @@ impl SharedServices {
             sst_engine,
             wal_manager,
             axis_manager,
+            collection_service.clone(),
         ));
 
         info!(

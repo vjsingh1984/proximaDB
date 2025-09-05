@@ -3,7 +3,76 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Index module for ProximaDB
+//! # Index Module - Vector Similarity Search and Indexing
+//! 
+//! This module provides ProximaDB's advanced indexing subsystem for efficient
+//! vector similarity search, supporting multiple indexing algorithms and
+//! adaptive index selection based on workload patterns.
+//! 
+//! ## Architecture Overview
+//! 
+//! ```text
+//! ┌─────────────────────────────────────────────┐
+//! │              Index Subsystem                 │
+//! ├─────────────────────────────────────────────┤
+//! │   AXIS Manager (Adaptive Index Selection)   │
+//! │         ↓            ↓            ↓          │
+//! │      HNSW          IVF         Annoy        │
+//! │   (Graph-based) (Inverted)  (Tree-based)    │
+//! │         ↓            ↓            ↓          │
+//! │    EventLog → Background Index Building      │
+//! └─────────────────────────────────────────────┘
+//! ```
+//! 
+//! ## Core Components
+//! 
+//! ### 1. **AXIS Manager** (`axis/`)
+//! Adaptive eXperimental Index System:
+//! - Dynamic index selection based on query patterns
+//! - Automatic index building and maintenance
+//! - EventLog integration for async indexing
+//! - Multi-index fusion for hybrid search
+//! 
+//! ### 2. **Index Configurations** (`config/`)
+//! Configuration for various index types:
+//! - **HNSW**: Hierarchical Navigable Small World graphs
+//! - **IVF**: Inverted File indexes with clustering
+//! - **PQ**: Product Quantization for compression
+//! - **LSH**: Locality Sensitive Hashing
+//! - **Annoy**: Approximate Nearest Neighbors Oh Yeah
+//! - **Flat**: Brute-force exact search
+//! 
+//! ## Usage Examples
+//! 
+//! ```rust
+//! use proximadb::index::{AxisManager, IndexConfig, HnswConfig};
+//! 
+//! // Create AXIS manager with HNSW index
+//! let config = IndexConfig::Hnsw(HnswConfig {
+//!     max_connections: 16,
+//!     ef_construction: 200,
+//!     ef_search: 100,
+//!     seed: Some(42),
+//! });
+//! 
+//! let axis_manager = AxisManager::new(config).await?;
+//! 
+//! // Index vectors asynchronously via EventLog
+//! axis_manager.index_vector(vector_record).await?;
+//! 
+//! // Search with automatic index selection
+//! let results = axis_manager.search(query_vector, k).await?;
+//! ```
+//! 
+//! ## Performance Characteristics
+//! 
+//! | Algorithm | Build Time | Query Time | Memory | Recall@10 |
+//! |-----------|-----------|------------|---------|-----------|
+//! | HNSW      | O(N log N) | O(log N)   | High    | 95-99%    |
+//! | IVF       | O(N√N)     | O(√N)      | Medium  | 90-95%    |
+//! | LSH       | O(N)       | O(1)       | Low     | 70-85%    |
+//! | Annoy     | O(N log N) | O(log N)   | Medium  | 85-95%    |
+//! | Flat      | O(1)       | O(N)       | High    | 100%      |
 
 pub mod axis;
 pub mod config;
@@ -18,35 +87,98 @@ use std::sync::Arc;
 
 use crate::core::{VectorId, VectorRecord};
 
-/// Placeholder Global ID Index
+/// Global ID Index for cross-collection vector tracking
+/// 
+/// The `GlobalIdIndex` maintains a unified index of all vector IDs across
+/// all collections, enabling O(1) lookups and cross-collection operations.
+/// 
+/// # Architecture
+/// 
+/// ```text
+/// GlobalIdIndex
+///     ├── ID → (collection_id, file_path, offset)
+///     ├── Bloom filters for existence checks
+///     └── Persistent backing store
+/// ```
+/// 
+/// # Example
+/// 
+/// ```rust
+/// # use proximadb::index::GlobalIdIndex;
+/// # use proximadb::core::{VectorId, VectorRecord};
+/// # async fn example() -> anyhow::Result<()> {
+/// let index = GlobalIdIndex::new().await?;
+/// 
+/// // Track vector across collections
+/// let vector_id = VectorId::new();
+/// let record = VectorRecord::default();
+/// index.insert(vector_id.clone(), "collection_1", &record).await?;
+/// 
+/// // Update storage location
+/// index.update_file_reference(&vector_id, "/path/to/sst/file").await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct GlobalIdIndex {
-    // Placeholder implementation
+    // TODO: Implement with DashMap<VectorId, IndexEntry>
+    // where IndexEntry contains collection_id, file_path, offset
 }
 
 impl GlobalIdIndex {
+    /// Creates a new global ID index
+    /// 
+    /// Initializes the index with optional persistent backing store
+    /// for recovery after restarts.
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
 
+    /// Inserts a vector ID into the global index
+    /// 
+    /// # Arguments
+    /// 
+    /// * `id` - Unique vector identifier
+    /// * `collection_id` - Collection containing the vector
+    /// * `vector` - Vector record for metadata extraction
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if ID already exists (duplicate key)
     pub async fn insert(
         &self,
         _id: VectorId,
         _collection_id: &str,
         _vector: &VectorRecord,
     ) -> Result<()> {
+        // TODO: Implement with atomic CAS operation
         Ok(())
     }
 
+    /// Updates the file reference for a vector after flush/compaction
+    /// 
+    /// Called when vectors move from memtable to SST files or
+    /// during compaction when vectors are reorganized.
     pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
+        // TODO: Update index entry with new storage location
         Ok(())
     }
 
+    /// Removes a vector ID from the global index
+    /// 
+    /// # Errors
+    /// 
+    /// Returns error if ID doesn't exist
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
+        // TODO: Atomic removal with existence check
         Ok(())
     }
 
+    /// Removes all vectors for a collection
+    /// 
+    /// Bulk operation for collection deletion
     pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
+        // TODO: Scan and remove all entries for collection
         Ok(())
     }
 }

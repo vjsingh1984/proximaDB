@@ -16,7 +16,7 @@ pub use crate::storage::transaction_coordinator;
 pub mod atomic;
 pub mod backends;
 pub mod checkpoint;
-// filestore_backend moved to backends/filestore_backend.rs
+// universal_backend moved to backends/universal_backend.rs
 pub mod indexes;
 pub mod single_index;
 pub mod store;

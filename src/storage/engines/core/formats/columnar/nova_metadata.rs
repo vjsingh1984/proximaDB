@@ -581,7 +581,7 @@ impl MetadataSerializer for NovaMetadataSerializer {
         }
 
         // 5. Variable data size + data
-        serialized.extend_from_slice(&(metadata.variable_data.len() as u32).to_le_bytes());
+        serialized.extend_from_slice(&(metadata.variable_data.len()).to_le_bytes());
         serialized.extend_from_slice(&metadata.variable_data);
 
         trace!(

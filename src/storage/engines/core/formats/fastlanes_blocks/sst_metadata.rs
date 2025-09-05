@@ -153,11 +153,11 @@ impl SstMetadataSerializer {
         let mut variable_data = Vec::new();
 
         // Add global bloom filter to variable data
-        let bloom_offset = variable_data.len() as u32;
+        let bloom_offset = variable_data.len();
         variable_data.extend_from_slice(&global_bloom_data);
 
         // Add index data to variable data
-        let index_offset = variable_data.len() as u32;
+        let index_offset = variable_data.len();
         variable_data.extend_from_slice(&index_data);
 
         // Process each block
@@ -188,9 +188,9 @@ impl SstMetadataSerializer {
         let global = SstGlobalHeader {
             file_size,
             num_blocks: blocks.len() as u32,
-            bloom_filter_offset: bloom_offset,
+            bloom_filter_offset: bloom_offset as u32,
             bloom_filter_size: global_bloom_data.len() as u32,
-            index_offset,
+            index_offset: index_offset as u32,
             index_size: index_data.len() as u32,
             total_records: blocks.iter().map(|b| b.record_count as u64).sum(),
             min_timestamp: 0, // Would extract from file metadata
@@ -284,7 +284,7 @@ impl MetadataSerializer for SstMetadataSerializer {
         }
 
         // Serialize variable data size
-        buffer.extend_from_slice(&(metadata.variable_data.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&(metadata.variable_data.len()).to_le_bytes());
 
         // Serialize variable data (compressed with bincode if enabled)
         buffer.extend_from_slice(&metadata.variable_data);

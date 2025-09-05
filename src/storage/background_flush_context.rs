@@ -281,10 +281,10 @@ impl BackgroundFlushContext {
         // Determine batch size hint based on dimension and engine
         let batch_size_hint = match storage_engine {
             StorageEngineType::Viper => {
-                Some(1000.min(10000 / (config.dimension as usize / 100).max(1)))
+                Some(1000.min(10000 / (config.dimension / 100).max(1)))
             }
             StorageEngineType::Sst => {
-                Some(500.min(5000 / (config.dimension as usize / 100).max(1)))
+                Some(500.min(5000 / (config.dimension / 100).max(1)))
             }
         };
 
@@ -297,7 +297,7 @@ impl BackgroundFlushContext {
             compression_config,
             filterable_columns: config.filterable_columns.clone(),
             quantization,
-            batch_size_hint,
+            batch_size_hint: batch_size_hint.map(|s| s as usize),
             priority: OperationPriority::Normal,
             timeout_ms: Some(300_000), // 5 minutes default
             extra_metadata: HashMap::new(),

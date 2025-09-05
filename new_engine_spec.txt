@@ -1,0 +1,115 @@
+Excellent — you’re essentially asking for a **design-level specification** (a “prompt” you could give to an engineer or system) that explains *how* to cluster vectors (and their metadata) in a **columnar + LSM-based vector database** so that “like vectors” (close in high-dimensional space) end up being stored physically near each other. That way, during compaction, **row groups** and **file layout** preserve this clustering — similar in spirit to Delta’s **Z-order** or **Liquid Clustering**.
+
+Here’s a **structured full specification prompt** you could reuse:
+
+---
+
+# 📄 Specification Prompt: Z-Order / Liquid Clustering for Vector Database with Columnar Storage
+
+## Objective
+
+Design a storage and compaction strategy for a vector database (with columnar storage and LSM architecture) that **physically colocates similar vectors and metadata together**. This should leverage **multi-dimensional clustering (Z-order or Liquid Clustering / Hilbert curve)** to ensure that “like vectors” are stored in the same row groups or files. The system should optimize for:
+
+* Efficient **nearest neighbor queries** (vector search).
+* Fast **filter + vector search** hybrid queries (metadata filtering + ANN).
+* **Data skipping** and reduced I/O during query execution.
+* Low write amplification during compaction.
+
+---
+
+## Data Model
+
+* **Vectors:** High-dimensional dense/sparse embeddings (float arrays).
+* **Metadata columns:** Scalar attributes (ints, floats, strings, timestamps).
+* **Storage format:** Columnar (e.g., Parquet-like row groups).
+* **Write path:** LSM tree (new writes go to memtable → flushed SSTable → compacted).
+
+---
+
+## Clustering Algorithm
+
+### 1. Z-Order (Morton Curve)
+
+* Map selected **clustering dimensions** (e.g., metadata columns + projection of vector embeddings) into a normalized integer domain.
+* Compute a **Morton key** by **bit interleaving** across dimensions.
+* Sort rows by this Morton key before writing row groups.
+* Store row-group statistics (min/max for each clustering dimension and Morton key) for data skipping.
+
+### 2. Liquid Clustering (Hilbert Curve)
+
+* Define clustering keys (metadata and/or vector projections) at the **table level**.
+* Use **Hilbert curve index** instead of Morton, which preserves locality better in high dimensions.
+* Maintain **Z-Cubes** (logical clustering units tagged in metadata) during compaction:
+
+  * New data is clustered incrementally into existing Z-Cubes.
+  * Avoids rewriting all existing data (lowers write amplification).
+* Table metadata persists clustering definition.
+
+---
+
+## Vector Dimension Reduction for Clustering
+
+* To apply Z-order/Hilbert to vectors:
+
+  * Either cluster on **top-K PCA dimensions**, **random projections**, or **centroid assignment IDs** (from k-means, IVF, or HNSW partitions).
+  * These reduced coordinates are treated like metadata columns for Z-order/Liquid clustering.
+
+---
+
+## Row Group Layout
+
+* Each row group should contain vectors that fall within the **same Z-order / Hilbert curve region**.
+* Row group metadata includes:
+
+  * Min/max of clustering dimensions.
+  * Hilbert/Z-order range IDs.
+  * Statistics for skipping during query.
+
+---
+
+## Compaction in LSM
+
+* During LSM compaction:
+
+  1. Merge SSTables.
+  2. Extract clustering keys (from metadata + reduced vector dimensions).
+  3. Compute Morton/Hilbert keys.
+  4. Resort rows accordingly.
+  5. Rewrite into new row groups aligned with clustering curve.
+* **Incremental clustering (Liquid Clustering)**: only recluster unclustered or newly written SSTables into existing Z-Cubes, avoiding rewriting the whole dataset.
+
+---
+
+## Query Path Optimizations
+
+* ANN index (e.g., HNSW, IVF) can use row group boundaries as coarse partitions.
+* Metadata filters + ANN queries benefit from:
+
+  * Skipping entire row groups by min/max/Z-curve ranges.
+  * Scanning only colocated vectors in “nearby” row groups.
+
+---
+
+## When to Choose
+
+* **Z-Order**: Simpler to implement; good when clustering dimensions are stable; useful for periodic full compaction.
+* **Liquid Clustering**: Preferred for **evolving workloads**, **large continuously written tables**, or when **low write amplification** is critical.
+
+---
+
+## Deliverables
+
+* **Row group builder spec**: how to compute clustering keys, sort rows, and output metadata.
+* **Compaction planner spec**: how to merge SSTables incrementally with clustering awareness.
+* **Metadata spec**: store clustering keys/ranges for efficient skipping.
+* **Fallback path**: if clustering columns not defined, default to round-robin compaction.
+
+---
+
+✅ **In short**:
+This design ensures that vectors and their metadata are clustered using Z-order or Liquid Clustering, so “like vectors end up together” in row groups, compaction preserves spatial locality, and both ANN + filtering queries benefit from **data skipping** and reduced I/O.
+
+---
+
+Would you like me to also **sketch pseudocode** for the clustering key computation (Morton vs. Hilbert) and show how it would plug into the LSM compaction pipeline? That way you’d have a more “implementation-ready” spec, not just a conceptual one.
+

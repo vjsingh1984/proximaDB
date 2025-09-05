@@ -518,7 +518,7 @@ impl SstCompactor {
                 .push(entry.record);
 
             // Get next record from the same file
-            if let Some((_, ref mut iter)) = active_iterators
+            if let Some((_, iter)) = active_iterators
                 .iter_mut()
                 .find(|(idx, _)| *idx == entry.file_index)
             {

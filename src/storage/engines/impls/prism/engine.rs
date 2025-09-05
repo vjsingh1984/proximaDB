@@ -67,7 +67,7 @@
 //!    - Cache-friendly compressed representations
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::search::StorageTier;
+use crate::storage::persistence::filesystem::StorageTier;
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
@@ -632,7 +632,7 @@ impl PrismEngine {
             .write_data_optimized(
                 &file_url,
                 &bytes,
-                crate::core::search::multi_tier_deduplication::StorageTier::Unflushed, // Memory cache is unflushed tier
+                StorageTier::Unflushed, // Memory cache is unflushed tier
             )
             .await
     }
@@ -1013,7 +1013,7 @@ impl UnifiedStorageEngine for PrismEngine {
             ResolutionLevel::FP32,   // Full precision when needed
         ];
 
-        let serialized = serializer.serialize_progressive(&params.vector_records, &levels)?;
+        let serialized = serializer.serialize_progressive(&params.vector_records, &levels).await?;
         let bytes_written = serialized.len();
 
         // In production, would store in actual memory cache structures

@@ -1506,7 +1506,7 @@ impl Compaction {
             use prost::Message;
             match VectorRecord::decode(&record_data[..]) {
                 Ok(record) => {
-                    let record_id = record.id.as_ref().cloned().clone();
+                    let record_id = record.id.clone();
                     debug!(
                         "Successfully deserialized record {} with id: {:?}",
                         record_idx, record.id

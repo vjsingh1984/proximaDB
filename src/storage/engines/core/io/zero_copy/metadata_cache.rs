@@ -266,11 +266,11 @@ impl ZeroCopyMetadataCache {
     /// Register engine-specific metadata serializer
     pub fn register_serializer(&self, serializer: Arc<dyn MetadataSerializer>) {
         let engine_id = serializer.engine_id().to_string();
-        self.serializers.insert(engine_id, serializer);
         debug!(
-            engine_id = serializer.engine_id(),
+            engine_id = engine_id.as_str(),
             "Registered metadata serializer"
         );
+        self.serializers.insert(engine_id, serializer);
     }
 
     /// Get metadata for file, using cache or creating new entry

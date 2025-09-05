@@ -58,6 +58,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
+// Import metrics service
+use crate::metrics::query_service::{MetricsQueryService, MetricsQueryOptions};
+use crate::metrics::MetricsPersistenceLayer;
+use crate::metrics::MetricsConfig;
+
 use crate::proto::proximadb::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorBatchRequest,
     VectorOperation, VectorOperationResponse, VectorSearchRequest,
@@ -72,6 +77,8 @@ pub struct UnifiedHandlers {
     pub collection_service: Arc<CollectionService>,
     /// Optimized vector service with eliminated registry overhead
     pub vector_operations_service: Arc<VectorOperationsService>,
+    /// Metrics query service for collection statistics and optimization hints
+    pub metrics_query_service: Option<Arc<MetricsQueryService>>,
 }
 
 impl UnifiedHandlers {
@@ -88,6 +95,20 @@ impl UnifiedHandlers {
         Self {
             collection_service,
             vector_operations_service,
+            metrics_query_service: None,
+        }
+    }
+
+    /// Create new unified handlers with metrics support
+    pub fn with_metrics(
+        collection_service: Arc<CollectionService>,
+        vector_operations_service: Arc<VectorOperationsService>,
+        metrics_query_service: Arc<MetricsQueryService>,
+    ) -> Self {
+        Self {
+            collection_service,
+            vector_operations_service,
+            metrics_query_service: Some(metrics_query_service),
         }
     }
 
@@ -754,65 +775,115 @@ impl UnifiedHandlers {
         self.vector_operations_service.metrics().await
     }
 
-    /// Get collection-specific metrics (placeholder until metrics service is integrated)
+    /// Get collection-specific metrics using the metrics query service
     pub async fn collection_metrics(
         &self,
         collection_id: &str,
-        _include_hints: bool,
+        include_hints: bool,
     ) -> Result<serde_json::Value> {
         debug!(
             "📊 UnifiedHandlers: Getting metrics for collection {}",
             collection_id
         );
 
-        // TODO: Replace with actual metrics query service
-        // For now, return basic collection info from collection service
-        if let Ok(Some(collection)) = self.collection_service.collection(collection_id).await {
-            let response = serde_json::json!({
+        // Use metrics query service if available
+        if let Some(ref metrics_service) = self.metrics_query_service {
+            let options = MetricsQueryOptions {
+                include_hints,
+                include_history: false,
+                from_timestamp: None,
+                to_timestamp: None,
+                metric_names: Vec::new(),
+            };
+            
+            let metrics = metrics_service
+                .collection_metrics(collection_id, options)
+                .await
+                .context("Failed to query collection metrics")?;
+            
+            let mut response = serde_json::json!({
                 "collection_id": collection_id,
-                "metrics": {
-                    "basic": {
-                        "vector_count": collection.stats.as_ref().map(|s| s.vector_count),
-                        "dimension": collection.config.as_ref().map(|c| c.dimension),
-                        "data_size_bytes": collection.stats.as_ref().map(|s| s.data_size_bytes),
-                        "index_size_bytes": collection.stats.as_ref().map(|s| s.index_size_bytes),
-                    }
-                },
-                "placeholder": true,
-                "note": "Full metrics framework coming soon"
+                "metrics": serde_json::to_value(&metrics)?,
             });
+            
+            // Include optimization hints if requested
+            if include_hints {
+                let hints_result = metrics_service
+                    .query_hints(collection_id, None)
+                    .await;
+                if let Ok(hints) = hints_result {
+                    response["hints"] = serde_json::to_value(&hints)?;
+                }
+            }
+            
             Ok(response)
         } else {
-            Err(anyhow::anyhow!("Collection {} not found", collection_id))
+            // Fallback to collection service for basic metrics
+            if let Ok(Some(collection)) = self.collection_service.collection(collection_id).await {
+                let response = serde_json::json!({
+                    "collection_id": collection_id,
+                    "metrics": {
+                        "basic": {
+                            "vector_count": collection.stats.as_ref().map(|s| s.vector_count),
+                            "dimension": collection.config.as_ref().map(|c| c.dimension),
+                            "data_size_bytes": collection.stats.as_ref().map(|s| s.data_size_bytes),
+                            "index_size_bytes": collection.stats.as_ref().map(|s| s.index_size_bytes),
+                        }
+                    },
+                    "note": "Using basic metrics. Initialize with metrics service for full metrics."
+                });
+                Ok(response)
+            } else {
+                Err(anyhow::anyhow!("Collection {} not found", collection_id))
+            }
         }
     }
 
-    /// Get query optimization hints (placeholder until metrics service is integrated)
+    /// Get query optimization hints using the metrics query service
     pub async fn query_hints(
         &self,
         collection_id: &str,
-        _query_type: Option<String>,
+        query_type: Option<String>,
     ) -> Result<serde_json::Value> {
         debug!(
             "📊 UnifiedHandlers: Getting query hints for collection {}",
             collection_id
         );
 
-        // TODO: Replace with actual metrics query service
-        let response = serde_json::json!({
-            "collection_id": collection_id,
-            "hints": [
-                {
-                    "type": "placeholder",
-                    "priority": "info",
-                    "recommendation": "Full query optimization hints coming soon",
-                    "reason": "Metrics framework under development"
-                }
-            ],
-            "generated_at": chrono::Utc::now().timestamp_millis()
-        });
-
-        Ok(response)
+        // Use metrics query service if available
+        if let Some(ref metrics_service) = self.metrics_query_service {
+            let hints_result = metrics_service
+                .query_hints(collection_id, query_type.clone())
+                .await
+                .context("Failed to get query hints")?;
+            
+            // The hints are already filtered by query type in the service
+            let hints_vec = hints_result.hints;
+            
+            let response = serde_json::json!({
+                "collection_id": collection_id,
+                "hints": serde_json::to_value(&hints_vec)?,
+                "generated_at": chrono::Utc::now().timestamp_millis()
+            });
+            
+            Ok(response)
+        } else {
+            // Fallback response when metrics service not available
+            let response = serde_json::json!({
+                "collection_id": collection_id,
+                "hints": [
+                    {
+                        "type": "info",
+                        "priority": "low",
+                        "recommendation": "Enable metrics service for query optimization hints",
+                        "reason": "Metrics service not initialized"
+                    }
+                ],
+                "generated_at": chrono::Utc::now().timestamp_millis()
+            });
+            
+            Ok(response)
+        }
     }
 
     /// Handle create collection operation
@@ -1150,15 +1221,21 @@ impl UnifiedHandlers {
 
         info!("Executing SQL query: {}", query);
 
-        // TODO: Support parameterized queries in future
-        if parameters.is_some() {
-            return Err(anyhow!("Parameterized queries not yet supported"));
-        }
+        // Support parameterized queries by replacing placeholders
+        let processed_query = if let Some(params) = parameters {
+            self.apply_query_parameters(query, params)?
+        } else {
+            query
+        };
 
-        // TODO: Handle collection hint in future
-        if let Some(coll) = collection {
-            debug!("Collection hint provided: {}", coll);
-        }
+        // Handle collection hint by prepending USE statement
+        let final_query = if let Some(coll) = collection {
+            debug!("Applying collection hint: {}", coll);
+            // Prepend USE statement to set default collection context
+            format!("USE {}; {}", coll, processed_query)
+        } else {
+            processed_query
+        };
 
         // Create SQL engine instance with collection service for name resolution
         let sql_engine = SqlEngine::with_collection_service(
@@ -1168,7 +1245,7 @@ impl UnifiedHandlers {
 
         // Execute the query
         let result = sql_engine
-            .execute(&query)
+            .execute(&final_query)
             .await
             .map_err(|e| anyhow!("SQL execution failed: {}", e))?;
 
@@ -1181,11 +1258,14 @@ impl UnifiedHandlers {
             })
             .collect();
 
-        // Extract column information from the first row
+        // Extract column information with type inference
         let columns = if let Some(first_row) = rows.first() {
             if let serde_json::Value::Object(map) = first_row {
-                map.keys()
-                    .map(|key| (key.clone(), "unknown".to_string())) // TODO: Type inference
+                map.iter()
+                    .map(|(key, value)| {
+                        let type_name = self.infer_json_type(value);
+                        (key.clone(), type_name)
+                    })
                     .collect()
             } else {
                 vec![]
@@ -1199,6 +1279,85 @@ impl UnifiedHandlers {
             columns,
             row_count: result.stats.rows_returned,
         })
+    }
+
+    /// Apply parameters to a parameterized query
+    /// Replaces $1, $2, etc. with actual parameter values
+    fn apply_query_parameters(
+        &self,
+        query: String,
+        parameters: Vec<serde_json::Value>,
+    ) -> Result<String> {
+        let mut processed = query;
+        
+        for (index, param) in parameters.iter().enumerate() {
+            let placeholder = format!("${}", index + 1);
+            let value = self.format_sql_value(param)?;
+            processed = processed.replace(&placeholder, &value);
+        }
+        
+        // Also support ? placeholders (common in many SQL dialects)
+        let mut result = String::new();
+        let mut chars = processed.chars().peekable();
+        let mut param_index = 0;
+        
+        while let Some(ch) = chars.next() {
+            if ch == '?' && param_index < parameters.len() {
+                result.push_str(&self.format_sql_value(&parameters[param_index])?);
+                param_index += 1;
+            } else {
+                result.push(ch);
+            }
+        }
+        
+        Ok(result)
+    }
+
+    /// Format a JSON value for SQL
+    fn format_sql_value(&self, value: &serde_json::Value) -> Result<String> {
+        match value {
+            serde_json::Value::Null => Ok("NULL".to_string()),
+            serde_json::Value::Bool(b) => Ok(b.to_string()),
+            serde_json::Value::Number(n) => Ok(n.to_string()),
+            serde_json::Value::String(s) => {
+                // Escape single quotes and wrap in quotes
+                let escaped = s.replace("'", "''");
+                Ok(format!("'{}'", escaped))
+            }
+            serde_json::Value::Array(arr) => {
+                // Format as SQL array literal
+                let items: Result<Vec<_>> = arr.iter().map(|v| self.format_sql_value(v)).collect();
+                Ok(format!("ARRAY[{}]", items?.join(", ")))
+            }
+            serde_json::Value::Object(_) => {
+                // Convert to JSON string for object types
+                Ok(format!("'{}'", value.to_string().replace("'", "''")))
+            }
+        }
+    }
+
+    /// Infer SQL type from JSON value
+    fn infer_json_type(&self, value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::Null => "NULL".to_string(),
+            serde_json::Value::Bool(_) => "BOOLEAN".to_string(),
+            serde_json::Value::Number(n) => {
+                if n.is_i64() || n.is_u64() {
+                    "INTEGER".to_string()
+                } else {
+                    "FLOAT".to_string()
+                }
+            }
+            serde_json::Value::String(_) => "TEXT".to_string(),
+            serde_json::Value::Array(arr) => {
+                if let Some(first) = arr.first() {
+                    format!("ARRAY<{}>", self.infer_json_type(first))
+                } else {
+                    "ARRAY".to_string()
+                }
+            }
+            serde_json::Value::Object(_) => "JSON".to_string(),
+        }
     }
 }
 

@@ -4,12 +4,12 @@ mod metadata_backend_tests {
     use crate::core::StorageConfig;
     use crate::network::multi_server::{MultiServerConfig, SharedServices};
     use crate::services::collection::manager::CollectionService;
-    use crate::storage::metadata::backends::filestore_backend::{
-        FilestoreMetadataBackend, FilestoreMetadataConfig,
+    use crate::storage::metadata::backends::universal_backend::{
+        UniversalMetadataBackend, UniversalMetadataConfig,
     };
     use crate::proto::proximadb::Collection;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use crate::storage::traits::CollectionMetadataProvider;
+    use crate::storage::traits::InternalCollectionProvider;
     use crate::storage::StorageEngine;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -133,7 +133,7 @@ mod metadata_backend_tests {
         let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
         
         // Create metadata backend
-        let filestore_config = FilestoreMetadataConfig {
+        let filestore_config = UniversalMetadataConfig {
             filestore_url: format!("file://{}", metadata_path.to_string_lossy()),
             compression: true,
             enable_backup: true,
@@ -143,7 +143,7 @@ mod metadata_backend_tests {
         };
         
         let metadata_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory.clone())
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory.clone())
                 .await
                 .unwrap()
         );
@@ -165,7 +165,7 @@ mod metadata_backend_tests {
         
         // Inject collection service as metadata provider
         storage_engine
-            .set_metadata_provider(collection_service.clone() as Arc<dyn CollectionMetadataProvider>)
+            .set_metadata_provider(collection_service.clone() as Arc<dyn InternalCollectionProvider>)
             .await;
         
         // Now storage engine should be able to access collections

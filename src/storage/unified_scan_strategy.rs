@@ -251,7 +251,7 @@ pub mod scan_helpers {
     pub fn extract_filter_columns(filter: &FilterExpression) -> HashSet<String> {
         let mut columns = HashSet::new();
         match filter {
-            FilterExpression::Comparison(field, _, _) => {
+            FilterExpression::Comparison { field, .. } => {
                 columns.insert(field.clone());
             }
             FilterExpression::And(exprs) | FilterExpression::Or(exprs) => {

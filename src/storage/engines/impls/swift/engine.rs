@@ -467,13 +467,13 @@ impl UnifiedStorageEngine for SwiftEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension as usize)
+            .map(|cfg| cfg.dimension)
             .unwrap_or(384);
 
         // Create new SWIFT file from flush parameters
         let mut swift_file = SwiftFile::new(
             collection_id.to_string(),
-            dimension,
+            dimension as usize,
             DistanceMetric::Euclidean,
         );
 
@@ -758,6 +758,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         all_results.truncate(top_k);
 
         // Convert to InternalSearchResult format
+        let results_len = all_results.len();
         let search_results: Vec<crate::core::search::InternalSearchResult> = all_results
             .into_iter()
             .enumerate()
@@ -818,7 +819,7 @@ impl UnifiedStorageEngine for SwiftEngine {
 
         // Track bytes processed for metrics
         if let Some(ref mut timer) = timer {
-            let bytes_processed = all_results.len() * query_vector.len() * 4; // Approximate
+            let bytes_processed = results_len * query_vector.len() * 4; // Approximate
             timer.set_bytes_processed(bytes_processed as u64);
         }
 
@@ -952,7 +953,10 @@ impl UniversallyOptimized for SwiftEngine {
 
         Ok(metrics)
     }
+}
 
+// Helper methods for SwiftEngine
+impl SwiftEngine {
     // Removed unnecessary helper methods - engines already have these components as fields
     // Distance and quantization engines are accessed directly from struct fields
 

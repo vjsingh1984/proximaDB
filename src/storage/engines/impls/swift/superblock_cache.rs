@@ -77,7 +77,7 @@ pub struct CachedSuperBlockMetadata {
     /// Access patterns for tree optimization
     pub access_frequency: u64,
     #[serde(skip)]
-    pub last_access: Instant,
+    pub last_access: Option<Instant>,
     pub hot_datablocks: Vec<u32>,
 
     /// Bloom filter statistics
@@ -206,7 +206,7 @@ pub struct QuantizationSummary {
 pub struct DataBlockAccessStats {
     pub access_count: u64,
     #[serde(skip)]
-    pub last_access: Instant,
+    pub last_access: Option<Instant>,
     pub avg_response_time_us: u64,
     pub cache_hit_rate: f32,
     pub tree_navigation_efficiency: f32,
@@ -276,7 +276,9 @@ impl SwiftSuperBlockCache {
         Self {
             superblock_cache: Arc::new(DashMap::new()),
             tree_navigation_cache: Arc::new(DashMap::new()),
-            datablock_cache: Arc::new(RwLock::new(lru::LruCache::new(datablock_cache_size))),
+            datablock_cache: Arc::new(RwLock::new(lru::LruCache::new(
+                std::num::NonZeroUsize::new(datablock_cache_size).unwrap_or(std::num::NonZeroUsize::new(100).unwrap())
+            ))),
             datablock_ttl_sec,
             bloom_filter_cache: Arc::new(DashMap::new()),
             progressive_search_cache: Arc::new(RwLock::new(HashMap::new())),

@@ -1060,7 +1060,7 @@ pub struct ColumnarCentroids {
     pub count: u32,
 
     /// Dimension of each centroid (typically same as vector dimension)
-    pub dimension: u32,
+    pub dimension: usize,
 
     /// Rowgroup IDs in sorted order for O(1) access
     /// Size: k * 2 bytes (50% savings vs u32)
@@ -1082,8 +1082,8 @@ impl ColumnarCentroids {
         match self.rowgroup_ids.binary_search(&rowgroup_id) {
             Ok(idx) => {
                 // Reconstruct centroid from transposed data
-                let mut centroid = Vec::with_capacity(self.dimension as usize);
-                for dim in 0..self.dimension as usize {
+                let mut centroid = Vec::with_capacity(self.dimension);
+                for dim in 0..self.dimension {
                     let offset = dim * self.count as usize + idx;
                     centroid.push(self.transposed_data[offset]);
                 }
@@ -1098,8 +1098,8 @@ impl ColumnarCentroids {
         let mut centroids = Vec::with_capacity(self.count as usize);
 
         for (idx, &rowgroup_id) in self.rowgroup_ids.iter().enumerate() {
-            let mut centroid = Vec::with_capacity(self.dimension as usize);
-            for dim in 0..self.dimension as usize {
+            let mut centroid = Vec::with_capacity(self.dimension);
+            for dim in 0..self.dimension {
                 let offset = dim * self.count as usize + idx;
                 centroid.push(self.transposed_data[offset]);
             }

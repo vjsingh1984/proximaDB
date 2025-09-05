@@ -336,7 +336,7 @@ impl NovaEngine {
         column_indices: &[usize],
     ) -> Result<Vec<Vec<u8>>> {
         // Use universal optimizer for parallel operations
-        let optimizer = &self.universal_optimizer;
+        let optimizer = self.universal_optimizer.clone();
         let file_path_owned = file_path.to_string();
         let read_operations: Vec<_> = column_indices
             .iter()
@@ -520,17 +520,17 @@ impl UnifiedStorageEngine for NovaEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension as usize)
+            .map(|cfg| cfg.dimension)
             .unwrap_or(1536); // Default dimension
         // Use default compression for Parquet
         let compression_algorithm = CompressionAlgorithm::Zstd;
         debug!("NOVA: Using compression: {:?}", compression_algorithm);
         // Enhanced row group statistics (optimized NOVA design)
         let enhanced_stats =
-            self.compute_enhanced_row_group_stats(&params.vector_records, dimension)?;
+            self.compute_enhanced_row_group_stats(&params.vector_records, dimension as usize)?;
 
         // Basic zone maps for dimension-level pruning (simplified from 3-tier hierarchy)
-        let zone_maps = self.compute_basic_zone_maps(&params.vector_records, dimension)?;
+        let zone_maps = self.compute_basic_zone_maps(&params.vector_records, dimension as usize)?;
 
         let nova_file = NovaFile {
             quantized_columns: super::quantized_columns::QuantizedColumnMetadata::default(),
@@ -538,7 +538,7 @@ impl UnifiedStorageEngine for NovaEngine {
             metadata: crate::storage::engines::core::formats::columnar::ColumnarFileMetadata {
                 collection_id: collection_id.to_string(),
                 num_vectors: params.vector_records.len() as u64,
-                dimension,
+                dimension: dimension as usize,
                 distance_metric: DistanceMetric::Euclidean,
                 quantization: super::QuantizationConfig {
                     enabled: true,
@@ -1036,9 +1036,11 @@ impl UniversallyOptimized for NovaEngine {
 
         Ok(metrics)
     }
+}
 
+// Helper methods for NovaEngine
+impl NovaEngine {
     // Helper method for AXIS integration when needed
-
     async fn get_axis_manager(
         &self,
     ) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {

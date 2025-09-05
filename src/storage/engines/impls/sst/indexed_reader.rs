@@ -111,11 +111,11 @@ impl SSTMetadataSource {
 
     fn infer_data_type(value: &serde_json::Value) -> ColumnData {
         match value {
-            serde_json::Value::String(_) => ColumnData::String(String::new()),
-            serde_json::Value::Number(_) => ColumnData::Float(0.0),
-            serde_json::Value::Bool(_) => ColumnData::Boolean(false),
-            serde_json::Value::Array(_) => ColumnData::Array(Vec::new()),
-            _ => ColumnData::String(String::new()), // Default
+            serde_json::Value::String(_) => ColumnData::String,
+            serde_json::Value::Number(_) => ColumnData::Float,
+            serde_json::Value::Bool(_) => ColumnData::Boolean,
+            serde_json::Value::Array(_) => ColumnData::Array,
+            _ => ColumnData::String, // Default
         }
     }
 
@@ -147,10 +147,24 @@ impl SSTIndexBasedReader {
                 .expect("Failed to create filesystem factory"),
         );
         // Create a zero-copy IO system for the reader
-        let zero_copy_system = Arc::new(crate::storage::engines::impls::sst::readers::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-            filesystem.clone(),
-            1024 * 1024 * 64, // 64MB cache
-        ));
+        let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
+            metadata_cache: crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
+                max_memory_mb: 64,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let zero_copy_system = Arc::new(
+            tokio::runtime::Handle::current()
+                .block_on(
+                    crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
+                        zero_copy_config,
+                        filesystem.clone(),
+                        Vec::new(),
+                    )
+                )
+                .expect("Failed to create zero-copy IO system")
+        );
 
         Self {
             reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(

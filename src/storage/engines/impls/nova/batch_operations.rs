@@ -252,9 +252,9 @@ fn extract_records_from_batch(
         let vector = deserialize_vector(vector_bytes)?;
         // Create record
         let record = VectorRecord {
-            id: Some(expected_id.clone()),
+            id: expected_id.clone(),
             vector,
-            metadata: None, // Would extract if needed
+            metadata: Vec::new(), // Would extract if needed
             timestamp: 0,   // Would extract from timestamp column
             updated_at: None,
             quantized_vector: None,

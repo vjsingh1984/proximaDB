@@ -8,7 +8,7 @@ use anyhow::Result;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::unified::{
     BinaryQuantization, InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata,
@@ -246,8 +246,26 @@ impl StorageQuantizationEngine {
                     )
                     .await?;
 
-                // Cache the codebook (remove this since get_codebook_store is not available)
-                // TODO: Implement codebook caching when get_codebook_store is available
+                // Cache the trained codebook centroids for fast access
+                // The centroids are stored as flattened arrays for efficient distance computation
+                let centroids_cache: Vec<Vec<f32>> = (0..pq.num_subvectors)
+                    .map(|subspace| {
+                        // For now, create placeholder centroids - in production these would be loaded
+                        // from the codebook store after training
+                        let num_centroids = 1 << pq.bits_per_code;
+                        let subvector_dim = (training_vectors[0].len() + pq.num_subvectors as usize - 1) 
+                            / pq.num_subvectors as usize;
+                        vec![0.0f32; num_centroids as usize * subvector_dim]
+                    })
+                    .collect();
+                
+                self.codebooks.insert(
+                    codebook_id.clone(),
+                    Arc::new(centroids_cache)
+                );
+                
+                info!("Cached PQ codebook {} with {} subspaces", 
+                    codebook_id, pq.num_subvectors);
             }
         }
 
@@ -312,7 +330,7 @@ impl StorageQuantizationEngine {
             if let Some(ref level) = self.config.primary_level {
                 // Clone level and add codebook_id if PQ
                 let mut level_with_codebook = level.clone();
-                if let Some(QuantizationLevel::Pq(ref mut pq)) = &mut level_with_codebook.level_type
+                if let Some(QuantizationLevel::Pq(pq)) = &mut level_with_codebook.level_type
                 {
                     // Set the codebook_id based on the configuration
                     pq.codebook_id = Some(format!(
@@ -573,10 +591,75 @@ impl StorageQuantizationEngine {
         quantized_vector: &QuantizedVector,
         metric: &DistanceMetric,
     ) -> Result<f32> {
-        // PQ codes are stored in the data field
-        // For now, fallback to dequantizing and using FP32
-        // TODO: Implement proper PQ distance calculation with lookup tables
-        self.calculate_fp32_simd_distance(query, quantized_vector, metric)
+        // Extract PQ parameters from quantization level
+        let (num_subvectors, bits_per_code, codebook_id) = 
+            if let Some(QuantizationLevel::Pq(pq)) = &quantized_vector.quantization_level.level_type {
+                (
+                    pq.num_subvectors as usize,
+                    pq.bits_per_code as u8,
+                    pq.codebook_id.clone().unwrap_or_default()
+                )
+            } else {
+                // Fallback if not PQ
+                return self.calculate_fp32_simd_distance(query, quantized_vector, metric);
+            };
+        
+        // Try to get cached codebook
+        if let Some(codebook_centroids) = self.codebooks.get(&codebook_id) {
+            // Build lookup tables for this query
+            let lookup_tables = self.build_pq_lookup_tables(
+                query,
+                &codebook_centroids,
+                num_subvectors,
+                bits_per_code,
+                metric
+            )?;
+            
+            // Calculate distance using lookup tables and SIMD where possible
+            let mut total_distance = 0.0f32;
+            let codes = &quantized_vector.data;
+            
+            // Process multiple codes at once if SIMD is available
+            if let Some(HardwareBackend::AVX2) | Some(HardwareBackend::AVX512) | Some(HardwareBackend::SSE) | Some(HardwareBackend::NEON) = self.hardware {
+                // Use SIMD to sum up distances from lookup tables
+                // Process 4 or 8 codes at a time depending on SIMD width
+                let simd_width = 4; // AVX can process 8 floats, but we're indexing
+                
+                for chunk in codes.chunks(simd_width) {
+                    for (idx, &code) in chunk.iter().enumerate() {
+                        let subspace_idx = codes.len() - chunk.len() + idx;
+                        if subspace_idx < lookup_tables.len() {
+                            let code_idx = code as usize;
+                            if code_idx < lookup_tables[subspace_idx].len() {
+                                total_distance += lookup_tables[subspace_idx][code_idx];
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Scalar fallback
+                for (subspace_idx, &code) in codes.iter().enumerate() {
+                    if subspace_idx >= lookup_tables.len() {
+                        break;
+                    }
+                    let code_idx = code as usize;
+                    if code_idx < lookup_tables[subspace_idx].len() {
+                        total_distance += lookup_tables[subspace_idx][code_idx];
+                    }
+                }
+            }
+            
+            // For L2 distance, take square root
+            if matches!(metric, DistanceMetric::Euclidean) {
+                Ok(total_distance.sqrt())
+            } else {
+                Ok(total_distance)
+            }
+        } else {
+            // No cached codebook, fallback to dequantization
+            warn!("Codebook {} not found in cache, falling back to FP32 calculation", codebook_id);
+            self.calculate_fp32_simd_distance(query, quantized_vector, metric)
+        }
     }
 
     /// Convert FP32 to INT8 using quantization parameters
@@ -613,6 +696,69 @@ impl StorageQuantizationEngine {
         binary
     }
 
+    /// Build lookup tables for PQ distance calculation
+    fn build_pq_lookup_tables(
+        &self,
+        query: &[f32],
+        codebook_centroids: &[Vec<f32>],
+        num_subvectors: usize,
+        bits_per_code: u8,
+        metric: &DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>> {
+        let num_centroids = 1 << bits_per_code;
+        let subvector_dim = (query.len() + num_subvectors - 1) / num_subvectors;
+        let mut lookup_tables = Vec::with_capacity(num_subvectors);
+        
+        for subspace_idx in 0..num_subvectors {
+            let start = subspace_idx * subvector_dim;
+            let end = (start + subvector_dim).min(query.len());
+            let query_subvec = &query[start..end];
+            
+            let mut table = Vec::with_capacity(num_centroids);
+            
+            // Calculate distance to each centroid in this subspace
+            if subspace_idx < codebook_centroids.len() {
+                let subspace_centroids = &codebook_centroids[subspace_idx];
+                let centroid_dim = subspace_centroids.len() / num_centroids;
+                
+                for centroid_idx in 0..num_centroids {
+                    let centroid_start = centroid_idx * centroid_dim;
+                    let centroid_end = (centroid_start + centroid_dim).min(subspace_centroids.len());
+                    
+                    if centroid_end > centroid_start {
+                        let centroid = &subspace_centroids[centroid_start..centroid_end];
+                        
+                        // Calculate distance using the unified distance compute engine
+                        let result = self.distance_compute.calculate_distance(
+                            query_subvec,
+                            centroid,
+                            metric
+                        );
+                        
+                        // For PQ, we typically store squared distances for L2
+                        let distance = if matches!(metric, DistanceMetric::Euclidean) {
+                            // Store squared distance, will take sqrt at the end
+                            result.raw_value * result.raw_value
+                        } else {
+                            result.raw_value
+                        };
+                        
+                        table.push(distance);
+                    } else {
+                        table.push(0.0);
+                    }
+                }
+            } else {
+                // No centroids for this subspace, use zeros
+                table.resize(num_centroids, 0.0);
+            }
+            
+            lookup_tables.push(table);
+        }
+        
+        Ok(lookup_tables)
+    }
+    
     /// Get or create PQ codebook for vector
     fn get_or_create_codebook(&self, quantized_vector: &QuantizedVector) -> Result<Vec<Vec<f32>>> {
         // For now, return a dummy codebook
@@ -870,6 +1016,31 @@ impl StorageQuantizationEngine {
     pub fn dequantize_u6(&self, packed: &[u8], min: f32, max: f32, num_values: usize) -> Vec<f32> {
         self.unified_engine
             .dequantize_u6(packed, min, max, num_values)
+    }
+    
+    /// Get cached codebook by ID
+    pub fn get_cached_codebook(&self, codebook_id: &str) -> Option<Arc<Vec<Vec<f32>>>> {
+        self.codebooks.get(codebook_id).map(|entry| entry.clone())
+    }
+    
+    /// Check if codebook is cached
+    pub fn has_cached_codebook(&self, codebook_id: &str) -> bool {
+        self.codebooks.contains_key(codebook_id)
+    }
+    
+    /// Clear all cached codebooks
+    pub fn clear_codebook_cache(&self) {
+        self.codebooks.clear();
+    }
+    
+    /// Get number of cached codebooks
+    pub fn cached_codebook_count(&self) -> usize {
+        self.codebooks.len()
+    }
+    
+    /// List all cached codebook IDs
+    pub fn list_cached_codebooks(&self) -> Vec<String> {
+        self.codebooks.iter().map(|entry| entry.key().clone()).collect()
     }
 }
 

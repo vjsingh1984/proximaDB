@@ -35,7 +35,10 @@ pub mod metadata_item {
 pub struct EmbeddingModelRegistry {
     /// model_id -> full specification
     #[prost(map = "string, message", tag = "1")]
-    pub models: ::std::collections::HashMap<::prost::alloc::string::String, EmbeddingModelSpec>,
+    pub models: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        EmbeddingModelSpec,
+    >,
 }
 /// Full embedding model specification (stored once per collection)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -84,12 +87,12 @@ pub struct SourceContent {
     /// MIME type: text/plain, image/jpeg, video/mp4
     #[prost(string, tag = "10")]
     pub mime_type: ::prost::alloc::string::String,
-    /// Original size in bytes
-    #[prost(int64, tag = "11")]
-    pub size_bytes: i64,
-    /// Size after compression (if applicable)
-    #[prost(int64, optional, tag = "12")]
-    pub compressed_size: ::core::option::Option<i64>,
+    /// Original size in bytes (needs u64 for large files)
+    #[prost(uint64, tag = "11")]
+    pub size_bytes: u64,
+    /// Size after compression (needs u64 for large files)
+    #[prost(uint64, optional, tag = "12")]
+    pub compressed_size: ::core::option::Option<u64>,
     /// CRC32 for integrity
     #[prost(uint32, optional, tag = "15")]
     pub checksum: ::core::option::Option<u32>,
@@ -164,8 +167,10 @@ pub struct ExternalContent {
     pub storage_backend: ::prost::alloc::string::String,
     /// Access credentials/headers
     #[prost(map = "string, string", tag = "3")]
-    pub access:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub access: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// Caching directives
     #[prost(message, optional, tag = "4")]
     pub cache: ::core::option::Option<CachePolicy>,
@@ -244,8 +249,10 @@ pub struct MediaMetadata {
     pub codec: ::prost::alloc::string::String,
     /// EXIF/metadata tags
     #[prost(map = "string, string", tag = "6")]
-    pub exif:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub exif: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 /// ULTRA-OPTIMIZED: Processing information with packed enum storage (75% savings)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -262,9 +269,9 @@ pub struct ProcessingInfo {
     pub packed_enums: ::core::option::Option<u32>,
     /// Lightweight processing metadata (essential only)
     ///
-    /// Performance monitoring
-    #[prost(int64, optional, tag = "10")]
-    pub processing_time_ms: ::core::option::Option<i64>,
+    /// Performance monitoring in ms (max: ~49 days)
+    #[prost(uint32, optional, tag = "10")]
+    pub processing_time_ms: ::core::option::Option<u32>,
     /// Processor version
     #[prost(uint32, optional, tag = "11")]
     pub processor_version: ::core::option::Option<u32>,
@@ -274,9 +281,9 @@ pub struct ProcessingInfo {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CachePolicy {
-    /// Time to live in cache
-    #[prost(int64, tag = "1")]
-    pub ttl_seconds: i64,
+    /// Time to live in cache in seconds (max: ~136 years)
+    #[prost(uint32, tag = "1")]
+    pub ttl_seconds: u32,
     /// Prefetch on search
     #[prost(bool, tag = "2")]
     pub prefetch: bool,
@@ -298,10 +305,10 @@ pub struct VectorRecord {
     /// Efficient key-value metadata (no JSON parsing)
     #[prost(message, repeated, tag = "3")]
     pub metadata: ::prost::alloc::vec::Vec<MetadataItem>,
-    /// Record timestamp - seconds since epoch (compact, unsigned)
+    /// Record timestamp - seconds since epoch
     #[prost(uint32, tag = "4")]
     pub timestamp: u32,
-    /// Only set if different from timestamp (saves bytes when not updated)
+    /// Only set if different from timestamp (seconds since epoch)
     #[prost(uint32, optional, tag = "5")]
     pub updated_at: ::core::option::Option<u32>,
     /// TTL support (seconds since epoch)
@@ -348,7 +355,7 @@ pub struct SearchVectorRecord {
     /// Version (if versioning enabled)
     #[prost(uint32, optional, tag = "6")]
     pub version: ::core::option::Option<u32>,
-    /// When record was created
+    /// When record was created (seconds since epoch)
     #[prost(uint32, optional, tag = "7")]
     pub timestamp: ::core::option::Option<u32>,
     /// NEW: Source content (if requested)
@@ -368,7 +375,10 @@ pub struct SearchVectorRecord {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataMap {
     #[prost(map = "string, message", tag = "1")]
-    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, MetadataValue>,
+    pub fields: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        MetadataValue,
+    >,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -385,6 +395,7 @@ pub mod metadata_value {
     pub enum Value {
         #[prost(string, tag = "1")]
         StringValue(::prost::alloc::string::String),
+        /// General integer values (can be negative or large)
         #[prost(int64, tag = "2")]
         IntValue(i64),
         #[prost(double, tag = "3")]
@@ -410,6 +421,7 @@ pub struct StringArray {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Int64Array {
+    /// General integer array (can be negative or large)
     #[prost(int64, repeated, tag = "1")]
     pub values: ::prost::alloc::vec::Vec<i64>,
 }
@@ -503,9 +515,9 @@ pub struct IndexConfig {
     /// Sync/async index updates
     #[prost(enumeration = "IndexUpdateMode", tag = "3")]
     pub update_mode: i32,
-    /// Timeout for async updates
-    #[prost(int64, optional, tag = "4")]
-    pub async_update_timeout_ms: ::core::option::Option<i64>,
+    /// Timeout for async updates in ms (max: ~49 days)
+    #[prost(uint32, optional, tag = "4")]
+    pub async_update_timeout_ms: ::core::option::Option<u32>,
     /// Batch size for async updates
     #[prost(uint32, optional, tag = "5")]
     pub async_update_batch_size: ::core::option::Option<u32>,
@@ -531,15 +543,15 @@ pub struct IndexConfig {
     pub lsh_config: ::core::option::Option<LshConfig>,
     /// Performance tuning
     ///
-    /// Parallel index building
-    #[prost(int32, optional, tag = "13")]
-    pub build_concurrency: ::core::option::Option<i32>,
-    /// Memory limit per index
-    #[prost(int64, optional, tag = "14")]
-    pub memory_limit_mb: ::core::option::Option<i64>,
-    /// Index checkpoint frequency
-    #[prost(int32, optional, tag = "15")]
-    pub checkpoint_interval_ms: ::core::option::Option<i32>,
+    /// Parallel index building threads
+    #[prost(uint32, optional, tag = "13")]
+    pub build_concurrency: ::core::option::Option<u32>,
+    /// Memory limit per index in MB (max: 4TB)
+    #[prost(uint32, optional, tag = "14")]
+    pub memory_limit_mb: ::core::option::Option<u32>,
+    /// Index checkpoint frequency in ms (max: ~49 days)
+    #[prost(uint32, optional, tag = "15")]
+    pub checkpoint_interval_ms: ::core::option::Option<u32>,
     /// Index usage configuration
     ///
     /// Whether this is the primary index
@@ -593,15 +605,15 @@ pub struct HnswConfig {
     /// SIMD optimizations (default: true)
     #[prost(bool, tag = "6")]
     pub use_simd: bool,
-    /// Memory limit per partition (default: 512)
-    #[prost(int32, tag = "7")]
-    pub memory_limit_mb: i32,
+    /// Memory limit per partition in MB (max: 4TB with u32)
+    #[prost(uint32, tag = "7")]
+    pub memory_limit_mb: u32,
     /// Lazy loading for large partitions (default: true)
     #[prost(bool, tag = "8")]
     pub lazy_loading: bool,
     /// Connection pruning threshold (default: 0 = disabled)
-    #[prost(int32, tag = "9")]
-    pub prune_connections: i32,
+    #[prost(uint32, tag = "9")]
+    pub prune_connections: u32,
     /// Level generation multiplier (default: 1/ln(2))
     #[prost(float, tag = "10")]
     pub level_multiplier: f32,
@@ -612,11 +624,11 @@ pub struct HnswConfig {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IvfConfig {
     /// Number of clusters (default: sqrt(N))
-    #[prost(int32, tag = "1")]
-    pub n_lists: i32,
+    #[prost(uint32, tag = "1")]
+    pub n_lists: u32,
     /// Number of clusters to search (default: 1)
-    #[prost(int32, tag = "2")]
-    pub n_probe: i32,
+    #[prost(uint32, tag = "2")]
+    pub n_probe: u32,
     /// Bits for quantization (default: 8)
     #[prost(uint32, tag = "3")]
     pub quantization_bits: u32,
@@ -624,8 +636,8 @@ pub struct IvfConfig {
     #[prost(bool, tag = "4")]
     pub use_pq: bool,
     /// PQ subspaces (default: 8)
-    #[prost(int32, tag = "5")]
-    pub pq_subspaces: i32,
+    #[prost(uint32, tag = "5")]
+    pub pq_subspaces: u32,
     /// Retrain on every insert (default: false)
     #[prost(bool, tag = "6")]
     pub train_on_insert: bool,
@@ -654,8 +666,8 @@ pub struct FlatConfig {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PqConfig {
     /// Number of subvectors (default: 8)
-    #[prost(int32, tag = "1")]
-    pub subvectors: i32,
+    #[prost(uint32, tag = "1")]
+    pub subvectors: u32,
     /// Bits per subvector (default: 8)
     #[prost(uint32, tag = "2")]
     pub bits_per_subvector: u32,
@@ -672,11 +684,11 @@ pub struct PqConfig {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AnnoyConfig {
     /// Number of trees (default: 10)
-    #[prost(int32, tag = "1")]
-    pub n_trees: i32,
-    /// Search parameter (default: -1)
-    #[prost(int32, tag = "2")]
-    pub search_k: i32,
+    #[prost(uint32, tag = "1")]
+    pub n_trees: u32,
+    /// Search parameter (default: n_trees * n)
+    #[prost(uint32, tag = "2")]
+    pub search_k: u32,
     /// Maximum leaf size (default: 100)
     #[prost(uint32, tag = "3")]
     pub max_leaf_size: u32,
@@ -690,11 +702,11 @@ pub struct AnnoyConfig {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LshConfig {
     /// Number of hash tables (default: 10)
-    #[prost(int32, tag = "1")]
-    pub n_hash_tables: i32,
+    #[prost(uint32, tag = "1")]
+    pub n_hash_tables: u32,
     /// Hash functions per table (default: 8)
-    #[prost(int32, tag = "2")]
-    pub n_hash_functions: i32,
+    #[prost(uint32, tag = "2")]
+    pub n_hash_functions: u32,
     /// Bucket width for LSH (default: 4.0)
     #[prost(float, tag = "3")]
     pub bucket_width: f32,
@@ -702,8 +714,8 @@ pub struct LshConfig {
     #[prost(bool, tag = "4")]
     pub binary_vectors: bool,
     /// Max candidates to check (default: 100)
-    #[prost(int32, tag = "5")]
-    pub max_candidates: i32,
+    #[prost(uint32, tag = "5")]
+    pub max_candidates: u32,
     /// Projection type (default: GAUSSIAN)
     #[prost(enumeration = "RandomProjectionType", tag = "6")]
     pub projection: i32,
@@ -781,9 +793,9 @@ pub struct StorageConfig {
     /// Whether data is frequently updated
     #[prost(bool, optional, tag = "7")]
     pub frequent_updates: ::core::option::Option<bool>,
-    /// Expected collection size in GB
-    #[prost(int64, optional, tag = "8")]
-    pub expected_size_gb: ::core::option::Option<i64>,
+    /// Expected collection size in MB (max: 4PB with u32)
+    #[prost(uint32, optional, tag = "8")]
+    pub expected_size_mb: ::core::option::Option<u32>,
     /// Read/write ratio (1.0 = balanced)
     #[prost(float, optional, tag = "9")]
     pub read_write_ratio: ::core::option::Option<f32>,
@@ -872,14 +884,14 @@ pub struct StorageTieringPolicy {
     /// Size-based thresholds (can be adjusted by compaction)
     ///
     /// < N bytes: store inline (default: 100KB)
-    #[prost(int64, tag = "1")]
-    pub inline_threshold: i64,
+    #[prost(uint64, tag = "1")]
+    pub inline_threshold: u64,
     /// < N bytes: store in blocks (default: 1MB)
-    #[prost(int64, tag = "2")]
-    pub block_threshold: i64,
+    #[prost(uint64, tag = "2")]
+    pub block_threshold: u64,
     /// < N bytes: store as files (default: 10MB)
-    #[prost(int64, tag = "3")]
-    pub file_threshold: i64,
+    #[prost(uint64, tag = "3")]
+    pub file_threshold: u64,
     /// Access pattern based promotion/demotion during compaction
     ///
     /// Promote/demote based on usage
@@ -897,8 +909,10 @@ pub struct StorageTieringPolicy {
     ///
     /// MIME type -> tier settings
     #[prost(map = "string, message", tag = "7")]
-    pub content_overrides:
-        ::std::collections::HashMap<::prost::alloc::string::String, TierOverride>,
+    pub content_overrides: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        TierOverride,
+    >,
 }
 /// Access-based tiering for compaction (promotes hot data, demotes cold data)
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -906,11 +920,11 @@ pub struct StorageTieringPolicy {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AccessBasedTiering {
     /// Promote after N accesses
-    #[prost(int32, tag = "1")]
-    pub access_threshold_promote: i32,
+    #[prost(uint32, tag = "1")]
+    pub access_threshold_promote: u32,
     /// Demote after N seconds without access
-    #[prost(int64, tag = "2")]
-    pub age_threshold_demote: i64,
+    #[prost(uint32, tag = "2")]
+    pub age_threshold_demote: u32,
     /// Keep N% of data in hot tier (default: 0.1)
     #[prost(float, tag = "3")]
     pub hot_data_ratio: f32,
@@ -942,11 +956,11 @@ pub struct CompressionPolicy {
     #[prost(string, tag = "1")]
     pub algorithm: ::prost::alloc::string::String,
     /// Compression level (1-22 for zstd)
-    #[prost(int32, tag = "2")]
-    pub level: i32,
+    #[prost(uint32, tag = "2")]
+    pub level: u32,
     /// Don't compress below N bytes
-    #[prost(int64, tag = "3")]
-    pub min_size_to_compress: i64,
+    #[prost(uint64, tag = "3")]
+    pub min_size_to_compress: u64,
     /// Adjust level based on content type
     #[prost(bool, tag = "4")]
     pub adaptive_level: bool,
@@ -967,11 +981,13 @@ pub struct ExternalStorageConfig {
     pub prefix: ::prost::alloc::string::String,
     /// Access credentials
     #[prost(map = "string, string", tag = "4")]
-    pub credentials:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub credentials: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// URL expiry in seconds
-    #[prost(int64, tag = "5")]
-    pub signed_url_expiry: i64,
+    #[prost(uint32, tag = "5")]
+    pub signed_url_expiry: u32,
     /// Enable CDN for retrieval
     #[prost(bool, tag = "6")]
     pub enable_cdn: bool,
@@ -988,11 +1004,11 @@ pub struct ChunkingConfig {
     #[prost(enumeration = "ChunkingStrategy", tag = "2")]
     pub strategy: i32,
     /// Target chunk size in tokens/chars
-    #[prost(int32, tag = "3")]
-    pub chunk_size: i32,
+    #[prost(uint32, tag = "3")]
+    pub chunk_size: u32,
     /// Overlap between chunks
-    #[prost(int32, tag = "4")]
-    pub overlap: i32,
+    #[prost(uint32, tag = "4")]
+    pub overlap: u32,
     /// Don't break sentences
     #[prost(bool, tag = "5")]
     pub preserve_sentences: bool,
@@ -1000,8 +1016,8 @@ pub struct ChunkingConfig {
     #[prost(bool, tag = "6")]
     pub include_context: bool,
     /// Context window size
-    #[prost(int32, tag = "7")]
-    pub context_window: i32,
+    #[prost(uint32, tag = "7")]
+    pub context_window: u32,
 }
 /// Source content caching configuration
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1011,12 +1027,12 @@ pub struct CacheConfig {
     /// Enable source caching
     #[prost(bool, tag = "1")]
     pub enabled: bool,
-    /// Cache size in MB
-    #[prost(int64, tag = "2")]
-    pub cache_size_mb: i64,
-    /// Cache TTL
-    #[prost(int64, tag = "3")]
-    pub ttl_seconds: i64,
+    /// Cache size in MB (max: 4TB)
+    #[prost(uint32, tag = "2")]
+    pub cache_size_mb: u32,
+    /// Cache TTL in seconds (max: ~136 years)
+    #[prost(uint32, tag = "3")]
+    pub ttl_seconds: u32,
     /// Only cache hot tier content
     #[prost(bool, tag = "4")]
     pub cache_hot_only: bool,
@@ -1079,24 +1095,30 @@ pub struct ParquetWriterSettings {
 pub struct FooterCacheSettings {
     #[prost(bool, optional, tag = "1")]
     pub enable: ::core::option::Option<bool>,
-    #[prost(int64, optional, tag = "2")]
-    pub max_entries: ::core::option::Option<i64>,
-    #[prost(int64, optional, tag = "3")]
-    pub ttl_seconds: ::core::option::Option<i64>,
-    #[prost(int64, optional, tag = "4")]
-    pub time_to_idle_seconds: ::core::option::Option<i64>,
+    /// Maximum cache entries
+    #[prost(uint32, optional, tag = "2")]
+    pub max_entries: ::core::option::Option<u32>,
+    /// Time to live in seconds
+    #[prost(uint32, optional, tag = "3")]
+    pub ttl_seconds: ::core::option::Option<u32>,
+    /// Time to idle before eviction in seconds
+    #[prost(uint32, optional, tag = "4")]
+    pub time_to_idle_seconds: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "5")]
     pub enable_persistence: ::core::option::Option<bool>,
     #[prost(string, optional, tag = "6")]
     pub persistence_path: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bool, optional, tag = "7")]
     pub enable_prefetch: ::core::option::Option<bool>,
-    #[prost(int64, optional, tag = "8")]
-    pub prefetch_threshold: ::core::option::Option<i64>,
-    #[prost(int64, optional, tag = "9")]
-    pub warming_interval_seconds: ::core::option::Option<i64>,
+    /// Prefetch threshold
+    #[prost(uint32, optional, tag = "8")]
+    pub prefetch_threshold: ::core::option::Option<u32>,
+    /// Cache warming interval in seconds
+    #[prost(uint32, optional, tag = "9")]
+    pub warming_interval_seconds: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "10")]
     pub enable_compression: ::core::option::Option<bool>,
+    /// Compression level for cached data
     #[prost(uint32, optional, tag = "11")]
     pub compression_level: ::core::option::Option<u32>,
 }
@@ -1122,8 +1144,9 @@ pub struct HybridWriterSettings {
     pub batch_threshold: ::core::option::Option<u32>,
     #[prost(uint32, optional, tag = "8")]
     pub max_buffer_size: ::core::option::Option<u32>,
-    #[prost(int64, optional, tag = "9")]
-    pub buffer_time_limit_seconds: ::core::option::Option<i64>,
+    /// Buffer time limit in seconds
+    #[prost(uint32, optional, tag = "9")]
+    pub buffer_time_limit_seconds: ::core::option::Option<u32>,
     #[prost(bool, optional, tag = "10")]
     pub enable_concurrent_writes: ::core::option::Option<bool>,
     #[prost(uint32, optional, tag = "11")]
@@ -1146,10 +1169,12 @@ pub struct SstEngineSettings {
     pub bloom_filter_fpp: ::core::option::Option<f32>,
     #[prost(enumeration = "CompressionAlgorithm", optional, tag = "3")]
     pub compression: ::core::option::Option<i32>,
+    /// Compression level
     #[prost(uint32, optional, tag = "4")]
     pub compression_level: ::core::option::Option<u32>,
-    #[prost(int64, optional, tag = "5")]
-    pub write_buffer_size: ::core::option::Option<i64>,
+    /// Write buffer size in bytes
+    #[prost(uint64, optional, tag = "5")]
+    pub write_buffer_size: ::core::option::Option<u64>,
     #[prost(uint32, optional, tag = "6")]
     pub max_write_buffers: ::core::option::Option<u32>,
     #[prost(uint32, optional, tag = "7")]
@@ -1220,8 +1245,8 @@ pub struct QuantizationConfig {
     /// Training and quality settings
     ///
     /// Samples for codebook training (default: 10000)
-    #[prost(int32, tag = "8")]
-    pub training_sample_size: i32,
+    #[prost(uint32, tag = "8")]
+    pub training_sample_size: u32,
     /// Minimum acceptable recall (default: 0.95)
     #[prost(float, tag = "9")]
     pub quality_threshold: f32,
@@ -1277,9 +1302,8 @@ pub struct QuantizationConfig {
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {
     /// Quantization strategy - controls how quantization levels are selected
+    #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(
-        serde::Serialize,
-        serde::Deserialize,
         Clone,
         Copy,
         Debug,
@@ -1288,7 +1312,7 @@ pub mod quantization_config {
         Hash,
         PartialOrd,
         Ord,
-        ::prost::Enumeration,
+        ::prost::Enumeration
     )]
     #[repr(i32)]
     pub enum Strategy {
@@ -1341,13 +1365,13 @@ pub struct QuantizationLevel {
     /// Bits per code/element
     ///
     /// 1 (binary), 4, 8, 16, 32
-    #[prost(int32, tag = "3")]
-    pub bits: i32,
+    #[prost(uint32, tag = "3")]
+    pub bits: u32,
     /// Product quantization specific settings (when type=PRODUCT)
     ///
     /// Number of subvectors for PQ
-    #[prost(int32, optional, tag = "4")]
-    pub num_subvectors: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "4")]
+    pub num_subvectors: ::core::option::Option<u32>,
     /// Auto-adjust subvectors based on dimension
     #[prost(bool, optional, tag = "5")]
     pub adaptive_subvectors: ::core::option::Option<bool>,
@@ -1379,8 +1403,8 @@ pub struct QuantizationLevel {
     #[prost(bool, optional, tag = "12")]
     pub enable_in_index: ::core::option::Option<bool>,
     /// Search order (lower = earlier, 0=first filter)
-    #[prost(int32, optional, tag = "13")]
-    pub search_priority: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "13")]
+    pub search_priority: ::core::option::Option<u32>,
     /// Quality and validation settings
     ///
     /// Minimum recall required for this level (default: 0.8)
@@ -1393,9 +1417,8 @@ pub struct QuantizationLevel {
 /// Nested message and enum types in `QuantizationLevel`.
 pub mod quantization_level {
     /// Quantization method for this level
+    #[derive(serde::Serialize, serde::Deserialize)]
     #[derive(
-        serde::Serialize,
-        serde::Deserialize,
         Clone,
         Copy,
         Debug,
@@ -1404,7 +1427,7 @@ pub mod quantization_level {
         Hash,
         PartialOrd,
         Ord,
-        ::prost::Enumeration,
+        ::prost::Enumeration
     )]
     #[repr(i32)]
     pub enum QuantizationType {
@@ -1463,8 +1486,8 @@ pub struct FilterableColumnSpec {
     #[prost(bool, tag = "4")]
     pub supports_range: bool,
     /// Estimated cardinality for optimization
-    #[prost(int32, optional, tag = "5")]
-    pub estimated_cardinality: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "5")]
+    pub estimated_cardinality: ::core::option::Option<u32>,
     /// Column-specific encoding for VIPER (RLE, Dictionary, etc.)
     #[prost(enumeration = "ColumnEncoding", optional, tag = "6")]
     pub encoding_hint: ::core::option::Option<i32>,
@@ -1520,15 +1543,19 @@ pub struct CollectionRequest {
     pub collection_config: ::core::option::Option<CollectionConfig>,
     /// limit, offset, filters, etc.
     #[prost(map = "string, string", tag = "4")]
-    pub query_params:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub query_params: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     /// force, include_stats, etc.
     #[prost(map = "string, bool", tag = "5")]
     pub options: ::std::collections::HashMap<::prost::alloc::string::String, bool>,
     /// For MIGRATE operations
     #[prost(map = "string, string", tag = "6")]
-    pub migration_config:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub migration_config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1552,8 +1579,10 @@ pub struct CollectionResponse {
     pub total_count: ::core::option::Option<i64>,
     /// Additional response data
     #[prost(map = "string, string", tag = "7")]
-    pub metadata:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
     #[prost(string, optional, tag = "8")]
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "9")]
@@ -1573,9 +1602,9 @@ pub struct VectorBatchRequest {
     /// Pure proto vector records (proto-first architecture)
     #[prost(message, repeated, tag = "2")]
     pub vectors: ::prost::alloc::vec::Vec<VectorRecord>,
-    /// Optional batch processing timeout
-    #[prost(int64, optional, tag = "3")]
-    pub batch_timeout_ms: ::core::option::Option<i64>,
+    /// Optional batch processing timeout in ms
+    #[prost(uint32, optional, tag = "3")]
+    pub batch_timeout_ms: ::core::option::Option<u32>,
     /// Optional request tracking ID
     #[prost(string, optional, tag = "4")]
     pub request_id: ::core::option::Option<::prost::alloc::string::String>,
@@ -1590,8 +1619,9 @@ pub struct VectorSearchRequest {
     /// Batch search support
     #[prost(message, repeated, tag = "2")]
     pub queries: ::prost::alloc::vec::Vec<SearchQuery>,
-    #[prost(int32, tag = "3")]
-    pub top_k: i32,
+    /// Number of top results to return
+    #[prost(uint32, tag = "3")]
+    pub top_k: u32,
     #[prost(enumeration = "DistanceMetric", optional, tag = "4")]
     pub distance_metric_override: ::core::option::Option<i32>,
     /// Algorithm-specific search parameters (HNSW, IVF, etc)
@@ -1622,27 +1652,27 @@ pub struct SearchParameters {
     /// HNSW parameters
     ///
     /// HNSW search parameter
-    #[prost(int32, optional, tag = "1")]
-    pub ef_search: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "1")]
+    pub ef_search: ::core::option::Option<u32>,
     /// HNSW max connections
-    #[prost(int32, optional, tag = "2")]
-    pub max_connections: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub max_connections: ::core::option::Option<u32>,
     /// IVF parameters
     ///
     /// IVF clusters to probe
-    #[prost(int32, optional, tag = "3")]
-    pub n_probe: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "3")]
+    pub n_probe: ::core::option::Option<u32>,
     /// IVF reranking
     #[prost(bool, optional, tag = "4")]
     pub enable_reranking: ::core::option::Option<bool>,
     /// General parameters
     ///
     /// Batch processing size
-    #[prost(int32, optional, tag = "5")]
-    pub batch_size: ::core::option::Option<i32>,
-    /// Search timeout
-    #[prost(int64, optional, tag = "6")]
-    pub timeout_ms: ::core::option::Option<i64>,
+    #[prost(uint32, optional, tag = "5")]
+    pub batch_size: ::core::option::Option<u32>,
+    /// Search timeout in ms (max: ~49 days)
+    #[prost(uint32, optional, tag = "6")]
+    pub timeout_ms: ::core::option::Option<u32>,
     /// Minimum accuracy requirement
     #[prost(float, optional, tag = "7")]
     pub accuracy_threshold: ::core::option::Option<f32>,
@@ -1652,8 +1682,8 @@ pub struct SearchParameters {
     #[prost(bool, optional, tag = "8")]
     pub enable_parallel_search: ::core::option::Option<bool>,
     /// Thread count for parallel search
-    #[prost(int32, optional, tag = "9")]
-    pub thread_count: ::core::option::Option<i32>,
+    #[prost(uint32, optional, tag = "9")]
+    pub thread_count: ::core::option::Option<u32>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1704,17 +1734,17 @@ pub struct SourceRetrievalOptions {
     #[prost(bool, tag = "1")]
     pub expand_chunks: bool,
     /// How many chunks before/after to include
-    #[prost(int32, tag = "2")]
-    pub max_chunk_expansion: i32,
+    #[prost(uint32, tag = "2")]
+    pub max_chunk_expansion: u32,
     /// Specific source fields to retrieve
     #[prost(string, repeated, tag = "3")]
     pub source_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Resolve external references to actual content
     #[prost(bool, tag = "4")]
     pub resolve_external: bool,
-    /// Maximum source size to retrieve (bytes)
-    #[prost(int64, tag = "5")]
-    pub max_source_size: i64,
+    /// Maximum source size to retrieve in bytes
+    #[prost(uint64, tag = "5")]
+    pub max_source_size: u64,
     /// Preferred storage tier: hot, warm, cold
     #[prost(string, tag = "6")]
     pub tier_preference: ::prost::alloc::string::String,
@@ -1793,16 +1823,19 @@ pub struct SearchParams {
     /// Metadata filters to apply
     #[prost(map = "string, message", tag = "2")]
     #[serde(skip)]
-    pub filters: ::std::collections::HashMap<::prost::alloc::string::String, ::prost_types::Value>,
+    pub filters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost_types::Value,
+    >,
     /// Accuracy threshold for search (0.0-1.0)
     #[prost(float, optional, tag = "3")]
     pub accuracy_threshold: ::core::option::Option<f32>,
     /// Include expired vectors in results
     #[prost(bool, optional, tag = "4")]
     pub include_expired: ::core::option::Option<bool>,
-    /// Search timeout in milliseconds
-    #[prost(uint64, optional, tag = "5")]
-    pub timeout_ms: ::core::option::Option<u64>,
+    /// Search timeout in ms (max: ~49 days)
+    #[prost(uint32, optional, tag = "5")]
+    pub timeout_ms: ::core::option::Option<u32>,
     /// Enable two-stage search with quantization
     #[prost(bool, optional, tag = "6")]
     pub enable_two_stage: ::core::option::Option<bool>,
@@ -1817,8 +1850,10 @@ pub struct SearchParams {
     /// Custom optimization parameters
     #[prost(map = "string, message", tag = "14")]
     #[serde(skip)]
-    pub custom_hints:
-        ::std::collections::HashMap<::prost::alloc::string::String, ::prost_types::Value>,
+    pub custom_hints: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost_types::Value,
+    >,
     /// Quantization hint - directly maps to UnifiedQuantizationLevel
     #[prost(oneof = "search_params::QuantizationHint", tags = "7, 8, 9, 10, 11")]
     pub quantization_hint: ::core::option::Option<search_params::QuantizationHint>,
@@ -1940,8 +1975,9 @@ pub struct HealthResponse {
     pub version: ::prost::alloc::string::String,
     #[prost(int64, tag = "3")]
     pub uptime_seconds: i64,
-    #[prost(int32, tag = "4")]
-    pub active_connections: i32,
+    /// Number of active connections
+    #[prost(uint32, tag = "4")]
+    pub active_connections: u32,
     #[prost(int64, tag = "5")]
     pub memory_usage_bytes: i64,
     #[prost(int64, tag = "6")]
@@ -1978,25 +2014,14 @@ pub struct CollectionSnapshot {
     #[prost(message, repeated, tag = "1")]
     pub collections: ::prost::alloc::vec::Vec<Collection>,
     /// Snapshot format version
-    #[prost(int32, tag = "2")]
-    pub version: i32,
+    #[prost(uint32, tag = "2")]
+    pub version: u32,
     /// When snapshot was created (microseconds)
     #[prost(int64, tag = "3")]
     pub timestamp: i64,
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum DistanceMetric {
     Unspecified = 0,
@@ -2058,19 +2083,8 @@ impl DistanceMetric {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum StorageEngine {
     Unspecified = 0,
@@ -2113,19 +2127,8 @@ impl StorageEngine {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum IndexingAlgorithm {
     Unspecified = 0,
@@ -2166,19 +2169,8 @@ impl IndexingAlgorithm {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum CollectionOperation {
     Unspecified = 0,
@@ -2223,19 +2215,8 @@ impl CollectionOperation {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum VectorOperation {
     Unspecified = 0,
@@ -2271,19 +2252,8 @@ impl VectorOperation {
     }
 }
 /// Well-known embedding models with enum for efficient storage
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum EmbeddingModelType {
     EmbeddingModelUnspecified = 0,
@@ -2333,10 +2303,18 @@ impl EmbeddingModelType {
     /// (if the ProtoBuf definition does not change) and safe for programmatic use.
     pub fn as_str_name(&self) -> &'static str {
         match self {
-            EmbeddingModelType::EmbeddingModelUnspecified => "EMBEDDING_MODEL_UNSPECIFIED",
-            EmbeddingModelType::OpenaiTextEmbeddingAda002 => "OPENAI_TEXT_EMBEDDING_ADA_002",
-            EmbeddingModelType::OpenaiTextEmbedding3Small => "OPENAI_TEXT_EMBEDDING_3_SMALL",
-            EmbeddingModelType::OpenaiTextEmbedding3Large => "OPENAI_TEXT_EMBEDDING_3_LARGE",
+            EmbeddingModelType::EmbeddingModelUnspecified => {
+                "EMBEDDING_MODEL_UNSPECIFIED"
+            }
+            EmbeddingModelType::OpenaiTextEmbeddingAda002 => {
+                "OPENAI_TEXT_EMBEDDING_ADA_002"
+            }
+            EmbeddingModelType::OpenaiTextEmbedding3Small => {
+                "OPENAI_TEXT_EMBEDDING_3_SMALL"
+            }
+            EmbeddingModelType::OpenaiTextEmbedding3Large => {
+                "OPENAI_TEXT_EMBEDDING_3_LARGE"
+            }
             EmbeddingModelType::SentenceTransformersAllMinilmL6V2 => {
                 "SENTENCE_TRANSFORMERS_ALL_MINILM_L6_V2"
             }
@@ -2356,8 +2334,12 @@ impl EmbeddingModelType {
             EmbeddingModelType::GoogleUseMultilingualV3 => "GOOGLE_USE_MULTILINGUAL_V3",
             EmbeddingModelType::GoogleUseLite => "GOOGLE_USE_LITE",
             EmbeddingModelType::CohereEmbedEnglishV3 => "COHERE_EMBED_ENGLISH_V3",
-            EmbeddingModelType::CohereEmbedMultilingualV3 => "COHERE_EMBED_MULTILINGUAL_V3",
-            EmbeddingModelType::CohereEmbedEnglishLightV3 => "COHERE_EMBED_ENGLISH_LIGHT_V3",
+            EmbeddingModelType::CohereEmbedMultilingualV3 => {
+                "COHERE_EMBED_MULTILINGUAL_V3"
+            }
+            EmbeddingModelType::CohereEmbedEnglishLightV3 => {
+                "COHERE_EMBED_ENGLISH_LIGHT_V3"
+            }
             EmbeddingModelType::AnthropicVoyage2 => "ANTHROPIC_VOYAGE_2",
             EmbeddingModelType::AnthropicVoyageCode2 => "ANTHROPIC_VOYAGE_CODE_2",
             EmbeddingModelType::MistralEmbed => "MISTRAL_EMBED",
@@ -2421,19 +2403,8 @@ impl EmbeddingModelType {
     }
 }
 /// Content categories for efficient classification
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ContentCategory {
     Unspecified = 0,
@@ -2517,19 +2488,8 @@ impl ContentCategory {
     }
 }
 /// Quality levels for content and processing
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum QualityLevel {
     QualityUnspecified = 0,
@@ -2569,19 +2529,8 @@ impl QualityLevel {
     }
 }
 /// Processing status for tracking content lifecycle
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ProcessingStatus {
     Unspecified = 0,
@@ -2633,19 +2582,8 @@ impl ProcessingStatus {
     }
 }
 /// Common language codes as enums for efficiency (ISO 639-1 subset)
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum LanguageCode {
     LanguageUnspecified = 0,
@@ -2785,19 +2723,8 @@ impl LanguageCode {
     }
 }
 /// Data source types for provenance tracking
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum DataSource {
     Unspecified = 0,
@@ -2861,19 +2788,8 @@ impl DataSource {
     }
 }
 /// Extraction methods for content processing
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ExtractionMethod {
     ExtractionUnspecified = 0,
@@ -2937,19 +2853,8 @@ impl ExtractionMethod {
     }
 }
 /// Index update behavior modes
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum IndexUpdateMode {
     Unspecified = 0,
@@ -2986,19 +2891,8 @@ impl IndexUpdateMode {
 }
 /// Vector representation preference for AXIS queue consumption
 /// Enables indexes to specify what type of vectors they want from the queue
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum VectorRepresentation {
     /// Use system default
@@ -3039,19 +2933,8 @@ impl VectorRepresentation {
     }
 }
 /// Random projection types for LSH
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum RandomProjectionType {
     /// Gaussian random projection
@@ -3084,19 +2967,8 @@ impl RandomProjectionType {
     }
 }
 /// Compression algorithms supported by storage engines
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum CompressionAlgorithm {
     /// No compression
@@ -3169,19 +3041,8 @@ impl CompressionAlgorithm {
     }
 }
 /// Access patterns for optimization hints
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum AccessPattern {
     Unknown = 0,
@@ -3221,19 +3082,8 @@ impl AccessPattern {
     }
 }
 /// Data density characteristics
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum DataDensity {
     DensityUnknown = 0,
@@ -3268,19 +3118,8 @@ impl DataDensity {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum StorageTier {
     Unspecified = 0,
@@ -3319,19 +3158,8 @@ impl StorageTier {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ChunkingStrategy {
     Unspecified = 0,
@@ -3374,19 +3202,8 @@ impl ChunkingStrategy {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum CacheEvictionPolicy {
     CacheEvictionUnspecified = 0,
@@ -3426,19 +3243,8 @@ impl CacheEvictionPolicy {
     }
 }
 /// Column-specific encoding hints for VIPER Parquet storage
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ColumnEncoding {
     /// Let Parquet decide based on data
@@ -3482,19 +3288,8 @@ impl ColumnEncoding {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum FilterableDataType {
     Unspecified = 0,
@@ -3541,19 +3336,8 @@ impl FilterableDataType {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum FilterOperator {
     Unspecified = 0,
@@ -3585,19 +3369,8 @@ impl FilterOperator {
         }
     }
 }
-#[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    ::prost::Enumeration,
-)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum FilterOperation {
     Unspecified = 0,
@@ -3656,8 +3429,8 @@ impl FilterOperation {
 /// Generated client implementations.
 pub mod proxima_db_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
-    use tonic::codegen::http::Uri;
     use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
     #[derive(Debug, Clone)]
     pub struct ProximaDbClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -3696,13 +3469,14 @@ pub mod proxima_db_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                    http::Request<tonic::body::BoxBody>,
-                    Response = http::Response<
-                        <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
-                    >,
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
                 >,
-            <T as tonic::codegen::Service<http::Request<tonic::body::BoxBody>>>::Error:
-                Into<StdError> + Send + Sync,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
         {
             ProximaDbClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -3741,38 +3515,49 @@ pub mod proxima_db_client {
         pub async fn collection_operation(
             &mut self,
             request: impl tonic::IntoRequest<super::CollectionRequest>,
-        ) -> std::result::Result<tonic::Response<super::CollectionResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::CollectionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path =
-                http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/CollectionOperation");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/CollectionOperation",
+            );
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new(
-                "proximadb.ProximaDB",
-                "CollectionOperation",
-            ));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.ProximaDB", "CollectionOperation"));
             self.inner.unary(req, path, codec).await
         }
         /// Vector operations - optimized batch operations
         pub async fn vector_batch(
             &mut self,
             request: impl tonic::IntoRequest<super::VectorBatchRequest>,
-        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/VectorBatch");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/VectorBatch",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorBatch"));
@@ -3781,16 +3566,23 @@ pub mod proxima_db_client {
         pub async fn vector_search(
             &mut self,
             request: impl tonic::IntoRequest<super::VectorSearchRequest>,
-        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/VectorSearch");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/VectorSearch",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorSearch"));
@@ -3799,16 +3591,23 @@ pub mod proxima_db_client {
         pub async fn vector_get(
             &mut self,
             request: impl tonic::IntoRequest<super::VectorGetRequest>,
-        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>
-        {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/VectorGet");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/VectorGet",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "VectorGet"));
@@ -3819,14 +3618,19 @@ pub mod proxima_db_client {
             &mut self,
             request: impl tonic::IntoRequest<super::HealthRequest>,
         ) -> std::result::Result<tonic::Response<super::HealthResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/Health");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/Health",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "Health"));
@@ -3835,15 +3639,23 @@ pub mod proxima_db_client {
         pub async fn get_metrics(
             &mut self,
             request: impl tonic::IntoRequest<super::MetricsRequest>,
-        ) -> std::result::Result<tonic::Response<super::MetricsResponse>, tonic::Status> {
-            self.inner.ready().await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!("Service was not ready: {}", e.into()),
-                )
-            })?;
+        ) -> std::result::Result<
+            tonic::Response<super::MetricsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
             let codec = tonic::codec::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static("/proximadb.ProximaDB/GetMetrics");
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.ProximaDB/GetMetrics",
+            );
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.ProximaDB", "GetMetrics"));
@@ -3862,20 +3674,32 @@ pub mod proxima_db_server {
         async fn collection_operation(
             &self,
             request: tonic::Request<super::CollectionRequest>,
-        ) -> std::result::Result<tonic::Response<super::CollectionResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::CollectionResponse>,
+            tonic::Status,
+        >;
         /// Vector operations - optimized batch operations
         async fn vector_batch(
             &self,
             request: tonic::Request<super::VectorBatchRequest>,
-        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
         async fn vector_search(
             &self,
             request: tonic::Request<super::VectorSearchRequest>,
-        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
         async fn vector_get(
             &self,
             request: tonic::Request<super::VectorGetRequest>,
-        ) -> std::result::Result<tonic::Response<super::VectorOperationResponse>, tonic::Status>;
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
         /// Health and monitoring
         async fn health(
             &self,
@@ -3909,7 +3733,10 @@ pub mod proxima_db_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -3965,18 +3792,23 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/CollectionOperation" => {
                     #[allow(non_camel_case_types)]
                     struct CollectionOperationSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::CollectionRequest>
-                        for CollectionOperationSvc<T>
-                    {
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::CollectionRequest>
+                    for CollectionOperationSvc<T> {
                         type Response = super::CollectionResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::CollectionRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as ProximaDb>::collection_operation(&inner, request).await
+                                <T as ProximaDb>::collection_operation(&inner, request)
+                                    .await
                             };
                             Box::pin(fut)
                         }
@@ -4007,9 +3839,15 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/VectorBatch" => {
                     #[allow(non_camel_case_types)]
                     struct VectorBatchSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::VectorBatchRequest> for VectorBatchSvc<T> {
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::VectorBatchRequest>
+                    for VectorBatchSvc<T> {
                         type Response = super::VectorOperationResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VectorBatchRequest>,
@@ -4047,9 +3885,15 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/VectorSearch" => {
                     #[allow(non_camel_case_types)]
                     struct VectorSearchSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::VectorSearchRequest> for VectorSearchSvc<T> {
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::VectorSearchRequest>
+                    for VectorSearchSvc<T> {
                         type Response = super::VectorOperationResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VectorSearchRequest>,
@@ -4087,16 +3931,23 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/VectorGet" => {
                     #[allow(non_camel_case_types)]
                     struct VectorGetSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::VectorGetRequest> for VectorGetSvc<T> {
+                    impl<
+                        T: ProximaDb,
+                    > tonic::server::UnaryService<super::VectorGetRequest>
+                    for VectorGetSvc<T> {
                         type Response = super::VectorOperationResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VectorGetRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as ProximaDb>::vector_get(&inner, request).await };
+                            let fut = async move {
+                                <T as ProximaDb>::vector_get(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -4126,16 +3977,21 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/Health" => {
                     #[allow(non_camel_case_types)]
                     struct HealthSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::HealthRequest> for HealthSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::HealthRequest>
+                    for HealthSvc<T> {
                         type Response = super::HealthResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::HealthRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as ProximaDb>::health(&inner, request).await };
+                            let fut = async move {
+                                <T as ProximaDb>::health(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -4165,16 +4021,21 @@ pub mod proxima_db_server {
                 "/proximadb.ProximaDB/GetMetrics" => {
                     #[allow(non_camel_case_types)]
                     struct GetMetricsSvc<T: ProximaDb>(pub Arc<T>);
-                    impl<T: ProximaDb> tonic::server::UnaryService<super::MetricsRequest> for GetMetricsSvc<T> {
+                    impl<T: ProximaDb> tonic::server::UnaryService<super::MetricsRequest>
+                    for GetMetricsSvc<T> {
                         type Response = super::MetricsResponse;
-                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::MetricsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut =
-                                async move { <T as ProximaDb>::get_metrics(&inner, request).await };
+                            let fut = async move {
+                                <T as ProximaDb>::get_metrics(&inner, request).await
+                            };
                             Box::pin(fut)
                         }
                     }
@@ -4201,14 +4062,18 @@ pub mod proxima_db_server {
                     };
                     Box::pin(fut)
                 }
-                _ => Box::pin(async move {
-                    Ok(http::Response::builder()
-                        .status(200)
-                        .header("grpc-status", "12")
-                        .header("content-type", "application/grpc")
-                        .body(empty_body())
-                        .unwrap())
-                }),
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
             }
         }
     }

@@ -76,6 +76,7 @@ pub struct RowGroupProcessingResult {
 }
 
 /// Candidate from row group processing
+#[derive(Debug)]
 pub struct RowGroupCandidate {
     pub row_offset: u32,
     pub similarity: f32,

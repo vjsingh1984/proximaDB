@@ -481,7 +481,25 @@ impl ZeroCopyIOSystem {
     }
 
     /// Execute optimized I/O operation
-    pub async fn execute_optimized_read(
+    pub fn execute_optimized_read<'a>(
+        &'a self,
+        optimization: &'a OptimizedIOResult,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.execute_optimized_read_impl(optimization).await
+        })
+    }
+
+    fn execute_optimized_read_impl<'a>(
+        &'a self,
+        optimization: &'a OptimizedIOResult,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
+            self.execute_optimized_read_impl_inner(optimization).await
+        })
+    }
+
+    async fn execute_optimized_read_impl_inner(
         &self,
         optimization: &OptimizedIOResult,
     ) -> Result<Vec<u8>, ProximaDBError> {
@@ -526,20 +544,19 @@ impl ZeroCopyIOSystem {
             } => {
                 debug!(condition, "Executing hybrid strategy");
                 // Try primary strategy first, fallback on failure
-                match self
-                    .execute_optimized_read(&OptimizedIOResult {
-                        strategy: (**primary).clone(),
-                        ..optimization.clone()
-                    })
-                    .await
+                match Box::pin(self.execute_optimized_read_impl_inner(&OptimizedIOResult {
+                    strategy: (**primary).clone(),
+                    ..optimization.clone()
+                }))
+                .await
                 {
                     Ok(data) => Ok(data),
                     Err(_) => {
                         warn!("Primary strategy failed, trying fallback");
-                        self.execute_optimized_read(&OptimizedIOResult {
+                        Box::pin(self.execute_optimized_read_impl_inner(&OptimizedIOResult {
                             strategy: (**fallback).clone(),
                             ..optimization.clone()
-                        })
+                        }))
                         .await
                     }
                 }
@@ -589,13 +606,14 @@ impl ZeroCopyIOSystem {
         Ok(())
     }
 
-    async fn create_execution_plan(
-        &self,
+    fn create_execution_plan<'a>(
+        &'a self,
         strategy: DownloadStrategy,
-        file_path: &str,
-        collection_id: &str,
+        file_path: &'a str,
+        collection_id: &'a str,
         file_size: u64,
-    ) -> Result<(IOStrategy, ExecutionPlan, IOSavings), ProximaDBError> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(IOStrategy, ExecutionPlan, IOSavings), ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
         match strategy {
             DownloadStrategy::SkipFile { reason } => {
                 let io_strategy = IOStrategy::SkipFile { reason };
@@ -745,6 +763,7 @@ impl ZeroCopyIOSystem {
                 Ok((io_strategy, plan, primary_savings))
             }
         }
+        })
     }
 
     async fn identify_cross_file_optimizations(

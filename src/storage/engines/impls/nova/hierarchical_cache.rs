@@ -51,9 +51,9 @@ pub struct SuperBlockStats {
 
     /// Access patterns for caching decisions
     pub access_count: u64,
-    #[serde(skip)]
+    #[serde(skip, default = "Instant::now")]
     pub last_access: Instant,
-    #[serde(skip)]
+    #[serde(skip, default = "Instant::now")]
     pub creation_time: Instant,
 }
 

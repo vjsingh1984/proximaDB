@@ -6,7 +6,7 @@
 //! Unified Atomic Operations Package for ProximaDB Storage Components
 //!
 //! This module provides common atomic operations infrastructure that can be used
-//! across all storage components: VIPER, WAL, and FilestoreMetadataBackend.
+//! across all storage components: VIPER, WAL, and UniversalMetadataBackend.
 //!
 //! ## Key Features:
 //! - **Staging Pattern**: Write to `__flush/`, `__temp/`, or custom staging directories

@@ -165,6 +165,14 @@ impl AccessPatternTracker {
         // Update collection-level patterns
         self.update_collection_patterns(&event);
 
+        // Log before moving
+        trace!(
+            file_path = event.file_path,
+            collection_id = event.collection_id,
+            query_type = ?event.query_type,
+            "Recorded file access event"
+        );
+
         // Add to recent events
         self.recent_events.push_back(event);
 
@@ -175,13 +183,6 @@ impl AccessPatternTracker {
 
         // Clean up old events
         self.cleanup_old_events();
-
-        trace!(
-            file_path = event.file_path,
-            collection_id = event.collection_id,
-            query_type = ?event.query_type,
-            "Recorded file access event"
-        );
     }
 
     /// Predict future access for a file
@@ -245,10 +246,18 @@ impl AccessPatternTracker {
     /// Clear access patterns for a collection
     pub fn clear_collection_patterns(&mut self, collection_id: &str) {
         // Remove file stats for this collection
-        self.file_stats.retain(|key, _| {
-            let (_, file_collection_id) = self.parse_file_key(key);
-            file_collection_id != collection_id
-        });
+        let keys_to_remove: Vec<String> = self.file_stats
+            .keys()
+            .filter(|key| {
+                let (_, file_collection_id) = self.parse_file_key(key);
+                file_collection_id == collection_id
+            })
+            .cloned()
+            .collect();
+        
+        for key in keys_to_remove {
+            self.file_stats.remove(&key);
+        }
 
         // Remove collection pattern
         self.collection_patterns.remove(collection_id);
@@ -348,7 +357,7 @@ impl AccessPatternTracker {
             if let Some((query_type, _)) = stats
                 .query_type_distribution
                 .iter()
-                .find(|(_, &count)| count == max_count)
+                .find(|(_, count)| **count == max_count)
             {
                 stats.primary_query_type = query_type.clone();
             }
@@ -367,7 +376,8 @@ impl AccessPatternTracker {
         }
 
         // Analyze timing pattern
-        stats.timing_pattern = self.analyze_timing_pattern(&stats.recent_pattern);
+        let recent_pattern = stats.recent_pattern.clone();
+        stats.timing_pattern = Self::analyze_timing_pattern_static(&recent_pattern);
     }
 
     fn update_collection_patterns(&mut self, event: &AccessEvent) {
@@ -398,7 +408,7 @@ impl AccessPatternTracker {
         }
     }
 
-    fn analyze_timing_pattern(&self, recent_events: &VecDeque<AccessEvent>) -> TimingPattern {
+    fn analyze_timing_pattern_static(recent_events: &VecDeque<AccessEvent>) -> TimingPattern {
         if recent_events.len() < 3 {
             return TimingPattern::Random;
         }
@@ -411,7 +421,7 @@ impl AccessPatternTracker {
         }
 
         // Check for periodicity
-        if let Some(periodic_interval) = self.detect_periodicity(&intervals) {
+        if let Some(periodic_interval) = Self::detect_periodicity_static_impl(&intervals) {
             return TimingPattern::Periodic {
                 interval: periodic_interval,
                 confidence: 0.8,
@@ -419,7 +429,7 @@ impl AccessPatternTracker {
         }
 
         // Check for burst pattern
-        if self.is_burst_pattern(&intervals) {
+        if Self::is_burst_pattern_static_impl(&intervals) {
             let burst_duration = intervals.iter().take(3).sum::<Duration>() / 3;
             let quiet_duration = Duration::from_secs(3600); // Default 1 hour
             return TimingPattern::Burst {
@@ -458,7 +468,11 @@ impl AccessPatternTracker {
         TimingPattern::Random
     }
 
-    fn detect_periodicity(&self, intervals: &[Duration]) -> Option<Duration> {
+    fn detect_periodicity_static(&self, intervals: &[Duration]) -> Option<Duration> {
+        Self::detect_periodicity_static_impl(intervals)
+    }
+
+    fn detect_periodicity_static_impl(intervals: &[Duration]) -> Option<Duration> {
         if intervals.len() < 3 {
             return None;
         }
@@ -481,22 +495,29 @@ impl AccessPatternTracker {
         let std_dev = variance.sqrt();
         let coefficient_of_variation = std_dev / avg_interval.as_secs_f64();
 
-        if coefficient_of_variation < self.learning_params.periodicity_threshold {
+        // Use a default threshold of 0.2 for periodicity detection
+        if coefficient_of_variation < 0.2 {
             Some(avg_interval)
         } else {
             None
         }
     }
 
-    fn is_burst_pattern(&self, intervals: &[Duration]) -> bool {
+    fn is_burst_pattern_static(&self, intervals: &[Duration]) -> bool {
+        Self::is_burst_pattern_static_impl(intervals)
+    }
+
+    fn is_burst_pattern_static_impl(intervals: &[Duration]) -> bool {
         if intervals.len() < 3 {
             return false;
         }
 
         // Check if most intervals are very short (indicating burst)
+        // Use a default threshold of 100ms for burst detection
+        let burst_threshold = Duration::from_millis(100);
         let short_intervals = intervals
             .iter()
-            .filter(|&&interval| interval < self.learning_params.burst_threshold)
+            .filter(|&&interval| interval < burst_threshold)
             .count();
 
         short_intervals as f64 / intervals.len() as f64 > 0.7

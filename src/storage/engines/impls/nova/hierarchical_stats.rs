@@ -218,6 +218,7 @@ impl SuperBlock {
                     .as_ref()
                     .map(|md| md.num_rows() as u64)
             })
+            .flatten()
             .sum();
 
         // Create aggregate zone map
@@ -278,7 +279,7 @@ impl SuperBlock {
             .collect();
 
         // Sort by cost (ascending)
-        row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1));
+        row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         row_group_costs.into_iter().map(|(id, _)| id).collect()
     }
@@ -370,6 +371,7 @@ impl SuperBlock {
                     .as_ref()
                     .map(|md| md.total_byte_size() as usize)
             })
+            .flatten()
             .sum();
 
         hints

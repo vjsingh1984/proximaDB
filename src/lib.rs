@@ -169,9 +169,9 @@ impl ProximaDB {
         );
         let storage_engine =
             storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
-        // Inject the collection service from SharedServices (no duplicate!)
+        // Inject the metadata backend from CollectionService (not CollectionService itself!)
         storage_engine
-            .set_metadata_provider(collection_service.clone())
+            .set_metadata_provider(collection_service.metadata_backend().clone())
             .await;
         tracing::info!(
             "✅ ProximaDB::new - Storage engine created with SharedServices' CollectionService"

@@ -9,7 +9,7 @@ use tracing::{debug, info};
 mod tests {
     use crate::config::{Config, ServerConfig, StorageConfig, SstConfig, WriteBufferUserConfig, ApiConfig, MonitoringConfig, ConsensusConfig};
     use crate::storage::persistence::filesystem::atomic_strategy::AtomicConfig;
-    use crate::storage::metadata::backends::filestore_backend::FilestoreConfig;
+    use crate::storage::metadata::backends::universal_backend::FilestoreConfig;
     use std::collections::HashMap;
     use tempfile::TempDir;
 

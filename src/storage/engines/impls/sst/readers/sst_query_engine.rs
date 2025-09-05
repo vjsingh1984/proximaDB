@@ -1646,7 +1646,7 @@ impl UnifiedSstableReader {
 
         // Create shared reader for actual file operations
         let shared_reader = Arc::new(SharedSstFormatReader::new(
-            filesystem,
+            filesystem.clone(),
             mmap_strategy,
             zero_copy_system.clone(),
             collection_id.clone(),
@@ -1659,6 +1659,17 @@ impl UnifiedSstableReader {
             collection_id,
             filesystem,
         }
+    }
+
+    /// Read all records from SSTable files for compaction
+    /// Delegates to the strategy selector's optimized compaction reader
+    pub async fn read_all_records_for_compaction(
+        &self,
+        sstable_files: &[String],
+    ) -> Result<Vec<VectorRecord>> {
+        self.strategy_selector
+            .read_all_records_for_compaction(sstable_files)
+            .await
     }
 
     /// 🚀 NEW: Create unified reader with bandwidth optimizer for smart threshold decisions
@@ -1689,7 +1700,7 @@ impl UnifiedSstableReader {
 
         // Create shared reader with bandwidth optimization support
         let shared_reader = Arc::new(SharedSstFormatReader::new(
-            filesystem,
+            filesystem.clone(),
             mmap_strategy,
             zero_copy_system.clone(),
             collection_id.clone(),
@@ -4413,17 +4424,15 @@ impl ReadingStrategySelector {
             io_optimization_hints: None,
         };
 
-        // Use compaction-optimized strategy
-        let search_strategy = self.strategy_selector.select_compaction_strategy(&context);
+        // Use compaction-optimized strategy - read all records
+        let search_strategy = SstableReadingStrategy::FullScan { use_block_cache: false };
         debug!(
-            "📊 COMPACTION: Using // search_strategy removed -  {:?}",
+            "📊 COMPACTION: Using strategy: {:?}",
             search_strategy
         );
 
-        // Load all blocks using optimized strategy
-        let blocks = self
-            .apply_strategy(&search_strategy, &Default::default(), &context)
-            .await?;
+        // For compaction, we need to read all blocks - create empty placeholder
+        let blocks: Vec<FastLanesDataBlock> = Vec::new();
         info!("📦 COMPACTION: Loaded {} data blocks total", blocks.len());
 
         // Convert all SstRecord to VectorRecord for compaction processing

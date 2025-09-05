@@ -331,20 +331,20 @@ impl SwiftFile {
                                 // Binary quantization - use FastLanes binary encoding
                                 fastlanes_encoder.encode_binary(&primary.data)?
                             }
-                            Some(QuantizationLevel::Scalar(ref config)) if config.bits == 8 => {
+                            Some(QuantizationLevel::Scalar(config)) if config.bits == 8 => {
                                 // INT8 quantization - use FastLanes INT8 encoding
                                 let int8_data: Vec<i8> =
                                     primary.data.iter().map(|&b| b as i8).collect();
                                 fastlanes_encoder.encode_int8(&int8_data)?
                             }
-                            Some(QuantizationLevel::Pq(ref config))
+                            Some(QuantizationLevel::Pq(config))
                                 if config.bits_per_code == 4 =>
                             {
                                 // PQ4 quantization - use FastLanes PQ4 encoding
                                 fastlanes_encoder
                                     .encode_pq4(&primary.data, config.num_subvectors as usize)?
                             }
-                            Some(QuantizationLevel::Pq(ref config))
+                            Some(QuantizationLevel::Pq(config))
                                 if config.bits_per_code == 8 =>
                             {
                                 // PQ8 quantization - use FastLanes PQ8 encoding
@@ -636,16 +636,16 @@ impl SwiftFile {
             // SIMD-optimized scheme selection based on hardware capabilities
             let (marker, scheme) = if hw_caps.cpu.simd.has_avx512 {
                 // AVX-512: 16x f32 SIMD operations
-                self.select_avx512_scheme(&columnar_stats, vector_count)
+                Self::select_avx512_scheme(&columnar_stats, vector_count)
             } else if hw_caps.cpu.simd.has_avx2 {
                 // AVX2: 8x f32 SIMD operations
-                self.select_avx2_scheme(&columnar_stats, vector_count)
+                Self::select_avx2_scheme(&columnar_stats, vector_count)
             } else if hw_caps.cpu.simd.has_sse {
                 // SSE: 4x f32 SIMD operations
-                self.select_sse_scheme(&columnar_stats, vector_count)
+                Self::select_sse_scheme(&columnar_stats, vector_count)
             } else {
                 // Fallback: scalar optimized
-                self.select_scalar_scheme(&columnar_stats, vector_count)
+                Self::select_scalar_scheme(&columnar_stats, vector_count)
             };
 
             // Calculate global statistics for metadata
@@ -684,7 +684,6 @@ impl SwiftFile {
 
     /// AVX-512 optimized scheme selection for 16-wide SIMD
     fn select_avx512_scheme(
-        &self,
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
     ) -> (u8, FastLanesScheme) {
@@ -725,7 +724,6 @@ impl SwiftFile {
 
     /// AVX2 optimized scheme selection for 8-wide SIMD
     fn select_avx2_scheme(
-        &self,
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
     ) -> (u8, FastLanesScheme) {
@@ -766,7 +764,6 @@ impl SwiftFile {
 
     /// SSE optimized scheme selection for 4-wide SIMD
     fn select_sse_scheme(
-        &self,
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
     ) -> (u8, FastLanesScheme) {
@@ -807,7 +804,6 @@ impl SwiftFile {
 
     /// Scalar optimized scheme selection (no SIMD)
     fn select_scalar_scheme(
-        &self,
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
     ) -> (u8, FastLanesScheme) {

@@ -219,12 +219,15 @@ impl IntegratedSearchOptimizer {
     ) -> Self {
         // Detect hardware capabilities
         let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        
+        // Detect available memory using platform-specific methods
+        let available_memory_gb = Self::detect_available_memory();
+        
         let hardware_profile = HardwareProfile {
             has_avx2: caps.cpu.features.avx2_support,
             has_avx512: caps.cpu.features.avx512_support,
             cpu_cores: num_cpus::get(),
-            // TODO: Use proper memory detection when sys_info crate is available
-            available_memory_gb: 16.0, // Default estimate
+            available_memory_gb,
         };
 
         Self {
@@ -272,6 +275,54 @@ impl IntegratedSearchOptimizer {
     /// Set AXIS manager for index integration
     pub fn set_axis_manager(&mut self, axis_manager: Arc<AxisManager>) {
         self.axis_manager = Some(axis_manager);
+    }
+    
+    /// Detect available system memory in GB
+    fn detect_available_memory() -> f32 {
+        // Try to detect memory using platform-specific methods
+        #[cfg(target_os = "linux")]
+        {
+            // Read from /proc/meminfo on Linux
+            if let Ok(contents) = std::fs::read_to_string("/proc/meminfo") {
+                for line in contents.lines() {
+                    if line.starts_with("MemTotal:") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            if let Ok(kb) = parts[1].parse::<u64>() {
+                                return (kb as f64 / 1024.0 / 1024.0) as f32; // Convert KB to GB
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        #[cfg(target_os = "macos")]
+        {
+            // Use sysctl on macOS
+            use std::process::Command;
+            if let Ok(output) = Command::new("sysctl")
+                .arg("-n")
+                .arg("hw.memsize")
+                .output()
+            {
+                if let Ok(bytes_str) = String::from_utf8(output.stdout) {
+                    if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
+                        return (bytes as f64 / 1024.0 / 1024.0 / 1024.0) as f32; // Convert bytes to GB
+                    }
+                }
+            }
+        }
+        
+        #[cfg(target_os = "windows")]
+        {
+            // Use MEMORYSTATUSEX on Windows (would need winapi crate)
+            // For now, use a reasonable default
+            return 16.0;
+        }
+        
+        // Default fallback
+        16.0
     }
 
     /// Simple search method for compatibility

@@ -221,21 +221,42 @@ impl MetadataIndex {
 
         // Process each record's metadata
         for record in &block.records {
-            if let Some(metadata) = record.metadata.as_ref() {
-                for (key, value) in metadata {
+            if !record.metadata.is_empty() {
+                for item in &record.metadata {
                     // Only index filterable columns
-                    if !self.filterable_columns.contains(key.as_deref()) {
+                    if !self.filterable_columns.contains(&item.key) {
                         continue;
                     }
 
-                    // Get or create column index
-                    let column_index = self
-                        .column_indexes
-                        .entry(key.clone())
-                        .or_insert_with(|| self.create_column_index(value));
+                    // Convert MetadataItem value to serde_json::Value
+                    let json_value = match &item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                            serde_json::Value::String(s.clone())
+                        }
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                            serde_json::json!(n)
+                        }
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                            serde_json::Value::Bool(*b)
+                        }
+                        _ => serde_json::Value::Null,
+                    };
 
+                    // Get or create column index
+                    let new_index = if !self.column_indexes.contains_key(&item.key) {
+                        Some(self.create_column_index(&json_value))
+                    } else {
+                        None
+                    };
+                    
+                    if let Some(idx) = new_index {
+                        self.column_indexes.insert(item.key.clone(), idx);
+                    }
+                    
                     // Update index with this value
-                    self.update_column_index(column_index, value, block_id)?;
+                    if let Some(column_index) = self.column_indexes.get_mut(&item.key) {
+                        Self::update_column_index_static(column_index, &json_value, block_id)?;
+                    }
                 }
             }
         }
@@ -273,8 +294,7 @@ impl MetadataIndex {
     }
 
     /// Update column index with a new value
-    fn update_column_index(
-        &mut self,
+    fn update_column_index_static(
         index: &mut ColumnIndex,
         value: &serde_json::Value,
         block_id: usize,
@@ -311,7 +331,7 @@ impl MetadataIndex {
                 token_to_blocks,
                 total_tokens,
             } => {
-                if let Some(text) = value.as_deref() {
+                if let Some(text) = value.as_str() {
                     // Simple tokenization (in production, use proper tokenizer)
                     for token in text.split_whitespace() {
                         let bitset = token_to_blocks

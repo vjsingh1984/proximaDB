@@ -568,6 +568,9 @@ impl UnifiedQueryOptimizer {
                             .get("nprobe")
                             .and_then(|v| v.as_u64())
                             .map(|v| v as usize),
+                        query_vector: None,  // Will be set during execution
+                        top_k: context.search_params.and_then(|p| p.top_k).unwrap_or(10),
+                        filter: None,  // Will be set from filter params if needed
                     },
                 },
             );

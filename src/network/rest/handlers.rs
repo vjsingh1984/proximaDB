@@ -95,7 +95,7 @@ pub struct CollectionOperationRequest {
 #[serde(rename_all = "snake_case")]
 pub struct CollectionConfigJson {
     pub name: String,
-    pub dimension: i32,
+    pub dimension: usize,
     pub distance_metric: Option<String>, // "cosine", "euclidean", "dot_product" - defaults to "cosine"
     pub storage_engine: Option<String>,  // "viper", "sst" - defaults to "viper"
     pub filterable_columns: Option<Vec<FilterableColumnSpec>>,
@@ -146,7 +146,7 @@ impl CollectionConfigJson {
     pub fn from_proto(proto: &CollectionConfig) -> Self {
         Self {
             name: proto.name.clone(),
-            dimension: proto.dimension as i32,
+            dimension: proto.dimension as usize,
             distance_metric: Some(
                 conversions::distance_metric_to_string(proto.distance_metric).to_owned(),
             ),
@@ -193,7 +193,7 @@ pub struct IndexConfiguration {
     pub index_name: String,
     pub algorithm: String,
     pub update_mode: String, // "synchronous", "asynchronous", "hybrid_mode"
-    pub async_update_timeout_ms: Option<i64>,
+    pub async_update_timeout_ms: Option<u32>,  // Timeout in ms, u32 covers ~49 days
     pub async_update_batch_size: Option<i32>,
     pub enable_background_optimization: Option<bool>,
     pub hnsw_config: Option<RestHnswConfig>,
@@ -203,7 +203,7 @@ pub struct IndexConfiguration {
     pub annoy_config: Option<RestAnnoyConfig>,
     pub lsh_config: Option<RestLshConfig>,
     pub build_concurrency: Option<i32>,
-    pub memory_limit_mb: Option<i64>,
+    pub memory_limit_mb: Option<u32>,  // Memory in MB, u32 covers 4TB
     pub checkpoint_interval_ms: Option<i32>,
     pub is_primary: Option<bool>,
     pub use_cases: Option<Vec<String>>,
@@ -213,64 +213,64 @@ pub struct IndexConfiguration {
 /// HNSW configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestHnswConfig {
-    pub m: i32,
-    pub ef_construction: i32,
-    pub ef_search: i32,
-    pub max_partition_size: i32,
+    pub m: u32,
+    pub ef_construction: u32,
+    pub ef_search: u32,
+    pub max_partition_size: u32,
     pub adaptive_parameters: bool,
     pub use_simd: bool,
-    pub memory_limit_mb: i32,
+    pub memory_limit_mb: u32,
     pub lazy_loading: bool,
-    pub prune_connections: i32,
+    pub prune_connections: u32,
     pub level_multiplier: f32,
 }
 
 /// IVF configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestIvfConfig {
-    pub n_lists: i32,
-    pub n_probe: i32,
-    pub quantization_bits: i32,
+    pub n_lists: u32,
+    pub n_probe: u32,
+    pub quantization_bits: u32,
     pub use_pq: bool,
-    pub pq_subspaces: i32,
+    pub pq_subspaces: u32,
     pub train_on_insert: bool,
-    pub min_train_size: i32,
+    pub min_train_size: u32,
 }
 
 /// Flat index configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestFlatConfig {
     pub enable_simd: bool,
-    pub batch_size: i32,
+    pub batch_size: u32,
     pub enable_parallel_search: bool,
 }
 
 /// Product Quantization configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestPqConfig {
-    pub subvectors: i32,
-    pub bits_per_subvector: i32,
-    pub training_sample_count: i32,
+    pub subvectors: u32,
+    pub bits_per_subvector: u32,
+    pub training_sample_count: u32,
     pub enable_reranking: bool,
 }
 
 /// Annoy configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestAnnoyConfig {
-    pub n_trees: i32,
-    pub search_k: i32,
-    pub max_leaf_size: i32,
+    pub n_trees: u32,
+    pub search_k: u32,
+    pub max_leaf_size: u32,
     pub enable_mmap: bool,
 }
 
 /// LSH configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestLshConfig {
-    pub n_hash_tables: i32,
-    pub n_hash_functions: i32,
+    pub n_hash_tables: u32,
+    pub n_hash_functions: u32,
     pub bucket_width: f32,
     pub binary_vectors: bool,
-    pub max_candidates: i32,
+    pub max_candidates: u32,
     pub projection: String, // "gaussian", "binary", "sparse"
 }
 
@@ -310,7 +310,7 @@ pub struct SearchQuantizationConfig {
     pub default_level: RestQuantizationLevel,
     pub adaptive_precision: bool,
     pub accuracy_threshold: f32,
-    pub candidate_multiplier: i32,
+    pub candidate_multiplier: u32,
 }
 
 /// Quantization level
@@ -345,7 +345,7 @@ pub struct RestIndexQuantizationStrategy {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct QuantizationValidation {
     pub accuracy_threshold: f32,
-    pub validation_sample_size: i32,
+    pub validation_sample_size: u32,
     pub enable_quality_monitoring: bool,
     pub retraining_threshold: f32,
 }
@@ -357,7 +357,7 @@ pub struct RestStorageEngineConfig {
     pub access_pattern: Option<String>, // "write_heavy", "read_heavy", "balanced", "archive"
     pub data_density: Option<String>,   // "dense", "sparse", "mixed"
     pub frequent_updates: Option<bool>,
-    pub expected_size_gb: Option<i64>,
+    pub expected_size_mb: Option<u32>,  // Changed to MB for better granularity, u32 covers 4PB
     pub read_write_ratio: Option<f32>,
 
     // Quick presets
@@ -407,14 +407,14 @@ pub struct RestParquetWriterSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RestFooterCacheSettings {
     pub enable: Option<bool>,
-    pub max_entries: Option<i64>,
-    pub ttl_seconds: Option<i64>,
-    pub time_to_idle_seconds: Option<i64>,
+    pub max_entries: Option<u32>,  // Cache entries count
+    pub ttl_seconds: Option<u32>,  // TTL in seconds, u32 covers ~136 years
+    pub time_to_idle_seconds: Option<u32>,  // Idle time in seconds
     pub enable_persistence: Option<bool>,
     pub persistence_path: Option<String>,
     pub enable_prefetch: Option<bool>,
-    pub prefetch_threshold: Option<i64>,
-    pub warming_interval_seconds: Option<i64>,
+    pub prefetch_threshold: Option<u32>,  // Prefetch threshold count
+    pub warming_interval_seconds: Option<u32>,  // Warming interval in seconds
     pub compression: Option<bool>,
     pub compression_level: Option<i32>,
 }
@@ -430,7 +430,7 @@ pub struct RestHybridWriterSettings {
     pub streaming_threshold: Option<f32>,
     pub batch_threshold: Option<i32>,
     pub max_buffer_size: Option<i32>,
-    pub buffer_time_limit_seconds: Option<i64>,
+    pub buffer_time_limit_seconds: Option<u32>,  // Buffer time limit in seconds
     pub enable_concurrent_writes: Option<bool>,
     pub max_concurrent_writers: Option<i32>,
     pub optimize_row_group_size: Option<bool>,
@@ -445,7 +445,7 @@ pub struct RestSstEngineSettings {
     pub bloom_filter_fpp: Option<f32>,
     pub compression: Option<String>,
     pub compression_level: Option<i32>,
-    pub write_buffer_size: Option<i64>,
+    pub write_buffer_size: Option<u64>,  // Buffer size in bytes, u64 for large buffers
     pub max_write_buffers: Option<i32>,
     pub block_size_kb: Option<i32>,
     pub dynamic_block_sizing: Option<bool>,
@@ -495,7 +495,7 @@ pub struct CollectionResponse {
     pub collection: Option<Collection>,
     pub collections: Option<Vec<Collection>>,
     pub affected_count: i64,
-    pub total_count: Option<i64>,
+    pub total_count: Option<u64>,  // Total count, u64 for large collections
     pub metadata: HashMap<String, String>,
     pub error_message: Option<String>,
     pub error_code: Option<String>,
@@ -517,11 +517,11 @@ pub struct Collection {
 pub struct CollectionInfo {
     pub id: String,
     pub name: String,
-    pub dimension: i32,
+    pub dimension: usize,
     pub metric: String,
     pub timestamp: i64,
     pub updated_at: i64,
-    pub vector_count: Option<i64>,
+    pub vector_count: Option<u64>,  // Vector count, u64 for billions of vectors
     pub indexed: bool,
 }
 
@@ -529,7 +529,7 @@ pub struct CollectionInfo {
 #[derive(Debug, Serialize)]
 pub struct ListCollectionsResponse {
     pub collections: Vec<CollectionInfo>,
-    pub total_count: i32,
+    pub total_count: u32,
 }
 
 /// Collection statistics
@@ -545,7 +545,7 @@ pub struct CollectionStats {
 pub struct RestVectorBatchRequest {
     pub collection_id: String,
     pub vectors: Vec<VectorData>,
-    pub batch_timeout_ms: Option<i64>,
+    pub batch_timeout_ms: Option<u32>,
     pub request_id: Option<String>,
 }
 
@@ -555,7 +555,7 @@ pub struct VectorData {
     pub id: Option<String>,
     pub vector: Vec<f32>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
-    pub expires_at: Option<i64>, // For TTL/delete
+    pub expires_at: Option<u32>, // For TTL/delete in seconds since epoch
 }
 
 /// Vector search request - aligned with proto VectorSearchRequest
@@ -563,7 +563,7 @@ pub struct VectorData {
 pub struct VectorSearchRequest {
     pub collection_id: String,
     pub queries: Vec<SearchQuery>,
-    pub top_k: i32,
+    pub top_k: u32,
     pub distance_metric_override: Option<String>,
     pub search_parameters: Option<SearchParameters>,
     pub include_fields: Option<IncludeFields>,
@@ -601,7 +601,7 @@ pub struct SearchParameters {
     pub n_probe: Option<i32>,
     pub enable_reranking: Option<bool>,
     pub batch_size: Option<i32>,
-    pub timeout_ms: Option<i64>,
+    pub timeout_ms: Option<u32>,  // Search timeout in ms, u32 covers ~49 days
     pub accuracy_threshold: Option<f32>,
     pub enable_parallel_search: Option<bool>,
     pub thread_count: Option<i32>,
@@ -823,7 +823,7 @@ pub async fn collection_operation(
         collection_config: request.config.as_ref().and_then(|c| {
             conversions::build_collection_config(
                 c.name.clone(),
-                c.dimension as u32,
+                c.dimension,
                 c.distance_metric.clone(),
                 c.storage_engine.clone(),
                 None, // indexing_algorithm - removed from config
@@ -866,7 +866,7 @@ pub async fn collection_operation(
             )
         },
         affected_count: proto_response.affected_count,
-        total_count: proto_response.total_count,
+        total_count: proto_response.total_count.map(|x| x as u64),
         metadata: proto_response.metadata.into_iter().collect(),
         error_message: proto_response.error_message,
         error_code: proto_response.error_code,
@@ -1015,7 +1015,7 @@ pub async fn vector_search(
     let proto_request = conversions::build_vector_search_request(
         request.collection_id.clone(),
         first_query.map(|q| q.vector.clone()).unwrap_or_default(),
-        request.top_k as u32,
+        request.top_k,
         None, // TODO: Convert MetadataFilter to serde_json::Map
         request
             .include_fields
@@ -1345,10 +1345,10 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         async_update_batch_size: config.async_update_batch_size.map(|x| x as u32),
         enable_background_optimization: config.enable_background_optimization.unwrap_or(false),
         hnsw_config: config.hnsw_config.map(|c| HnswConfig {
-            m: c.m as u32,
-            ef_construction: c.ef_construction as u32,
-            ef_search: c.ef_search as u32,
-            max_partition_size: c.max_partition_size as u32,
+            m: c.m,
+            ef_construction: c.ef_construction,
+            ef_search: c.ef_search,
+            max_partition_size: c.max_partition_size,
             adaptive_parameters: c.adaptive_parameters,
             use_simd: c.use_simd,
             memory_limit_mb: c.memory_limit_mb,
@@ -1359,27 +1359,27 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
         ivf_config: config.ivf_config.map(|c| IvfConfig {
             n_lists: c.n_lists,
             n_probe: c.n_probe,
-            quantization_bits: c.quantization_bits as u32,
+            quantization_bits: c.quantization_bits,
             use_pq: c.use_pq,
             pq_subspaces: c.pq_subspaces,
             train_on_insert: c.train_on_insert,
-            min_train_size: c.min_train_size as i32,
+            min_train_size: c.min_train_size,
         }),
         flat_config: config.flat_config.map(|c| FlatConfig {
             enable_simd: c.enable_simd,
-            batch_size: c.batch_size as i32,
+            batch_size: c.batch_size,
             enable_parallel_search: c.enable_parallel_search,
         }),
         pq_config: config.pq_config.map(|c| PqConfig {
             subvectors: c.subvectors,
-            bits_per_subvector: c.bits_per_subvector as i32,
-            training_sample_count: c.training_sample_count as i32,
+            bits_per_subvector: c.bits_per_subvector,
+            training_sample_count: c.training_sample_count,
             enable_reranking: c.enable_reranking,
         }),
         annoy_config: config.annoy_config.map(|c| AnnoyConfig {
             n_trees: c.n_trees,
             search_k: c.search_k,
-            max_leaf_size: c.max_leaf_size as i32,
+            max_leaf_size: c.max_leaf_size,
             enable_mmap: c.enable_mmap,
         }),
         lsh_config: config.lsh_config.map(|c| LshConfig {
@@ -1394,9 +1394,9 @@ fn convert_index_config_to_proto(config: IndexConfiguration) -> IndexConfig {
                 _ => RandomProjectionType::Gaussian as i32,
             },
         }),
-        build_concurrency: config.build_concurrency,
+        build_concurrency: config.build_concurrency.map(|x| x as u32),
         memory_limit_mb: config.memory_limit_mb,
-        checkpoint_interval_ms: config.checkpoint_interval_ms,
+        checkpoint_interval_ms: config.checkpoint_interval_ms.map(|x| x as u32),
         is_primary: config.is_primary.unwrap_or(false),
         use_cases: config.use_cases.clone().unwrap_or_default(),
         selectivity_threshold: config.selectivity_threshold,
@@ -1481,10 +1481,10 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
         async_update_batch_size: config.async_update_batch_size.map(|x| x as i32),
         enable_background_optimization: Some(config.enable_background_optimization),
         hnsw_config: config.hnsw_config.map(|c| RestHnswConfig {
-            m: c.m as i32,
-            ef_construction: c.ef_construction as i32,
-            ef_search: c.ef_search as i32,
-            max_partition_size: c.max_partition_size as i32,
+            m: c.m,
+            ef_construction: c.ef_construction,
+            ef_search: c.ef_search,
+            max_partition_size: c.max_partition_size,
             adaptive_parameters: c.adaptive_parameters,
             use_simd: c.use_simd,
             memory_limit_mb: c.memory_limit_mb,
@@ -1495,27 +1495,27 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
         ivf_config: config.ivf_config.map(|c| RestIvfConfig {
             n_lists: c.n_lists,
             n_probe: c.n_probe,
-            quantization_bits: c.quantization_bits as i32,
+            quantization_bits: c.quantization_bits,
             use_pq: c.use_pq,
             pq_subspaces: c.pq_subspaces,
             train_on_insert: c.train_on_insert,
-            min_train_size: c.min_train_size as i32,
+            min_train_size: c.min_train_size,
         }),
         flat_config: config.flat_config.map(|c| RestFlatConfig {
             enable_simd: c.enable_simd,
-            batch_size: c.batch_size as i32,
+            batch_size: c.batch_size,
             enable_parallel_search: c.enable_parallel_search,
         }),
         pq_config: config.pq_config.map(|c| RestPqConfig {
             subvectors: c.subvectors,
-            bits_per_subvector: c.bits_per_subvector as i32,
-            training_sample_count: c.training_sample_count as i32,
+            bits_per_subvector: c.bits_per_subvector,
+            training_sample_count: c.training_sample_count,
             enable_reranking: c.enable_reranking,
         }),
         annoy_config: config.annoy_config.map(|c| RestAnnoyConfig {
             n_trees: c.n_trees,
             search_k: c.search_k,
-            max_leaf_size: c.max_leaf_size as i32,
+            max_leaf_size: c.max_leaf_size,
             enable_mmap: c.enable_mmap,
         }),
         lsh_config: config.lsh_config.map(|c| RestLshConfig {
@@ -1531,9 +1531,9 @@ fn convert_index_config_from_proto(config: IndexConfig) -> IndexConfiguration {
             }
             .to_string(),
         }),
-        build_concurrency: config.build_concurrency,
+        build_concurrency: config.build_concurrency.map(|x| x as i32),
         memory_limit_mb: config.memory_limit_mb,
-        checkpoint_interval_ms: config.checkpoint_interval_ms,
+        checkpoint_interval_ms: config.checkpoint_interval_ms.map(|x| x as i32),
         is_primary: Some(config.is_primary),
         use_cases: Some(config.use_cases),
         selectivity_threshold: config.selectivity_threshold,
@@ -1813,7 +1813,7 @@ pub async fn list_collections(
             CollectionInfo {
                 id: c.id,
                 name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
-                dimension: config.map(|cfg| cfg.dimension as i32).unwrap_or(0),
+                dimension: config.map(|cfg| cfg.dimension as usize).unwrap_or(0),
                 metric: match config.and_then(|cfg| Some(cfg.distance_metric)) {
                     Some(x) if x == DistanceMetric::Cosine as i32 => "cosine",
                     Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
@@ -1823,13 +1823,13 @@ pub async fn list_collections(
                 .to_string(),
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
-                vector_count: stats.map(|s| s.vector_count),
+                vector_count: stats.map(|s| s.vector_count as u64),
                 indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
             }
         })
         .collect();
 
-    let total_count = collection_responses.len() as i32;
+    let total_count = collection_responses.len() as u32;
 
     Ok(JsonResponse(ListCollectionsResponse {
         collections: collection_responses,
@@ -1865,7 +1865,7 @@ pub async fn collection(
             let collection_info = CollectionInfo {
                 id: c.id,
                 name: config.map(|cfg| cfg.name.clone()).unwrap_or_default(),
-                dimension: config.map(|cfg| cfg.dimension as i32).unwrap_or(0),
+                dimension: config.map(|cfg| cfg.dimension as usize).unwrap_or(0),
                 metric: match config.and_then(|cfg| Some(cfg.distance_metric)) {
                     Some(x) if x == DistanceMetric::Cosine as i32 => "cosine",
                     Some(x) if x == DistanceMetric::Euclidean as i32 => "euclidean",
@@ -1875,7 +1875,7 @@ pub async fn collection(
                 .to_string(),
                 timestamp: c.created_at,
                 updated_at: c.updated_at,
-                vector_count: stats.map(|s| s.vector_count),
+                vector_count: stats.map(|s| s.vector_count as u64),
                 indexed: stats.map(|s| s.index_size_bytes > 0).unwrap_or(false),
             };
             Ok(JsonResponse(collection_info))
@@ -1924,7 +1924,7 @@ pub async fn delete_collection(
             .map(|c| convert_from_proto_collection(c)),
         collections: None,
         affected_count: proto_response.affected_count,
-        total_count: proto_response.total_count,
+        total_count: proto_response.total_count.map(|x| x as u64),
         metadata: proto_response.metadata.into_iter().collect(),
         error_message: proto_response.error_message,
         error_code: proto_response.error_code,

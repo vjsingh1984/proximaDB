@@ -443,7 +443,7 @@ impl SstEntry {
         let mut buffer = Vec::with_capacity(8 + proto_buf.len() + meta_data.len());
         buffer.extend_from_slice(&(proto_buf.len() as u32).to_le_bytes());
         buffer.extend_from_slice(&proto_buf);
-        buffer.extend_from_slice(&(meta_data.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&(meta_data.len()).to_le_bytes());
         buffer.extend_from_slice(&meta_data);
 
         Ok(buffer)
@@ -623,7 +623,7 @@ impl IndexEntry {
         buffer.write_all(&[if self.compressed { 1u8 } else { 0u8 }])?;
 
         // Write metadata_min_values
-        buffer.write_all(&(self.metadata_min_values.len() as u32).to_le_bytes())?;
+        buffer.write_all(&(self.metadata_min_values.len()).to_le_bytes())?;
         for (key, value) in &self.metadata_min_values {
             let key_bytes = key.as_bytes();
             buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
@@ -632,7 +632,7 @@ impl IndexEntry {
         }
 
         // Write metadata_max_values
-        buffer.write_all(&(self.metadata_max_values.len() as u32).to_le_bytes())?;
+        buffer.write_all(&(self.metadata_max_values.len()).to_le_bytes())?;
         for (key, value) in &self.metadata_max_values {
             let key_bytes = key.as_bytes();
             buffer.write_all(&(key_bytes.len() as u32).to_le_bytes())?;
@@ -653,7 +653,7 @@ impl IndexEntry {
         match &self.block_key_bloom {
             Some(bloom_data) => {
                 buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
-                buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
+                buffer.write_all(&(bloom_data.len()).to_le_bytes())?;
                 buffer.write_all(bloom_data)?;
             }
             None => {
@@ -664,7 +664,7 @@ impl IndexEntry {
         match &self.block_metadata_bloom {
             Some(bloom_data) => {
                 buffer.write_all(&1u8.to_le_bytes())?; // Has bloom
-                buffer.write_all(&(bloom_data.len() as u32).to_le_bytes())?;
+                buffer.write_all(&(bloom_data.len()).to_le_bytes())?;
                 buffer.write_all(bloom_data)?;
             }
             None => {
@@ -914,13 +914,13 @@ mod compression_helpers {
                     "lzo" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32,
                     _ => crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
                 },
-                level: Some(config.compression_level),
+                level: Some(config.compression_level as u32),
                 adaptive: false,
                 min_ratio: Some(0.5), // Optional field: Default minimum compression ratio
                 enable_quantization: false, // Not used for SST compression
                 quantization_type: None,
                 normalization_method: None, // Optional field: No normalization by default
-                block_size_kb: Some(config.block_size_kb as i32),
+                block_size_kb: Some(config.block_size_kb),
                 dynamic_block_sizing: Some(false),
             })
         } else {
@@ -2341,7 +2341,7 @@ impl UnifiedStorageEngine for SstStorage {
                 collection_id,
                 params.collection_config.as_ref(),
                 params.force,
-                compression_config.map(|c| c.as_ref()).flatten(),
+                compression_config.cloned(),
             )
             .await
             .context("Failed to flush records to SSTable with row-by-row storage")?;
@@ -2627,7 +2627,7 @@ impl UnifiedStorageEngine for SstStorage {
                         &task,
                         &self.config,
                         Some(self.atomic_coordinator.clone()),
-                        compression_config,
+                        compression_config.cloned(),
                     )
                     .await?;
 
@@ -2914,7 +2914,7 @@ impl UnifiedStorageEngine for SstStorage {
                 Ok(strategy) => {
                     debug!("📋 Using default SST search strategy");
 
-                    match Ok(&strategy) {
+                    match Ok::<_, anyhow::Error>(&strategy) {
                         Ok(strategy) => {
                             info!(
                                 "🎯 Strategy Selected: {} (estimated cost: {:.2}ms)",
@@ -3753,11 +3753,11 @@ impl SstStorage {
         // Step 5: Serialize header
         let header_data = bincode::serialize(&header)
             .map_err(|e| anyhow::anyhow!("Failed to serialize header: {}", e))?;
-        sstable_data.extend((header_data.len() as u32).to_le_bytes());
+        sstable_data.extend((header_data.len()).to_le_bytes());
         sstable_data.extend(header_data);
 
         // Step 6: Serialize bloom filter
-        sstable_data.extend((bloom_data.len() as u32).to_le_bytes());
+        sstable_data.extend((bloom_data.len()).to_le_bytes());
         sstable_data.extend(bloom_data);
 
         // Step 7: Serialize enhanced index using custom serialization
@@ -3766,10 +3766,10 @@ impl SstStorage {
             let entry_data = entry
                 .serialize()
                 .map_err(|e| anyhow::anyhow!("Failed to serialize index entry: {}", e))?;
-            index_data.extend_from_slice(&(entry_data.len() as u32).to_le_bytes());
+            index_data.extend_from_slice(&(entry_data.len()).to_le_bytes());
             index_data.extend_from_slice(&entry_data);
         }
-        sstable_data.extend((index_data.len() as u32).to_le_bytes());
+        sstable_data.extend((index_data.len()).to_le_bytes());
         sstable_data.extend(index_data);
 
         // Step 8: Append compressed data blocks
@@ -4033,7 +4033,7 @@ impl SstStorage {
 
         let primary_sort_key = key_frequency
             .iter()
-            .max_by_key(|(_, &count)| count)
+            .max_by_key(|(_, count)| *count)
             .map(|(key, _)| key.clone());
 
         let sort_start = std::time::Instant::now();

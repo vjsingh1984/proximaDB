@@ -76,7 +76,7 @@ pub fn encode_sparse_tensor(
                 bits: 16,
             });
             let encoded_values = encoder.encode_f32(&values)?;
-            output.write_all(&(encoded_values.len() as u32).to_le_bytes())?;
+            output.write_all(&(encoded_values.len()).to_le_bytes())?;
             output.write_all(&encoded_values)?;
         }
         SparseFormat::CSR => {
@@ -105,7 +105,7 @@ pub fn encode_sparse_tensor(
                 bits: 16,
             });
             let encoded_values = encoder.encode_f32(&values)?;
-            output.write_all(&(encoded_values.len() as u32).to_le_bytes())?;
+            output.write_all(&(encoded_values.len()).to_le_bytes())?;
             output.write_all(&encoded_values)?;
         }
     }
@@ -176,7 +176,7 @@ pub fn decode_sparse_tensor(
             reference: 0,
             bits: 16,
         });
-        let values = decoder.decode_f32(&val_data)?;
+        let values = decoder.decode_f32(&val_data, nnz)?;
 
         // Reconstruct dense matrix
         let mut dense = vec![0.0f32; num_vectors * dimension];
@@ -216,7 +216,7 @@ pub fn decode_sparse_tensor(
             reference: 0,
             bits: 16,
         });
-        let values = decoder.decode_f32(&val_data)?;
+        let values = decoder.decode_f32(&val_data, nnz)?;
 
         // Reconstruct dense matrix
         let mut dense = vec![0.0f32; num_vectors * dimension];

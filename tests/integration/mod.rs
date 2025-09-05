@@ -66,6 +66,18 @@ pub mod unified_search_integration;
 // VIPER engine integration tests
 pub mod viper;
 
+// Nova engine integration tests
+pub mod nova_engine_test;
+
+// Prism engine integration tests
+pub mod prism_engine_test;
+
+// Swift engine integration tests
+pub mod swift_engine_test;
+
+// Raptor engine integration tests
+pub mod raptor_engine_test;
+
 // SST engine integration tests
 pub mod sst_collection_test_fixed;
 

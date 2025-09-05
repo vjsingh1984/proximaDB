@@ -469,7 +469,8 @@ impl AxisAnnoyIndex {
             debug!("Building tree {}/{}", tree_idx + 1, self.config.n_trees);
 
             let mut tree = AnnoyTree::new(vectors.config().dimension);
-            let tree_seed = rng.next_u64();
+            use rand::RngCore;
+            let tree_seed: u64 = rng.next_u64();
             let mut tree_rng = ChaCha20Rng::seed_from_u64(tree_seed);
 
             tree.build(

@@ -344,7 +344,7 @@ impl CompoundBloomFilter {
             null_ratio: 0.0,
             access_frequency: 0,
             selectivity: 0.5,
-            data_type: ColumnData::String(String::new()),
+            data_type: ColumnData::String,
             bloom_benefit_score: 0.0,
         };
 
@@ -383,7 +383,7 @@ mod tests {
             null_ratio: 0.01,
             access_frequency: 1000,
             selectivity: 0.3,
-            data_type: ColumnData::String(String::new()),
+            data_type: ColumnData::String,
             bloom_benefit_score: 0.8,
         };
 

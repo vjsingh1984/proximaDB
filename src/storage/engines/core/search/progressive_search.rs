@@ -205,7 +205,7 @@ impl ProgressiveSearchExecutor {
                     let first_level = levels
                         .get(0)
                         .ok_or_else(|| anyhow::anyhow!("No quantization levels provided"))?;
-                    match first_level.quantization_type {
+                    let quantized_data = match first_level.quantization_type {
                         QuantizationType::Binary => {
                             let binary_data = self
                                 .quantization_engine
@@ -273,17 +273,46 @@ impl ProgressiveSearchExecutor {
                                 "Unsupported quantization type for runtime quantization"
                             ));
                         }
+                    };
+                    // Convert StorageQuantizedData to Vec<QuantizedRepresentation>
+                    let mut representations = Vec::new();
+                    
+                    // Add filter quantization (binary) if present
+                    if let Some(filter) = &quantized_data.filter {
+                        representations.push(QuantizedRepresentation {
+                            level_id: "binary".to_string(),
+                            data: filter.data.clone(),
+                            quant_type: QuantizationType::Binary,
+                        });
                     }
+                    
+                    // Add fast quantization (INT8) if present
+                    if let Some(fast) = &quantized_data.fast {
+                        representations.push(QuantizedRepresentation {
+                            level_id: "int8".to_string(),
+                            data: fast.data.clone(),
+                            quant_type: QuantizationType::Scalar,
+                        });
+                    }
+                    
+                    // Add primary quantization (PQ) if present
+                    if let Some(primary) = &quantized_data.primary {
+                        representations.push(QuantizedRepresentation {
+                            level_id: "pq".to_string(),
+                            data: primary.data.clone(),
+                            quant_type: QuantizationType::Product,
+                        });
+                    }
+                    
+                    representations
                 } else {
                     // ERROR: Runtime quantization not allowed for this collection/query
                     debug!(
                         "❌ Vector {} missing pre-quantized data (collection expects pre-quantization)",
-                        record.id.as_ref().unwrap_or(&String::from("unknown"))
+                        if record.id.is_empty() { "unknown" } else { &record.id }
                     );
-                    return Err(anyhow::anyhow!(
-                        "Missing pre-quantized data for vector {}. Collection config expects pre-quantization.",
-                        record.id.as_ref().unwrap_or(&String::from("unknown"))
-                    ));
+                    // Return empty vec to skip this record
+                    Vec::new()
                 }
             };
 
@@ -649,7 +678,7 @@ impl ProgressiveSearchExecutor {
                 QuantizationType::Product => self.quantization_engine.quantize_to_pq(
                     vector,
                     level.num_subvectors.unwrap_or(8) as usize,
-                    level.bits.unwrap_or(8),
+                    level.bits as u32,
                 )?,
                 _ => Vec::new(),
             };

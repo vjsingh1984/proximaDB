@@ -324,7 +324,7 @@ struct StreamingSession {
 }
 
 /// Stream types
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum StreamType {
     Insert,
     Search,
@@ -716,12 +716,11 @@ impl NovaUnifiedEngine {
                 max_concurrent_streams: nova_config.streaming_config.max_concurrent_streams,
                 stream_timeout_seconds: nova_config.streaming_config.stream_timeout_seconds,
             },
-            advanced_caching: AdvancedCachingConfig {
+            advanced_caching: crate::storage::engines::core::formats::columnar::common::AdvancedCachingConfig {
                 enable_adaptive_caching: nova_config.caching_config.enable_adaptive_caching,
                 cache_size_mb: nova_config.caching_config.cache_size_mb,
                 cache_levels: nova_config.caching_config.cache_levels,
-                prefetch_strategy: nova_config.caching_config.prefetch_strategy,
-                enable_cache_warming: false, // Default to false for now
+                prefetch_strategy: format!("{:?}", nova_config.caching_config.prefetch_strategy)
             },
         };
 

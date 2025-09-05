@@ -917,7 +917,7 @@ impl QuantizedDistanceCalculator {
             sorted[sorted.len() / 2]
         };
 
-        let mut binary = vec![0u8; (query.len() + 7) / 8];
+        let mut binary = vec![0u8; ((query.len() + 7) / 8) as usize];
         for (i, &value) in query.iter().enumerate() {
             if value > median {
                 let byte_idx = i / 8;
@@ -971,7 +971,7 @@ impl QuantizedDistanceCalculator {
 
         // Compute distance using precomputed table
         let mut distance = 0.0;
-        for (i, (&q_val, &d_val)) in query_int8.iter().zip(int8_data.values.iter()).enumerate() {
+        for (i, (&q_val, &_d_val)) in query_int8.iter().zip(int8_data.values.iter()).enumerate() {
             if i < table.squared_diff_table.len()
                 && (q_val as usize) < table.squared_diff_table[i].len()
             {
@@ -1131,7 +1131,7 @@ impl PQDistanceTable {
 
         for (subvector_idx, centroids) in codebook.iter().enumerate() {
             let mut centroid_distances = Vec::with_capacity(num_centroids);
-            let subvector_size = query.len() / num_subvectors;
+            let subvector_size = query.len() / num_subvectors as usize;
             let query_subvector =
                 &query[subvector_idx * subvector_size..(subvector_idx + 1) * subvector_size];
 

@@ -200,13 +200,13 @@ impl ParquetMetadataSerializer {
         let mut variable_data = Vec::new();
 
         // Add schema to variable data
-        let schema_offset = variable_data.len() as u32;
+        let schema_offset = variable_data.len();
         variable_data.extend_from_slice(&schema_info);
 
         // Process each row group
         for (rg_idx, rg_info) in row_group_info.iter().enumerate() {
             // Add statistics to variable data
-            let stats_offset = variable_data.len() as u32;
+            let stats_offset = variable_data.len();
             let stats_data = self.extract_row_group_statistics(rg_info)?;
             variable_data.extend_from_slice(&stats_data);
 
@@ -217,7 +217,7 @@ impl ParquetMetadataSerializer {
                 uncompressed_size: rg_info.uncompressed_size,
                 num_rows: rg_info.num_rows,
                 num_columns: rg_info.columns.len() as u32,
-                statistics_offset: stats_offset,
+                statistics_offset: stats_offset as u32,
                 statistics_size: stats_data.len() as u32,
                 min_key_hash: rg_info.min_key_hash,
                 max_key_hash: rg_info.max_key_hash,
@@ -255,7 +255,7 @@ impl ParquetMetadataSerializer {
             num_row_groups: row_groups.len() as u32,
             footer_offset: 0, // Will be updated when serialized
             footer_size: footer_data.len() as u32,
-            schema_offset,
+            schema_offset: schema_offset as u32,
             schema_size: schema_info.len() as u32,
             total_rows: row_groups.iter().map(|rg| rg.num_rows).sum(),
             num_columns: if !row_groups.is_empty() {
@@ -409,7 +409,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         }
 
         // Serialize variable data size
-        buffer.extend_from_slice(&(metadata.variable_data.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&(metadata.variable_data.len()).to_le_bytes());
 
         // Serialize variable data (compressed with bincode if enabled)
         buffer.extend_from_slice(&metadata.variable_data);

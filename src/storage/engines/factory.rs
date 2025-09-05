@@ -73,6 +73,12 @@ impl StorageEngineFactory {
                 info!("Creating RAPTOR engine");
                 Self::create_raptor_default()
             }
+            StorageEngineStrategy::Lynx => {
+                // LYNX: Experimental locality-aware engine
+                // For now, use RAPTOR as a fallback
+                info!("Creating LYNX engine (falling back to RAPTOR for now)");
+                Self::create_raptor_default()
+            }
         }
     }
 

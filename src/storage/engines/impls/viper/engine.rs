@@ -41,7 +41,7 @@ use crate::core::search::UnifiedSearchEngine;
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::StorageTier;
-use crate::storage::traits::{CollectionMetadataProvider, FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{InternalCollectionProvider, FlushResult, UnifiedStorageEngine};
 // Schema now uses shared ColumnarSchema from columnar module
 use super::compaction::Compaction;
 use super::flush::Flush;
@@ -1613,7 +1613,8 @@ impl UnifiedStorageEngine for ViperEngine {
                 vector_dimension: collection_opt
                     .as_ref()
                     .and_then(|c| c.config.as_ref())
-                    .map(|c| c.dimension as usize), // Fallback only if config not available
+                    .map(|c| c.dimension as usize)
+                    .unwrap_or(0), // Fallback only if config not available
                 enable_quantization: collection_opt
                     .as_ref()
                     .and_then(|c| c.config.as_ref())
@@ -1671,7 +1672,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let intelligent_fs = self
             .filesystem
             .get_intelligent_filesystem(
-                storage_url,
+                &storage_url,
                 collection_id.to_string(),
                 crate::storage::engines::ENGINE_VIPER.to_string(),
             )
@@ -1733,7 +1734,15 @@ impl UnifiedStorageEngine for ViperEngine {
                 score: r.score,
                 similarity: r.similarity,
                 vector: Some(r.vector),
-                metadata: r.metadata.into_iter().map(|(k, v)| (k, v)).collect(),
+                metadata: r.metadata.into_iter().map(|item| {
+                    let value = match item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
+                        None => serde_json::Value::Null,
+                    };
+                    (item.key, value)
+                }).collect(),
                 debug_info: None,
                 version: r.version,
                 timestamp: r.timestamp,

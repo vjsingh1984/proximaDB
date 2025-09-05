@@ -169,7 +169,7 @@ mod tests {
     fn test_bincode_sizes() {
         #[derive(Serialize, Deserialize)]
         struct OriginalStruct {
-            dimension: u32,
+            dimension: usize,
             version: u32,
             hnsw_m: u32,
             pq_segments: u32,

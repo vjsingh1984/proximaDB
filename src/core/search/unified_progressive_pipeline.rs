@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;
@@ -97,12 +97,36 @@ struct PerformanceRecord {
 }
 
 /// Progressive search stage
+/// 
+/// Each stage represents a different quantization level used during
+/// progressive search. Stages are ordered from lowest to highest precision,
+/// allowing the search to quickly filter candidates at low precision
+/// before refining with higher precision stages.
+/// 
+/// # Stage Ordering
+/// 
+/// 1. `Binary` - 1 bit per dimension, fastest but least accurate
+/// 2. `Pq4` - 4-bit product quantization, very fast with reasonable accuracy
+/// 3. `Int8` - 8-bit integer quantization, good balance of speed and accuracy
+/// 4. `Pq8` - 8-bit product quantization, better accuracy than Pq4
+/// 5. `Pq16` - 16-bit product quantization, high accuracy
+/// 6. `Fp16` - 16-bit floating point, near-full precision
+/// 7. `Fp32` - Full 32-bit floating point precision
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchStage {
+    /// Binary quantization - 1 bit per dimension
     Binary,
+    /// 8-bit integer quantization
     Int8,
+    /// 4-bit product quantization
     Pq4,
+    /// 8-bit product quantization
     Pq8,
+    /// 16-bit product quantization
+    Pq16,
+    /// 16-bit floating point
+    Fp16,
+    /// Full 32-bit floating point precision
     Fp32,
 }
 
@@ -232,7 +256,7 @@ impl UnifiedProgressiveSearchPipeline {
                 stages.push(SearchStage::Int8);
             }
             Strategy::CustomLevels => {
-                // TODO: Convert custom_levels to SearchStage
+                // No custom levels provided in config, use default INT8
                 stages.push(SearchStage::Int8);
             }
         }
@@ -311,7 +335,7 @@ impl UnifiedProgressiveSearchPipeline {
                 self.calculate_stage_candidates(top_k, current_records.len(), stage, &thresholds)
             };
 
-            // Execute stage
+            // Execute stage with comprehensive pattern matching
             let stage_candidates = match stage {
                 SearchStage::Binary => {
                     self.execute_binary_stage(
@@ -348,6 +372,29 @@ impl UnifiedProgressiveSearchPipeline {
                         distance_metric,
                         keep_count,
                         8,
+                    )
+                    .await?
+                }
+                SearchStage::Pq16 => {
+                    // PQ16 stage - higher precision product quantization
+                    // For now, fallback to PQ8 with adjusted parameters
+                    self.execute_pq_stage(
+                        &current_records,
+                        &query_cache.quantized_pq8, // Reuse PQ8 cache
+                        distance_metric,
+                        keep_count,
+                        16,
+                    )
+                    .await?
+                }
+                SearchStage::Fp16 => {
+                    // FP16 stage - half-precision floating point
+                    // For now, use FP32 stage as FP16 is not yet implemented
+                    self.execute_fp32_stage(
+                        &current_records,
+                        &query_cache.normalized,
+                        distance_metric,
+                        keep_count,
                     )
                     .await?
                 }
@@ -617,8 +664,8 @@ impl UnifiedProgressiveSearchPipeline {
         let selectivity = match stage {
             SearchStage::Binary => thresholds.binary_selectivity,
             SearchStage::Int8 => thresholds.int8_selectivity,
-            SearchStage::Pq4 | SearchStage::Pq8 => thresholds.pq_selectivity,
-            SearchStage::Fp32 => 1.0,
+            SearchStage::Pq4 | SearchStage::Pq8 | SearchStage::Pq16 => thresholds.pq_selectivity,
+            SearchStage::Fp16 | SearchStage::Fp32 => 1.0,
         };
 
         let candidates = ((current_count as f32 * selectivity) as usize)

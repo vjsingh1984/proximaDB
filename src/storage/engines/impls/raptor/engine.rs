@@ -454,11 +454,12 @@ impl RaptorEngine {
     /// I/O bandwidth optimization with vectorized reads (delegates to universal optimizer)
     async fn vectorized_read(&self, file_paths: &[String]) -> Result<Vec<Vec<u8>>> {
         // Use universal optimizer's parallel operations
+        let optimizer = self.universal_optimizer.clone();
         let read_operations: Vec<_> = file_paths
             .iter()
             .map(|path| {
                 let path = path.clone();
-                let optimizer = &self.universal_optimizer;
+                let optimizer = optimizer.clone();
                 async move { optimizer.read_data_optimized(&path).await }
             })
             .collect();
@@ -467,12 +468,13 @@ impl RaptorEngine {
             .universal_optimizer
             .parallel_operations(read_operations, |operation| operation)
             .await?;
-
-        // Collect results, converting Vec<Result<Vec<u8>>> to Result<Vec<Vec<u8>>>
-        results
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow::anyhow!("Read operation failed: {:?}", e))
+        
+        // Unwrap the nested Results
+        let mut data = Vec::with_capacity(results.len());
+        for result in results {
+            data.push(result??);
+        }
+        Ok(data)
     }
 
     /// Cloud storage cost optimization - determine optimal storage tier (delegates to universal optimizer)
@@ -897,7 +899,7 @@ impl RaptorEngine {
                 reference: 0,
                 bits: 16,
             });
-            let decoded = decoder.decode_f32(&column_data)?;
+            let decoded = decoder.decode_f32(&column_data, num_vectors)?;
             columns.push(decoded);
         }
 
@@ -1028,7 +1030,7 @@ impl RaptorEngine {
                 reference: 0,
                 bits: 16,
             });
-            let values = decoder.decode_f32(&values_data)?;
+            let values = decoder.decode_f32(&values_data, num_nonzeros)?;
 
             // Reconstruct dense vectors from sparse representation
             let mut dense_vectors = vec![0.0f32; num_vectors * dimension];
@@ -1075,7 +1077,7 @@ impl RaptorEngine {
                 reference: 0,
                 bits: 16,
             });
-            let values = decoder.decode_f32(&values_data)?;
+            let values = decoder.decode_f32(&values_data, num_nonzeros)?;
 
             // Reconstruct dense vectors from CSR
             let mut dense_vectors = vec![0.0f32; num_vectors * dimension];
@@ -1444,6 +1446,72 @@ impl RaptorEngine {
         let registry = self.file_registry.read().await;
         registry.active_files.len() >= self.config.compaction_threshold_files
     }
+
+    fn determine_storage_tier(base_path: &str) -> StorageTier {
+        if base_path.starts_with("s3://") {
+            if base_path.contains("express") {
+                StorageTier::S3Express
+            } else if base_path.contains("glacier") {
+                StorageTier::S3GlacierInstant
+            } else {
+                StorageTier::S3Standard
+            }
+        } else if base_path.starts_with("gs://") {
+            StorageTier::GcsSSD
+        } else if base_path.starts_with("azure://") {
+            StorageTier::AzurePremium
+        } else {
+            StorageTier::NVMe
+        }
+    }
+
+    fn reconstruct_vector_record(&self, batch: &RecordBatch, index: usize) -> Result<VectorRecord> {
+        let id = self.get_id_from_batch(batch, index)?;
+
+        let vector_column = batch
+            .column_by_name("vector")
+            .ok_or_else(|| anyhow::anyhow!("Vector column not found"))?;
+
+        // For RAPTOR, vectors are stored as flat Float32Array, not list
+        let float_array = vector_column
+            .as_any()
+            .downcast_ref::<arrow_array::Float32Array>()
+            .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
+        
+        // Assuming fixed dimension for all vectors
+        let dimension = float_array.len() / batch.num_rows();
+        let start = index * dimension;
+        let end = start + dimension;
+        
+        let vector = float_array.values()[start..end].to_vec();
+
+        let metadata_str = batch
+            .column_by_name("metadata")
+            .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>())
+            .map(|arr| arr.value(index))
+            .unwrap_or("");
+
+        let metadata_json: serde_json::Value = if metadata_str.is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(metadata_str)?
+        };
+        
+        // Convert JSON metadata to Vec<MetadataItem> using centralized utility
+        let metadata = if let Some(obj) = metadata_json.as_object() {
+            crate::core::utils::metadata_conversions::json_to_proto_metadata(obj.clone())
+        } else {
+            Vec::new()
+        };
+
+        Ok(VectorRecord {
+            id,
+            vector,
+            metadata,
+            version: Some(0),
+            ..Default::default()
+        })
+    }
 }
 
 #[async_trait]
@@ -1470,7 +1538,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
         let collection_dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension as usize)
+            .map(|cfg| cfg.dimension)
             .expect("Collection dimension should always be available since it's required in CollectionConfig");
 
         tracing::debug!(
@@ -1521,7 +1589,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
         let collection_dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.dimension as usize)
+            .map(|cfg| cfg.dimension)
             .expect("Collection dimension should always be available since it's required in CollectionConfig");
 
         tracing::debug!(
@@ -1872,97 +1940,6 @@ impl RaptorMetrics {
         } else {
             written as f32 / memory as f32
         }
-    }
-
-    fn determine_storage_tier(base_path: &str) -> StorageTier {
-        if base_path.starts_with("s3://") {
-            if base_path.contains("express") {
-                StorageTier::S3Express
-            } else if base_path.contains("glacier") {
-                StorageTier::S3GlacierInstant
-            } else {
-                StorageTier::S3Standard
-            }
-        } else if base_path.starts_with("gs://") {
-            StorageTier::GcsSSD
-        } else if base_path.starts_with("azure://") || base_path.starts_with("adls://") {
-            StorageTier::AzurePremium
-        } else if base_path.contains("nvme") {
-            StorageTier::NVMe
-        } else if base_path.contains("ssd") {
-            StorageTier::SSD
-        } else {
-            StorageTier::HDD
-        }
-    }
-
-    fn reconstruct_vector_record(&self, batch: &RecordBatch, index: usize) -> Result<VectorRecord> {
-        let id = self.get_id_from_batch(batch, index)?;
-
-        let vector_column = batch
-            .column_by_name("vector")
-            .ok_or_else(|| anyhow::anyhow!("Vector column not found"))?;
-        let float_array = vector_column
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
-
-        let dimension = float_array.len() / batch.num_rows();
-        let start = index * dimension;
-        let end = start + dimension;
-        let vector = float_array.values()[start..end].to_vec();
-
-        // Get metadata if present
-        let metadata = if let Some(metadata_column) = batch.column_by_name("metadata") {
-            let string_array = metadata_column.as_any().downcast_ref::<StringArray>();
-
-            if let Some(arr) = string_array {
-                if let Some(metadata_str) = arr.value(index).parse::<String>().ok() {
-                    serde_json::from_str(&metadata_str).unwrap_or_default()
-                } else {
-                    HashMap::<String, serde_json::Value>::new()
-                }
-            } else {
-                HashMap::new()
-            }
-        } else {
-            HashMap::new()
-        };
-
-        // Get version
-        let version = if let Some(version_column) = batch.column_by_name("version") {
-            let uint_array = version_column.as_any().downcast_ref::<UInt32Array>();
-
-            uint_array.and_then(|arr| Some(arr.value(index)))
-        } else {
-            None
-        };
-
-        // Get timestamp
-        let timestamp = if let Some(timestamp_column) = batch.column_by_name("timestamp") {
-            let int_array = timestamp_column.as_any().downcast_ref::<Int64Array>();
-
-            int_array.and_then(|arr| Some(arr.value(index) as u32))
-        } else {
-            None
-        };
-
-        Ok(VectorRecord {
-            id,
-            vector,
-            metadata: metadata
-                .into_iter()
-                .map(|(k, v)| crate::proto::proximadb::MetadataItem {
-                    key: k,
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                        v.to_string(),
-                    )),
-                })
-                .collect(),
-            version,
-            timestamp: timestamp.unwrap_or(0),
-            ..Default::default()
-        })
     }
 }
 

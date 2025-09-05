@@ -16,7 +16,7 @@ pub struct QuantizationSmartDefaults;
 
 impl QuantizationSmartDefaults {
     /// Generate smart default quantization config based on vector dimension and use case
-    pub fn generate_for_dimension(dimension: u32) -> Result<QuantizationConfig> {
+    pub fn generate_for_dimension(dimension: usize) -> Result<QuantizationConfig> {
         debug!(
             "🧠 Generating smart quantization defaults for dimension: {}",
             dimension
@@ -49,7 +49,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Create minimal quantization for small dimensions (preserve quality)
-    fn create_minimal_config(dimension: u32) -> QuantizationConfig {
+    fn create_minimal_config(dimension: usize) -> QuantizationConfig {
         QuantizationConfig {
             enabled: true,
             strategy: Strategy::Minimal as i32,
@@ -97,7 +97,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Create balanced config for medium dimensions
-    fn create_balanced_config(dimension: u32) -> QuantizationConfig {
+    fn create_balanced_config(dimension: usize) -> QuantizationConfig {
         QuantizationConfig {
             enabled: true,
             strategy: Strategy::SmartDefaults as i32,
@@ -163,7 +163,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Create full progressive config for large dimensions
-    fn create_progressive_config(dimension: u32) -> QuantizationConfig {
+    fn create_progressive_config(dimension: usize) -> QuantizationConfig {
         let num_subvectors = Self::calculate_optimal_subvectors(dimension);
 
         QuantizationConfig {
@@ -211,7 +211,7 @@ impl QuantizationSmartDefaults {
                     level_id: "pq8".to_string(),
                     r#type: QuantizationType::Product as i32,
                     bits: 8,
-                    num_subvectors: Some(num_subvectors),
+                    num_subvectors: Some(num_subvectors as u32),
                     adaptive_subvectors: Some(false),
                     scale: None,
                     offset: None,
@@ -249,7 +249,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Create aggressive config for very large dimensions
-    fn create_aggressive_config(dimension: u32) -> QuantizationConfig {
+    fn create_aggressive_config(dimension: usize) -> QuantizationConfig {
         let num_subvectors = Self::calculate_optimal_subvectors(dimension);
 
         QuantizationConfig {
@@ -279,7 +279,7 @@ impl QuantizationSmartDefaults {
                     level_id: "pq4".to_string(),
                     r#type: QuantizationType::Product as i32,
                     bits: 4,
-                    num_subvectors: Some(num_subvectors),
+                    num_subvectors: Some(num_subvectors as u32),
                     adaptive_subvectors: Some(true), // Enable adaptive for very large dims
                     scale: None,
                     offset: None,
@@ -297,7 +297,7 @@ impl QuantizationSmartDefaults {
                     level_id: "pq8".to_string(),
                     r#type: QuantizationType::Product as i32,
                     bits: 8,
-                    num_subvectors: Some(num_subvectors),
+                    num_subvectors: Some(num_subvectors as u32),
                     adaptive_subvectors: Some(false),
                     scale: None,
                     offset: None,
@@ -335,7 +335,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Calculate optimal number of subvectors for PQ based on dimension
-    fn calculate_optimal_subvectors(dimension: u32) -> i32 {
+    fn calculate_optimal_subvectors(dimension: usize) -> i32 {
         // Rule of thumb: subvectors = dimension / 8, with bounds [8, 64]
         let optimal = (dimension / 8).max(8).min(64);
 
@@ -353,7 +353,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Generate config based on use case pattern
-    pub fn generate_for_use_case(use_case: &str, dimension: u32) -> Result<QuantizationConfig> {
+    pub fn generate_for_use_case(use_case: &str, dimension: usize) -> Result<QuantizationConfig> {
         debug!(
             "🎯 Generating quantization config for use case: {}, dimension: {}",
             use_case, dimension
@@ -401,7 +401,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Validate quantization configuration for correctness
-    pub fn validate_config(config: &QuantizationConfig, dimension: u32) -> Result<()> {
+    pub fn validate_config(config: &QuantizationConfig, dimension: usize) -> Result<()> {
         if !config.enabled {
             return Ok(()); // No validation needed for disabled quantization
         }
@@ -437,7 +437,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Validate individual quantization level
-    fn validate_level(level: &QuantizationLevel, dimension: u32, index: usize) -> Result<()> {
+    fn validate_level(level: &QuantizationLevel, dimension: usize, index: usize) -> Result<()> {
         // Validate bits per element
         match level.r#type() {
             QuantizationType::Binary => {
@@ -477,7 +477,7 @@ impl QuantizationSmartDefaults {
                         ));
                     }
 
-                    if dimension % (subvectors as u32) != 0 {
+                    if dimension % (subvectors as usize) != 0 {
                         return Err(anyhow::anyhow!(
                             "PQ level {} subvectors {} must divide dimension {} evenly",
                             index,

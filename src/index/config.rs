@@ -263,9 +263,9 @@ impl IndexConfig {
                 max_partition_size: h.max_partition_size as u32,
                 adaptive_parameters: h.adaptive_parameters,
                 use_simd: h.use_simd,
-                memory_limit_mb: h.memory_limit_mb as i32,
+                memory_limit_mb: h.memory_limit_mb as u32,
                 lazy_loading: h.lazy_loading,
-                prune_connections: h.prune_connections as i32,
+                prune_connections: h.prune_connections as u32,
                 level_multiplier: h.level_multiplier,
             });
 
@@ -273,11 +273,11 @@ impl IndexConfig {
             .ivf_config
             .as_ref()
             .map(|i| crate::proto::proximadb::IvfConfig {
-                n_lists: i.n_lists as i32,
-                n_probe: i.n_probe as i32,
+                n_lists: i.n_lists as u32,
+                n_probe: i.n_probe as u32,
                 quantization_bits: i.quantization_bits as u32,
                 use_pq: i.use_pq,
-                pq_subspaces: i.pq_subspaces as i32,
+                pq_subspaces: i.pq_subspaces as u32,
                 train_on_insert: i.train_on_insert,
                 min_train_size: i.min_train_size as u32,
             });
@@ -286,11 +286,11 @@ impl IndexConfig {
             .lsh_config
             .as_ref()
             .map(|l| crate::proto::proximadb::LshConfig {
-                n_hash_tables: l.n_hash_tables as i32,
-                n_hash_functions: l.n_hash_functions as i32,
+                n_hash_tables: l.n_hash_tables,
+                n_hash_functions: l.n_hash_functions,
                 bucket_width: l.bucket_width,
                 binary_vectors: l.binary_vectors,
-                max_candidates: l.max_candidates as i32,
+                max_candidates: l.max_candidates,
                 projection: match l.projection {
                     RandomProjection::Gaussian => 0,
                     RandomProjection::Binary => 1,
@@ -311,7 +311,7 @@ impl IndexConfig {
                 },
             },
             update_mode,
-            async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as i64),
+            async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as u32),
             async_update_batch_size: self.async_update_batch_size.map(|b| b as u32),
             enable_background_optimization: self.enable_background_optimization,
             hnsw_config,
@@ -320,9 +320,9 @@ impl IndexConfig {
             pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected
             annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
             lsh_config,
-            build_concurrency: self.build_concurrency.map(|c| c as i32),
-            memory_limit_mb: self.memory_limit_mb.map(|m| m as i64),
-            checkpoint_interval_ms: self.checkpoint_interval_ms.map(|i| i as i32),
+            build_concurrency: self.build_concurrency.map(|x| x as u32),
+            memory_limit_mb: self.memory_limit_mb.map(|x| x as u32),
+            checkpoint_interval_ms: self.checkpoint_interval_ms.map(|x| x as u32),
             is_primary: true,            // Default to primary index
             use_cases: vec![],           // Default empty use cases
             selectivity_threshold: None, // Default no selectivity threshold

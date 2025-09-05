@@ -178,9 +178,13 @@ impl StreamingSearchEngine {
         );
         let quant_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+        let unified_quantization_engine = Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+        ));
         let quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::default()),
+                unified_quantization_engine.clone(),
                 distance_compute.clone(),
                 quant_config,
             ),
@@ -190,7 +194,7 @@ impl StreamingSearchEngine {
             config.progressive_config.clone(),
             crate::core::DistanceMetric::Euclidean, // Default metric
             distance_compute,
-            quantization_engine,
+            unified_quantization_engine.clone(),
         );
 
         let streaming_processor = StreamingRowGroupProcessor::new(config.streaming_config.clone());
@@ -562,7 +566,7 @@ impl StreamingSearchEngine {
             .iter()
             .map(|m| m.duration_ms)
             .sum::<u64>() as f32;
-        let max_stage_time = result.stage_metrics.iter().map(|m| m.duration_ms).max() as f32;
+        let max_stage_time = result.stage_metrics.iter().map(|m| m.duration_ms).max().unwrap_or(0) as f32;
 
         if total_time > 0.0 {
             max_stage_time / total_time

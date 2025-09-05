@@ -93,6 +93,9 @@ pub mod hardware_capabilities;
 /// Ultra-efficient enum packing for 75% storage savings
 pub mod enum_packing;
 
+/// Common utility functions (metadata conversion, vector ops, validation)
+pub mod utils;
+
 #[cfg(test)]
 mod config_tests;
 
@@ -202,7 +205,7 @@ impl VectorRecordSerialization for VectorRecord {
         buffer.write_all(&(vector_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(vector_bytes)?;
 
-        buffer.write_all(&(bincode_data.len() as u32).to_le_bytes())?;
+        buffer.write_all(&(bincode_data.len()).to_le_bytes())?;
         buffer.write_all(&bincode_data)?;
 
         Ok(buffer)

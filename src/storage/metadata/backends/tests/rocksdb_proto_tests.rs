@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::rocksdb_backend::*;
+    use super::super::super::local_rocksdb_backend::*;
     use crate::proto::proximadb::Collection;
     use crate::proto::proximadb::{
         Collection as Collection, CollectionConfig as CollectionConfig,
@@ -145,7 +145,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create RocksDB backend");
 
@@ -158,7 +158,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -186,7 +186,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -211,7 +211,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -249,7 +249,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -310,7 +310,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -357,7 +357,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -398,7 +398,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config)
+        let backend = LocalRocksDbBackend::new(config)
             .await
             .expect("Failed to create backend");
 
@@ -454,7 +454,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
-        let backend = RocksDbMetadataBackend::new(config.clone())
+        let backend = LocalRocksDbBackend::new(config.clone())
             .await
             .expect("Failed to create backend");
 

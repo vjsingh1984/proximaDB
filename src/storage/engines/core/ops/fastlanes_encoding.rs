@@ -16,6 +16,7 @@ use std::mem;
 // Reuse existing unified modules
 use crate::compute::quantization::StorageQuantizationEngine;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::core::compression::{decompress, CompressionAlgorithm, CompressionContext};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
 // ============================================================================
@@ -458,7 +459,7 @@ impl FastLanesEncoder {
         // Encode regular values
         let regular_bits = patch_bits;
         let regular_packed = self.bitpack_integers(&regular_values, regular_bits)?;
-        encoded.extend_from_slice(&(regular_values.len() as u32).to_le_bytes());
+        encoded.extend_from_slice(&(regular_values.len()).to_le_bytes());
         encoded.extend(regular_packed);
 
         // Encode patches
@@ -700,7 +701,7 @@ impl FastLanesDecoder {
 
                 // Step 1: Decompress columnar data
                 let simd_encoded = if algorithm != CompressionAlgorithm::None {
-                    decompress(&compressed_data, algorithm, num_vectors * 4 + 100)?
+                    decompress(&compressed_data, algorithm, CompressionContext::VectorSerialization)?
                 } else {
                     compressed_data
                 };

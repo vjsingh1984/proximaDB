@@ -297,7 +297,7 @@ impl AtomicMetadataStore {
                             .as_ref()
                             .map(|c| c.name.clone())
                             .unwrap_or_default(),
-                        dimension: collection.config.as_ref().map(|c| c.dimension).unwrap_or(0),
+                        dimension: collection.config.as_ref().map(|c| c.dimension as usize).unwrap_or(0),
                         distance_metric: collection
                             .config
                             .as_ref()
@@ -526,6 +526,9 @@ impl AtomicMetadataStore {
                 MetadataOperation::UpdateRetentionPolicy { collection_id, .. } => {
                     collection_ids.push(collection_id.clone());
                 }
+                MetadataOperation::UpdateSystemMetadata(_) => {
+                    // System metadata operations don't affect specific collections
+                }
             }
         }
 
@@ -629,7 +632,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                 id: versioned.id,
                 config: Some(crate::proto::proximadb::CollectionConfig {
                     name: versioned.name,
-                    dimension: versioned.dimension,
+                    dimension: versioned.dimension as u32,
                     distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
                     ..Default::default()
                 }),
@@ -715,7 +718,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     id: versioned.id,
                     config: Some(crate::proto::proximadb::CollectionConfig {
                         name: versioned.name,
-                        dimension: versioned.dimension,
+                        dimension: versioned.dimension as u32,
                         distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
                         ..Default::default()
                     }),

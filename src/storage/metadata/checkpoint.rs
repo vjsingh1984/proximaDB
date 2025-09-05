@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb::Collection;
-use crate::storage::metadata::backends::filestore_backend::{IncrementalOperation, OperationType};
+use crate::storage::metadata::backends::universal_backend::{IncrementalOperation, OperationType};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 // NOTE: Using unified CompactionConfig from unified_types.rs
@@ -139,7 +139,7 @@ impl FilestoreCheckpoint {
         let archive_path = self.archive_current_state(fs.as_ref()).await?;
 
         // Step 5: Clean up old archives
-        self.cleanup_old_archives(fs).await?;
+        self.cleanup_old_archives(fs.as_ref()).await?;
 
         // Update stats
         self.stats.last_checkpoint_time = Some(Utc::now());

@@ -145,7 +145,9 @@ pub fn configure_memory_pool_from_config(pool_size_mb: Option<usize>) {
 
     if let Some(size) = pool_size_mb {
         // Set environment variable for the lazy static to pick up
-        std::env::set_var("PROXIMADB_MEMORY_POOL_SIZE_MB", size.to_string());
+        unsafe {
+            std::env::set_var("PROXIMADB_MEMORY_POOL_SIZE_MB", size.to_string());
+        }
         tracing::info!("Configured memory pool size from server config: {}MB", size);
     }
 }
@@ -196,7 +198,7 @@ impl Default for UniversalIOConfig {
 }
 
 /// Universal performance optimization provider for all storage engines
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UniversalPerformanceOptimizer {
     /// I/O configuration
     io_config: UniversalIOConfig,

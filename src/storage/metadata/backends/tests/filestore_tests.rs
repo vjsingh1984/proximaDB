@@ -7,16 +7,16 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::filestore_backend::*;
+    use super::super::super::universal_backend::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn test_filestore_backend_create() {
+    async fn test_universal_backend_create() {
         // Basic creation test
         let filesystem_factory =
             Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
-        let config = FilestoreMetadataConfig {
+        let config = UniversalMetadataConfig {
             storage_url: "file:///tmp/test_metadata_info".to_string(),
             compression: true,
             enable_snapshots: false,
@@ -26,7 +26,7 @@ mod tests {
             temp_dir: None,
         };
 
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory)
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
             .await
             .expect("Failed to create filestore backend");
 

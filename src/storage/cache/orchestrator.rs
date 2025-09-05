@@ -188,7 +188,7 @@ impl AccessPatternTracker {
 
         for event in batch.drain(..) {
             // Record metrics if collector is available
-            if let Some(ref collector) = metrics_collector {
+            if let Some(collector) = &metrics_collector {
                 // Map cache type to collection ID for metrics
                 let collection_id = format!("cache_{:?}", event.cache_type);
                 collector

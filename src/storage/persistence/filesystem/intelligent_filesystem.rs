@@ -427,7 +427,7 @@ impl IntelligentFilesystem {
     /// Update metadata cache
     async fn update_metadata_cache(&self, path: &str, data: &[u8]) {
         // Extract metadata if this is a Parquet file
-        let metadata = if path.ends_with(".parquet") {
+        let metadata: Option<()> = if path.ends_with(".parquet") {
             // TODO: Extract Parquet metadata
             None
         } else {

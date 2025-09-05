@@ -46,7 +46,7 @@ impl SSTRowFilterEvaluator {
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
             let formatted_key = format!("idx_{}", index);
-            let cache_key = Some(record.id.as_str());
+            let cache_key = record.id.as_str();
             let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
 
             // Fast filter evaluation using centralized logic
@@ -80,7 +80,7 @@ impl SSTRowFilterEvaluator {
         for (index, record) in records.iter().enumerate() {
             // Use record ID or index as cache key
             let formatted_key = format!("idx_{}", index);
-            let cache_key = Some(record.id.as_str());
+            let cache_key = record.id.as_str();
             let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
 
             if self.evaluate_filter_fast(filter_expr, &metadata_map) {
@@ -146,7 +146,7 @@ impl SSTRowFilterEvaluator {
         record_id: &str,
         metadata: &[crate::proto::proximadb::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(&record_id) {
+        if let Some(cached) = self.metadata_cache.get(record_id) {
             return Ok(cached.clone());
         }
 
@@ -168,7 +168,7 @@ impl SSTRowFilterEvaluator {
         cache_key: &str,
         metadata: &[crate::proto::proximadb::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
-        if let Some(cached) = self.metadata_cache.get(&cache_key) {
+        if let Some(cached) = self.metadata_cache.get(cache_key) {
             return Ok(cached.clone());
         }
 

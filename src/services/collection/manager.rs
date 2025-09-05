@@ -53,9 +53,9 @@
 //!
 //! - **Upstream**: Called by `UnifiedHandlers` for all collection operations
 //! - **Downstream**:
-//!   - `FilestoreMetadataBackend` for metadata persistence
+//!   - `UniversalMetadataBackend` for metadata persistence
 //!   - `FilesystemFactory` for storage access
-//!   - Storage engines via `CollectionMetadataProvider` trait
+//!   - Storage engines via `InternalCollectionProvider` trait
 //!
 //! ## Performance Optimizations
 //!
@@ -74,9 +74,9 @@ use tracing::{debug, error, info, warn};
 // Using String directly instead of String alias for proto-first architecture
 use crate::core::config::StorageConfig;
 use crate::proto::proximadb::{Collection, CollectionConfig};
-use crate::storage::metadata::backends::filestore_backend::FilestoreMetadataBackend;
+use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::CollectionMetadataProvider;
+use crate::storage::traits::InternalCollectionProvider;
 
 // Proto-first architecture - use crate::proto::proximadb::Collection directly
 
@@ -90,7 +90,7 @@ enum StorageComponentType {
 
 /// Collection service for unified business logic with multi-disk coordination
 pub struct CollectionService {
-    metadata_backend: Arc<FilestoreMetadataBackend>,
+    metadata_backend: Arc<dyn InternalCollectionProvider>,
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
     /// Using dashmap for lock-free concurrent access
@@ -101,11 +101,21 @@ pub struct CollectionService {
 impl CollectionService {
     /// Create new collection service with multi-disk coordination
     pub async fn new(
-        metadata_backend: Arc<FilestoreMetadataBackend>,
+        metadata_backend: Arc<dyn InternalCollectionProvider>,
         storage_config: StorageConfig,
     ) -> Result<Self> {
+        // Create filesystem factory with proper config from storage_config
+        let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(storage_config.metadata_url.clone()),
+            local: None,
+            global_options: Default::default(),
+            auth_config: None,
+            performance_config: Default::default(),
+            scheme_mapping: Default::default(),
+        };
+        
         let filesystem_factory = Arc::new(
-            FilesystemFactory::new(Default::default())
+            FilesystemFactory::new(fs_config)
                 .await
                 .context("Failed to initialize filesystem factory")?,
         );
@@ -155,7 +165,7 @@ impl CollectionService {
         if enriched_config.quantization.is_none() {
             use crate::compute::quantization::QuantizationSmartDefaults;
 
-            match QuantizationSmartDefaults::generate_for_dimension(config.dimension as u32) {
+            match QuantizationSmartDefaults::generate_for_dimension(config.dimension as usize) {
                 Ok(smart_config) => {
                     enriched_config.quantization = Some(smart_config);
                     info!(
@@ -910,7 +920,7 @@ impl CollectionService {
     }
 
     /// Get access to the metadata backend for recovery operations
-    pub fn metadata_backend(&self) -> &Arc<FilestoreMetadataBackend> {
+    pub fn metadata_backend(&self) -> &Arc<dyn InternalCollectionProvider> {
         &self.metadata_backend
     }
 
@@ -1295,7 +1305,7 @@ impl CollectionService {
 impl std::fmt::Debug for CollectionService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CollectionService")
-            .field("metadata_backend", &"FilestoreMetadataBackend")
+            .field("metadata_backend", &"UniversalMetadataBackend")
             .field("assignment_service", &"AssignmentService")
             .field("filesystem_factory", &"FilesystemFactory")
             .field("index_config_cache_info", &"HashMap<String, IndexConfig>")
@@ -1358,18 +1368,25 @@ impl CollectionServiceResponse {
 
 /// Builder for collection service with dependencies
 pub struct CollectionServiceBuilder {
-    metadata_backend: Option<Arc<FilestoreMetadataBackend>>,
+    metadata_backend: Option<Arc<dyn InternalCollectionProvider>>,
+    storage_config: Option<StorageConfig>,
 }
 
 impl CollectionServiceBuilder {
     pub fn new() -> Self {
         Self {
             metadata_backend: None,
+            storage_config: None,
         }
     }
 
-    pub fn with_metadata_backend(mut self, backend: Arc<FilestoreMetadataBackend>) -> Self {
+    pub fn with_metadata_backend(mut self, backend: Arc<dyn InternalCollectionProvider>) -> Self {
         self.metadata_backend = Some(backend);
+        self
+    }
+    
+    pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
+        self.storage_config = Some(config);
         self
     }
 
@@ -1377,10 +1394,10 @@ impl CollectionServiceBuilder {
         let metadata_backend = self
             .metadata_backend
             .ok_or_else(|| anyhow::anyhow!("Metadata backend is required"))?;
+        
+        let storage_config = self.storage_config.unwrap_or_default();
 
-        // Use default storage config if not provided
-        // In production, this should be provided from the server config
-        CollectionService::new(metadata_backend, StorageConfig::default()).await
+        CollectionService::new(metadata_backend, storage_config).await
     }
 }
 
@@ -1398,8 +1415,8 @@ mod tests {
     #[tokio::test]
     async fn test_collection_validation() {
         // Use filestore backend with temporary directory for testing
-        use crate::storage::metadata::backends::filestore_backend::{
-            FilestoreMetadataBackend, FilestoreMetadataConfig,
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
         };
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
@@ -1407,7 +1424,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = format!("file://{}", temp_dir.path().display());
 
-        let filestore_config = FilestoreMetadataConfig {
+        let filestore_config = UniversalMetadataConfig {
             storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
@@ -1421,7 +1438,7 @@ mod tests {
         let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
 
         let backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
                 .unwrap(),
         );
@@ -1510,8 +1527,8 @@ mod tests {
     #[tokio::test]
     async fn test_collection_name_length_validation() {
         // Create a minimal test setup
-        use crate::storage::metadata::backends::filestore_backend::{
-            FilestoreMetadataBackend, FilestoreMetadataConfig,
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
         };
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
@@ -1519,7 +1536,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = format!("file://{}", temp_dir.path().display());
 
-        let filestore_config = FilestoreMetadataConfig {
+        let filestore_config = UniversalMetadataConfig {
             storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
@@ -1533,7 +1550,7 @@ mod tests {
         let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
 
         let backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
                 .unwrap(),
         );
@@ -1613,24 +1630,7 @@ mod tests {
     }
 }
 
-// Implement CollectionMetadataProvider trait to break circular dependency
-#[async_trait]
-impl CollectionMetadataProvider for CollectionService {
-    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>> {
-        // Call the actual implementation method to avoid recursion
-        self.uuid(collection_id).await
-    }
-
-    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
-        self.get_native_proto(collection_id).await
-    }
-
-    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
-        // Call the actual implementation method to avoid recursion
-        self.collection(collection_id).await
-    }
-
-    async fn list_collections(&self) -> Result<Vec<Collection>> {
-        self.metadata_backend.list_collections().await
-    }
-}
+// CollectionService does NOT implement MetadataProvider - it USES a MetadataProvider backend!
+// The backend (LocalRocksDbBackend or UniversalMetadataBackend) implements MetadataProvider.
+// CollectionService can implement InternalCollectionProvider if needed for backward compatibility,
+// but it delegates to its metadata_backend which is the actual MetadataProvider.

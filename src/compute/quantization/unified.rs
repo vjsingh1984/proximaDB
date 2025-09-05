@@ -40,6 +40,9 @@ pub struct UnifiedQuantizationEngine {
 
     /// Hardware-accelerated quantization
     accelerated: AcceleratedQuantization,
+    
+    /// Codebook cache for fast access during sync operations
+    codebook_cache: Arc<std::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
 }
 
 /// Trait for codebook storage (can be backed by LSM, VIPER, or external store)
@@ -139,6 +142,7 @@ impl UnifiedQuantizationEngine {
             distance_compute,
             codebook_store,
             accelerated: AcceleratedQuantization::new(),
+            codebook_cache: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -322,8 +326,10 @@ impl UnifiedQuantizationEngine {
                 self.quantize_binary(vector, b.threshold.as_ref())
             }
 
-            Some(QuantizationLevel::Custom(_)) => {
-                anyhow::bail!("Custom quantization not yet implemented")
+            Some(QuantizationLevel::Custom(c)) => {
+                // Custom quantization allows user-defined compression schemes
+                // We'll implement a flexible approach that supports various custom methods
+                self.quantize_custom(vector, c)
             }
         }
     }
@@ -913,6 +919,153 @@ impl UnifiedQuantizationEngine {
         })
     }
 
+    fn quantize_custom(&self, vector: &[f32], custom: &CustomQuantization) -> Result<QuantizedVector> {
+        // Implement flexible custom quantization based on type_id
+        let quantized_data = match custom.type_id.as_str() {
+            "logarithmic" => {
+                // Logarithmic quantization for values with exponential distribution
+                self.quantize_logarithmic(vector, &custom.config)?
+            }
+            "adaptive" => {
+                // Adaptive quantization based on data distribution
+                self.quantize_adaptive(vector, &custom.config)?
+            }
+            "sparse" => {
+                // Sparse quantization for mostly-zero vectors
+                self.quantize_sparse(vector, &custom.config)?
+            }
+            "hybrid" => {
+                // Hybrid approach combining multiple techniques
+                self.quantize_hybrid(vector, &custom.config)?
+            }
+            _ => {
+                // Fallback to user-provided custom implementation or default
+                if !custom.config.is_empty() {
+                    // Use custom parameters to guide quantization
+                    self.apply_custom_transform(vector, &custom.config)?
+                } else {
+                    // Default custom quantization: adaptive INT8
+                    self.quantize_to_int8(vector)?
+                }
+            }
+        };
+
+        Ok(QuantizedVector {
+            data: quantized_data,
+            quantization_level: UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::Custom(custom.clone())),
+            },
+            metadata: QuantizationMetadata {
+                codebook_id: None,
+                scale: None,
+                offset: None,
+                norm: Some(
+                    vector.iter().map(|x| x * x).sum::<f32>().sqrt()
+                ),
+            },
+        })
+    }
+
+    fn quantize_logarithmic(&self, vector: &[f32], config: &std::collections::HashMap<String, String>) -> Result<Vec<u8>> {
+        // Logarithmic scale quantization for high dynamic range
+        let base = config.get("base")
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(2.0);
+        let mut result = Vec::with_capacity(vector.len());
+        
+        for &val in vector {
+            let sign = val.signum() as i8;
+            let log_val = if val.abs() > 1e-6 {
+                (val.abs().ln() / base.ln()).round() as i8
+            } else {
+                i8::MIN
+            };
+            result.push(((sign + 1) << 7) as u8 | (log_val.abs() as u8));
+        }
+        
+        Ok(result)
+    }
+
+    fn quantize_adaptive(&self, vector: &[f32], _config: &std::collections::HashMap<String, String>) -> Result<Vec<u8>> {
+        // Adaptive quantization based on value distribution
+        let (min, max) = vector.iter()
+            .fold((f32::INFINITY, f32::NEG_INFINITY), |(min, max), &v| {
+                (min.min(v), max.max(v))
+            });
+        
+        let scale = if max > min { 255.0 / (max - min) } else { 1.0 };
+        
+        Ok(vector.iter()
+            .map(|&v| ((v - min) * scale).round() as u8)
+            .collect())
+    }
+
+    fn quantize_sparse(&self, vector: &[f32], config: &std::collections::HashMap<String, String>) -> Result<Vec<u8>> {
+        // Sparse encoding for vectors with many zeros
+        let threshold = config.get("threshold")
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(1e-6);
+        let mut indices = Vec::new();
+        let mut values = Vec::new();
+        
+        for (i, &val) in vector.iter().enumerate() {
+            if val.abs() > threshold {
+                indices.extend_from_slice(&(i as u16).to_le_bytes());
+                values.extend_from_slice(&val.to_le_bytes());
+            }
+        }
+        
+        // Format: [num_non_zero:u32][indices][values]
+        let mut result = (indices.len() as u32 / 2).to_le_bytes().to_vec();
+        result.extend(indices);
+        result.extend(values);
+        
+        Ok(result)
+    }
+
+    fn quantize_hybrid(&self, vector: &[f32], _config: &std::collections::HashMap<String, String>) -> Result<Vec<u8>> {
+        // Hybrid approach: use different quantization for different parts
+        let third = vector.len() / 3;
+        let mut result = Vec::new();
+        
+        // First third: binary quantization for sign
+        result.extend(self.quantize_binary(&vector[..third], None)?.data);
+        
+        // Second third: U4 as INT4 equivalent for medium precision
+        let (u4_data, _, _, _) = self.quantize_to_u4(&vector[third..2*third])?;
+        result.extend(u4_data);
+        
+        // Last third: INT8 for higher precision
+        result.extend(self.quantize_to_int8(&vector[2*third..])?);
+        
+        Ok(result)
+    }
+
+    fn apply_custom_transform(&self, vector: &[f32], config: &std::collections::HashMap<String, String>) -> Result<Vec<u8>> {
+        // Generic custom transformation based on parameters
+        if let Some(transform_type) = config.get("type") {
+            match transform_type.as_str() {
+                "delta" => {
+                    // Delta encoding for smooth signals
+                    let mut result = Vec::new();
+                    let mut prev = 0.0f32;
+                    for &val in vector {
+                        let delta = (val - prev) * 127.0;
+                        result.push(delta.round().clamp(-128.0, 127.0) as i8 as u8);
+                        prev = val;
+                    }
+                    Ok(result)
+                }
+                _ => {
+                    // Fallback to INT8
+                    Ok(self.quantize_to_int8(vector)?)
+                }
+            }
+        } else {
+            Ok(self.quantize_to_int8(vector)?)
+        }
+    }
+
     fn dequantize_fp32(&self, bytes: &[u8]) -> Result<Vec<f32>> {
         if bytes.len() % 4 != 0 {
             anyhow::bail!("Invalid FP32 byte array length");
@@ -951,6 +1104,112 @@ impl UnifiedQuantizationEngine {
     ) -> Result<Vec<f32>> {
         // Same as scalar for now
         self.dequantize_scalar(bytes, bits, scale, offset)
+    }
+
+    fn dequantize_binary(&self, bytes: &[u8], dimension: usize) -> Result<Vec<f32>> {
+        let mut result = Vec::with_capacity(dimension);
+        
+        for i in 0..dimension {
+            let byte_idx = i / 8;
+            let bit_idx = i % 8;
+            
+            if byte_idx < bytes.len() {
+                let bit = (bytes[byte_idx] >> bit_idx) & 1;
+                result.push(if bit == 1 { 1.0 } else { 0.0 });
+            } else {
+                result.push(0.0);
+            }
+        }
+        
+        Ok(result)
+    }
+
+    fn dequantize_pq(&self, codes: &[u8], codebook: &Codebook, dimension: usize) -> Result<Vec<f32>> {
+        let CodebookData::ProductQuantization {
+            centroids,
+            subvector_dim,
+        } = &codebook.data
+        else {
+            anyhow::bail!("Invalid codebook type for PQ dequantization");
+        };
+        
+        let mut result = Vec::with_capacity(dimension);
+        
+        for (i, &code) in codes.iter().enumerate() {
+            if i < centroids.len() && (code as usize) < centroids[i].len() {
+                let centroid = &centroids[i][code as usize];
+                result.extend_from_slice(centroid);
+            }
+        }
+        
+        // Ensure we have the right dimension
+        result.resize(dimension, 0.0);
+        Ok(result)
+    }
+
+    fn dequantize_custom(&self, bytes: &[u8], custom: &CustomQuantization) -> Result<Vec<f32>> {
+        // Dequantize based on custom algorithm
+        match custom.type_id.as_str() {
+            "logarithmic" => {
+                // Inverse logarithmic transformation
+                let scale = custom.config.get("scale")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(10.0);
+                
+                Ok(bytes.iter().map(|&b| {
+                    let normalized = b as f32 / 255.0;
+                    scale.powf(normalized) - 1.0
+                }).collect())
+            }
+            "adaptive" => {
+                // Use stored min/max for dequantization
+                let min = custom.config.get("min")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(-1.0);
+                let max = custom.config.get("max")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(1.0);
+                
+                Ok(bytes.iter().map(|&b| {
+                    let normalized = b as f32 / 255.0;
+                    min + normalized * (max - min)
+                }).collect())
+            }
+            "sparse" => {
+                // Reconstruct sparse vector from indices and values
+                let dimension = custom.config.get("dimension")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(0);
+                
+                let mut result = vec![0.0; dimension];
+                
+                // Assume bytes encode (index, value) pairs
+                for chunk in bytes.chunks_exact(5) {
+                    if chunk.len() == 5 {
+                        let idx = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize;
+                        let val = chunk[4] as f32 / 255.0;
+                        if idx < dimension {
+                            result[idx] = val;
+                        }
+                    }
+                }
+                
+                Ok(result)
+            }
+            _ => {
+                // Generic dequantization for unknown custom types
+                self.dequantize_scalar(bytes, 8, 1.0, 0.0)
+            }
+        }
+    }
+
+    fn get_cached_codebook(&self, codebook_id: &str) -> Option<Codebook> {
+        // Check codebook cache
+        self.codebook_cache
+            .read()
+            .unwrap()
+            .get(codebook_id)
+            .cloned()
     }
 
     /// Dequantize 4-bit packed values back to f32
@@ -1323,15 +1582,40 @@ impl UnifiedQuantizationEngine {
 
     /// Synchronous dequantize for use in distance calculations
     fn dequantize_sync(&self, quantized_vector: &QuantizedVector) -> Result<Vec<f32>> {
-        // For now, use a simple implementation
-        // In production, this would use async runtime or cached results
         match &quantized_vector.quantization_level.level_type {
             None | Some(QuantizationLevel::None(_)) => {
                 Ok(self.bytes_to_f32(&quantized_vector.data))
             }
-            _ => {
-                // TODO: Implement sync dequantization for other types
-                anyhow::bail!("Sync dequantization not implemented for this type")
+            Some(QuantizationLevel::Scalar(s)) => {
+                self.dequantize_scalar(&quantized_vector.data, s.bits as u8, s.scale, s.offset)
+            }
+            Some(QuantizationLevel::Uniform(u)) => self.dequantize_uniform(
+                &quantized_vector.data,
+                u.bits as u8,
+                u.scale.unwrap_or(1.0),
+                u.offset.unwrap_or(0.0),
+            ),
+            Some(QuantizationLevel::Binary(binary)) => {
+                // Binary vectors have dimension encoded in the quantization level
+                // For now, use a reasonable default dimension
+                let dimension = 128; // This should be stored in metadata or config
+                self.dequantize_binary(&quantized_vector.data, dimension)
+            }
+            Some(QuantizationLevel::Pq(pq)) => {
+                // For PQ, we need the codebook which should be cached
+                // Use cached codebook if available, otherwise return error
+                let codebook_id = pq.codebook_id.as_deref().unwrap_or("default");
+                if let Some(codebook) = self.get_cached_codebook(codebook_id) {
+                    // Dimension can be inferred from codebook
+                    let dimension = 128; // This should be stored in metadata or config
+                    self.dequantize_pq(&quantized_vector.data, &codebook, dimension)
+                } else {
+                    anyhow::bail!("Codebook {} not found in cache for sync dequantization", codebook_id)
+                }
+            }
+            Some(QuantizationLevel::Custom(c)) => {
+                // Custom dequantization using cached parameters
+                self.dequantize_custom(&quantized_vector.data, c)
             }
         }
     }

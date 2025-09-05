@@ -309,8 +309,8 @@ message SourceContent {
   
   // Essential metadata (optimized for performance)
   string mime_type = 10;               // MIME type: text/plain, image/jpeg, video/mp4
-  int64 size_bytes = 11;               // Original size in bytes
-  optional int64 compressed_size = 12; // Size after compression (if applicable)
+  uint64 size_bytes = 11;               // Original size in bytes (needs u64 for large files)
+  optional uint64 compressed_size = 12; // Size after compression (needs u64 for large files)
   optional uint32 checksum = 15;      // CRC32 for integrity
   
   // Processing metadata (lightweight reference-based)
@@ -386,7 +386,7 @@ message ProcessingInfo {
   optional uint32 packed_enums = 2;              // Packed: [extraction(8), status(8), quality(8), source(8)]
   
   // Lightweight processing metadata (essential only)
-  optional int64 processing_time_ms = 10;        // Performance monitoring
+  optional uint32 processing_time_ms = 10;        // Performance monitoring in ms (max: ~49 days)
   optional uint32 processor_version = 11;        // Processor version
 }
 
@@ -398,7 +398,7 @@ message ProcessingInfo {
 
 // Cache policy for external content
 message CachePolicy {
-  int64 ttl_seconds = 1;               // Time to live in cache
+  uint32 ttl_seconds = 1;               // Time to live in cache in seconds (max: ~136 years)
   bool prefetch = 2;                   // Prefetch on search
   string tier = 3;                     // hot, warm, cold
 }
@@ -408,8 +408,8 @@ message VectorRecord {
   string id = 1;                             // MANDATORY: Unique identifier for correlation (changed from optional)
   repeated float vector = 2;                 // REQUIRED for inserts
   repeated MetadataItem metadata = 3;        // Efficient key-value metadata (no JSON parsing)
-  uint32 timestamp = 4;                      // Record timestamp - seconds since epoch (compact, unsigned)
-  optional uint32 updated_at = 5;            // Only set if different from timestamp (saves bytes when not updated)
+  uint32 timestamp = 4;                      // Record timestamp - seconds since epoch
+  optional uint32 updated_at = 5;            // Only set if different from timestamp (seconds since epoch)
   optional uint32 expires_at = 6;            // TTL support (seconds since epoch)
   optional uint32 version = 7;               // For optimistic concurrency (optional to save bytes)
   
@@ -432,7 +432,7 @@ message SearchVectorRecord {
   
   // Optional fields for detailed results
   optional uint32 version = 6;               // Version (if versioning enabled)
-  optional uint32 timestamp = 7;             // When record was created
+  optional uint32 timestamp = 7;             // When record was created (seconds since epoch)
   
   // NEW: Source content (if requested)
   optional SourceContent source = 10;        // Original content that generated this vector
@@ -449,7 +449,7 @@ message MetadataMap {
 message MetadataValue {
   oneof value {
     string string_value = 1;
-    int64 int_value = 2;
+    int64 int_value = 2;  // General integer values (can be negative or large)
     double double_value = 3;
     bool bool_value = 4;
     StringArray string_array = 5;
@@ -463,7 +463,7 @@ message StringArray {
 }
 
 message Int64Array {
-  repeated int64 values = 1;
+  repeated int64 values = 1;  // General integer array (can be negative or large)
 }
 
 message DoubleArray {
@@ -517,7 +517,7 @@ message IndexConfig {
   string index_name = 1;                           // Unique name for this index
   IndexingAlgorithm algorithm = 2;                 // Algorithm for this specific index
   IndexUpdateMode update_mode = 3;                 // Sync/async index updates
-  optional int64 async_update_timeout_ms = 4;      // Timeout for async updates
+  optional uint32 async_update_timeout_ms = 4;      // Timeout for async updates in ms (max: ~49 days)
   optional uint32 async_update_batch_size = 5;     // Batch size for async updates
   bool enable_background_optimization = 6;         // Background index optimization
   
@@ -530,9 +530,9 @@ message IndexConfig {
   optional LshConfig lsh_config = 12;              // Configuration for LSH index
   
   // Performance tuning
-  optional int32 build_concurrency = 13;           // Parallel index building
-  optional int64 memory_limit_mb = 14;             // Memory limit per index
-  optional int32 checkpoint_interval_ms = 15;      // Index checkpoint frequency
+  optional uint32 build_concurrency = 13;          // Parallel index building threads
+  optional uint32 memory_limit_mb = 14;            // Memory limit per index in MB (max: 4TB)
+  optional uint32 checkpoint_interval_ms = 15;     // Index checkpoint frequency in ms (max: ~49 days)
   
   // Index usage configuration
   bool is_primary = 16;                            // Whether this is the primary index
@@ -578,19 +578,19 @@ message HnswConfig {
   uint32 max_partition_size = 4;                   // Maximum vectors per partition (default: 100000)
   bool adaptive_parameters = 5;                    // Dynamic parameter tuning (default: true)
   bool use_simd = 6;                              // SIMD optimizations (default: true)
-  int32 memory_limit_mb = 7;                      // Memory limit per partition (default: 512)
+  uint32 memory_limit_mb = 7;                      // Memory limit per partition in MB (max: 4TB with u32)
   bool lazy_loading = 8;                          // Lazy loading for large partitions (default: true)
-  int32 prune_connections = 9;                    // Connection pruning threshold (default: 0 = disabled)
+  uint32 prune_connections = 9;                    // Connection pruning threshold (default: 0 = disabled)
   float level_multiplier = 10;                    // Level generation multiplier (default: 1/ln(2))
 }
 
 // IVF algorithm configuration
 message IvfConfig {
-  int32 n_lists = 1;                              // Number of clusters (default: sqrt(N))
-  int32 n_probe = 2;                              // Number of clusters to search (default: 1)
+  uint32 n_lists = 1;                              // Number of clusters (default: sqrt(N))
+  uint32 n_probe = 2;                              // Number of clusters to search (default: 1)
   uint32 quantization_bits = 3;                   // Bits for quantization (default: 8)
   bool use_pq = 4;                                // Use product quantization (default: false)
-  int32 pq_subspaces = 5;                         // PQ subspaces (default: 8)
+  uint32 pq_subspaces = 5;                         // PQ subspaces (default: 8)
   bool train_on_insert = 6;                       // Retrain on every insert (default: false)
   uint32 min_train_size = 7;                      // Minimum size to trigger training (default: 1000)
 }
@@ -604,7 +604,7 @@ message FlatConfig {
 
 // Product Quantization index configuration
 message PqConfig {
-  int32 subvectors = 1;                           // Number of subvectors (default: 8)
+  uint32 subvectors = 1;                           // Number of subvectors (default: 8)
   uint32 bits_per_subvector = 2;                  // Bits per subvector (default: 8)
   uint32 training_sample_count = 3;               // Training samples (default: 10000)
   bool enable_reranking = 4;                      // Enable full-precision reranking (default: true)
@@ -612,19 +612,19 @@ message PqConfig {
 
 // Annoy index configuration  
 message AnnoyConfig {
-  int32 n_trees = 1;                              // Number of trees (default: 10)
-  int32 search_k = 2;                             // Search parameter (default: -1)
+  uint32 n_trees = 1;                              // Number of trees (default: 10)
+  uint32 search_k = 2;                             // Search parameter (default: n_trees * n)
   uint32 max_leaf_size = 3;                       // Maximum leaf size (default: 100)
   bool enable_mmap = 4;                           // Memory-map index files (default: true)
 }
 
 // LSH index configuration
 message LshConfig {
-  int32 n_hash_tables = 1;                        // Number of hash tables (default: 10)
-  int32 n_hash_functions = 2;                      // Hash functions per table (default: 8) 
+  uint32 n_hash_tables = 1;                        // Number of hash tables (default: 10)
+  uint32 n_hash_functions = 2;                      // Hash functions per table (default: 8) 
   float bucket_width = 3;                         // Bucket width for LSH (default: 4.0)
   bool binary_vectors = 4;                        // Support binary vectors (default: false)
-  int32 max_candidates = 5;                       // Max candidates to check (default: 100)
+  uint32 max_candidates = 5;                       // Max candidates to check (default: 100)
   RandomProjectionType projection = 6;            // Projection type (default: GAUSSIAN)
 }
 
@@ -708,7 +708,7 @@ message StorageConfig {
   optional AccessPattern access_pattern = 5;       // Expected access pattern
   optional DataDensity data_density = 6;           // Data density characteristics
   optional bool frequent_updates = 7;              // Whether data is frequently updated
-  optional int64 expected_size_gb = 8;             // Expected collection size in GB
+  optional uint32 expected_size_mb = 8;             // Expected collection size in MB (max: 4PB with u32)
   optional float read_write_ratio = 9;             // Read/write ratio (1.0 = balanced)
   
   // Quick presets for common use cases
@@ -758,9 +758,9 @@ message SourceStorageConfig {
 // Dynamic storage tiering policy (handles unknown sizes at ingestion time)
 message StorageTieringPolicy {
   // Size-based thresholds (can be adjusted by compaction)
-  int64 inline_threshold = 1;                   // < N bytes: store inline (default: 100KB)
-  int64 block_threshold = 2;                    // < N bytes: store in blocks (default: 1MB)
-  int64 file_threshold = 3;                     // < N bytes: store as files (default: 10MB)
+  uint64 inline_threshold = 1;                   // < N bytes: store inline (default: 100KB)
+  uint64 block_threshold = 2;                    // < N bytes: store in blocks (default: 1MB)
+  uint64 file_threshold = 3;                     // < N bytes: store as files (default: 10MB)
   // > file_threshold: external storage
   
   // Access pattern based promotion/demotion during compaction
@@ -776,8 +776,8 @@ message StorageTieringPolicy {
 
 // Access-based tiering for compaction (promotes hot data, demotes cold data)
 message AccessBasedTiering {
-  int32 access_threshold_promote = 1;           // Promote after N accesses
-  int64 age_threshold_demote = 2;               // Demote after N seconds without access
+  uint32 access_threshold_promote = 1;           // Promote after N accesses
+  uint32 age_threshold_demote = 2;               // Demote after N seconds without access
   float hot_data_ratio = 3;                    // Keep N% of data in hot tier (default: 0.1)
   bool track_access_patterns = 4;              // Enable access tracking (default: true)
 }
@@ -800,8 +800,8 @@ enum StorageTier {
 // Compression policy per content type
 message CompressionPolicy {
   string algorithm = 1;                        // zstd, lz4, gzip, snappy, none
-  int32 level = 2;                            // Compression level (1-22 for zstd)
-  int64 min_size_to_compress = 3;             // Don't compress below N bytes
+  uint32 level = 2;                            // Compression level (1-22 for zstd)
+  uint64 min_size_to_compress = 3;             // Don't compress below N bytes
   bool adaptive_level = 4;                     // Adjust level based on content type
 }
 
@@ -811,7 +811,7 @@ message ExternalStorageConfig {
   string bucket = 2;                           // Bucket/container name
   string prefix = 3;                           // Path prefix
   map<string, string> credentials = 4;         // Access credentials
-  int64 signed_url_expiry = 5;                 // URL expiry in seconds
+  uint32 signed_url_expiry = 5;                 // URL expiry in seconds
   bool enable_cdn = 6;                         // Enable CDN for retrieval
 }
 
@@ -819,11 +819,11 @@ message ExternalStorageConfig {
 message ChunkingConfig {
   bool enabled = 1;                            // Enable automatic chunking
   ChunkingStrategy strategy = 2;               // Chunking strategy
-  int32 chunk_size = 3;                        // Target chunk size in tokens/chars
-  int32 overlap = 4;                           // Overlap between chunks
+  uint32 chunk_size = 3;                        // Target chunk size in tokens/chars
+  uint32 overlap = 4;                           // Overlap between chunks
   bool preserve_sentences = 5;                 // Don't break sentences
   bool include_context = 6;                    // Include surrounding context
-  int32 context_window = 7;                    // Context window size
+  uint32 context_window = 7;                    // Context window size
 }
 
 enum ChunkingStrategy {
@@ -838,8 +838,8 @@ enum ChunkingStrategy {
 // Source content caching configuration
 message CacheConfig {
   bool enabled = 1;                            // Enable source caching
-  int64 cache_size_mb = 2;                     // Cache size in MB
-  int64 ttl_seconds = 3;                       // Cache TTL
+  uint32 cache_size_mb = 2;                     // Cache size in MB (max: 4TB)
+  uint32 ttl_seconds = 3;                       // Cache TTL in seconds (max: ~136 years)
   bool cache_hot_only = 4;                     // Only cache hot tier content
   CacheEvictionPolicy eviction = 5;           // Eviction policy
 }
@@ -880,16 +880,16 @@ message ParquetWriterSettings {
 // Footer cache settings for cloud storage optimization
 message FooterCacheSettings {
   optional bool enable = 1;
-  optional int64 max_entries = 2;
-  optional int64 ttl_seconds = 3;
-  optional int64 time_to_idle_seconds = 4;
+  optional uint32 max_entries = 2;  // Maximum cache entries
+  optional uint32 ttl_seconds = 3;  // Time to live in seconds
+  optional uint32 time_to_idle_seconds = 4;  // Time to idle before eviction in seconds
   optional bool enable_persistence = 5;
   optional string persistence_path = 6;
   optional bool enable_prefetch = 7;
-  optional int64 prefetch_threshold = 8;
-  optional int64 warming_interval_seconds = 9;
+  optional uint32 prefetch_threshold = 8;  // Prefetch threshold
+  optional uint32 warming_interval_seconds = 9;  // Cache warming interval in seconds
   optional bool enable_compression = 10;
-  optional uint32 compression_level = 11;
+  optional uint32 compression_level = 11;  // Compression level for cached data
 }
 
 // Hybrid writer settings for adaptive performance
@@ -902,7 +902,7 @@ message HybridWriterSettings {
   optional float streaming_threshold = 6;
   optional uint32 batch_threshold = 7;
   optional uint32 max_buffer_size = 8;
-  optional int64 buffer_time_limit_seconds = 9;
+  optional uint32 buffer_time_limit_seconds = 9;  // Buffer time limit in seconds
   optional bool enable_concurrent_writes = 10;
   optional uint32 max_concurrent_writers = 11;
   optional bool optimize_row_group_size = 12;
@@ -915,8 +915,8 @@ message SstEngineSettings {
   optional bool enable_bloom_filters = 1;
   optional float bloom_filter_fpp = 2;
   optional CompressionAlgorithm compression = 3;
-  optional uint32 compression_level = 4;
-  optional int64 write_buffer_size = 5;
+  optional uint32 compression_level = 4;  // Compression level
+  optional uint64 write_buffer_size = 5;  // Write buffer size in bytes
   optional uint32 max_write_buffers = 6;
   optional uint32 block_size_kb = 7;
   optional bool dynamic_block_sizing = 8;
@@ -976,7 +976,7 @@ message QuantizationConfig {
   float pq_ranking_selectivity = 7;      // PQ ranking selectivity (default: 0.05 = 5% for rerank)
 
   // Training and quality settings
-  int32 training_sample_size = 8;        // Samples for codebook training (default: 10000)
+  uint32 training_sample_size = 8;        // Samples for codebook training (default: 10000)
   float quality_threshold = 9;           // Minimum acceptable recall (default: 0.95)
   bool enable_adaptive_training = 10;    // Retrain on data distribution changes (default: true)
 
@@ -1021,10 +1021,10 @@ message QuantizationLevel {
   QuantizationType type = 2;
 
   // Bits per code/element
-  int32 bits = 3;                       // 1 (binary), 4, 8, 16, 32
+  uint32 bits = 3;                       // 1 (binary), 4, 8, 16, 32
 
   // Product quantization specific settings (when type=PRODUCT)
-  optional int32 num_subvectors = 4;    // Number of subvectors for PQ
+  optional uint32 num_subvectors = 4;    // Number of subvectors for PQ
   optional bool adaptive_subvectors = 5; // Auto-adjust subvectors based on dimension
 
   // Scalar quantization specific settings (when type=SCALAR)  
@@ -1039,7 +1039,7 @@ message QuantizationLevel {
   // Level-specific performance settings
   optional bool enable_in_storage = 11; // Store this level in storage engine (default: true)
   optional bool enable_in_index = 12;   // Use this level in AXIS indexes (default: inherit)
-  optional int32 search_priority = 13;  // Search order (lower = earlier, 0=first filter)
+  optional uint32 search_priority = 13;  // Search order (lower = earlier, 0=first filter)
 
   // Quality and validation settings
   optional float min_recall = 14;       // Minimum recall required for this level (default: 0.8)
@@ -1053,7 +1053,7 @@ message FilterableColumnSpec {
   FilterableDataType data_type = 2;         // Data type for Parquet schema
   bool indexed = 3;                         // Whether to create an index
   bool supports_range = 4;                  // Whether this column supports range queries
-  optional int32 estimated_cardinality = 5; // Estimated cardinality for optimization
+  optional uint32 estimated_cardinality = 5; // Estimated cardinality for optimization
   optional ColumnEncoding encoding_hint = 6; // Column-specific encoding for VIPER (RLE, Dictionary, etc.)
 }
 
@@ -1140,7 +1140,7 @@ message CollectionResponse {
 message VectorBatchRequest {
   string collection_id = 1;                 // Collection identifier
   repeated VectorRecord vectors = 2;        // Pure proto vector records (proto-first architecture)
-  optional int64 batch_timeout_ms = 3;      // Optional batch processing timeout
+  optional uint32 batch_timeout_ms = 3;      // Optional batch processing timeout in ms
   optional string request_id = 4;           // Optional request tracking ID
 }
 
@@ -1150,7 +1150,7 @@ message VectorBatchRequest {
 message VectorSearchRequest {
   string collection_id = 1;
   repeated SearchQuery queries = 2;          // Batch search support
-  int32 top_k = 3;
+  uint32 top_k = 3;  // Number of top results to return
   optional DistanceMetric distance_metric_override = 4;
   SearchParameters search_params = 5;       // Algorithm-specific search parameters (HNSW, IVF, etc)
   IncludeFields include_fields = 6;
@@ -1166,21 +1166,21 @@ message VectorGetRequest {
 // Native typed search parameters - no more string maps!
 message SearchParameters {
   // HNSW parameters
-  optional int32 ef_search = 1;              // HNSW search parameter
-  optional int32 max_connections = 2;        // HNSW max connections
+  optional uint32 ef_search = 1;              // HNSW search parameter
+  optional uint32 max_connections = 2;        // HNSW max connections
   
   // IVF parameters  
-  optional int32 n_probe = 3;                // IVF clusters to probe
+  optional uint32 n_probe = 3;                // IVF clusters to probe
   optional bool enable_reranking = 4;        // IVF reranking
   
   // General parameters
-  optional int32 batch_size = 5;             // Batch processing size
-  optional int64 timeout_ms = 6;             // Search timeout
+  optional uint32 batch_size = 5;             // Batch processing size
+  optional uint32 timeout_ms = 6;             // Search timeout in ms (max: ~49 days)
   optional float accuracy_threshold = 7;     // Minimum accuracy requirement
   
   // Advanced parameters
   optional bool enable_parallel_search = 8;  // Parallel search execution
-  optional int32 thread_count = 9;           // Thread count for parallel search
+  optional uint32 thread_count = 9;           // Thread count for parallel search
 }
 
 message SearchQuery {
@@ -1226,10 +1226,10 @@ enum FilterOperation {
 // Source content retrieval options for search and get operations
 message SourceRetrievalOptions {
   bool expand_chunks = 1;                    // Include surrounding chunks for RAG
-  int32 max_chunk_expansion = 2;             // How many chunks before/after to include
+  uint32 max_chunk_expansion = 2;             // How many chunks before/after to include
   repeated string source_fields = 3;         // Specific source fields to retrieve
   bool resolve_external = 4;                 // Resolve external references to actual content
-  int64 max_source_size = 5;                 // Maximum source size to retrieve (bytes)
+  uint64 max_source_size = 5;                 // Maximum source size to retrieve in bytes
   string tier_preference = 6;                // Preferred storage tier: hot, warm, cold
   bool include_chunk_context = 7;            // Include full chunking context
   bool include_processing_info = 8;          // Include processing metadata
@@ -1273,7 +1273,7 @@ message SearchParams {
   map<string, google.protobuf.Value> filters = 2;   // Metadata filters to apply
   optional float accuracy_threshold = 3;            // Accuracy threshold for search (0.0-1.0)
   optional bool include_expired = 4;                // Include expired vectors in results
-  optional uint64 timeout_ms = 5;                   // Search timeout in milliseconds
+  optional uint32 timeout_ms = 5;                   // Search timeout in ms (max: ~49 days)
   optional bool enable_two_stage = 6;               // Enable two-stage search with quantization
   
   // Quantization hint - directly maps to UnifiedQuantizationLevel
@@ -1344,7 +1344,7 @@ message HealthResponse {
   string status = 1;                         // "healthy", "degraded", "unhealthy"
   string version = 2;
   int64 uptime_seconds = 3;
-  int32 active_connections = 4;
+  uint32 active_connections = 4;  // Number of active connections
   int64 memory_usage_bytes = 5;
   int64 storage_usage_bytes = 6;
 }
@@ -1362,6 +1362,6 @@ message MetricsResponse {
 // Collection snapshot for checkpoint/recovery
 message CollectionSnapshot {
   repeated Collection collections = 1;        // All collections in the snapshot
-  int32 version = 2;                         // Snapshot format version
+  uint32 version = 2;                         // Snapshot format version
   int64 timestamp = 3;                       // When snapshot was created (microseconds)
 }

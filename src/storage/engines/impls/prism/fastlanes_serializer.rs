@@ -26,7 +26,31 @@ use crate::storage::engines::core::ops::fastlanes_encoding::{
 /// - INT8: Delegated to unified quantization (ScalarQuantization)
 /// - PQ: Delegated to unified quantization (ProductQuantization)
 /// - FP32: Uses FastLanes for efficient storage only
-#[derive(Clone)]
+// Note: FastLanesEncoder/Decoder don't implement Clone, so we can't derive it
+// We'll need to manually implement Clone or wrap them in Arc
+pub struct PrismFastLanesSerializer {
+    /// Unified quantization engine for all quantization operations
+    quantization_engine: Arc<StorageQuantizationEngine>,
+
+    /// FastLanes encoder for FP32 data only (quantized data uses unified module)
+    fp32_encoder: Arc<FastLanesEncoder>,
+
+    /// FastLanes decoder for FP32 data only
+    fp32_decoder: Arc<FastLanesDecoder>,
+}
+
+impl Clone for PrismFastLanesSerializer {
+    fn clone(&self) -> Self {
+        Self {
+            quantization_engine: Arc::clone(&self.quantization_engine),
+            fp32_encoder: Arc::clone(&self.fp32_encoder),
+            fp32_decoder: Arc::clone(&self.fp32_decoder),
+        }
+    }
+}
+
+// Remove the original struct definition that follows
+#[cfg(never)]
 pub struct PrismFastLanesSerializer {
     /// Unified quantization engine for all quantization operations
     quantization_engine: Arc<StorageQuantizationEngine>,
@@ -68,15 +92,15 @@ impl PrismFastLanesSerializer {
 
         // Only need FastLanes for FP32 encoding/decoding
         // All quantization is handled by the unified engine
-        let fp32_encoder = FastLanesEncoder::new_with_scheme(FastLanesScheme::FrameOfReference {
+        let fp32_encoder = Arc::new(FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
             reference: 0,
             bits: 32,
-        });
+        }));
 
-        let fp32_decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
-            base: 0.0,
+        let fp32_decoder = Arc::new(FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+            reference: 0,
             bits: 32,
-        });
+        }));
 
         Self {
             quantization_engine,
@@ -191,7 +215,7 @@ impl PrismFastLanesSerializer {
         result.extend_from_slice(&metadata_bytes);
 
         // Write encoded data
-        result.extend_from_slice(&(encoded_data.len() as u32).to_le_bytes());
+        result.extend_from_slice(&(encoded_data.len()).to_le_bytes());
         result.extend_from_slice(&encoded_data);
 
         // Write IDs separately for efficient lookup
@@ -212,7 +236,7 @@ impl PrismFastLanesSerializer {
         for q in quantized {
             // Get the primary quantized data
             if let Some(primary) = &q.primary {
-                result.extend_from_slice(&(primary.data.len() as u32).to_le_bytes());
+                result.extend_from_slice(&(primary.data.len()).to_le_bytes());
                 result.extend_from_slice(&primary.data);
             } else {
                 result.extend_from_slice(&0u32.to_le_bytes());
@@ -372,13 +396,13 @@ impl PrismFastLanesSerializer {
                 let quantized = QuantizedVector {
                     data: data[offset..offset + data_len].to_vec(),
                     quantization_level: match level {
-                        ResolutionLevel::Binary => UnifiedQuantizationLevel::binary(),
-                        ResolutionLevel::INT8 => UnifiedQuantizationLevel::int8(),
-                        ResolutionLevel::PQ4 => UnifiedQuantizationLevel::pq4(16),
+                        ResolutionLevel::Binary => UnifiedQuantizationLevel::Binary,
+                        ResolutionLevel::INT8 => UnifiedQuantizationLevel::Int8,
+                        ResolutionLevel::PQ4 => UnifiedQuantizationLevel::Pq4,
                         ResolutionLevel::PQ8 => UnifiedQuantizationLevel::pq8(16),
-                        _ => UnifiedQuantizationLevel::none(),
+                        _ => UnifiedQuantizationLevel { level_type: None },
                     },
-                    original_dimension: dimension,
+                    metadata: QuantizationMetadata::default(),  // Add the missing metadata field
                 };
 
                 result.push(StorageQuantizedData {
@@ -421,7 +445,7 @@ impl PrismFastLanesSerializer {
         // Serialize each level
         for level in levels {
             let level_data = self.serialize_resolution(records, *level).await?;
-            result.extend_from_slice(&(level_data.len() as u32).to_le_bytes());
+            result.extend_from_slice(&(level_data.len()).to_le_bytes());
             result.extend_from_slice(&level_data);
         }
 
@@ -470,7 +494,7 @@ impl PrismFastLanesSerializer {
 
     // All duplicate encoding/decoding methods removed - using unified quantization engine
 
-    fn estimate_quality_for_level(&self, level: ResolutionLevel) -> f32 {
+    fn estimate_quality_for_level_v2(&self, level: ResolutionLevel) -> f32 {
         match level {
             ResolutionLevel::Binary => 0.60, // 60% recall typical
             ResolutionLevel::INT8 => 0.85,   // 85% recall typical

@@ -16,7 +16,7 @@
 //!
 //! - `StorageEngineStrategy`: Enum for selecting the appropriate storage engine
 //! - `UnifiedStorageEngine`: Main trait that all storage engines must implement
-//! - `CollectionMetadataProvider`: Trait for accessing collection metadata without circular dependencies
+//! - `InternalCollectionProvider`: Trait for accessing collection metadata without circular dependencies
 //! - `PerformanceTier`: Data temperature hints for intelligent tiering
 //!
 //! ## Storage Engine Types
@@ -89,6 +89,8 @@ pub enum StorageEngineStrategy {
     Nova,
     /// RAPTOR: Rapid Access Parallel Tiered Object Retrieval (Experimental)
     Raptor,
+    /// LYNX: Locality-aware Yggdrasil-style Neighbor Exploration (Experimental)
+    Lynx,
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     Hybrid,
 }
@@ -99,10 +101,10 @@ impl Default for StorageEngineStrategy {
     }
 }
 
-/// Trait for providing collection metadata to storage engines
-/// This breaks the circular dependency between StorageEngine and CollectionService
+/// Core metadata provider trait for collection metadata operations
+/// This trait focuses solely on metadata CRUD operations
 #[async_trait]
-pub trait CollectionMetadataProvider: Send + Sync {
+pub trait MetadataProvider: Send + Sync {
     /// Get collection UUID by name or ID
     async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
 
@@ -127,6 +129,231 @@ pub trait CollectionMetadataProvider: Send + Sync {
         // Backends can override with more efficient implementation
         self.collection_exists(collection_id).await
     }
+    
+    /// Create or update a collection from protobuf
+    async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()>;
+    
+    /// Delete a collection by ID  
+    async fn delete_collection(&self, collection_id: &str) -> Result<()>;
+    
+    /// Find collection by name or ID (sync convenience method)
+    fn find_collection(&self, collection_id: &str) -> Option<Collection> {
+        // Default sync implementation - backends can override
+        None
+    }
+}
+
+/// Unified metrics collector that can be shared across backends
+/// This avoids circular dependencies by being a separate component
+pub struct UnifiedMetricsCollector {
+    metrics: Arc<tokio::sync::RwLock<MetricsData>>,
+}
+
+impl UnifiedMetricsCollector {
+    pub fn new() -> Self {
+        Self {
+            metrics: Arc::new(tokio::sync::RwLock::new(MetricsData::default())),
+        }
+    }
+    
+    /// Record an operation - can be called from any thread
+    pub fn record(&self, op_type: MetricsOperationType, duration_ms: u64, success: bool, bytes: Option<usize>) {
+        let metrics = self.metrics.clone();
+        // Fire and forget - don't block the operation
+        tokio::spawn(async move {
+            if let Ok(mut m) = metrics.try_write() {
+                m.record_operation(op_type, duration_ms, success, bytes);
+            }
+            // If we can't get the lock, skip metrics to avoid blocking
+        });
+    }
+    
+    pub async fn get_snapshot(&self) -> MetricsSnapshot {
+        let metrics = self.metrics.read().await;
+        metrics.to_snapshot()
+    }
+    
+    pub async fn reset(&self) {
+        let mut metrics = self.metrics.write().await;
+        *metrics = MetricsData::default();
+    }
+}
+
+impl Clone for UnifiedMetricsCollector {
+    fn clone(&self) -> Self {
+        Self {
+            metrics: self.metrics.clone(),
+        }
+    }
+}
+
+/// Internal metrics data structure
+#[derive(Debug)]
+struct MetricsData {
+    total_operations: u64,
+    successful_operations: u64,
+    failed_operations: u64,
+    operation_counts: HashMap<String, u64>,
+    bytes_read: u64,
+    bytes_written: u64,
+    latencies_ms: std::collections::VecDeque<u64>,
+    cache_hits: u64,
+    cache_misses: u64,
+    started_at: chrono::DateTime<chrono::Utc>,
+    last_reset: chrono::DateTime<chrono::Utc>,
+}
+
+impl Default for MetricsData {
+    fn default() -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            total_operations: 0,
+            successful_operations: 0,
+            failed_operations: 0,
+            operation_counts: HashMap::new(),
+            bytes_read: 0,
+            bytes_written: 0,
+            latencies_ms: std::collections::VecDeque::with_capacity(1000),
+            cache_hits: 0,
+            cache_misses: 0,
+            started_at: now,
+            last_reset: now,
+        }
+    }
+}
+
+impl MetricsData {
+    fn record_operation(&mut self, op_type: MetricsOperationType, duration_ms: u64, success: bool, bytes: Option<usize>) {
+        self.total_operations += 1;
+        
+        if success {
+            self.successful_operations += 1;
+        } else {
+            self.failed_operations += 1;
+        }
+        
+        // Track operation type
+        let op_name = format!("{:?}", op_type);
+        *self.operation_counts.entry(op_name).or_insert(0) += 1;
+        
+        match op_type {
+            MetricsOperationType::Read => {
+                if let Some(b) = bytes {
+                    self.bytes_read += b as u64;
+                }
+            }
+            MetricsOperationType::Write => {
+                if let Some(b) = bytes {
+                    self.bytes_written += b as u64;
+                }
+            }
+            MetricsOperationType::CacheHit => self.cache_hits += 1,
+            MetricsOperationType::CacheMiss => self.cache_misses += 1,
+            _ => {}
+        }
+        
+        // Track latency (keep last 1000)
+        if self.latencies_ms.len() >= 1000 {
+            self.latencies_ms.pop_front();
+        }
+        self.latencies_ms.push_back(duration_ms);
+    }
+    
+    fn to_snapshot(&self) -> MetricsSnapshot {
+        let avg_latency = if !self.latencies_ms.is_empty() {
+            self.latencies_ms.iter().sum::<u64>() as f64 / self.latencies_ms.len() as f64
+        } else {
+            0.0
+        };
+        
+        let (p50, p95, p99) = self.calculate_percentiles();
+        
+        MetricsSnapshot {
+            total_operations: self.total_operations,
+            successful_operations: self.successful_operations,
+            failed_operations: self.failed_operations,
+            total_bytes_read: self.bytes_read,
+            total_bytes_written: self.bytes_written,
+            avg_latency_ms: avg_latency,
+            p50_latency_ms: p50,
+            p95_latency_ms: p95,
+            p99_latency_ms: p99,
+            operations_per_type: self.operation_counts.clone(),
+            error_rate: if self.total_operations > 0 {
+                self.failed_operations as f64 / self.total_operations as f64
+            } else {
+                0.0
+            },
+            last_reset: self.last_reset,
+        }
+    }
+    
+    fn calculate_percentiles(&self) -> (u64, u64, u64) {
+        if self.latencies_ms.is_empty() {
+            return (0, 0, 0);
+        }
+        
+        let mut sorted: Vec<u64> = self.latencies_ms.iter().copied().collect();
+        sorted.sort_unstable();
+        
+        let len = sorted.len();
+        let p50 = sorted[len * 50 / 100];
+        let p95 = sorted[len * 95 / 100];
+        let p99 = sorted[len * 99 / 100];
+        
+        (p50, p95, p99)
+    }
+}
+
+/// Metrics operation types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricsOperationType {
+    Read,
+    Write,
+    Delete,
+    List,
+    CacheHit,
+    CacheMiss,
+}
+
+/// Snapshot of current metrics
+#[derive(Debug, Clone, Default)]
+pub struct MetricsSnapshot {
+    pub total_operations: u64,
+    pub successful_operations: u64,
+    pub failed_operations: u64,
+    pub total_bytes_read: u64,
+    pub total_bytes_written: u64,
+    pub avg_latency_ms: f64,
+    pub p50_latency_ms: u64,
+    pub p95_latency_ms: u64,
+    pub p99_latency_ms: u64,
+    pub operations_per_type: HashMap<String, u64>,
+    pub error_rate: f64,
+    pub last_reset: chrono::DateTime<chrono::Utc>,
+}
+
+/// Cache statistics
+#[derive(Debug, Clone, Default)]
+pub struct CacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub size_bytes: u64,
+    pub entry_count: u64,
+    pub hit_rate: f64,
+}
+
+/// Marker trait for internal collection metadata providers.
+/// This trait exists solely to break circular dependencies between StorageEngine and CollectionService.
+/// It adds no new methods - all functionality comes from MetadataProvider.
+/// 
+/// Implementations: LocalRocksDbBackend, UniversalMetadataBackend
+/// Consumers: CollectionService (via metadata_backend field)
+#[async_trait]
+pub trait InternalCollectionProvider: MetadataProvider + Send + Sync {
+    // This is intentionally a marker trait with no methods.
+    // All methods are inherited from MetadataProvider.
 }
 
 /// Unified storage engine trait implementing Strategy Pattern
@@ -346,6 +573,9 @@ pub trait UnifiedStorageEngine: Send + Sync {
     // This avoids duplication and provides a single source of truth for capabilities
 
     /// Engine capabilities with defaults based on strategy
+    /// 
+    /// Determines whether the storage engine supports collection-level operations
+    /// such as per-collection flush, compaction, and configuration.
     fn supports_collection_level_operations(&self) -> bool {
         match self.strategy() {
             StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
@@ -355,9 +585,14 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
             StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
             StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
+            StorageEngineStrategy::Lynx => true, // LYNX supports collection-level ops
         }
     }
 
+    /// Determines whether the storage engine supports atomic operations
+    /// 
+    /// Atomic operations guarantee that either all changes are applied
+    /// or none are applied, preventing partial updates.
     fn supports_atomic_operations(&self) -> bool {
         match self.strategy() {
             StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
@@ -367,6 +602,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
             StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
             StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
+            StorageEngineStrategy::Lynx => true, // LYNX provides atomic guarantees
         }
     }
 
@@ -723,6 +959,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 32 * 1024 * 1024) // 32MB default
             }
+            StorageEngineStrategy::Lynx => {
+                // LYNX: locality-aware flushing
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
+            }
         }
     }
 
@@ -792,6 +1033,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .get("needs_compaction")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false))
+            }
+            StorageEngineStrategy::Lynx => {
+                // LYNX: locality-aware compaction
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("locality_score")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0) < 0.7) // Compact when locality score drops below threshold
             }
         }
     }
@@ -1170,7 +1420,7 @@ impl StorageQueryContext {
     /// Parse quantization config into ready-to-use format for progressive search
     fn parse_quantization_config(
         quant_config: &crate::proto::proximadb::QuantizationConfig,
-        dimension: u32,
+        dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
         use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
 
@@ -1202,7 +1452,7 @@ impl StorageQueryContext {
             int8_ranking_selectivity: quant_config.int8_ranking_selectivity,
             pq_ranking_selectivity: quant_config.pq_ranking_selectivity,
             quality_threshold: quant_config.quality_threshold,
-            training_sample_size: quant_config.training_sample_size,
+            training_sample_size: quant_config.training_sample_size as i32,
             enable_simd_acceleration: quant_config.enable_simd_acceleration,
             optimize_for_storage: quant_config.optimize_for_storage,
             optimize_for_memory: quant_config.optimize_for_memory,
@@ -1230,9 +1480,9 @@ impl StorageQueryContext {
                 QuantizationLevel {
                     level_id: level.level_id.clone(),
                     quantization_type,
-                    bits: level.bits,
+                    bits: level.bits as i32,
                     search_priority: idx as i32, // Use index as priority
-                    num_subvectors: level.num_subvectors,
+                    num_subvectors: level.num_subvectors.map(|n| n as i32),
                     min_recall: 0.9, // Default recall threshold
                 }
             })
@@ -1311,8 +1561,8 @@ impl StorageQueryContext {
             // Parse quantization config for progressive search
             quantization_config: config.and_then(|c| c.quantization.as_ref()).and_then(|qc| {
                 config
-                    .map(|c| c.dimension as u32)
-                    .and_then(|dim| Self::parse_quantization_config(qc, dim))
+                    .map(|c| c.dimension)
+                    .and_then(|dim| Self::parse_quantization_config(qc, dim as usize))
             }),
         };
 

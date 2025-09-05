@@ -153,11 +153,23 @@ impl ThreeStageFilterPipeline {
                         let metadata_item = crate::core::bloom::json_to_metadata_item(field, value);
                         let result = bloom_filter.might_match_metadata(field, &metadata_item);
 
-                        debug!(
-                            "🌸 Stage 1: Bloom filter check {}={:?} → {}",
-                            field, value, result
-                        );
-                        result
+                        match result {
+                            Ok(might_match) => {
+                                debug!(
+                                    "🌸 Stage 1: Bloom filter check {}={:?} → {}",
+                                    field, value, might_match
+                                );
+                                might_match
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "🌸 Stage 1: Bloom filter check error for {}={:?}: {}",
+                                    field, value, e
+                                );
+                                // On error, assume it might match (conservative approach)
+                                true
+                            }
+                        }
                     }
                     _ => {
                         // Non-equality operators can't use bloom filter efficiently

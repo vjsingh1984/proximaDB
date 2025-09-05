@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::filestore_backend::*;
+    use super::super::super::universal_backend::*;
     use crate::proto::proximadb::Collection;
     use crate::proto::proximadb::{
         Collection as Collection, CollectionConfig as CollectionConfig,
@@ -20,8 +20,8 @@ mod tests {
     use tempfile::TempDir;
 
     /// Create a test configuration with temporary directory
-    fn create_test_config(temp_dir: &TempDir) -> FilestoreMetadataConfig {
-        FilestoreMetadataConfig {
+    fn create_test_config(temp_dir: &TempDir) -> UniversalMetadataConfig {
+        UniversalMetadataConfig {
             storage_url: format!("file://{}", temp_dir.path().display()),
             compression: true,
             enable_snapshots: true,
@@ -93,7 +93,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_filestore_backend_create_with_proto() {
+    async fn test_universal_backend_create_with_proto() {
         let temp_dir = TempDir::new().unwrap();
         let config = create_test_config(&temp_dir);
         
@@ -103,7 +103,7 @@ mod tests {
                 .expect("Failed to create filesystem factory")
         );
         
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory)
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
             .await
             .expect("Failed to create filestore backend");
 
@@ -121,7 +121,7 @@ mod tests {
                 .expect("Failed to create filesystem factory")
         );
         
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory)
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
             .await
             .expect("Failed to create backend");
 
@@ -153,7 +153,7 @@ mod tests {
                 .expect("Failed to create filesystem factory")
         );
         
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory.clone())
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory.clone())
             .await
             .expect("Failed to create backend");
 
@@ -189,7 +189,7 @@ mod tests {
                 .expect("Failed to create filesystem factory")
         );
         
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory)
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
             .await
             .expect("Failed to create backend");
 
@@ -224,7 +224,7 @@ mod tests {
                 .expect("Failed to create filesystem factory")
         );
         
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory.clone())
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory.clone())
             .await
             .expect("Failed to create backend");
 
@@ -265,7 +265,7 @@ mod tests {
         
         // First backend instance
         {
-            let backend = FilestoreMetadataBackend::new(config.clone(), filesystem_factory.clone())
+            let backend = UniversalMetadataBackend::new(config.clone(), filesystem_factory.clone())
                 .await
                 .expect("Failed to create backend");
 
@@ -283,7 +283,7 @@ mod tests {
 
         // Second backend instance - should recover from proto files
         {
-            let backend = FilestoreMetadataBackend::new(config, filesystem_factory.clone())
+            let backend = UniversalMetadataBackend::new(config, filesystem_factory.clone())
                 .await
                 .expect("Failed to create backend");
 
@@ -307,7 +307,7 @@ mod tests {
                 .expect("Failed to create filesystem factory")
         );
         
-        let backend = FilestoreMetadataBackend::new(config, filesystem_factory)
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
             .await
             .expect("Failed to create backend");
 

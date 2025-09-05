@@ -105,6 +105,8 @@ pub trait EngineMetadata: Send + Sync {
             QueryType::SimilaritySearch => true, // All engines support similarity
             QueryType::MetadataFilter => true,   // All engines support metadata
             QueryType::Batch => true,            // All engines support batch
+            QueryType::VectorSearch => true,     // All engines support vector search
+            QueryType::FullScan => true,         // All engines support full scan
         }
     }
 

@@ -105,7 +105,7 @@ impl EventLogWAL {
             .context("Failed to open WAL file")?;
 
         // Write length prefix + data
-        let len_bytes = (data.len() as u32).to_le_bytes();
+        let len_bytes = (data.len()).to_le_bytes();
         file.write_all(&len_bytes).await?;
         file.write_all(&data).await?;
         file.flush().await?;

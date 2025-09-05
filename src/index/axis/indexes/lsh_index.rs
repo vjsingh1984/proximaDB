@@ -96,8 +96,8 @@ impl HashFunction {
         let projection: Vec<f32> = (0..dimension)
             .map(|_| {
                 // Box-Muller transform for normal distribution
-                let u1 = rng.gen_range(0.0..1.0);
-                let u2 = rng.gen_range(0.0..1.0);
+                let u1: f32 = rng.gen_range(0.0..1.0);
+                let u2: f32 = rng.gen_range(0.0..1.0);
                 let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
                 z0
             })

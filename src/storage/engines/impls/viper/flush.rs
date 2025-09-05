@@ -186,7 +186,7 @@ impl Flush {
         let vector_dimensions = collection_config
             .as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|config| config.dimension as usize)
+            .map(|config| config.dimension)
             .ok_or_else(|| {
                 error!("CRITICAL: Collection config missing or incomplete for collection {}. Cannot determine vector dimensions!", collection_id);
                 anyhow::anyhow!("Collection config with dimension is required for flush operation")
@@ -288,7 +288,7 @@ impl Flush {
                 &sorted_records,
                 collection_id,
                 &collection_config,
-                vector_dimensions,
+                vector_dimensions as usize,
                 viper_config,
             )
             .await
@@ -492,7 +492,7 @@ impl Flush {
         // This ordering maximizes performance by eliminating rows early using efficient
         // columnar filters before expensive vector operations
         // Check if quantization is enabled to determine schema columns
-        let quantization = if let Some(ref collection) = collection_config {
+        let quantization = if let Some(collection) = collection_config {
             collection
                 .config
                 .as_ref()
@@ -550,7 +550,7 @@ impl Flush {
 
         // 🎯 DYNAMIC FILTERABLE METADATA: Use proto filterable_columns directly
         let filterable_metadata: Vec<&crate::proto::proximadb::FilterableColumnSpec> =
-            if let Some(ref collection) = collection_config {
+            if let Some(collection) = collection_config {
                 if let Some(ref config) = collection.config {
                     config.filterable_columns.iter().collect()
                 } else {
@@ -968,7 +968,7 @@ impl Flush {
         debug!("   Records: {}", records.len());
 
         // Select compression algorithm based on collection config
-        let compression_algorithm = if let Some(ref collection) = collection_config {
+        let compression_algorithm = if let Some(collection) = collection_config {
             if let Some(ref config) = collection.config {
                 if let Some(ref storage_config) = config.storage_config {
                     if let Some(ref compression) = storage_config.compression {
@@ -1008,23 +1008,23 @@ impl Flush {
             crate::core::compression::CompressionAlgorithm::Zstd // Default
         };
 
-        let compression_level = if let Some(ref collection) = collection_config {
+        let compression_level = if let Some(collection) = collection_config {
             collection
                 .config
                 .as_ref()
                 .and_then(|c| c.storage_config.as_ref())
                 .and_then(|s| s.compression.as_ref())
                 .and_then(|c| c.level)
+                .unwrap_or(viper_config.compression_level as u32)
         } else {
-            Some(viper_config.compression_level)
-        }
-        .unwrap_or(viper_config.compression_level);
+            viper_config.compression_level as u32
+        };
 
         // Map core compression to Parquet compression using shared function
         let compression_algo =
-            crate::storage::engines::core::formats::columnar::map_core_to_parquet_compression(
+            crate::storage::engines::core::formats::columnar::common::map_core_to_parquet_compression(
                 compression_algorithm,
-                compression_level,
+                Some(compression_level as i32),
             )?;
         debug!("   Selected Parquet compression: {:?}", compression_algo);
 
@@ -1041,7 +1041,7 @@ impl Flush {
 
         // Set optimal encoding for vector column based on quantization
         // Check if vectors are quantized (detected via collection config)
-        let is_quantized = if let Some(ref collection) = collection_config {
+        let is_quantized = if let Some(collection) = collection_config {
             collection
                 .config
                 .as_ref()
@@ -1544,39 +1544,25 @@ impl Flush {
             // Get optimal compression for this column type
             let optimal_algorithm = optimal_compression_for_column(&data_type);
 
-            // Convert to Parquet compression
-            if let Some(compression_algo) = map_to_parquet_compression(&optimal_algorithm) {
-                let column_path = parquet::schema::types::ColumnPath::from(name.as_str());
+            // Convert to Parquet compression using the columnar common function
+            let compression_algo = crate::storage::engines::core::formats::columnar::common::map_core_to_parquet_compression(
+                optimal_algorithm,
+                None, // No specific compression level for column-specific compression
+            )?;
+            
+            let column_path = parquet::schema::types::ColumnPath::from(name.as_str());
 
-                debug!(
-                    "🔧 VIPER Mixed: {} -> {:?} (type: {:?})",
-                    name, optimal_algorithm, data_type
-                );
+            debug!(
+                "🔧 VIPER Mixed: {} -> {:?} (type: {:?})",
+                name, optimal_algorithm, data_type
+            );
 
-                // Apply per-column compression - convert our compression to the parquet crate's compression
-                let parquet_compression = match compression_algo {
-                    parquet::basic::Compression::UNCOMPRESSED => {
-                        parquet::basic::Compression::UNCOMPRESSED
-                    }
-                    parquet::basic::Compression::SNAPPY => parquet::basic::Compression::SNAPPY,
-                    parquet::basic::Compression::GZIP(level) => {
-                        parquet::basic::Compression::GZIP(level)
-                    }
-                    parquet::basic::Compression::LZO => parquet::basic::Compression::LZO,
-                    parquet::basic::Compression::BROTLI(level) => {
-                        parquet::basic::Compression::BROTLI(level)
-                    }
-                    parquet::basic::Compression::LZ4 => parquet::basic::Compression::LZ4,
-                    parquet::basic::Compression::ZSTD(level) => {
-                        parquet::basic::Compression::ZSTD(level)
-                    }
-                    parquet::basic::Compression::LZ4_RAW => parquet::basic::Compression::LZ4_RAW,
-                };
-                props_builder =
-                    props_builder.set_column_compression(column_path, parquet_compression);
+            // Apply per-column compression - compression_algo is already a parquet compression type
+            props_builder =
+                props_builder.set_column_compression(column_path.clone(), compression_algo);
 
-                // Apply optimal encoding based on column type
-                let encoding = match data_type {
+            // Apply optimal encoding based on column type
+            let encoding = match data_type {
                     crate::core::compression::ColumnData::BinaryQuantized => {
                         // Binary data - use bit packing for maximum density
                         parquet::basic::Encoding::BIT_PACKED
@@ -1611,10 +1597,9 @@ impl Flush {
                     }
                 };
 
-                props_builder = props_builder.set_column_encoding(column_path, encoding);
+            props_builder = props_builder.set_column_encoding(column_path, encoding);
 
-                debug!("🔧 VIPER Mixed: {} encoding -> {:?}", name, encoding);
-            }
+            debug!("🔧 VIPER Mixed: {} encoding -> {:?}", name, encoding);
         }
 
         info!("✅ VIPER: Mixed compression search_strategy applied to all columns");

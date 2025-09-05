@@ -608,13 +608,28 @@ impl FastLanesDataBlock {
         // Use row-wise for high dimensions to speed up reconstruction
         let encoded_vectors = if dimension <= 512 {
             // Columnar layout for better compression
-            encoder.encode_vectors_columnar(&vectors, 64)?
-        } else if dimension <= 2048 {
-            // Row-wise without compression for medium-high dimensions
-            encoder.encode_vectors_rowwise(&vectors, false)?
+            let columnar = encoder.encode_vectors_columnar(&vectors, 64)?;
+            // Serialize columnar format
+            let mut bytes = Vec::new();
+            bytes.extend(&(dimension as u32).to_le_bytes());
+            bytes.extend(&(vectors.len() as u32).to_le_bytes());
+            for group in &columnar.dimension_groups {
+                // Serialize each dimension in the group
+                for dim in &group.dimensions {
+                    bytes.extend(&(dim.encoded_data.len()).to_le_bytes());
+                    bytes.extend(&dim.encoded_data);
+                }
+            }
+            bytes
         } else {
-            // Row-wise with compression for very high dimensions
-            encoder.encode_vectors_rowwise(&vectors, true)?
+            // Row-wise for medium-high dimensions
+            let rowwise = encoder.encode_vectors_rowwise(&vectors, dimension <= 2048)?;
+            // Concatenate all encoded vectors
+            let mut all_bytes = Vec::new();
+            for vec_data in &rowwise.encoded_vectors {
+                all_bytes.extend(vec_data);
+            }
+            all_bytes
         };
 
         // Write encoded vectors
@@ -682,7 +697,12 @@ impl FastLanesDataBlock {
                     // Serialize value
                     if let Some(value) = &item.value {
                         use prost::Message;
-                        let value_bytes = value.encode_to_vec();
+                        // Encode the metadata value based on its type
+                        let value_bytes = match value {
+                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => s.as_bytes().to_vec(),
+                            crate::proto::proximadb::metadata_item::Value::NumberValue(n) => n.to_le_bytes().to_vec(),
+                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
+                        };
                         sparse_values.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
                         sparse_values.write_all(&value_bytes)?;
                     } else {
@@ -703,7 +723,7 @@ impl FastLanesDataBlock {
                     3,
                     CompressionContext::Block,
                 )?;
-                result.write_all(&(compressed_values.len() as u32).to_le_bytes())?;
+                result.write_all(&(compressed_values.len()).to_le_bytes())?;
                 result.write_all(&compressed_values)?;
             } else {
                 result.write_all(&0u32.to_le_bytes())?;
@@ -862,10 +882,12 @@ impl FastLanesDataBlock {
         };
 
         // Reconstruct the block
+        let block_id = metadata.record_count;
+        let has_deletes = metadata.has_deletes;
         Ok(Self {
             encoding_marker: marker,
             encoding_metadata: None, // Will be reconstructed if needed
-            block_id: metadata.record_count, // Use from metadata
+            block_id,
             records,
             quantized_vectors: None,
             quantization_level: None,
@@ -880,7 +902,7 @@ impl FastLanesDataBlock {
             timestamp_range: (0, 0),
             statistics: BlockStatistics::default(),
             metadata_stats: None,
-            has_deletes: metadata.has_deletes,
+            has_deletes,
         })
     }
 }
