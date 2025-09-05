@@ -1,0 +1,650 @@
+= Design Specification: The HELIX Storage Engine (Comprehensive & Refined)
+
+:toc: left
+:toclevels: 4
+:source-highlighter: rouge
+:icons: font
+
+## 1. Introduction
+
+### 1.1. Overview
+
+This document specifies the design of "HELIX," a new Log-Structured Merge-Tree (LSM) based storage engine for ProximaDB. The primary goal of the HELIX engine is to accelerate nearest neighbor (ANN) and hybrid queries by physically co-locating similar vectors on disk. This is achieved by clustering vectors based on their position along a space-filling curve and storing them in specialized columnar blocks that can be efficiently pruned during query execution.
+
+### 1.2. Rationale
+
+As vector datasets grow, scanning the entire dataset for a query becomes prohibitively expensive. The HELIX engine addresses this by organizing data on disk in a way that reflects its structure in the high-dimensional vector space. This allows the query planner to skip large portions of the data that are irrelevant to the query, drastically reducing I/O and speeding up response times. This approach is particularly effective for queries that combine vector similarity search with metadata filters.
+
+### 1.3. Key Differentiators from Traditional LSM
+
+The HELIX engine differs fundamentally from traditional LSM implementations:
+
+[cols="2,3,3", options="header"]
+|===
+| Aspect | Traditional LSM | HELIX Disk-Only LSM
+
+| Memory Management
+| Each engine has own memtable & WAL
+| Uses global partitioned memtable & WAL
+
+| Write Path
+| Writes → Engine Memtable → Engine WAL
+| Writes → Global Memtable → Global WAL → Batch Flush to HELIX
+
+| Flush Trigger
+| When engine memtable is full
+| When global memtable partition flushes
+
+| Level 0 Files
+| Sorted by primary key
+| Unsorted FastLane blocks (clustering happens in compaction)
+
+| Compaction Focus
+| Merge overlapping key ranges
+| Cluster similar vectors using PCA + Hilbert keys
+
+| Query Optimization
+| Key-based pruning
+| Similarity-based pruning with Hilbert ranges
+|===
+
+### 1.4. Key Concepts
+
+*   **LSM Tree:** A data structure that excels at handling high write throughput. It buffers writes in an in-memory **Memtable** and periodically flushes them to immutable on-disk files called **SSTables**. These files are merged in the background through a process called **Compaction**.
+*   **SSTable:** A Sorted String Table. An immutable, on-disk file containing data sorted by a key. In HELIX, the primary sort key is the Hilbert Key.
+*   **PCA (Principal Component Analysis):** A dimensionality-reduction technique used to project high-dimensional vectors into a lower-dimensional space while preserving as much of the data's variance as possible.
+*   **Hilbert Curve:** A continuous space-filling curve that maps a multi-dimensional space onto a 1D line. This mapping largely preserves locality, meaning points that are close in the multi-dimensional space are likely to be close on the 1D line.
+*   **Hilbert Key:** The `u64` value representing a vector's position on the 1D Hilbert curve after it has been projected into a lower-dimensional space by PCA.
+*   **Tombstone:** A special marker indicating that a record has been deleted. It is used for "soft deletes," with the actual data being purged during compaction.
+*   **AXIS:** The central indexing service in ProximaDB. It consumes events from storage engines to build and maintain in-memory indexes (e.g., HNSW, IVF) for fast searching.
+
+## 2. Key Benefits & Performance Characteristics
+
+### 2.1. Performance Gains
+
+The HELIX engine delivers significant performance improvements through:
+
+[cols="2,1,3", options="header"]
+|===
+| Feature | Improvement | Description
+
+| Query Latency
+| 5-10x faster
+| Hilbert clustering enables aggressive pruning, reducing data scanned
+
+| Write Throughput  
+| 100K+ vectors/sec
+| LSM architecture optimized for high write rates
+
+| Storage Efficiency
+| 30-50% reduction
+| Columnar format with compression and quantization
+
+| Memory Usage
+| 60% lower
+| Block-level caching with intelligent eviction
+
+| SIMD Utilization
+| 8-16x speedup
+| Columnar layout enables vectorized distance computations
+
+| Hybrid Queries
+| 10-20x faster
+| Co-located vectors and metadata enable efficient filtering
+|===
+
+### 2.2. Architecture Comparison
+
+....
+Traditional Row-Based Storage:          HELIX Clustered Storage:
+┌─────────────────────────┐            ┌─────────────────────────┐
+│ Random Vector Layout    │            │ Hilbert-Clustered       │
+│                         │            │                         │
+│ v1 ─┐                   │            │ v1──v2──v3  (similar)   │
+│ v9 ─┼─ Far apart        │            │                         │
+│ v3 ─┘                   │            │ v4──v5──v6  (similar)   │
+│                         │            │                         │
+│ v7 ─┐                   │            │ v7──v8──v9  (similar)   │
+│ v2 ─┼─ Random           │            │                         │
+│ v5 ─┘                   │            │ Grouped by similarity   │
+└─────────────────────────┘            └─────────────────────────┘
+  
+Query requires full scan                Query prunes 80%+ of data
+....
+
+## 3. High-Level Architecture
+
+### 3.1. Core Architectural Principles
+
+1.  **Disk-Only LSM Structure:** Unlike traditional LSM engines, HELIX **does not maintain its own memtable or WAL**. The global partitioned memtable and WAL provide write throughput guarantees across all storage engines. HELIX only manages the on-disk LSM structure with leveled compaction for efficient data organization.
+2.  **Pluggable Storage Backend:** All file I/O within the HELIX engine **must** be performed through the `Filesystem` API. This ensures that HELIX works seamlessly with different storage backends, such as local disk, S3, GCS, and other cloud stores, without any code changes.
+3.  **Decoupling from Indexing:** HELIX is a physical storage engine responsible for the layout and retrieval of data. It is decoupled from the logical indexing service, **AXIS**. HELIX produces clustered data files (SSTables) and notifies AXIS of these new files. AXIS is then responsible for consuming this information to update its own in-memory indexes.
+
+### 3.2. Disk-Only LSM-Tree Structure
+
+HELIX receives pre-batched, sorted data from the global memtable flush process. It organizes this data into a leveled LSM structure on disk with columnar FastLane blocks for efficient clustering and query performance.
+
+[source, mermaid]
+----
+graph TD
+    subgraph Global Infrastructure
+        A[Global Partitioned<br/>Memtable] --> B[Global WAL]
+        A -- Flush Batches --> C[Storage Engine<br/>Flush Handler]
+    end
+
+    subgraph HELIX Disk-Only LSM
+        C -- Create SSTable<br/>with FastLane Blocks --> D[Level 0 SSTables<br/>Unsorted Flush Files]
+        D -- Level Compaction<br/>with PCA + Hilbert --> E[Level 1 SSTables<br/>Sorted & Clustered]  
+        E -- Merge Compaction --> F[Level 2 SSTables<br/>Larger Clusters]
+        F -- Re-clustering --> G[Lmax SSTables<br/>Optimally Clustered]
+    end
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#ffc,stroke:#333,stroke-width:2px
+    style D fill:#bbf,stroke:#333,stroke-width:2px
+    style E fill:#9bf,stroke:#333,stroke-width:2px
+    style F fill:#7af,stroke:#333,stroke-width:2px
+    style G fill:#5af,stroke:#333,stroke-width:2px
+----
+
+### 3.3. Disk-Only Architecture Flow
+
+....
+Traditional LSM Engine:                    HELIX Disk-Only Engine:
+┌─────────────────────┐                   ┌─────────────────────┐
+│   Engine Memtable   │                   │  Global Memtable    │ ← Shared
+├─────────────────────┤                   │  (Partitioned)      │
+│    Engine WAL       │                   ├─────────────────────┤
+├─────────────────────┤                   │   Global WAL        │ ← Shared
+│                     │                   └──────────┬──────────┘
+│   SSTable Levels    │                              │ Flush Batches
+│    L0 → L1 → Lmax  │                   ┌──────────▼──────────┐
+└─────────────────────┘                   │   HELIX Engine       │
+                                          ├─────────────────────┤
+Each engine maintains                     │ ✗ No Memtable       │
+its own memory structures                 │ ✗ No WAL            │
+                                          ├─────────────────────┤
+                                          │ FastLane SSTable    │
+                                          │ Levels on Disk:     │
+                                          │  L0: Flush files    │
+                                          │  L1: Clustered      │
+                                          │  L2: Merged         │
+                                          │  Lmax: Optimal      │
+                                          └─────────────────────┘
+                                          
+                                          HELIX only manages disk
+                                          organization & clustering
+....
+
+## 4. Clustering and Data Layout
+
+### 4.1. Clustering Pipeline: PCA + Hilbert Curve
+
+To map the high-dimensional vector space to a one-dimensional line for sorting, the HELIX engine uses a PCA-powered Hilbert curve.
+
+[source, mermaid]
+----
+graph LR
+    A[High-Dim Vector<br/>e.g., 1536D] -- PCA Projection --> B(Low-Dim Vector<br/>e.g., 16D)
+    B -- Hilbert Curve<br/>Encoding --> C(u64 Hilbert Key)
+    
+    style A fill:#ffcccc,stroke:#333,stroke-width:2px
+    style B fill:#ffffcc,stroke:#333,stroke-width:2px
+    style C fill:#ccffcc,stroke:#333,stroke-width:2px
+----
+
+1.  **Dimensionality Reduction**: High-dimensional vectors are projected into a lower-dimensional space using a versioned PCA model.
+2.  **Key Generation**: The lower-dimensional projection is used to compute a single `u64` Hilbert curve key.
+3.  **Sorting**: Before being written to an SSTable, all records are sorted based on this Hilbert key.
+
+### 4.2. FastLane Block Format
+
+The FastLane block format is optimized for columnar storage and SIMD operations:
+
+....
+FastLane Block Structure (128 vectors):
+┌──────────────────────────────────────────────────┐
+│                   Block Header                    │
+│  • Block ID (u64)                                 │
+│  • Hilbert Key Range [min, max]                   │
+│  • Vector Count (u32)                             │
+│  • Compression Type                               │
+│  • Quantization Level                             │
+├──────────────────────────────────────────────────┤
+│              Columnar Vector Data                 │
+│  ┌──────────────────────────────────────┐        │
+│  │  Dimension 0: [v0_d0, v1_d0, ..., v127_d0]   │
+│  ├──────────────────────────────────────┤        │
+│  │  Dimension 1: [v0_d1, v1_d1, ..., v127_d1]   │
+│  ├──────────────────────────────────────┤        │
+│  │              ...                       │        │
+│  ├──────────────────────────────────────┤        │
+│  │  Dimension N: [v0_dN, v1_dN, ..., v127_dN]   │
+│  └──────────────────────────────────────┘        │
+├──────────────────────────────────────────────────┤
+│                 Metadata Column                   │
+│  • Vector IDs (128 entries)                       │
+│  • Timestamps (128 entries)                       │
+│  • Custom metadata (optional)                     │
+├──────────────────────────────────────────────────┤
+│                  Bloom Filter                     │
+│  • Size: ~1KB for 128 vectors                     │
+│  • False positive rate: 0.01                      │
+└──────────────────────────────────────────────────┘
+
+Benefits:
+• SIMD-friendly: Columnar layout enables vectorized operations
+• Cache-efficient: Sequential memory access patterns
+• Compression-friendly: Similar values grouped together
+• Quantization-ready: Can store INT8/Binary quantized versions
+....
+
+### 4.3. SSTable File Layout
+
+The on-disk representation is critical to the HELIX engine's performance. An SSTable file is composed of a header, multiple data blocks, and a footer containing all metadata required for pruning.
+
+[source, mermaid]
+----
+graph TD
+    subgraph SSTable File Structure
+        A[Header<br/>Version, Flags, Metadata]
+        B[Data Blocks<br/>Columnar Storage]
+        C[Footer<br/>Indexes & Metadata]
+        A --> B --> C
+    end
+
+    subgraph Data Blocks Detail
+        B1[FastLaneBlock 1<br/>128 vectors] 
+        B2[FastLaneBlock 2<br/>128 vectors]
+        B3[...]
+        B4[FastLaneBlock N<br/>128 vectors]
+        B1 --> B2 --> B3 --> B4
+    end
+
+    subgraph Footer Components
+        C1[Block Index<br/>Offsets & Sizes]
+        C2[Block Metadata<br/>Min/Max Stats]
+        C3[Bloom Filters]
+        C4[PCA Model Reference]
+        C1 --> C2 --> C3 --> C4
+    end
+
+    subgraph C3
+        direction LR
+        C3_1[Hilbert Range] --> C3_2[PCA Model Version];
+        C3_2 --> C3_3[Bloom Filter];
+    end
+----
+
+## 4. PCA Model Lifecycle Management
+
+The relevance of the PCA model is critical to clustering performance. As the data distribution "drifts," the model must be retrained and data must be re-clustered. This lifecycle is tied directly to the LSM compaction process.
+
+(Details on model storage, retraining policies, validation, and bootstrapping remain the same)
+
+## 5. Core Operations & Workflows
+
+### 5.1. Record Lifecycle
+
+The state of a record (vector) changes as it moves through the HELIX engine.
+
+[source, mermaid]
+----
+graph TD
+    A[Write Operation] --> B{In Memtable}
+    B -- Flush --> C(In L0 SSTable)
+    C -- Compaction --> D(In L1..Lk-1 SSTable)
+    D -- Compaction --> E(In Lmax SSTable)
+    E -- Re-clustering<br/>Compaction --> F(In Lmax SSTable<br/>with new PCA key)
+    
+    A2[Delete Operation] --> G{Tombstone<br/>in Memtable}
+    G -- Flush/Compaction --> H(Tombstone<br/>Propagates)
+    H -- Compaction<br/>with Record --> I[Record &<br/>Tombstone Purged]
+    
+    style B fill:#ffcccc,stroke:#333,stroke-width:2px
+    style C fill:#ccccff,stroke:#333,stroke-width:2px
+    style D fill:#ccccff,stroke:#333,stroke-width:2px
+    style E fill:#ccffcc,stroke:#333,stroke-width:2px
+    style F fill:#99ff99,stroke:#333,stroke-width:2px
+----
+
+### 5.2. Flush Integration and AXIS Notification
+
+Since HELIX doesn't maintain its own memtable, the flush process is different from traditional LSM engines:
+
+1.  **Batch Reception**: HELIX receives pre-batched vectors from the global memtable flush process. These batches are already organized and ready for columnar encoding.
+2.  **FastLane Block Creation**: The batch is transformed into columnar FastLane blocks with:
+    - Columnar vector storage for SIMD operations
+    - Metadata columns for IDs and timestamps
+    - Bloom filters for efficient lookups
+3.  **PCA Projection & Hilbert Key Generation**: Each vector in the batch is:
+    - Projected to lower dimensions using the active PCA model
+    - Assigned a Hilbert key for clustering
+4.  **SSTable Creation**: A new Level-0 SSTable is created with FastLane blocks, initially unsorted by Hilbert key (sorting happens during compaction).
+5.  **AXIS Notification**: Upon successful SSTable creation, an event is published to notify AXIS that a new file is available for indexing.
+
+### 5.3. Leveled Compaction with Liquid Clustering
+
+The compaction process is where HELIX's clustering magic happens. Unlike during flush (which just creates FastLane blocks), compaction performs the actual clustering:
+
+#### Level 0 → Level 1 Compaction (Initial Clustering)
+1.  **Select L0 SSTables**: Choose unsorted flush files for compaction
+2.  **Apply PCA + Hilbert**: For each vector:
+    - Project to low dimensions using PCA model
+    - Calculate Hilbert key
+    - Sort all records by Hilbert key
+3.  **Create Clustered SSTables**: Write sorted, clustered data to L1
+
+#### Level i → Level i+1 Compaction (Progressive Refinement)
+1.  **Merge Sorted Runs**: Combine multiple sorted SSTables
+2.  **Liquid Clustering**: Adaptively reorganize based on:
+    - Query patterns (frequently accessed ranges)
+    - Data distribution changes
+    - PCA model updates
+3.  **Optimize Block Boundaries**: Ensure FastLane blocks contain similar vectors
+4.  **AXIS Notification**: Publish events for index updates
+
+#### Re-clustering at Lmax
+- Periodic re-clustering with updated PCA models
+- Maintains optimal clustering as data distribution evolves
+- Balances clustering quality vs. compaction cost
+
+[source, mermaid]
+----
+graph TD
+    subgraph Level 0 - Unsorted Flush Files
+        A[SSTable A<br/>Random Order]
+        B[SSTable B<br/>Random Order]
+    end
+
+    subgraph Compaction Process
+        C[Read FastLane Blocks]
+        D[PCA Projection]
+        E[Hilbert Key Generation]
+        F[Sort by Hilbert Key]
+        G[Liquid Clustering<br/>Optimization]
+        C --> D --> E --> F --> G
+    end
+
+    subgraph Level 1 - Clustered Output
+        H[SSTable L1-A<br/>Hilbert Range<br/>[0x0000..0x7FFF]]
+        I[SSTable L1-B<br/>Hilbert Range<br/>[0x8000..0xFFFF]]
+    end
+
+    subgraph AXIS Integration
+        J[Event Log]
+        K[AXIS Index Update]
+    end
+
+    A --> C
+    B --> C
+    G --> H
+    G --> I
+    H --> J
+    I --> J
+    J --> K
+    
+    style C fill:#ffffcc,stroke:#333,stroke-width:2px
+    style D fill:#ffcccc,stroke:#333,stroke-width:2px
+    style E fill:#ccffcc,stroke:#333,stroke-width:2px
+    style F fill:#ccccff,stroke:#333,stroke-width:2px
+    style G fill:#ffccff,stroke:#333,stroke-width:2px
+    style H fill:#99ff99,stroke:#333,stroke-width:2px
+    style I fill:#99ff99,stroke:#333,stroke-width:2px
+----
+
+### 5.4. Query Execution and Pruning
+
+The HELIX engine's query execution leverages the clustering structure for efficient pruning:
+
+....
+Query Flow:
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Query Vec  │────▶│ PCA Project  │────▶│ Hilbert Key │
+└─────────────┘     └──────────────┘     └─────────────┘
+                                                 │
+                                                 ▼
+┌────────────────────────────────────────────────────────┐
+│              File-Based Level Management               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐│
+│  │L0_*.helix     │  │L1_*.helix     │  │L2_*.helix     ││
+│  │Range:        │  │Range:        │  │Range:        ││
+│  │[0..1000]     │  │[1001..2K]    │  │[2K..3K]      ││
+│  └──────────────┘  └──────────────┘  └──────────────┘│
+└────────────────────────────────────────────────────────┘
+       ▲              ▲              ✗ (pruned)
+       │              │
+   Selected       Selected      
+
+Pruning Strategy:
+1. Convert query vector to Hilbert key
+2. Select SSTables with overlapping key ranges
+3. Within selected SSTables, use block-level metadata for finer pruning
+4. Load only relevant blocks into memory
+....
+
+### 5.5. Handling Deletes and Updates
+
+Deletes and updates are handled through tombstoning:
+
+1. **Soft Deletes**: Use `expires_at` field in VectorRecord to mark as deleted
+2. **Tombstone Propagation**: Tombstones flow through flush and compaction
+3. **Physical Removal**: Records are hard deleted during compaction when:
+   - Tombstone and record meet in same compaction job
+   - Expired records (`expires_at` < current_time) are encountered
+4. **Update Handling**: Updates create new version with same ID, old version tombstoned
+
+### 5.6. Crash Recovery
+
+Since HELIX is disk-only, crash recovery is simplified:
+
+1. **No Memory State**: No memtable to recover, global WAL handles write durability
+2. **File Persistence**: SSTables persist on disk/cloud storage
+3. **Recovery Process**:
+   - Scan directory for all .helix files on restart
+   - Parse level from filenames
+   - Verify file checksums
+   - Resume any incomplete compactions
+4. **Storage-Level Guarantees**: Durability depends on underlying storage (local disk, S3, GCS)
+
+### 5.7. File Management (SST-Style Approach)
+
+HELIX uses the same file management strategy as the SST engine for simplicity and reliability:
+
+#### File Naming Convention
+Files encode level information directly in their names using the unified `FilenameCodec`:
+- **Format**: `L{level}_{timestamp}_{uuid}.helix`
+- **Example**: `L0_20250814T143052_a7f3c2d1.helix` (Level 0 file)
+- **Example**: `L3_20250814T143053_b8e4d3e2.helix` (Level 3 file)
+
+#### Manifest-Free Design
+Unlike traditional LSM engines with complex manifest files, HELIX:
+1. **File Discovery**: List directory to find all `.helix` files
+2. **Level Detection**: Parse level from filename (e.g., `L3_` → Level 3)
+3. **File Validity**: File existence indicates validity (no separate manifest)
+4. **Atomic Operations**: Rename for atomic file visibility
+5. **Compaction Cleanup**: Delete old files after successful compaction
+
+#### Benefits of This Approach
+- **Simplicity**: No manifest synchronization complexity
+- **Reliability**: File system provides atomicity guarantees
+- **Recovery**: Simple directory scan rebuilds state
+- **Cloud-Native**: Works seamlessly with object stores (S3, GCS)
+- **Debugging**: Human-readable file organization
+
+#### File Extensions and Magic Bytes
+- **Extension**: `.helix` (defined in `constants.rs`)
+- **Magic Bytes**: `HELX` (0x48454C58)
+- **Header**: Contains version, compression, and clustering metadata
+
+### 5.8. Hybrid Search Strategy with Adaptive Quantization
+
+HELIX leverages the unified quantization module for flexible search strategies:
+
+#### Storage Quantization Scenarios
+
+1. **No Storage Quantization + No On-Demand**:
+   - Use Hilbert range pruning on collocated row groups
+   - Leverage block statistics for filtering
+   - Direct FP32 vector comparisons
+
+2. **No Storage Quantization + On-Demand Required**:
+   - Apply on-demand quantization first (based on hints)
+   - Use quantized vectors for initial filtering
+   - Refine with FP32 vectors in final stage
+
+3. **Storage Quantization Enabled**:
+   - Use pre-quantized vectors from storage for filtering
+   - Progressive refinement: Binary → INT8 → PQ → FP32
+   - Leverage `quantized_vector` field in VectorRecord
+
+#### Quantization Integration Points
+
+- **Insert Time**: Via `QuantizationRepresentation` in VectorRecord
+- **Search Time**: Via `SearchQuantization` for on-demand quantization
+- **Collection Config**: Controls default quantization behavior
+- **Hints**: Runtime overrides for quantization strategy
+
+## 6. API and Implementation
+
+The `HELIXEngine` implements the `UnifiedStorageEngine` trait with disk-only optimizations:
+
+### 6.1. Core Trait Implementation
+
+```rust
+impl UnifiedStorageEngine for HELIXEngine {
+    async fn do_flush(&self, batch: FlushBatch) -> Result<()> {
+        // 1. Transform batch into FastLane blocks
+        // 2. Generate PCA projections and Hilbert keys
+        // 3. Create Level-0 SSTable
+        // 4. Notify AXIS via EventLog
+    }
+    
+    async fn do_compact(&self, level: usize) -> Result<()> {
+        // 1. Select SSTables for compaction
+        // 2. Read and merge FastLane blocks
+        // 3. Apply clustering (PCA + Hilbert sort)
+        // 4. Write new SSTables with liquid clustering
+        // 5. Update manifest and notify AXIS
+    }
+    
+    async fn search_vectors_unified(&self, query: SearchRequest) -> Result<SearchResults> {
+        // 1. Project query vector via PCA
+        // 2. Calculate query Hilbert key
+        // 3. Prune SSTables by Hilbert range
+        // 4. Apply quantization strategy (storage/on-demand)
+        // 5. Execute columnar scan on FastLane blocks
+    }
+}
+```
+
+### 6.2. Lynx-Specific Extensions
+
+- **Clustering Control**: APIs for PCA model management and re-clustering triggers
+- **Liquid Clustering**: Adaptive clustering based on query patterns
+- **FastLane Operations**: Columnar batch operations with SIMD optimization
+
+## 7. Configuration and Tunability
+
+### 7.1. Collection-Level Configuration
+
+Configuration via existing `CollectionMetadata` and proto messages:
+
+```proto
+message LynxEngineConfig {
+    // Compaction settings
+    uint32 level0_file_num_compaction_trigger = 1;  // Default: 4
+    uint32 max_levels = 2;                          // Default: 7
+    double size_ratio = 3;                          // Default: 10.0
+    
+    // Clustering settings  
+    uint32 pca_dimensions = 4;                      // Default: 16
+    uint32 fastlane_block_size = 5;                 // Default: 128
+    bool enable_liquid_clustering = 6;              // Default: true
+    
+    // Quantization integration
+    bool storage_quantization = 7;                  // Default: false
+    QuantizationConfig quantization_config = 8;     // If enabled
+}
+```
+
+### 7.2. Server-Wide Configuration
+
+TOML configuration for global settings:
+
+```toml
+[storage.helix]
+# Compaction thread pool
+compaction_threads = 4
+# PCA model retraining interval  
+pca_retrain_interval_hours = 24
+# Cache settings
+block_cache_size_mb = 1024
+# Bloom filter settings
+bloom_filter_bits_per_key = 10
+```
+
+### 7.3. Smart Defaults
+
+- Auto-tune based on dataset characteristics
+- Adaptive compaction triggers based on write patterns
+- Dynamic PCA dimension selection based on data variance
+
+## 8. Monitoring and Metrics
+
+Integration with unified metrics framework (similar to VIPER/SST):
+
+### 8.1. Key Metrics
+
+```rust
+// Compaction metrics
+lynx_compaction_duration_seconds{level="1"}
+lynx_compaction_bytes_written{level="1"}
+lynx_compaction_clustering_quality{level="1"}
+
+// Query metrics  
+lynx_query_pruning_ratio
+lynx_fastlane_blocks_scanned
+lynx_hilbert_range_efficiency
+
+// PCA metrics
+lynx_pca_model_version
+lynx_pca_projection_latency_us
+lynx_pca_model_drift_score
+
+// Storage metrics
+lynx_sstable_count{level="0"}
+lynx_sstable_size_bytes{level="0"}
+lynx_bloom_filter_hits
+```
+
+### 8.2. Dashboard Integration
+
+- Grafana dashboards for cluster health
+- Alert rules for compaction lag
+- PCA model drift monitoring
+
+## 9. Future Work
+
+### 9.1. Near-term Enhancements
+
+1. **Adaptive PCA Models**: Per-partition PCA models for better clustering
+2. **Multi-version Concurrency**: MVCC support for consistent reads during compaction
+3. **Incremental Clustering**: Online clustering without full re-compaction
+4. **Zone Maps**: Min/max statistics per dimension for better pruning
+
+### 9.2. Long-term Research
+
+1. **Learned Indexes**: ML-based index structures for predicting data locations
+2. **GPU-Accelerated Compaction**: Offload PCA and Hilbert computations to GPU
+3. **Distributed Lynx**: Sharded LSM tree across multiple nodes
+4. **Quantum-Resistant Hashing**: Future-proof Hilbert key generation
+5. **Neural Clustering**: Deep learning models for optimal data placement
+
+### 9.3. Integration Opportunities
+
+1. **AXIS Co-optimization**: Joint optimization of storage clustering and in-memory indexes
+2. **Cross-Engine Federation**: Query planning across Lynx, VIPER, SST engines
+3. **Tiered Storage**: Automatic data migration between Lynx levels and cold storage
+4. **Real-time Analytics**: Streaming ingestion with continuous clustering

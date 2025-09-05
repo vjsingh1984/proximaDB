@@ -48,6 +48,12 @@ pub const RAPTOR_FILE_EXT: &str = ".raptor";
 /// Prism uses hybrid format
 pub const PRISM_FILE_EXT: &str = ".prism";
 
+/// HELIX engine - High-Efficiency Locality-Indexed eXecution
+/// LSM-based with PCA/Hilbert clustering for vector similarity
+pub const ENGINE_HELIX: &str = "helix";
+pub const HELIX_MAGIC: [u8; 4] = *b"HELX";
+pub const HELIX_FILE_EXT: &str = ".helix";
+
 /// Metadata file extensions
 pub const METADATA_EXT: &str = ".meta";
 pub const STATS_EXT: &str = ".stats";
