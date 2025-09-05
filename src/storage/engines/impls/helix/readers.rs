@@ -15,8 +15,30 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
+use crate::core::bloom::{BloomFilterFactory, BloomFilterStrategy, SerializedBloomFilter};
 
-/// Search an SSTable for nearest vectors
+/// Check if SSTable might contain specific vector IDs using bloom filter
+pub async fn check_bloom_filter(
+    sstable: &SStableMetadata,
+    vector_ids: &[String],
+) -> Result<Vec<bool>> {
+    if let Some(ref bloom_data) = sstable.bloom_filter {
+        // Deserialize the bloom filter using the unified factory
+        let serialized = SerializedBloomFilter::from_bytes(bloom_data)?;
+        let bloom = BloomFilterFactory::from_serialized(&serialized)?;
+        
+        // Check each ID
+        let results: Vec<bool> = vector_ids.iter()
+            .map(|id| bloom.might_contain(id.as_bytes()))
+            .collect();
+        Ok(results)
+    } else {
+        // No bloom filter, assume all might be present
+        Ok(vec![true; vector_ids.len()])
+    }
+}
+
+/// Search an SSTable for nearest vectors with bloom filter optimization
 pub async fn search_sstable(
     filesystem: &Arc<dyn FileSystem>,
     sstable: &SStableMetadata,
@@ -24,7 +46,21 @@ pub async fn search_sstable(
     k: usize,
     distance_metric: &DistanceMetric,
     filter: Option<&dyn Fn(&HashMap<String, String>) -> bool>,
+    candidate_ids: Option<&[String]>,  // Optional IDs to check via bloom filter
 ) -> Result<Vec<InternalSearchResult>> {
+    // Check bloom filter if candidate IDs provided
+    if let Some(ids) = candidate_ids {
+        if !ids.is_empty() && sstable.bloom_filter.is_some() {
+            let bloom_results = check_bloom_filter(sstable, ids).await?;
+            
+            // Skip this SSTable if none of the candidate IDs might be present
+            if !bloom_results.iter().any(|&present| present) {
+                debug!("Skipping SSTable due to bloom filter pruning");
+                return Ok(Vec::new());
+            }
+        }
+    }
+    
     debug!(
         "Searching SSTable at level {} with {} vectors",
         sstable.level, sstable.num_vectors

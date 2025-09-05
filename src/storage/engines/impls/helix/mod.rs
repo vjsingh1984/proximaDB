@@ -28,6 +28,7 @@ pub mod fastlane;
 pub mod hilbert_curve;
 pub mod liquid_clustering;
 pub mod pca_impl;
+pub mod pca_manager;
 pub mod progressive_search;
 pub mod readers;
 pub mod zone_maps;
