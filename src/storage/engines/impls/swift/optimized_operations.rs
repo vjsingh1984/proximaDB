@@ -254,7 +254,7 @@ impl OptimizedSwiftOperations {
                         quantized_vector: None,
                         source: None,
                     },
-                    *distance,
+                    distance.clone(),
                 ));
             }
         }

@@ -760,12 +760,10 @@ impl UnifiedStorageEngine for SwiftEngine {
                 // Create SimilarityResult manually for Euclidean distance
                 // For euclidean: lower distance = better similarity
                 let similarity_result =
-                    crate::compute::distance_computation::engine::SimilarityResult {
-                        raw_value: distance,
-                        metric: crate::proto::proximadb::DistanceMetric::Euclidean,
-                        normalized_score: 1.0 / (1.0 + distance), // Simple normalization
-                        rank_value: distance, // For euclidean, rank_value = raw distance
-                    };
+                    crate::compute::distance_computation::engine::SimilarityResult::new(
+                        distance,
+                        crate::proto::proximadb::DistanceMetric::Euclidean,
+                    );
 
                 crate::core::search::InternalSearchResult {
                     id: if record.id.is_empty() {
@@ -1001,12 +999,10 @@ impl SwiftEngine {
             .map(|(idx, (record, distance))| {
                 // Create SimilarityResult manually based on distance metric
                 let similarity_result =
-                    crate::compute::distance_computation::engine::SimilarityResult {
-                        raw_value: distance,
-                        metric: distance_metric,
-                        normalized_score: 1.0 / (1.0 + distance), // Simple normalization
-                        rank_value: distance, // For most metrics, rank_value = raw distance
-                    };
+                    crate::compute::distance_computation::engine::SimilarityResult::new(
+                        distance,
+                        distance_metric,
+                    );
 
                 // Convert metadata from proto to internal format
                 let metadata: std::collections::HashMap<String, serde_json::Value> = record

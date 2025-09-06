@@ -92,10 +92,9 @@ fn benchmark_distance_metrics(dimensions: &[usize], iterations: usize) -> Result
     
     for metric in &metrics {
         println!("Creating UnifiedDistanceCompute for metric: {:?}", metric);
-        let mut engine = UnifiedDistanceCompute::new(*metric);
-        // Disable GPU to reduce potential stack usage
-        engine.set_gpu_enabled(false);
-        println!("Created engine for {:?} (GPU disabled)", metric);
+        let engine = UnifiedDistanceCompute::new(*metric);
+        // GPU is lazily initialized only when needed
+        println!("Created engine for {:?}", metric);
         engines.insert(*metric, engine);
     }
     

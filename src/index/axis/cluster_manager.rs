@@ -173,10 +173,10 @@ impl ClusterManager {
         let mut nearest_cluster = 0u32;
 
         for (i, centroid) in self.centroids.iter().enumerate() {
-            let distance_result = self.distance_calculator.calculate_distance(
+            let distance_result = self.distance_calculator.similarity(
                 vector,
                 centroid,
-                &self.config.distance_metric,
+                Some(self.config.distance_metric),
             );
             let distance = distance_result.raw_value;
 
@@ -193,10 +193,10 @@ impl ClusterManager {
         let mut cluster_distances = Vec::new();
 
         for (i, centroid) in self.centroids.iter().enumerate() {
-            let distance = self.distance_calculator.calculate_distance(
+            let distance = self.distance_calculator.similarity(
                 query,
                 centroid,
-                &self.config.distance_metric,
+                Some(self.config.distance_metric),
             );
             cluster_distances.push((i as u32, distance));
         }

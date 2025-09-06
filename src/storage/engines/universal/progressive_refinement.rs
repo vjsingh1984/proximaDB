@@ -717,12 +717,7 @@ impl ProgressiveRefinementPipeline {
             // Create a similarity result from the candidate
             // In a real implementation, this would use the actual computed distance
             let score = candidate.quality_score.unwrap_or(0.0);
-            let similarity_result = SimilarityResult {
-                raw_value: score,
-                metric: *distance_metric,
-                normalized_score: score,
-                rank_value: score,
-            };
+            let similarity_result = SimilarityResult::new(score, *distance_metric);
 
             results.push(similarity_result);
         }

@@ -882,16 +882,11 @@ impl UnifiedParquetReader {
                 .sum::<f32>()
                 .sqrt();
 
-            // Create a proper SimilarityResult
-            // For euclidean distance: lower = more similar, so we use rank_value directly
-            // normalized_score would be (1.0 / (1.0 + distance)) for [0,1] range where 1 = most similar
-            let similarity_result =
-                crate::compute::distance_computation::engine::SimilarityResult {
-                    raw_value: distance,
-                    metric: crate::proto::proximadb::DistanceMetric::Euclidean,
-                    normalized_score: 1.0 / (1.0 + distance), // Simple normalization for euclidean
-                    rank_value: distance, // For euclidean, rank_value = raw distance (lower is better)
-                };
+            // Create a proper SimilarityResult using the constructor
+            let similarity_result = crate::compute::distance_computation::engine::SimilarityResult::new(
+                distance,
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
+            );
 
             let vector_id = id_col.map(|arr| arr.value(row_idx).to_string());
             candidates.push(SearchCandidate {

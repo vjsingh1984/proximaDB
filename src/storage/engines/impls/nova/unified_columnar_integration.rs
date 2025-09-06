@@ -886,21 +886,17 @@ impl NovaUnifiedEngine {
                 // Approximate: use binary hamming distance
                 let hamming_distance = compute_hamming_distance(query_vector, binary_vec);
                 let normalized = 1.0 - (hamming_distance as f32 / (binary_vec.len() * 8) as f32);
-                let sim = crate::compute::distance_computation::engine::SimilarityResult {
-                    raw_value: hamming_distance as f32,
-                    metric: DistanceMetric::Hamming,
-                    normalized_score: normalized,
-                    rank_value: hamming_distance as f32,
-                };
+                let sim = crate::compute::distance_computation::engine::SimilarityResult::new(
+                    hamming_distance as f32,
+                    DistanceMetric::Hamming,
+                );
                 (sim, 0.60) // ~60% quality for binary
             } else {
                 // No data available
-                let sim = crate::compute::distance_computation::engine::SimilarityResult {
-                    raw_value: f32::MAX,
-                    metric: DistanceMetric::Cosine,
-                    normalized_score: 0.0,
-                    rank_value: f32::MAX,
-                };
+                let sim = crate::compute::distance_computation::engine::SimilarityResult::new(
+                    f32::MAX,
+                    DistanceMetric::Cosine,
+                );
                 (sim, 0.0)
             };
 

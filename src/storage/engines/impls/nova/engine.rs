@@ -821,12 +821,10 @@ impl UnifiedStorageEngine for NovaEngine {
             .enumerate()
             .map(|(idx, (record, score))| {
                 // Create similarity result for semantic information
-                let similarity_result = crate::compute::distance_computation::SimilarityResult {
-                    normalized_score: score,
-                    raw_value: 1.0 - score,  // Distance value
-                    rank_value: 1.0 - score, // Lower distance = better rank
-                    metric: distance_metric,
-                };
+                let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
+                    1.0 - score,  // Distance value
+                    distance_metric,
+                );
 
                 crate::core::search::InternalSearchResult {
                     id: if record.id.is_empty() {
@@ -1088,12 +1086,10 @@ impl NovaEngine {
             .into_iter()
             .enumerate()
             .map(|(idx, (record, score))| {
-                let similarity_result = crate::compute::distance_computation::SimilarityResult {
-                    normalized_score: score,
-                    raw_value: 1.0 - score,  // Distance value
-                    rank_value: 1.0 - score, // Lower distance = better rank
-                    metric: distance_metric,
-                };
+                let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
+                    1.0 - score,  // Distance value
+                    distance_metric,
+                );
 
                 crate::core::search::InternalSearchResult {
                     id: if record.id.is_empty() {

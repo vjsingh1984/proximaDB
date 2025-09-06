@@ -341,14 +341,12 @@ impl NovaColumnarSearch {
         let mut heap = BinaryHeap::new();
         while let Some(candidates) = rx.recv().await {
             for (record, distance) in candidates {
-                // Create SimilarityResult manually based on distance metric
+                // Create SimilarityResult using constructor
                 let similarity_result =
-                    crate::compute::distance_computation::engine::SimilarityResult {
-                        raw_value: distance,
-                        metric: distance_metric,
-                        normalized_score: 1.0 / (1.0 + distance), // Simple normalization
-                        rank_value: distance, // For most metrics, rank_value = raw distance
-                    };
+                    crate::compute::distance_computation::engine::SimilarityResult::new(
+                        distance,
+                        distance_metric,
+                    );
 
                 heap.push(SearchCandidate {
                     row_group_id: 0,

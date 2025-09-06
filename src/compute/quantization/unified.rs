@@ -19,7 +19,7 @@ use tracing::debug;
 use super::hardware_accelerated::AcceleratedQuantization;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::{
-    MetricProperties, SimilarityResult, UnifiedDistanceCompute,
+    DistanceMetricExt, SimilarityResult, UnifiedDistanceCompute,
 };
 
 // Use internal types (Release 1 - no legacy proto compatibility)
@@ -347,7 +347,7 @@ impl UnifiedQuantizationEngine {
                 let vector = self.dequantize_fp32(&quantized_vector.data)?;
                 Ok(self
                     .distance_compute
-                    .calculate_distance(query, &vector, metric))
+                    .similarity(query, &vector, Some(*metric)))
             }
 
             Some(QuantizationLevel::Pq(pq)) => {
@@ -371,7 +371,7 @@ impl UnifiedQuantizationEngine {
                 let vector = self.dequantize(quantized_vector).await?;
                 Ok(self
                     .distance_compute
-                    .calculate_distance(query, &vector, metric))
+                    .similarity(query, &vector, Some(*metric)))
             }
         }
     }
@@ -604,8 +604,7 @@ impl UnifiedQuantizationEngine {
             for (old, new) in old_centroids.iter().zip(&centroids) {
                 let change = self
                     .distance_compute
-                    .calculate_distance(old, new, &DistanceMetric::Euclidean)
-                    .rank_value;
+                    .distance_with_metric(old, new, &DistanceMetric::Euclidean);
                 max_change = max_change.max(change);
             }
 
@@ -1339,15 +1338,7 @@ impl UnifiedQuantizationEngine {
 
         // Create SimilarityResult for the final distance
         let final_distance = total_distance.sqrt();
-        Ok(SimilarityResult {
-            raw_value: final_distance,
-            metric: metric.clone(),
-            normalized_score: match metric.is_similarity() {
-                true => final_distance, // For similarity metrics, higher is better
-                false => 1.0 / (1.0 + final_distance), // For distance metrics, convert to similarity
-            },
-            rank_value: final_distance,
-        })
+        Ok(SimilarityResult::new(final_distance, metric.clone()))
     }
 
     fn precompute_pq_distance_tables(
@@ -1399,15 +1390,7 @@ impl UnifiedQuantizationEngine {
         }
 
         let distance = total.sqrt();
-        Ok(SimilarityResult {
-            raw_value: distance,
-            metric: metric.clone(),
-            normalized_score: match metric.is_similarity() {
-                true => distance,
-                false => 1.0 / (1.0 + distance),
-            },
-            rank_value: distance,
-        })
+        Ok(SimilarityResult::new(distance, metric.clone()))
     }
 
     /// Calculate distance between Product Quantized vectors
