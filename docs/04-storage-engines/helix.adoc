@@ -4,7 +4,9 @@
 :icons: font
 
 [abstract]
-**Hierarchical Embeddings with Locality-Indexed eXtensions** - A storage engine that uses PCA dimensionality reduction and Hilbert curve clustering to achieve 70-90% query pruning and 2-3x search speedup.
+**High-Efficiency Locality-Indexed eXecution** - A disk-only LSM engine with 7,798 lines of implementation. Uses PCA dimensionality reduction and Hilbert curve clustering for physical co-location of similar vectors, achieving 70-90% query pruning.
+
+include::../assets/logos/helix-engine-logo.svg[]
 
 == Overview
 
@@ -12,12 +14,12 @@ The HELIX engine is designed for similarity search workloads where vectors exhib
 
 === Key Features
 
-* **PCA Dimensionality Reduction**: Reduces high-dimensional vectors to 64D for clustering
-* **Hilbert Curve Clustering**: Preserves spatial locality in 1D ordering
-* **70-90% Query Pruning**: Eliminates most irrelevant files before search
-* **Parallel Search**: Configurable multi-threaded search (2-3x speedup)
-* **LSM Tree Storage**: Efficient write performance with compaction
-* **Progressive Quantization**: Supports binary, INT8, and PQ quantization
+* **Disk-Only LSM**: No embedded memtable/WAL - uses global infrastructure
+* **PCA + Hilbert Clustering**: Physical co-location of similar vectors
+* **FastLane Columnar Blocks**: SIMD-optimized columnar format
+* **Liquid Clustering**: Query pattern-based adaptive clustering
+* **Parallel Search**: Configurable threads (default: 3 files minimum)
+* **EventLog Integration**: Async AXIS indexing support
 
 === When to Use HELIX
 
@@ -40,17 +42,39 @@ The HELIX engine is designed for similarity search workloads where vectors exhib
 
 == Architecture
 
-=== Data Flow
+=== Actual Implementation Architecture
 
 [source,mermaid]
 ----
 graph TD
-    subgraph "Write Path"
-        I[Input Vectors] --> PCA[PCA Transform<br/>768D → 64D]
-        PCA --> HC[Hilbert Clustering]
-        HC --> LSM[LSM Tree<br/>L0 → L1 → L2]
-        LSM --> DISK[Disk Storage]
+    subgraph "HELIX Components (7,798 lines)"
+        HE[HelixEngine<br/>Main Engine]
+        PC[PCA Manager<br/>pca_impl.rs]
+        HC[Hilbert Curve<br/>hilbert_curve.rs]
+        FL[FastLane Blocks<br/>fastlane.rs]
+        LC[Liquid Clustering<br/>liquid_clustering.rs]
+        CP[Compaction<br/>compaction.rs]
     end
+    
+    subgraph "Query Optimization"
+        QO[Query Optimizer<br/>query_optimization.rs]
+        PS[Progressive Search<br/>progressive_search.rs]
+        ZM[Zone Maps<br/>zone_maps.rs]
+    end
+    
+    subgraph "External Integration"
+        EL[EventLog<br/>eventlog_integration.rs]
+        UQ[Unified Quantization]
+        UC[Unified Cache]
+    end
+    
+    HE --> PC
+    HE --> HC
+    HE --> FL
+    PC --> LC
+    HE --> QO
+    QO --> PS
+    HE --> EL
     
     subgraph "Read Path"
         Q[Query Vector] --> QPCA[PCA Transform]
@@ -96,21 +120,25 @@ default_engine = "helix"
 [engines.helix]
 # PCA configuration
 pca_dimensions = 64              # Target dimensions after PCA
-pca_training_samples = 100000    # Samples for PCA training
+pca_retrain_interval_hours = 24  # PCA model retrain interval
 
 # Clustering configuration
-clustering_batch_size = 50000    # Vectors per clustering batch
-hilbert_bits = 16                # Bits per dimension for Hilbert
+fastlane_block_size = 1024       # Vectors per FastLane block
+hilbert_bits_per_dimension = 16  # Hilbert curve resolution
+enable_liquid_clustering = true   # Query-based adaptive clustering
 
 # Search configuration
 parallel_search_enabled = true   # Enable parallel search
-parallel_search_threshold = 3    # Min files for parallel search
-max_search_threads = 8           # Max parallel threads
+parallel_search_threshold = 3    # Min files for parallel (default)
+max_search_threads = 0           # 0 = CPU cores / 2 (auto)
 
-# Storage configuration
-l0_size_mb = 64                 # L0 file size
-l1_size_mb = 256                # L1 file size
-compression = "zstd"             # Compression algorithm
+# LSM configuration
+level0_file_num_compaction_trigger = 4  # L0 compaction trigger
+max_levels = 7                          # Maximum LSM levels
+size_ratio = 10.0                       # Size ratio between levels
+storage_quantization = true             # Enable storage quantization
+bloom_filter_bits_per_key = 10         # Bloom filter configuration
+block_cache_size_mb = 256               # Block cache size
 ----
 
 === Performance Tuning
@@ -135,6 +163,61 @@ parallel_search_enabled = true   # Parallel search
 max_search_threads = 16          # More threads
 cache_clusters = true            # Cache cluster info
 ----
+
+== Implementation Details
+
+=== Core Structure
+[source,rust]
+----
+pub struct HelixEngine {
+    config: HelixConfig,
+    collection_id: String,
+    filesystem: Arc<dyn FileSystem>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    quantization_engine: Option<Arc<StorageQuantizationEngine>>,
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    pca_model: Arc<RwLock<Option<PCAModel>>>,
+    levels: Arc<RwLock<HashMap<usize, Vec<SStableMetadata>>>>,
+    compactor: Arc<LeveledCompactor>,
+    query_optimizer: Arc<QueryOptimizer>,
+    event_log: Option<Arc<EventLog>>,
+}
+----
+
+=== Key Components
+
+==== FastLane Columnar Blocks
+* SIMD-optimized columnar format for vector storage
+* Better compression and cache locality than row format
+* Direct integration with hardware acceleration
+
+==== Liquid Clustering
+* Adaptive clustering based on query patterns
+* Reorganizes data during compaction for better locality
+* Tracks access patterns to optimize future queries
+
+==== Disk-Only Design
+* No embedded memtable or WAL
+* Relies on global infrastructure for durability
+* Receives flushed data from EventLog system
+* Pure disk-based LSM implementation
+
+=== Unique Features
+
+==== Hilbert Curve Mapping
+* Maps high-dimensional PCA space to 1D curve
+* Preserves locality for range queries
+* Configurable resolution (bits per dimension)
+
+==== Zone Maps with Pruning
+* Min/max bounds per SSTable
+* Hilbert range filtering
+* 70-90% file pruning before search
+
+==== Progressive Search Integration
+* Uses unified progressive search framework
+* Binary → INT8 → PQ → Full precision pipeline
+* Shared with other storage engines
 
 == Performance Characteristics
 

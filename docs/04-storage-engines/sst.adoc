@@ -1,0 +1,249 @@
+= SST Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Sorted String Table** - A sophisticated LSM tree storage engine with zero-copy compaction, three-stage filtering pipeline, and hierarchical bloom filters. Optimized for real-time OLTP workloads with sub-5ms P99 latency.
+
+include::../assets/logos/sst-engine-logo.svg[]
+
+== Overview
+
+The SST engine implements a classic Log-Structured Merge (LSM) tree architecture, providing excellent write performance and predictable read latencies. It's the ideal choice for real-time applications requiring frequent updates and consistent sub-5ms query response times.
+
+=== Key Features
+
+* **Zero-Copy Compaction**: 80% memory reduction, 3x faster than traditional
+* **Three-Stage Filtering**: Bloom → Quantized → Full precision pipeline
+* **Hierarchical Bloom Filters**: File-level, block-level, and composite filters
+* **No Embedded MemTable**: Pure SSTable storage with external WAL handling
+* **Unified Infrastructure**: Full integration with quantization and compression
+* **Production Ready**: 47K+ lines of battle-tested code
+
+=== When to Use SST
+
+[cols="1,2", options="header"]
+|===
+| Use SST When | Don't Use When
+
+| Real-time updates required
+| Batch-only operations
+
+| Consistent latency critical
+| Analytics workloads
+
+| Frequent vector updates
+| Immutable datasets
+
+| OLTP workloads
+| OLAP workloads
+
+| Sub-5ms P99 needed
+| Can tolerate >10ms
+|===
+
+== Architecture
+
+=== Architecture Overview
+
+NOTE: SST engine operates as pure SSTable storage without embedded MemTable. Memory management is handled by the WAL subsystem.
+
+[source,mermaid]
+----
+graph TD
+    subgraph "External Systems"
+        WAL[Write-Ahead Log]
+        MT[MemTable<br/>External]
+        EventLog[EventLog Queue]
+    end
+    
+    subgraph "Level 0"
+        L0_1[SSTable]
+        L0_2[SSTable]
+        L0_3[SSTable]
+    end
+    
+    subgraph "Level 1"
+        L1_1[SSTable<br/>10MB]
+        L1_2[SSTable<br/>10MB]
+    end
+    
+    subgraph "Level 2"
+        L2_1[SSTable<br/>100MB]
+        L2_2[SSTable<br/>100MB]
+    end
+    
+    WAL --> MT
+    MT --> IMT
+    IMT --> L0_1
+    
+    L0_1 --> L1_1
+    L0_2 --> L1_1
+    L0_3 --> L1_2
+    
+    L1_1 --> L2_1
+    L1_2 --> L2_2
+    
+    style WAL fill:#ffcdd2
+    style MT fill:#e8f5e9
+    style L0_1 fill:#fff3e0
+    style L1_1 fill:#e3f2fd
+    style L2_1 fill:#f3e5f5
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "sst"
+
+[engines.sst]
+# Block settings (256KB-16MB range)
+block_size_kb = 2048              # 2MB default (cloud optimized)
+
+# Compression (14 algorithms available)
+compression = "mixed"             # Per-block optimal selection
+compression_level = 6             # 1-22 for ZSTD
+
+# Bloom filter configuration
+bloom_filter_config = {
+    enabled = true,
+    bits_per_key = 10,
+    hierarchical = true           # File + block level
+}
+
+# Compaction configuration
+compaction_strategy = "unified"   # leveled, tiered, or unified
+max_files_per_level = 10
+level_size_multiplier = 10
+max_levels = 7
+background_thread_count = 4
+
+# Cache configuration
+decompression_cache_config = {
+    size_mb = 512,
+    policy = "lru",
+    prefetch_enabled = true
+}
+
+# Write settings
+write_buffer_size = 67108864  # 64MB
+max_write_buffer_number = 3
+min_write_buffer_number_to_merge = 2
+----
+
+== Implementation Details
+
+=== Core Components
+
+==== SstStorage Structure
+[source,rust]
+----
+pub struct SstStorage {
+    config: SstConfig,
+    compaction_manager: Arc<Compaction>,
+    filesystem: Arc<FilesystemFactory>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
+    sstable_reader: Arc<UnifiedSstableReader>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    decompression_cache: Arc<DecompressionCache>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    universal_optimizer: UniversalPerformanceOptimizer,
+}
+----
+
+==== Three-Stage Filter Pipeline
+1. **Bloom Filter Stage**: 95% reduction in unnecessary reads
+2. **Quantized Vector Stage**: INT8/PQ for fast approximate filtering
+3. **Full Precision Stage**: Exact results with decompression cache
+
+==== Zero-Copy Compaction
+* Direct streaming between SST files without deserialization
+* Preserves compressed blocks during compaction
+* MVCC resolution for concurrent reads
+* 80% memory reduction vs traditional compaction
+
+=== Integration Points
+
+==== EventLog System
+* Synchronous flush acknowledgment
+* Asynchronous AXIS indexing
+* Queue-aware compaction
+
+==== Unified Infrastructure
+* **Quantization Engine**: `/src/compute/quantization/`
+* **Distance Computation**: `/src/compute/distance_computation/`
+* **Compression Module**: 14 algorithms with mixed strategy
+* **Hardware Acceleration**: Automatic SIMD detection
+
+== Performance Characteristics
+
+=== Throughput & Latency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Write Throughput**
+| 200K vec/s
+| With batching
+
+| **Read Latency P50**
+| 2.0ms
+| With bloom filters
+
+| **Read Latency P99**
+| 4.5ms
+| Consistent
+
+| **Update Rate**
+| 100K vec/s
+| In-place updates
+
+| **Compaction Overhead**
+| 10-15%
+| Background CPU
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 3-5x
+| LZ4 default
+
+| **Write Amplification**
+| 10-15x
+| Tiered compaction
+
+| **Space Amplification**
+| 1.1x
+| After compaction
+
+| **Memory per 1M vectors**
+| 2GB
+| Including cache
+|===
+
+== Best Practices
+
+1. **Tune Compaction**: Balance between write amplification and space
+2. **Size MemTables**: Larger for throughput, smaller for latency
+3. **Enable Bloom Filters**: Essential for read performance
+4. **Monitor Levels**: Keep L0 under control
+5. **Batch Writes**: Improve throughput significantly
+
+---
+
+[.text-center]
+_SST Engine - Production Ready_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
+  <!-- HELIX Engine Logo: Hierarchical Embeddings with Locality-Indexed eXtensions -->
+  <!-- Design: Double helix with Hilbert curve patterns representing PCA+Hilbert clustering -->
+  
+  <defs>
+    <!-- Helix gradient -->
+    <linearGradient id="helixGradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#9C27B0;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#673AB7;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#3F51B5;stop-opacity:1" />
+    </linearGradient>
+    
+    <linearGradient id="helixGradient2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#00BCD4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#03A9F4;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#2196F3;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Core glow -->
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#E91E63;stop-opacity:0.8" />
+      <stop offset="40%" style="stop-color:#9C27B0;stop-opacity:0.5" />
+      <stop offset="100%" style="stop-color:#3F51B5;stop-opacity:0.2" />
+    </radialGradient>
+    
+    <!-- Hilbert pattern -->
+    <pattern id="hilbertPattern" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M 2,2 L 2,8 L 8,8 L 8,2 M 12,2 L 12,8 L 18,8 L 18,2 M 2,12 L 2,18 L 8,18 L 8,12 M 12,12 L 18,12 L 18,18 L 12,18" 
+            stroke="#E91E63" stroke-width="0.5" fill="none" opacity="0.3"/>
+    </pattern>
+    
+    <!-- Glow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Shadow -->
+    <filter id="shadow">
+      <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  
+  <!-- Background with Hilbert pattern -->
+  <rect x="0" y="0" width="400" height="200" fill="#0A0E27" opacity="0.95"/>
+  <rect x="0" y="0" width="400" height="200" fill="url(#hilbertPattern)" opacity="0.15"/>
+  
+  <!-- Core glow background -->
+  <ellipse cx="200" cy="100" rx="120" ry="60" fill="url(#coreGlow)" opacity="0.3"/>
+  
+  <!-- Double Helix Structure -->
+  <!-- First helix strand -->
+  <g transform="translate(200,100)">
+    <!-- Main helix curves -->
+    <path d="M -80,0 Q -60,-30 -40,-20 T -20,0 T 0,-20 T 20,0 T 40,-20 T 60,0 T 80,-30"
+          stroke="url(#helixGradient1)" stroke-width="4" fill="none" filter="url(#glow)"
+          opacity="0.9">
+      <animate attributeName="d" 
+               values="M -80,0 Q -60,-30 -40,-20 T -20,0 T 0,-20 T 20,0 T 40,-20 T 60,0 T 80,-30;
+                       M -80,0 Q -60,-20 -40,-30 T -20,0 T 0,-30 T 20,0 T 40,-30 T 60,0 T 80,-20;
+                       M -80,0 Q -60,-30 -40,-20 T -20,0 T 0,-20 T 20,0 T 40,-20 T 60,0 T 80,-30"
+               dur="8s" repeatCount="indefinite"/>
+    </path>
+    
+    <path d="M -80,0 Q -60,30 -40,20 T -20,0 T 0,20 T 20,0 T 40,20 T 60,0 T 80,30"
+          stroke="url(#helixGradient2)" stroke-width="4" fill="none" filter="url(#glow)"
+          opacity="0.9">
+      <animate attributeName="d" 
+               values="M -80,0 Q -60,30 -40,20 T -20,0 T 0,20 T 20,0 T 40,20 T 60,0 T 80,30;
+                       M -80,0 Q -60,20 -40,30 T -20,0 T 0,30 T 20,0 T 40,30 T 60,0 T 80,20;
+                       M -80,0 Q -60,30 -40,20 T -20,0 T 0,20 T 20,0 T 40,20 T 60,0 T 80,30"
+               dur="8s" repeatCount="indefinite"/>
+    </path>
+    
+    <!-- Connection nodes representing clustering -->
+    <circle cx="-60" cy="0" r="3" fill="#E91E63" opacity="0.8">
+      <animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-20" cy="0" r="3" fill="#9C27B0" opacity="0.8">
+      <animate attributeName="r" values="3;5;3" dur="2s" begin="0.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="20" cy="0" r="3" fill="#673AB7" opacity="0.8">
+      <animate attributeName="r" values="3;5;3" dur="2s" begin="1s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="60" cy="0" r="3" fill="#3F51B5" opacity="0.8">
+      <animate attributeName="r" values="3;5;3" dur="2s" begin="1.5s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+  
+  <!-- PCA dimension arrows -->
+  <g transform="translate(200,100)" opacity="0.6">
+    <line x1="-100" y1="0" x2="-90" y2="0" stroke="#E91E63" stroke-width="2" marker-end="url(#arrowhead)"/>
+    <line x1="90" y1="0" x2="100" y2="0" stroke="#3F51B5" stroke-width="2" marker-end="url(#arrowhead)"/>
+  </g>
+  
+  <!-- Arrow marker -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#E91E63" opacity="0.8"/>
+    </marker>
+  </defs>
+  
+  <!-- Engine name -->
+  <text x="200" y="170" font-family="'Segoe UI', Arial, sans-serif" font-size="24" font-weight="bold" 
+        text-anchor="middle" fill="url(#helixGradient1)" filter="url(#shadow)">
+    HELIX
+  </text>
+  
+  <!-- Tagline -->
+  <text x="200" y="190" font-family="'Segoe UI', Arial, sans-serif" font-size="10" 
+        text-anchor="middle" fill="#00BCD4" opacity="0.8">
+    PCA + Hilbert Clustering
+  </text>
+</svg>

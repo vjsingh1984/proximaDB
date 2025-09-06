@@ -4,7 +4,7 @@
 :imagesdir: docs/diagrams/images
 
 [.text-center]
-image::docs/logos/proximadb-logo.svg[ProximaDB, 180, 180, align="center"]
+include::docs/assets/logos/proximadb-logo.svg[]
 
 [.lead.text-center]
 **AI-Ready Vector Database for Production Applications**

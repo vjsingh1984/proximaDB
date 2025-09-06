@@ -4,6 +4,7 @@
 //! Includes SIMD-optimized implementations with automatic hardware detection.
 
 pub mod conversion;
+pub mod core;  // Core SIMD distance implementations
 pub mod engine;
 pub mod int8_simd;
 pub mod platform;

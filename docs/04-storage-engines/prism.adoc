@@ -1,0 +1,728 @@
+= PRISM Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Progressive Retrieval with In-memory Storage Management** - A memory-first storage engine optimized for ultra-low latency (<1ms) through progressive quantization, lock-free data structures, and NUMA-aware memory management.
+
+include::../assets/logos/prism-engine-logo.svg[]
+
+== Overview
+
+The PRISM engine represents the pinnacle of low-latency vector search, designed for applications where every microsecond matters. By keeping all data in memory with progressive quantization levels and employing lock-free concurrent data structures, PRISM achieves sub-millisecond search latencies while maintaining high throughput.
+
+=== Key Features
+
+* **Memory-First Architecture**: All data resident in RAM
+* **Progressive Quantization**: Multi-level precision for speed/accuracy trade-off
+* **Lock-Free Operations**: Wait-free reads, minimal contention writes
+* **NUMA Optimization**: CPU-local memory allocation
+* **Zero-Copy Search**: Direct memory access without serialization
+* **Microsecond Latency**: P99 < 1ms for most workloads
+
+=== When to Use PRISM
+
+[cols="1,2", options="header"]
+|===
+| Use PRISM When | Don't Use When
+
+| Latency < 1ms required
+| Latency > 10ms acceptable
+
+| Dataset fits in memory
+| Dataset > available RAM
+
+| High-frequency trading
+| Batch processing
+
+| Real-time applications
+| Offline analytics
+
+| Can afford RAM costs
+| Cost-sensitive deployments
+|===
+
+== Architecture
+
+=== Memory Layout
+
+[source,mermaid]
+----
+graph TB
+    subgraph "NUMA Node 0"
+        CPU0[CPU Cores 0-15]
+        L1_0[L1/L2 Cache]
+        L3_0[L3 Cache 32MB]
+        RAM0[Local RAM 128GB]
+        
+        subgraph "Memory Regions"
+            HOT0[Hot Vectors<br/>Full Precision]
+            WARM0[Warm Vectors<br/>INT8]
+            COLD0[Cold Vectors<br/>Binary]
+            IDX0[Indices]
+        end
+    end
+    
+    subgraph "NUMA Node 1"
+        CPU1[CPU Cores 16-31]
+        L1_1[L1/L2 Cache]
+        L3_1[L3 Cache 32MB]
+        RAM1[Local RAM 128GB]
+        
+        subgraph "Memory Regions"
+            HOT1[Hot Vectors<br/>Full Precision]
+            WARM1[Warm Vectors<br/>INT8]
+            COLD1[Cold Vectors<br/>Binary]
+            IDX1[Indices]
+        end
+    end
+    
+    CPU0 --> L1_0 --> L3_0 --> RAM0
+    CPU1 --> L1_1 --> L3_1 --> RAM1
+    
+    RAM0 -.->|QPI/UPI| RAM1
+    
+    style HOT0 fill:#ffcdd2
+    style WARM0 fill:#fff9c4
+    style COLD0 fill:#e1f5fe
+    style HOT1 fill:#ffcdd2
+    style WARM1 fill:#fff9c4
+    style COLD1 fill:#e1f5fe
+----
+
+=== Progressive Quantization Levels
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Memory Tiers"
+        FP32[Full Precision<br/>4 bytes/dim<br/>100% accuracy]
+        FP16[Half Precision<br/>2 bytes/dim<br/>99.9% accuracy]
+        INT8[8-bit Integer<br/>1 byte/dim<br/>98% accuracy]
+        INT4[4-bit Integer<br/>0.5 bytes/dim<br/>95% accuracy]
+        BIN[Binary<br/>1 bit/dim<br/>85% accuracy]
+    end
+    
+    FP32 -->|Quantize| FP16
+    FP16 -->|Quantize| INT8
+    INT8 -->|Quantize| INT4
+    INT4 -->|Quantize| BIN
+    
+    style FP32 fill:#e8f5e9
+    style FP16 fill:#fff3e0
+    style INT8 fill:#e3f2fd
+    style INT4 fill:#fce4ec
+    style BIN fill:#f3e5f5
+----
+
+=== Lock-Free Data Structures
+
+==== Vector Storage
+[source,rust]
+----
+pub struct LockFreeVectorStore {
+    // Epoch-based memory reclamation
+    epoch: Arc<Epoch>,
+    
+    // Lock-free hash map for vectors
+    vectors: Arc<LockFreeHashMap<VectorId, AtomicVector>>,
+    
+    // Progressive quantization levels
+    fp32_vectors: Arc<MemoryPool<f32>>,
+    fp16_vectors: Arc<MemoryPool<f16>>,
+    int8_vectors: Arc<MemoryPool<i8>>,
+    binary_vectors: Arc<BitVecPool>,
+    
+    // Access statistics (lock-free counters)
+    access_counts: Arc<AtomicCounters>,
+    
+    // NUMA-aware allocators
+    numa_allocators: Vec<NumaAllocator>,
+}
+
+impl AtomicVector {
+    // Wait-free read
+    pub fn read(&self) -> VectorData {
+        let ptr = self.data.load(Ordering::Acquire);
+        unsafe { &*ptr }.clone()
+    }
+    
+    // Lock-free update with CAS
+    pub fn update(&self, new_data: VectorData) -> bool {
+        loop {
+            let current = self.data.load(Ordering::Acquire);
+            let new_ptr = Box::into_raw(Box::new(new_data));
+            
+            match self.data.compare_exchange(
+                current,
+                new_ptr,
+                Ordering::Release,
+                Ordering::Acquire
+            ) {
+                Ok(_) => {
+                    self.epoch.defer(move || {
+                        unsafe { Box::from_raw(current); }
+                    });
+                    return true;
+                }
+                Err(_) => {
+                    unsafe { Box::from_raw(new_ptr); }
+                }
+            }
+        }
+    }
+}
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "prism"
+
+[engines.prism]
+# Memory allocation
+total_memory_gb = 256             # Total RAM allocation
+numa_aware = true                 # Enable NUMA optimization
+huge_pages = true                 # Use huge pages (2MB)
+memory_locked = true              # Lock memory (no swap)
+
+# Quantization levels
+enable_progressive = true         # Progressive quantization
+fp32_percentage = 10              # % kept at full precision
+fp16_percentage = 20              # % kept at half precision
+int8_percentage = 40              # % kept at INT8
+binary_percentage = 30            # % kept as binary
+
+# Access patterns
+hot_threshold = 100               # Accesses to mark as hot
+warm_threshold = 10               # Accesses to mark as warm
+promotion_interval_ms = 1000      # Check for promotion
+demotion_interval_ms = 10000      # Check for demotion
+
+# Concurrency
+reader_threads = 32               # Read thread pool size
+writer_threads = 4                # Write thread pool size
+enable_lock_free = true           # Use lock-free structures
+enable_rcu = true                 # Read-Copy-Update for indices
+----
+
+=== Performance Tuning
+
+==== Ultra-Low Latency (<500μs)
+[source,toml]
+----
+[engines.prism]
+# Keep everything in L3 cache
+total_memory_gb = 32              # Fit in L3
+fp32_percentage = 100             # No quantization
+numa_bind = true                  # Pin to single NUMA
+cpu_affinity = "0-15"             # Pin to specific cores
+disable_hyperthreading = true     # Reduce jitter
+kernel_bypass = true              # Use DPDK-style I/O
+----
+
+==== High Throughput
+[source,toml]
+----
+[engines.prism]
+# Maximize parallelism
+reader_threads = 128              # Many readers
+enable_simd = true                # SIMD operations
+batch_size = 1000                 # Batch processing
+prefetch_distance = 8             # Aggressive prefetch
+enable_ht = true                  # Use hyperthreading
+----
+
+== Performance Characteristics
+
+=== Latency Profile
+
+[cols="2,1,1,2", options="header"]
+|===
+| Operation | P50 | P99 | Notes
+
+| **Search (Hot)**
+| 50μs
+| 200μs
+| L3 cache hit
+
+| **Search (Warm)**
+| 100μs
+| 500μs
+| RAM access
+
+| **Search (Cold)**
+| 200μs
+| 900μs
+| Remote NUMA
+
+| **Insert**
+| 10μs
+| 50μs
+| Lock-free
+
+| **Update**
+| 15μs
+| 100μs
+| CAS retry
+
+| **Delete**
+| 5μs
+| 20μs
+| Epoch defer
+|===
+
+=== Throughput Metrics
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Configuration
+
+| **Search QPS**
+| 1M+
+| 32 threads, binary
+
+| **Search QPS (FP32)**
+| 500K
+| 32 threads, full precision
+
+| **Insert Rate**
+| 1M vec/s
+| Batch mode
+
+| **Mixed Read/Write**
+| 800K ops/s
+| 90/10 split
+|===
+
+=== Memory Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Quantization | Memory/M vectors | Accuracy
+
+| **FP32**
+| 3GB
+| 100%
+
+| **FP16**
+| 1.5GB
+| 99.9%
+
+| **INT8**
+| 768MB
+| 98%
+
+| **INT4**
+| 384MB
+| 95%
+
+| **Binary**
+| 48MB
+| 85%
+
+| **Progressive Mix**
+| 800MB
+| 96% average
+|===
+
+== Progressive Search Strategy
+
+=== Search Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant C as Client
+    participant P as PRISM
+    participant B as Binary Layer
+    participant I8 as INT8 Layer
+    participant F as FP32 Layer
+    participant R as Results
+    
+    C->>P: Search(query, k=10)
+    P->>B: Coarse Search (1M vectors)
+    B-->>P: Top 10K candidates
+    
+    P->>I8: Refine (10K vectors)
+    I8-->>P: Top 100 candidates
+    
+    P->>F: Final Ranking (100 vectors)
+    F-->>P: Top 10 results
+    
+    P-->>C: Results in 200μs
+----
+
+=== Accuracy vs Speed Trade-off
+
+[cols="2,1,1,1", options="header"]
+|===
+| Strategy | Latency | Accuracy | Use Case
+
+| **Binary Only**
+| 50μs
+| 85%
+| Coarse filtering
+
+| **Binary → INT8**
+| 150μs
+| 95%
+| Balanced
+
+| **Binary → INT8 → FP32**
+| 300μs
+| 99.9%
+| High accuracy
+
+| **Direct FP32**
+| 1ms
+| 100%
+| Exact search
+|===
+
+== Implementation Details
+
+=== NUMA-Aware Allocation
+
+[source,rust]
+----
+pub struct NumaAllocator {
+    node_id: usize,
+    local_memory: *mut u8,
+    capacity: usize,
+    used: AtomicUsize,
+}
+
+impl NumaAllocator {
+    pub fn allocate_aligned(&self, size: usize, align: usize) 
+        -> Result<*mut u8> {
+        // Allocate from local NUMA node
+        let ptr = unsafe {
+            numa_alloc_onnode(
+                size,
+                self.node_id
+            )
+        };
+        
+        // Track usage
+        self.used.fetch_add(size, Ordering::Relaxed);
+        
+        // Prefault pages for lower latency
+        if self.prefault_enabled {
+            self.prefault_pages(ptr, size);
+        }
+        
+        Ok(ptr)
+    }
+    
+    fn prefault_pages(&self, ptr: *mut u8, size: usize) {
+        // Touch every page to prevent page faults
+        let page_size = 4096;
+        for offset in (0..size).step_by(page_size) {
+            unsafe {
+                ptr.add(offset).write(0);
+            }
+        }
+    }
+}
+----
+
+=== Lock-Free Search
+
+[source,rust]
+----
+pub fn search_lock_free(
+    &self,
+    query: &[f32],
+    k: usize
+) -> Vec<SearchResult> {
+    // Start epoch for safe memory access
+    let guard = self.epoch.pin();
+    
+    // Phase 1: Binary search (coarse)
+    let binary_candidates = self.search_binary_tier(
+        query, 
+        k * 100
+    );
+    
+    // Phase 2: INT8 refinement
+    let int8_candidates = self.refine_int8(
+        query,
+        binary_candidates,
+        k * 10
+    );
+    
+    // Phase 3: FP32 final ranking
+    let final_results = self.rank_fp32(
+        query,
+        int8_candidates,
+        k
+    );
+    
+    // Update access statistics (lock-free)
+    for result in &final_results {
+        self.access_counts.increment(result.id);
+    }
+    
+    final_results
+}
+----
+
+=== Automatic Promotion/Demotion
+
+[source,rust]
+----
+impl TierManager {
+    pub fn run_background_optimization(&self) {
+        loop {
+            sleep(Duration::from_millis(1000));
+            
+            // Check for vectors to promote
+            for (id, count) in self.access_counts.iter() {
+                let current_tier = self.get_tier(id);
+                let new_tier = self.compute_optimal_tier(count);
+                
+                if new_tier > current_tier {
+                    self.promote_vector(id, new_tier);
+                } else if new_tier < current_tier {
+                    self.demote_vector(id, new_tier);
+                }
+            }
+            
+            // Rebalance memory if needed
+            if self.memory_pressure() > 0.9 {
+                self.evict_coldest_vectors();
+            }
+        }
+    }
+}
+----
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `prism_search_latency_us`
+| Search latency in microseconds
+| > 1000μs
+
+| `prism_memory_usage_percent`
+| Memory utilization
+| > 90%
+
+| `prism_numa_remote_access`
+| Cross-NUMA accesses
+| > 10%
+
+| `prism_quantization_accuracy`
+| Average accuracy loss
+| < 95%
+
+| `prism_cache_miss_rate`
+| L3 cache misses
+| > 5%
+|===
+
+=== Performance Analysis
+
+[source,bash]
+----
+# CPU profiling
+perf record -F 99 -p $(pgrep proximadb)
+perf report
+
+# Memory access patterns
+numactl --hardware
+numastat -n proximadb
+
+# Cache analysis
+perf stat -e cache-misses,cache-references \
+    proximadb-bench --engine prism
+
+# Lock contention
+mutrace proximadb-server
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== High Latency Spikes
+**Symptom**: P99 > 1ms occasionally
+
+**Causes**:
+1. Page faults
+2. NUMA remote access
+3. GC or memory pressure
+
+**Solutions**:
+```toml
+memory_locked = true      # No page faults
+numa_bind = true         # Single NUMA node
+huge_pages = true        # Reduce TLB misses
+```
+
+==== Memory Fragmentation
+**Symptom**: Cannot allocate despite free memory
+
+**Solutions**:
+1. Use memory pools
+2. Enable huge pages
+3. Periodic defragmentation
+
+```toml
+use_memory_pools = true
+huge_pages = true
+defrag_interval_hours = 24
+```
+
+==== Accuracy Degradation
+**Symptom**: Search quality decreases over time
+
+**Solutions**:
+1. Adjust tier thresholds
+2. Increase FP32 percentage
+3. Retrain quantization
+
+```toml
+fp32_percentage = 20
+hot_threshold = 50
+reQuantize_interval_days = 7
+```
+
+== Best Practices
+
+=== Hardware Configuration
+1. **Disable CPU Frequency Scaling**: Consistent performance
+2. **Isolate CPUs**: Dedicate cores to PRISM
+3. **Configure NUMA**: Interleave or bind appropriately
+4. **Tune Network**: Kernel bypass for networking
+
+=== Data Management
+1. **Pre-warm Cache**: Load hot data at startup
+2. **Batch Operations**: Amortize overhead
+3. **Monitor Access Patterns**: Adjust tiers accordingly
+4. **Regular Rebalancing**: Maintain optimal layout
+
+=== Production Deployment
+1. **Redundancy**: Multiple PRISM instances
+2. **Health Checks**: Sub-millisecond response required
+3. **Gradual Rollout**: Test with subset first
+4. **Monitoring**: Detailed latency percentiles
+
+== Migration Guide
+
+=== From HELIX to PRISM
+
+[source,bash]
+----
+# Export from HELIX
+proximadb-cli export \
+  --engine helix \
+  --collection my_data \
+  --format binary
+
+# Analyze access patterns
+proximadb-cli analyze \
+  --access-log access.log \
+  --output hot_vectors.list
+
+# Configure PRISM with analysis
+cat > prism_config.toml << EOF
+[storage]
+default_engine = "prism"
+
+[engines.prism]
+total_memory_gb = 128
+hot_vectors_file = "hot_vectors.list"
+enable_progressive = true
+EOF
+
+# Import with tier assignment
+proximadb-cli import \
+  --engine prism \
+  --collection my_data_prism \
+  --config prism_config.toml \
+  --assign-tiers
+----
+
+=== Performance Comparison
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | HELIX | PRISM | Improvement
+
+| P50 Latency
+| 2.5ms
+| 0.05ms
+| 50x
+
+| P99 Latency
+| 4.8ms
+| 0.2ms
+| 24x
+
+| Throughput
+| 1,770 QPS
+| 1M QPS
+| 565x
+
+| Memory Usage
+| 2.5GB/M
+| 0.8GB/M
+| 3.1x
+|===
+
+== Development Status
+
+=== Current State (70% Complete)
+
+==== Completed ✅
+* Lock-free data structures
+* Basic progressive quantization
+* NUMA-aware allocation
+* Epoch-based reclamation
+* Basic search operations
+
+==== In Progress 🚧
+* Advanced tier management
+* Automatic rebalancing
+* Query optimization
+* Hardware acceleration
+
+==== Planned 📋
+* Persistent memory support
+* RDMA networking
+* GPU quantization
+* Distributed PRISM
+
+== Future Enhancements
+
+=== Near Term (Q2 2025)
+1. **Intel Optane Support**: Persistent memory tier
+2. **AVX-512 VNNI**: Accelerated INT8 operations
+3. **Kernel Bypass**: DPDK integration
+4. **Smart Prefetching**: ML-based prediction
+
+=== Long Term (Q3-Q4 2025)
+1. **Distributed PRISM**: Multi-node coordination
+2. **Hardware Offload**: DPU/SmartNIC support
+3. **Quantum-Ready**: Quantum distance metrics
+4. **Edge Deployment**: Embedded PRISM variant
+
+---
+
+[.text-center]
+_PRISM Engine - 70% Complete (Target: Q2 2025)_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_

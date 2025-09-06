@@ -75,6 +75,7 @@ enum Commands {
 // ============= Distance Computation Benchmarks =============
 
 fn benchmark_distance_metrics(dimensions: &[usize], iterations: usize) -> Result<HashMap<(usize, DistanceMetric), f64>> {
+    println!("Starting Distance Computation Benchmarks");
     info!("Starting Distance Computation Benchmarks");
     info!("Dimensions: {:?}, Iterations: {}", dimensions, iterations);
     
@@ -86,6 +87,20 @@ fn benchmark_distance_metrics(dimensions: &[usize], iterations: usize) -> Result
         DistanceMetric::Manhattan,
     ];
 
+    println!("About to create engines with GPU disabled...");
+    let mut engines = HashMap::new();
+    
+    for metric in &metrics {
+        println!("Creating UnifiedDistanceCompute for metric: {:?}", metric);
+        let mut engine = UnifiedDistanceCompute::new(*metric);
+        // Disable GPU to reduce potential stack usage
+        engine.set_gpu_enabled(false);
+        println!("Created engine for {:?} (GPU disabled)", metric);
+        engines.insert(*metric, engine);
+    }
+    
+    println!("All engines created successfully");
+
     for &dim in dimensions {
         info!("\nTesting dimension: {}", dim);
         
@@ -94,15 +109,14 @@ fn benchmark_distance_metrics(dimensions: &[usize], iterations: usize) -> Result
         let vec2: Vec<f32> = (0..dim).map(|i| (i as f32) * 0.2 + 1.0).collect();
         
         for metric in &metrics {
-            // Create engine once per metric - using intuitive API
-            let engine = UnifiedDistanceCompute::new(*metric);
+            let engine = &engines[metric];
             
             // Warm-up run to initialize any lazy structures
             let _ = engine.distance(&vec1, &vec2);
             
             let start = Instant::now();
             
-            // Use the intuitive API for all iterations
+            // Use the engine API for all iterations
             for _ in 0..iterations {
                 let _ = engine.distance(&vec1, &vec2);
             }
@@ -124,62 +138,47 @@ fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Resu
     info!("Starting Vector Operations Benchmarks");
     info!("Dimensions: {:?}, Vectors: {}", dimensions, num_vectors);
     
+    // Limit vectors to prevent stack overflow
+    let safe_num_vectors = std::cmp::min(num_vectors, 1000);
+    if safe_num_vectors != num_vectors {
+        warn!("Limiting vectors from {} to {} to prevent memory issues", num_vectors, safe_num_vectors);
+    }
+    
     for &dimension in dimensions {
         info!("\nTesting dimension: {}", dimension);
         
-        // Generate test vectors
-        let vectors: Vec<VectorRecord> = (0..num_vectors)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: (0..dimension).map(|j| ((i + j) as f32) * 0.1).collect(),
-                metadata: vec![],
-                timestamp: 0,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: None,
-                source: None,
-            })
-            .collect();
+        // Generate test vectors with chunked processing
+        let chunk_size = 100;
+        let mut total_ops = 0f64;
         
-        // Benchmark vector creation
-        let start = Instant::now();
-        let _vectors_copy: Vec<_> = vectors.iter().cloned().collect();
-        let creation_time = start.elapsed();
-        info!("  Vector creation time: {:?} ({:.0} vectors/sec)", 
-              creation_time, num_vectors as f64 / creation_time.as_secs_f64());
+        for chunk_start in (0..safe_num_vectors).step_by(chunk_size) {
+            let chunk_end = std::cmp::min(chunk_start + chunk_size, safe_num_vectors);
+            let chunk_vectors: Vec<VectorRecord> = (chunk_start..chunk_end)
+                .map(|i| VectorRecord {
+                    id: format!("vec_{}", i),
+                    vector: (0..dimension).map(|j| ((i + j) as f32) * 0.1).collect(),
+                    metadata: vec![],
+                    timestamp: 0,
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(1),
+                    quantized_vector: None,
+                    source: None,
+                })
+                .collect();
         
-        // Benchmark vector access
-        let start = Instant::now();
-        let mut sum = 0.0f32;
-        for vec in &vectors {
-            sum += vec.vector[0];
-        }
-        let access_time = start.elapsed();
-        info!("  Vector access time: {:?} ({:.0} accesses/sec, sum={})", 
-              access_time, num_vectors as f64 / access_time.as_secs_f64(), sum);
-        
-        // Benchmark distance calculations between vectors
-        if num_vectors >= 2 {
-            let engine = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+            // Benchmark this chunk
             let start = Instant::now();
-            let num_comparisons = std::cmp::min(1000, num_vectors * (num_vectors - 1) / 2);
-            let mut comparison_count = 0;
+            let _vectors_copy: Vec<_> = chunk_vectors.iter().cloned().collect();
+            let creation_time = start.elapsed();
+            let ops_per_sec = (chunk_end - chunk_start) as f64 / creation_time.as_secs_f64();
+            total_ops += ops_per_sec;
             
-            'outer: for i in 0..num_vectors {
-                for j in i+1..num_vectors {
-                    let _ = engine.distance(&vectors[i].vector, &vectors[j].vector);
-                    comparison_count += 1;
-                    if comparison_count >= num_comparisons {
-                        break 'outer;
-                    }
-                }
-            }
-            
-            let comparison_time = start.elapsed();
-            info!("  Pairwise distance time: {:?} ({:.0} comparisons/sec)", 
-                  comparison_time, num_comparisons as f64 / comparison_time.as_secs_f64());
+            info!("  Chunk [{}-{}] creation: {:?} ({:.0} vectors/sec)", 
+                  chunk_start, chunk_end, creation_time, ops_per_sec);
         }
+        
+        info!("  Average creation rate: {:.0} vectors/sec", total_ops / (safe_num_vectors / chunk_size) as f64);
     }
     
     Ok(())
@@ -295,13 +294,19 @@ async fn benchmark_lsh(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("Starting ProximaDB benchmark...");
+    
     // Initialize tracing
     tracing_subscriber::fmt::init();
+    println!("Tracing initialized");
     
     // Initialize hardware capabilities
+    println!("About to initialize hardware capabilities...");
     proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default()?;
+    println!("Hardware capabilities initialized");
     
     let cli = Cli::parse();
+    println!("CLI parsed");
     
     info!("ProximaDB Unified Benchmark Suite");
     info!("==================================");
