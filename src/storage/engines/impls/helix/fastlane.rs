@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::storage::engines::core::formats::fastlanes_blocks::{
     block_structures::{
         FastLanesDataBlock, FastLanesBlockMetadata, 
-        BlockCompressionConfig, BlockMetadataStats,
+        BlockCompressionConfig, ColumnStatistics, QuantizationStatistics,
     },
 };
 use crate::storage::engines::core::ops::fastlanes_encoding::markers;
@@ -332,21 +332,18 @@ pub fn extract_helix_metadata(
         .map(|(idx, chunk)| {
             // Create base FastLanes metadata
             let base_metadata = FastLanesBlockMetadata {
-                block_id: idx as u32,
-                block_size: chunk.len() as u32,
-                uncompressed_size: chunk.len() * std::mem::size_of::<VectorRecord>(),
+                record_count: chunk.len() as u32,
+                size_bytes: (chunk.len() * std::mem::size_of::<VectorRecord>()) as u64,
                 compressed_size: 0, // Will be set during compression
-                checksum: 0,
-                compression_algorithm: CompressionAlgorithm::Zstd,
-                encoding_marker: markers::FASTLANES_BITPACKED,
-                min_timestamp: chunk.iter().map(|r| r.timestamp).min().unwrap_or(0),
-                max_timestamp: chunk.iter().map(|r| r.timestamp).max().unwrap_or(0),
-                metadata_stats: BlockMetadataStats {
-                    unique_keys: chunk.iter().map(|r| r.id.clone()).collect::<std::collections::HashSet<_>>().len() as u32,
-                    null_values: 0,
-                    avg_value_size: 0.0,
-                    compression_ratio: 0.0,
-                },
+                timestamp: chunk.iter().map(|r| r.timestamp as i64).max().unwrap_or(0),
+                compaction_level: 0,
+                has_deletes: false,
+                has_updates: false,
+                version_range: (0, 1),
+                column_stats: HashMap::new(),
+                quantization_stats: QuantizationStatistics::default(),
+                data_checksum: 0,
+                metadata_checksum: 0,
             };
             
             // Calculate Hilbert range if keys provided

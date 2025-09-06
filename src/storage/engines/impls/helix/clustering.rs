@@ -78,6 +78,11 @@ impl PCAModel {
             .collect()
     }
 
+    /// Transform a vector (alias for project)
+    pub fn transform(&self, vector: &[f32]) -> Result<Vec<f32>> {
+        self.project(vector)
+    }
+    
     /// Project a vector to lower dimensions
     pub fn project(&self, vector: &[f32]) -> Result<Vec<f32>> {
         if vector.len() != self.original_dim {
@@ -243,7 +248,7 @@ impl QueryPatternTracker {
         let total = self.hilbert_histogram.values().sum::<usize>() as f32;
         let mut hot_keys: Vec<u64> = self.hilbert_histogram
             .iter()
-            .filter(|(_, &count)| count as f32 / total > threshold)
+            .filter(|(_, count)| **count as f32 / total > threshold)
             .map(|(&key, _)| key)
             .collect();
         

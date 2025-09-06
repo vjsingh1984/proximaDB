@@ -214,7 +214,7 @@ fn calculate_mean(data: &DMatrix<f32>) -> DVector<f32> {
 fn center_data(data: &DMatrix<f32>, mean: &DVector<f32>) -> DMatrix<f32> {
     let mut centered = data.clone();
     for i in 0..centered.nrows() {
-        let row = centered.row_mut(i);
+        let mut row = centered.row_mut(i);
         for j in 0..row.len() {
             row[j] -= mean[j];
         }
@@ -283,7 +283,7 @@ impl EnhancedPCAModel {
             eigenvalues_data,
             self.cumulative_variance.clone(),
             self.n_components,
-            self.model_version,
+            self.version,
         );
         
         bincode::serialize(&serializable).map_err(|e| anyhow::anyhow!("Failed to serialize PCA model: {}", e))
@@ -299,13 +299,18 @@ impl EnhancedPCAModel {
         let mean = DVector::from_vec(mean_data);
         let eigenvalues = DVector::from_vec(eigenvalues_data);
         
+        let total_variance = eigenvalues.iter().sum();
+        
         Ok(Self {
             components,
             mean,
             eigenvalues,
             cumulative_variance,
             n_components,
-            model_version,
+            original_dim: ncols,
+            total_variance,
+            version: model_version,
+            training_samples: 0, // This information is lost in serialization for now
         })
     }
 }

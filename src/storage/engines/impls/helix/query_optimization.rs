@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -367,7 +367,10 @@ impl QueryOptimizer {
             query_hash,
             hilbert_key: query_hilbert,
             accessed_files: accessed_files.clone(),
-            timestamp: Instant::now(),
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
             latency_ms,
             result_count: results.len(),
         };
