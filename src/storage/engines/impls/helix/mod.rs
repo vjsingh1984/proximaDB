@@ -25,6 +25,7 @@ pub mod clustering;
 pub mod compaction;
 pub mod eventlog_integration;
 pub mod fastlane;
+pub mod filter_evaluator;
 pub mod hilbert_curve;
 pub mod liquid_clustering;
 pub mod pca_impl;
@@ -85,6 +86,14 @@ pub struct HelixConfig {
     pub pca_retrain_interval_hours: u64,
     /// Hilbert curve bits per dimension (resolution)
     pub hilbert_bits_per_dimension: usize,
+    
+    /// Parallel search configuration
+    /// Enable parallel search for multiple SSTables
+    pub parallel_search_enabled: bool,
+    /// Minimum number of files to trigger parallel search (default: 3)
+    pub parallel_search_threshold: usize,
+    /// Maximum concurrent search threads (default: CPU cores / 2)
+    pub max_search_threads: usize,
 }
 
 impl Default for HelixConfig {
@@ -101,6 +110,9 @@ impl Default for HelixConfig {
             block_cache_size_mb: 1024,
             pca_retrain_interval_hours: 24,
             hilbert_bits_per_dimension: 16,  // Smart default for good resolution
+            parallel_search_enabled: true,  // Enable parallel search by default
+            parallel_search_threshold: 3,   // Use parallel for 3+ files
+            max_search_threads: num_cpus::get().max(2) / 2,  // Half of CPU cores, min 1
         }
     }
 }
@@ -678,33 +690,69 @@ impl UnifiedStorageEngine for HelixEngine {
         
         info!("HELIX pruned {:.1}% of SSTables", pruning_ratio * 100.0);
         
-        // Track accessed files for query learning
-        let mut accessed_files = Vec::new();
-        let mut results = Vec::new();
+        // Create thread-safe filter if needed
+        let filter_fn = ctx.search_params.filter_expression.as_ref()
+            .and_then(|expr| filter_evaluator::create_filter_fn(Some(expr)));
         
-        // Search selected SSTables
-        for sstable in sstables_to_search {
-            accessed_files.push(sstable.path.to_string_lossy().to_string());
+        // Decide whether to use parallel or sequential search based on config
+        let use_parallel = self.config.parallel_search_enabled 
+            && sstables_to_search.len() >= self.config.parallel_search_threshold;
+        
+        let (results, accessed_files) = if use_parallel {
+            info!("Using parallel search for {} SSTables", sstables_to_search.len());
             
-            // Convert FilterExpression to closure if present
-            // For now, skip filter implementation to avoid Send/Sync issues
-            // TODO: Implement proper filter evaluation that's Send+Sync
-            let sstable_results = readers::search_sstable(
-                &self.filesystem,
-                &sstable,
-                query_vector,
+            // Collect file paths before moving sstables
+            let files: Vec<String> = sstables_to_search
+                .iter()
+                .map(|s| s.path.to_string_lossy().to_string())
+                .collect();
+            
+            // Convert to owned Vec for parallel search
+            let sstables_vec: Vec<SStableMetadata> = sstables_to_search
+                .into_iter()
+                .cloned()
+                .collect();
+            
+            // Use parallel search for better performance
+            let results = readers::parallel_search(
+                self.filesystem.clone(),
+                sstables_vec,
+                query_vector.to_vec(),
                 k,
-                &distance_metric,
-                None, // Filter disabled for now
-                None, // No specific IDs to check
+                distance_metric,
+                filter_fn,
             ).await?;
             
-            results.extend(sstable_results);
-        }
-        
-        // Sort by score (higher is better) and take top-k
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        results.truncate(k);
+            (results, files)
+        } else {
+            info!("Using sequential search for {} SSTables", sstables_to_search.len());
+            
+            // Sequential search for small number of files
+            let mut results = Vec::new();
+            let mut accessed_files = Vec::new();
+            
+            for sstable in sstables_to_search {
+                accessed_files.push(sstable.path.to_string_lossy().to_string());
+                
+                let sstable_results = readers::search_sstable(
+                    &self.filesystem,
+                    &sstable,
+                    query_vector,
+                    k,
+                    &distance_metric,
+                    filter_fn.clone(),
+                    None, // No specific IDs to check
+                ).await?;
+                
+                results.extend(sstable_results);
+            }
+            
+            // Sort by score (higher is better) and take top-k
+            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+            results.truncate(k);
+            
+            (results, accessed_files)
+        };
         
         // Record query execution for learning
         let latency_ms = start.elapsed().as_millis() as u64;

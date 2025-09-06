@@ -6,7 +6,8 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, trace, warn, error};
+use futures::future::join_all;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::InternalSearchResult;
@@ -14,6 +15,7 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
+use super::filter_evaluator::ThreadSafeFilterEvaluator;
 use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{
     factory::BloomFilterFactory,
     BloomFilterStrategy, 
@@ -63,7 +65,7 @@ pub async fn search_sstable(
     query_vector: &[f32],
     k: usize,
     distance_metric: &DistanceMetric,
-    filter: Option<&(dyn Fn(&HashMap<String, String>) -> bool + Send + Sync)>,
+    filter: Option<Arc<dyn Fn(&HashMap<String, String>) -> bool + Send + Sync>>,
     candidate_ids: Option<&[String]>,  // Optional IDs to check via bloom filter
 ) -> Result<Vec<InternalSearchResult>> {
     // Check bloom filter if candidate IDs provided
@@ -137,7 +139,7 @@ pub async fn search_sstable(
             }
             
             // Apply filter if provided
-            if let Some(f) = filter {
+            if let Some(f) = filter.as_ref() {
                 // Convert metadata to HashMap<String, String> for filter
                 let metadata_map: HashMap<String, String> = record.metadata.iter()
                     .filter_map(|item| {
@@ -265,10 +267,10 @@ fn should_prune_block(
     false
 }
 
-// Parallel search disabled due to Send/Sync issues with filter functions
-// TODO: Re-enable with proper Send+Sync bounds on filter
-/*
-/// Parallel search across multiple SSTables
+/// Parallel search across multiple SSTables with thread-safe filter
+/// 
+/// This function distributes the search across multiple threads, with each
+/// thread searching one or more SSTables in parallel for maximum performance.
 pub async fn parallel_search(
     filesystem: Arc<dyn FileSystem>,
     sstables: Vec<SStableMetadata>,
@@ -277,47 +279,80 @@ pub async fn parallel_search(
     distance_metric: DistanceMetric,
     filter: Option<Arc<dyn Fn(&HashMap<String, String>) -> bool + Send + Sync>>,
 ) -> Result<Vec<InternalSearchResult>> {
-    use futures::future::join_all;
+    if sstables.is_empty() {
+        return Ok(Vec::new());
+    }
     
-    let search_tasks = sstables.into_iter().map(|sstable| {
+    info!("Starting parallel search across {} SSTables", sstables.len());
+    let start = std::time::Instant::now();
+    
+    // Create search tasks for each SSTable
+    let search_tasks = sstables.into_iter().enumerate().map(|(idx, sstable)| {
         let fs = filesystem.clone();
         let query = query_vector.clone();
         let metric = distance_metric.clone();
-        let f = filter.clone();
+        let filter_clone = filter.clone();
         
         tokio::spawn(async move {
-            let filter_fn = f.as_ref().map(|arc| arc.as_ref());
+            trace!("Thread {} searching SSTable at level {}", idx, sstable.level);
+            let thread_start = std::time::Instant::now();
             
-            let filter_ref = filter_fn.as_ref().map(|f| &**f as &dyn Fn(&HashMap<String, String>) -> bool);
-            search_sstable(&fs, &sstable, &query, k, &metric, filter_ref, None).await
+            // Search the SSTable with the thread-safe filter
+            let result = search_sstable(
+                &fs, 
+                &sstable, 
+                &query, 
+                k, 
+                &metric, 
+                filter_clone,
+                None  // No candidate IDs for now
+            ).await;
+            
+            trace!("Thread {} completed in {:?}", idx, thread_start.elapsed());
+            result
         })
     });
     
+    // Wait for all search tasks to complete
     let results = join_all(search_tasks).await;
     
     // Merge results from all SSTables
     let mut all_results = Vec::new();
-    for result in results {
+    let mut successful_searches = 0;
+    let mut failed_searches = 0;
+    
+    for (idx, result) in results.into_iter().enumerate() {
         match result {
-            Ok(Ok(mut sstable_results)) => all_results.append(&mut sstable_results),
+            Ok(Ok(mut sstable_results)) => {
+                trace!("Thread {} returned {} results", idx, sstable_results.len());
+                all_results.append(&mut sstable_results);
+                successful_searches += 1;
+            }
             Ok(Err(e)) => {
-                // Log error but continue
-                tracing::warn!("Error searching SSTable: {}", e);
+                warn!("Thread {} failed to search SSTable: {}", idx, e);
+                failed_searches += 1;
             }
             Err(e) => {
-                // Task panic
-                tracing::error!("Search task panicked: {}", e);
+                error!("Thread {} panicked: {}", idx, e);
+                failed_searches += 1;
             }
         }
     }
     
-    // Sort and take top-k
+    // Sort by score (higher is better) and take top-k
     all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     all_results.truncate(k);
     
+    info!(
+        "Parallel search completed in {:?}: {} successful, {} failed, {} results",
+        start.elapsed(),
+        successful_searches,
+        failed_searches,
+        all_results.len()
+    );
+    
     Ok(all_results)
 }
-*/
 
 /// Statistics for query execution
 #[derive(Debug, Default)]
