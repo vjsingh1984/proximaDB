@@ -70,7 +70,7 @@ impl HelixFlushHandler {
                 records.len(),
                 has_quantized,
                 has_fp32,
-                StorageEngineType::HELIX,
+                StorageEngineType::SST, // HELIX is SST-based
             )
             .await?;
 
@@ -120,7 +120,7 @@ impl HelixFlushHandler {
                 collection_id,
                 output_files,
                 vector_count,
-                StorageEngineType::HELIX,
+                StorageEngineType::SST, // HELIX is SST-based
             );
 
             debug!(

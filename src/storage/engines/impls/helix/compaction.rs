@@ -396,7 +396,7 @@ impl LeveledCompactor {
         Ok((reorganized_records, reorganized_keys))
     }
 
-    /// Read an SSTable
+    /// Read an SSTable and filter out expired records (tombstone support)
     async fn read_sstable(&self, path: &PathBuf) -> Result<Vec<VectorRecord>> {
         // Read file data
         let file_data = self.filesystem.read(path.to_str().unwrap_or("")).await?;
@@ -411,6 +411,7 @@ impl LeveledCompactor {
         let num_blocks = u32::from_le_bytes(num_blocks_bytes);
         
         let mut records = Vec::new();
+        let current_time = chrono::Utc::now().timestamp() as u64;
         
         // Read blocks
         for _ in 0..num_blocks {
@@ -426,7 +427,19 @@ impl LeveledCompactor {
             // Deserialize block
             use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
             let block = FastLanesDataBlock::deserialize(&block_data)?;
-            records.extend(block.records);
+            
+            // Filter out expired records (physical delete during compaction)
+            for record in block.records {
+                if let Some(expires_at) = record.expires_at {
+                    if expires_at as u64 <= current_time {
+                        // Record is expired, skip it (physical delete)
+                        debug!("Filtering expired record: {} (expired at {})", record.id, expires_at);
+                        continue;
+                    }
+                }
+                // Record is not expired or has no expiration, keep it
+                records.push(record);
+            }
         }
         
         Ok(records)

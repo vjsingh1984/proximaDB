@@ -188,7 +188,7 @@ impl PCAModelManager {
         let model_filename = format!("model_v{}.bin", version);
         let model_path = self.model_dir.join(&model_filename);
         let model_bytes = model.to_bytes()?;
-        self.filesystem.write(&model_path.to_string_lossy(), &model_bytes).await?;
+        self.filesystem.write(&model_path.to_string_lossy(), &model_bytes, None).await?;
         
         // Create version metadata
         let version_meta = ModelVersion {
@@ -393,7 +393,7 @@ impl PCAModelManager {
         let metadata_path = self.model_dir.join("versions.json");
         let history = self.version_history.read().await;
         let json = serde_json::to_vec_pretty(&*history)?;
-        self.filesystem.write(&metadata_path.to_string_lossy(), &json).await?;
+        self.filesystem.write(&metadata_path.to_string_lossy(), &json, None).await?;
         Ok(())
     }
 

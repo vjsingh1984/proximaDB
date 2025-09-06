@@ -15,7 +15,11 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
-use crate::core::bloom::{BloomFilterFactory, BloomFilterStrategy, SerializedBloomFilter};
+use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{
+    factory::BloomFilterFactory,
+    BloomFilterStrategy, 
+    SerializedBloomFilter
+};
 
 /// Check if SSTable might contain specific vector IDs using bloom filter
 pub async fn check_bloom_filter(
@@ -99,6 +103,7 @@ pub async fn search_sstable(
     }
     
     let mut results = Vec::new();
+    let current_time = chrono::Utc::now().timestamp() as u64;
     
     for block in blocks {
         // Check if block should be pruned based on statistics
@@ -108,6 +113,15 @@ pub async fn search_sstable(
         
         // Search within block
         for record in block.records {
+            // Filter out expired records (tombstone support via expires_at)
+            if let Some(expires_at) = record.expires_at {
+                if expires_at as u64 <= current_time {
+                    // Record is expired, skip it
+                    debug!("Skipping expired record: {} (expired at {})", record.id, expires_at);
+                    continue;
+                }
+            }
+            
             // Apply filter if provided
             if let Some(f) = filter {
                 if !f(&record.metadata.clone().unwrap_or_default()) {
@@ -191,8 +205,16 @@ pub async fn find_vector_by_id(
         use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
         let block = FastLanesDataBlock::deserialize(&block_data)?;
         
+        let current_time = chrono::Utc::now().timestamp() as u64;
         for record in block.records {
             if record.id == vector_id {
+                // Check if record is expired (tombstone support)
+                if let Some(expires_at) = record.expires_at {
+                    if expires_at as u64 <= current_time {
+                        // Record is expired, treat as deleted
+                        return Ok(None);
+                    }
+                }
                 return Ok(Some(record));
             }
         }

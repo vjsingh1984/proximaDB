@@ -23,6 +23,7 @@ use tracing::{debug, info, warn};
 // Core modules
 pub mod clustering;
 pub mod compaction;
+pub mod crash_recovery;
 pub mod eventlog_integration;
 pub mod fastlane;
 pub mod hilbert_curve;
@@ -30,6 +31,7 @@ pub mod liquid_clustering;
 pub mod pca_impl;
 pub mod pca_manager;
 pub mod progressive_search;
+pub mod query_optimization;
 pub mod readers;
 pub mod zone_maps;
 
@@ -54,6 +56,8 @@ use crate::storage::traits::{
 
 use self::clustering::{HilbertKey, PCAModel};
 use self::compaction::LeveledCompactor;
+use self::crash_recovery::{CrashRecoveryManager, RedoLogEntry};
+use self::query_optimization::QueryOptimizer;
 use self::clustering::LiquidClusteringConfig;
 use self::fastlane::{FastLaneMetadata, HelixBlockMetadata};
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata;
@@ -148,6 +152,10 @@ pub struct HelixEngine {
     levels: Arc<RwLock<HashMap<usize, Vec<SStableMetadata>>>>,
     /// Compactor for background compaction
     compactor: Arc<LeveledCompactor>,
+    /// Crash recovery manager
+    crash_recovery: Arc<CrashRecoveryManager>,
+    /// Query optimizer (prefetching + caching)
+    query_optimizer: Arc<QueryOptimizer>,
     /// EventLog for AXIS integration
     event_log: Option<Arc<EventLog>>,
     /// Filename codec for consistent naming
@@ -237,11 +245,26 @@ impl HelixEngine {
             filesystem.clone(),
             data_dir.clone(),
         ));
+        
+        // Create crash recovery manager
+        let crash_recovery = Arc::new(CrashRecoveryManager::new(
+            filesystem.clone(),
+            data_dir.clone(),
+            300, // Checkpoint every 5 minutes
+        ));
+        
+        // Create query optimizer
+        let query_optimizer = Arc::new(QueryOptimizer::new(
+            1000,  // Max query history
+            500,   // Cache capacity
+            300,   // Cache TTL (5 minutes)
+        ));
 
-        Ok(Self {
+        // Create engine instance
+        let engine = Self {
             config,
             collection_id,
-            data_dir,
+            data_dir: data_dir.clone(),
             filesystem,
             filesystem_factory,
             distance_compute,
@@ -250,10 +273,22 @@ impl HelixEngine {
             pca_model: Arc::new(RwLock::new(None)),
             levels: Arc::new(RwLock::new(levels)),
             compactor,
+            crash_recovery: crash_recovery.clone(),
+            query_optimizer,
             event_log,
             filename_codec: FilenameCodec::new(),
             metrics: Arc::new(RwLock::new(EngineMetrics::default())),
-        })
+        };
+        
+        // Check if recovery is needed
+        if crash_recovery.initialize().await? {
+            info!("Performing crash recovery for HELIX engine");
+            let recovered_levels = crash_recovery.recover().await?;
+            *engine.levels.write().await = recovered_levels;
+            info!("Crash recovery completed, recovered {} levels", engine.levels.read().await.len());
+        }
+        
+        Ok(engine)
     }
 
     /// Load existing SSTable levels from disk
@@ -418,6 +453,14 @@ impl UnifiedStorageEngine for HelixEngine {
             None, // No Hilbert range for L0 files
         ).await?;
         
+        // Append to redo log for crash recovery
+        self.crash_recovery.append_redo_log(RedoLogEntry::FlushCompleted {
+            timestamp: chrono::Utc::now(),
+            level: 0,
+            file_path: file_path.clone(),
+            num_vectors: num_records,
+        }).await?;
+        
         // Update metrics
         {
             let mut metrics = self.metrics.write().await;
@@ -457,6 +500,16 @@ impl UnifiedStorageEngine for HelixEngine {
         // Determine which level to compact (default to L0)
         let level_to_compact = 0; // TODO: Use hints from params if available
         
+        // Track files being compacted for cache invalidation
+        let files_to_invalidate = {
+            let levels = self.levels.read().await;
+            levels.get(&level_to_compact)
+                .map(|files| files.iter()
+                    .map(|f| f.path.to_string_lossy().to_string())
+                    .collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+        
         // Perform compaction based on level
         let (files_compacted, bytes_written) = if level_to_compact == 0 {
             // L0 to L1: Initial clustering with PCA + Hilbert
@@ -470,11 +523,29 @@ impl UnifiedStorageEngine for HelixEngine {
             ).await?
         };
         
+        // Invalidate cache for compacted files
+        if !files_to_invalidate.is_empty() {
+            self.query_optimizer.invalidate_files(&files_to_invalidate).await;
+            debug!("Invalidated cache for {} compacted files", files_to_invalidate.len());
+        }
+        
         // Update metrics
         {
             let mut metrics = self.metrics.write().await;
             metrics.compaction_count += 1;
         }
+        
+        // Create checkpoint after successful compaction
+        let pca_version = if let Some(model) = self.pca_model.read().await.as_ref() {
+            Some(1) // TODO: Track actual PCA model versions
+        } else {
+            None
+        };
+        
+        self.crash_recovery.create_checkpoint(
+            &*self.levels.read().await,
+            pca_version,
+        ).await?;
         
         Ok(CompactionResult {
             success: true,
@@ -499,9 +570,19 @@ impl UnifiedStorageEngine for HelixEngine {
         let distance_metric = ctx.distance_metric();
         debug!("HELIX search started with k={}", k);
         
-        let mut results = Vec::new();
+        let start = std::time::Instant::now();
         let query_vector = ctx.query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
+        
+        // Calculate query hash for caching
+        let query_hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            query_vector.iter().for_each(|v| v.to_bits().hash(&mut hasher));
+            k.hash(&mut hasher);
+            hasher.finish()
+        };
         
         // Get PCA model
         let pca_model = self.pca_model.read().await;
@@ -515,6 +596,15 @@ impl UnifiedStorageEngine for HelixEngine {
         } else {
             None
         };
+        
+        // Get optimization hints (cache check + prefetching)
+        let hints = self.query_optimizer.optimize_query(query_hash, query_hilbert).await;
+        
+        // Check cache first
+        if let Some(cached_results) = hints.cached_result {
+            debug!("Query cache hit, returning cached results");
+            return Ok(cached_results);
+        }
         
         // Read levels
         let levels = self.levels.read().await;
@@ -558,8 +648,14 @@ impl UnifiedStorageEngine for HelixEngine {
         
         info!("HELIX pruned {:.1}% of SSTables", pruning_ratio * 100.0);
         
+        // Track accessed files for query learning
+        let mut accessed_files = Vec::new();
+        let mut results = Vec::new();
+        
         // Search selected SSTables
         for sstable in sstables_to_search {
+            accessed_files.push(sstable.path.to_string_lossy().to_string());
+            
             let sstable_results = readers::search_sstable(
                 &self.filesystem,
                 &sstable,
@@ -567,6 +663,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 k,
                 &distance_metric,
                 ctx.search_params.filter_expression.as_ref(),
+                None, // No specific IDs to check
             ).await?;
             
             results.extend(sstable_results);
@@ -575,6 +672,16 @@ impl UnifiedStorageEngine for HelixEngine {
         // Sort by score (higher is better) and take top-k
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         results.truncate(k);
+        
+        // Record query execution for learning
+        let latency_ms = start.elapsed().as_millis() as u64;
+        self.query_optimizer.record_execution(
+            query_hash,
+            query_hilbert,
+            results.clone(),
+            accessed_files,
+            latency_ms,
+        ).await;
         
         Ok(results)
     }

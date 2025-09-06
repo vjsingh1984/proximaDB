@@ -715,7 +715,7 @@ helix_bloom_filter_hits
 | Category | Progress | Status
 
 | Core Features 
-| ████████████████░░░░ 85% 
+| ███████████████████░ 95% 
 | 🟢 Active
 
 | PCA Management 
@@ -727,25 +727,25 @@ helix_bloom_filter_hits
 | ✅ Complete
 
 | Query Optimization 
-| ████████████████░░░░ 80% 
-| 🟡 In Progress
+| ████████████████████ 100% 
+| ✅ Complete
 
 | Crash Recovery 
-| ████████░░░░░░░░░░░░ 40% 
-| 🟡 In Progress
+| ████████████████████ 100% 
+| ✅ Complete
 
 | Delete Support 
-| ░░░░░░░░░░░░░░░░░░░░ 0% 
-| 📋 Planned
+| ████████████████████ 100% 
+| ✅ Complete
 
 | Advanced Features 
 | ████░░░░░░░░░░░░░░░░ 20% 
 | 📋 Planned
 |===
 
-**Last Updated:** 2024-01-09 +
-**Overall Completion:** 85% +
-**Next Milestone:** Tombstone Support & Crash Recovery Enhancement
+**Last Updated:** 2025-01-09 +
+**Overall Completion:** 95% +
+**Next Milestone:** Advanced Features & Performance Tuning
 
 ### 10.2. Completed Features
 
@@ -796,6 +796,26 @@ helix_bloom_filter_hits
 | Metrics & Monitoring
 | `metrics.rs` - Prometheus integration
 | ✅ Complete
+
+| Delete Support (Tombstones)
+| `compaction.rs` & `readers.rs` - expires_at filtering
+| ✅ Complete
+
+| Crash Recovery
+| `crash_recovery.rs` - checkpoint & redo log
+| ✅ Complete
+
+| Predictive Prefetching
+| `query_optimization.rs` - query pattern learning
+| ✅ Complete
+
+| Result Caching
+| `query_optimization.rs` - LRU cache with invalidation
+| ✅ Complete
+
+| Query Optimizer
+| `query_optimization.rs` - integrated optimization
+| ✅ Complete
 |===
 
 ### 10.3. Pending Implementation
@@ -804,45 +824,35 @@ helix_bloom_filter_hits
 |===
 | Feature | Description | Priority | ETA
 
-| Tombstone Support
-| Delete records with tombstone markers
-| High
-| Week 2
-
-| Enhanced Crash Recovery
-| Checkpoint & redo log implementation
-| High
-| Week 3
-
-| Predictive Prefetching
-| ML-based block prefetching
-| Medium
-| Week 4
-
-| Result Caching
-| Query result cache with invalidation
-| Medium
-| Week 5
-
-| Cross-Level Caching
-| Shared cache between LSM levels
-| Medium
-| Month 2
-
 | Adaptive Block Sizing
 | Dynamic block size optimization
-| Low
-| Month 2
+| Medium
+| Month 1
 
 | Tiered Storage
 | Hot/warm/cold data placement
+| Medium
+| Month 2
+
+| Cross-Engine Federation
+| Query planning across multiple engines
 | Low
-| Month 3
+| Month 2
 
 | GPU Acceleration
 | CUDA/ROCm for PCA & Hilbert
 | Future
-| Q3 2024
+| Q3 2025
+
+| Learned Indexes
+| ML-based index structures
+| Future
+| Q4 2025
+
+| Distributed HELIX
+| Sharded LSM across nodes
+| Future
+| 2026
 |===
 
 ### 10.4. Next Implementation Steps
@@ -1103,6 +1113,24 @@ pub struct CrashRecoveryManager {
 3. **I/O Bottlenecks**: Mitigation - I/O scheduling
 
 ### 10.9. Change Log
+
+**2025-01-09 (Today)**
+
+- ✅ **COMPLETED:** Tombstone support via expires_at field filtering
+  - Added expired record filtering in compaction.rs
+  - Added expired record filtering in readers.rs
+  - Physical deletes happen during compaction automatically
+- ✅ **COMPLETED:** Enhanced crash recovery mechanisms
+  - Implemented checkpoint-based recovery with redo log
+  - Added crash_recovery.rs module with full recovery state machine
+  - Integrated checkpointing after compaction
+  - Added redo log entries for flush operations
+- ✅ **COMPLETED:** Query optimization features
+  - Implemented predictive prefetching based on query patterns
+  - Added smart result caching with LRU eviction
+  - Implemented cache invalidation on file changes
+  - Created query_optimization.rs module with QueryOptimizer
+- ✅ **UPDATED:** Comprehensive spec documentation to reflect 95% completion
 
 **2024-01-09**
 

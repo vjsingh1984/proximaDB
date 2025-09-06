@@ -242,8 +242,7 @@ impl ProgressiveSearchCoordinator {
                 let distance = self.distance_compute.distance(
                     query_vector,
                     vector,
-                    distance_metric,
-                )?;
+                );
                 candidate.score = 1.0 / (1.0 + distance);
                 candidate.similarity = Some(distance);
             }
@@ -273,8 +272,7 @@ impl ProgressiveSearchCoordinator {
                 let exact_distance = self.distance_compute.distance(
                     query_vector,
                     vector,
-                    distance_metric,
-                )?;
+                );
                 candidate.score = 1.0 / (1.0 + exact_distance);
                 candidate.similarity = Some(exact_distance);
             }
