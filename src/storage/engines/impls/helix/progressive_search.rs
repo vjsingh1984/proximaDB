@@ -312,6 +312,7 @@ impl ProgressiveSearchCoordinator {
                 k,
                 &distance_metric,
                 None,
+                None,  // candidate_ids
             ).await?;
             all_results.extend(results);
         }
@@ -342,6 +343,7 @@ impl ProgressiveSearchCoordinator {
             k,
             &distance_metric,
             None,
+            None,  // candidate_ids
         ).await
     }
 }

@@ -23,7 +23,6 @@ use tracing::{debug, info, warn};
 // Core modules
 pub mod clustering;
 pub mod compaction;
-pub mod crash_recovery;
 pub mod eventlog_integration;
 pub mod fastlane;
 pub mod hilbert_curve;
@@ -56,7 +55,6 @@ use crate::storage::traits::{
 
 use self::clustering::{HilbertKey, PCAModel};
 use self::compaction::LeveledCompactor;
-use self::crash_recovery::{CrashRecoveryManager, RedoLogEntry};
 use self::query_optimization::QueryOptimizer;
 use self::clustering::LiquidClusteringConfig;
 use self::fastlane::{FastLaneMetadata, HelixBlockMetadata};
@@ -152,8 +150,6 @@ pub struct HelixEngine {
     levels: Arc<RwLock<HashMap<usize, Vec<SStableMetadata>>>>,
     /// Compactor for background compaction
     compactor: Arc<LeveledCompactor>,
-    /// Crash recovery manager
-    crash_recovery: Arc<CrashRecoveryManager>,
     /// Query optimizer (prefetching + caching)
     query_optimizer: Arc<QueryOptimizer>,
     /// EventLog for AXIS integration
@@ -246,13 +242,6 @@ impl HelixEngine {
             data_dir.clone(),
         ));
         
-        // Create crash recovery manager
-        let crash_recovery = Arc::new(CrashRecoveryManager::new(
-            filesystem.clone(),
-            data_dir.clone(),
-            300, // Checkpoint every 5 minutes
-        ));
-        
         // Create query optimizer
         let query_optimizer = Arc::new(QueryOptimizer::new(
             1000,  // Max query history
@@ -273,19 +262,18 @@ impl HelixEngine {
             pca_model: Arc::new(RwLock::new(None)),
             levels: Arc::new(RwLock::new(levels)),
             compactor,
-            crash_recovery: crash_recovery.clone(),
             query_optimizer,
             event_log,
             filename_codec: FilenameCodec::new(),
             metrics: Arc::new(RwLock::new(EngineMetrics::default())),
         };
         
-        // Check if recovery is needed
-        if crash_recovery.initialize().await? {
-            info!("Performing crash recovery for HELIX engine");
-            let recovered_levels = crash_recovery.recover().await?;
-            *engine.levels.write().await = recovered_levels;
-            info!("Crash recovery completed, recovered {} levels", engine.levels.read().await.len());
+        // Simple initialization - just load existing PCA model if present
+        if let Ok(pca_model_bytes) = engine.filesystem.read(&engine.data_dir.join("pca_model.bin").to_string_lossy()).await {
+            if let Ok(model) = PCAModel::from_bytes(&pca_model_bytes) {
+                *engine.pca_model.write().await = Some(model);
+                info!("Loaded existing PCA model for HELIX engine");
+            }
         }
         
         Ok(engine)
@@ -453,14 +441,6 @@ impl UnifiedStorageEngine for HelixEngine {
             None, // No Hilbert range for L0 files
         ).await?;
         
-        // Append to redo log for crash recovery
-        self.crash_recovery.append_redo_log(RedoLogEntry::FlushCompleted {
-            timestamp: chrono::Utc::now(),
-            level: 0,
-            file_path: file_path.clone(),
-            num_vectors: num_records,
-        }).await?;
-        
         // Update metrics
         {
             let mut metrics = self.metrics.write().await;
@@ -534,18 +514,6 @@ impl UnifiedStorageEngine for HelixEngine {
             let mut metrics = self.metrics.write().await;
             metrics.compaction_count += 1;
         }
-        
-        // Create checkpoint after successful compaction
-        let pca_version = if let Some(model) = self.pca_model.read().await.as_ref() {
-            Some(1) // TODO: Track actual PCA model versions
-        } else {
-            None
-        };
-        
-        self.crash_recovery.create_checkpoint(
-            &*self.levels.read().await,
-            pca_version,
-        ).await?;
         
         Ok(CompactionResult {
             success: true,

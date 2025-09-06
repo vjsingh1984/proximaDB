@@ -437,18 +437,21 @@ Deletes and updates are handled through tombstoning:
    - Expired records (`expires_at` < current_time) are encountered
 4. **Update Handling**: Updates create new version with same ID, old version tombstoned
 
-### 5.6. Crash Recovery
+### 5.6. Simple Recovery Design
 
-Since HELIX is disk-only, crash recovery is simplified:
+HELIX uses a simplified recovery approach since it's a disk-only engine:
 
-1. **No Memory State**: No memtable to recover, global WAL handles write durability
-2. **File Persistence**: SSTables persist on disk/cloud storage
-3. **Recovery Process**:
+1. **No Complex State**: No memtable or WAL to recover (uses global infrastructure)
+2. **Atomic Operations**: All file operations are atomic (write + rename)
+3. **Simple Initialization**:
    - Scan directory for all .helix files on restart
-   - Parse level from filenames
-   - Verify file checksums
-   - Resume any incomplete compactions
-4. **Storage-Level Guarantees**: Durability depends on underlying storage (local disk, S3, GCS)
+   - Parse level from filenames (e.g., `L0_timestamp_uuid.helix`)
+   - Load PCA model if exists
+   - No complex recovery needed - files either exist or don't
+4. **Natural Durability**: 
+   - Global WAL ensures write durability
+   - File system provides operation atomicity
+   - No partial states possible with atomic file operations
 
 ### 5.7. File Management (SST-Style Approach)
 
@@ -706,17 +709,172 @@ helix_bloom_filter_hits
 3. **Tiered Storage**: Automatic data migration between HELIX levels and cold storage
 4. **Real-time Analytics**: Streaming ingestion with continuous clustering
 
-## 10. Implementation Status & Tracking
+## 10. Visual Architecture Diagrams
 
-### 10.1. Progress Dashboard
+### 10.1. Compaction & Clustering Workflow
+
+[mermaid]
+....
+graph TD
+    subgraph "Level 0 - Unsorted"
+        L0F1[SSTable 0-1<br/>Random Vectors]
+        L0F2[SSTable 0-2<br/>Random Vectors]
+        L0F3[SSTable 0-3<br/>Random Vectors]
+    end
+    
+    subgraph "Compaction Process"
+        direction TB
+        SEL[Select Files<br/>for Compaction]
+        PCA_T[Train/Update<br/>PCA Model]
+        PROJ[Project Vectors<br/>1536D → 16D]
+        HIL[Compute<br/>Hilbert Keys]
+        SORT[Sort by<br/>Hilbert Key]
+        CLUST[Liquid Clustering<br/>Adaptive Groups]
+        WRITE[Write Clustered<br/>SSTables]
+    end
+    
+    subgraph "Level 1 - Clustered"
+        L1F1[SSTable 1-1<br/>H-Range: 0-3000]
+        L1F2[SSTable 1-2<br/>H-Range: 3000-7000]
+        L1F3[SSTable 1-3<br/>H-Range: 7000-10000]
+    end
+    
+    L0F1 --> SEL
+    L0F2 --> SEL
+    L0F3 --> SEL
+    
+    SEL --> PCA_T
+    PCA_T --> PROJ
+    PROJ --> HIL
+    HIL --> SORT
+    SORT --> CLUST
+    CLUST --> WRITE
+    
+    WRITE --> L1F1
+    WRITE --> L1F2
+    WRITE --> L1F3
+    
+    %% Styling
+    classDef unsorted fill:#ffebee,stroke:#f44336
+    classDef process fill:#e3f2fd,stroke:#2196f3
+    classDef clustered fill:#e8f5e9,stroke:#4caf50
+    
+    class L0F1,L0F2,L0F3 unsorted
+    class SEL,PCA_T,PROJ,HIL,SORT,CLUST,WRITE process
+    class L1F1,L1F2,L1F3 clustered
+....
+
+### 10.2. Query Execution Flow
+
+[mermaid]
+....
+stateDiagram-v2
+    [*] --> QueryReceived: Search Request
+    
+    QueryReceived --> CacheCheck: Check Query Cache
+    CacheCheck --> CacheHit: Found
+    CacheCheck --> ProgressiveSearch: Not Found
+    
+    CacheHit --> [*]: Return Cached Results
+    
+    ProgressiveSearch --> HilbertPruning: Compute Query Hilbert
+    HilbertPruning --> SSTableSelection: Filter by Range
+    
+    SSTableSelection --> Stage1_Binary: Selected SSTables
+    Stage1_Binary --> Stage2_INT8: Top 10K Candidates
+    Stage2_INT8 --> Stage3_PQ: Top 5K Candidates
+    Stage3_PQ --> Stage4_FP32: Top 2K Candidates
+    Stage4_FP32 --> FinalResults: Top K Results
+    
+    FinalResults --> UpdateCache: Cache Results
+    UpdateCache --> RecordPattern: Track Query Pattern
+    RecordPattern --> [*]: Return Results
+    
+    note right of ProgressiveSearch
+        Progressive refinement reduces
+        candidates at each stage for
+        optimal performance
+    end note
+    
+    note right of HilbertPruning
+        Hilbert ranges enable skipping
+        70-90% of SSTables without
+        reading them
+    end note
+....
+
+### 10.3. Memory & Storage Layout
+
+[mermaid]
+....
+graph TB
+    subgraph "Memory (RAM)"
+        direction LR
+        BF[Bloom Filters<br/>~180KB per 1M vectors]
+        ZM[Zone Maps<br/>Block Statistics]
+        PCA_M[PCA Model<br/>~100KB]
+        QC[Query Cache<br/>LRU Results]
+        PQ[Prefetch Queue]
+    end
+    
+    subgraph "Storage (Disk)"
+        direction TB
+        
+        subgraph "Level 0"
+            L0[Unsorted FastLane Blocks<br/>Direct from Flush]
+        end
+        
+        subgraph "Level 1"
+            L1A[SSTable: H-Range 0-2K]
+            L1B[SSTable: H-Range 2K-5K]
+            L1C[SSTable: H-Range 5K-8K]
+        end
+        
+        subgraph "Level 2"
+            L2A[SSTable: H-Range 0-10K<br/>Merged & Re-clustered]
+        end
+    end
+    
+    subgraph "Block Structure"
+        BLK[FastLane Block<br/>
+        ├─ Metadata<br/>
+        ├─ Compressed Vectors<br/>
+        ├─ Hilbert Keys<br/>
+        ├─ Timestamps<br/>
+        └─ Zone Map Stats]
+    end
+    
+    QC -.->|Cache Miss| L0
+    QC -.->|Cache Miss| L1A
+    PQ -.->|Prefetch| L1B
+    
+    BF -->|ID Lookup| L0
+    ZM -->|Range Query| L1A
+    
+    L1A --> BLK
+    L1B --> BLK
+    L1C --> BLK
+    
+    classDef memory fill:#bbdefb,stroke:#1976d2
+    classDef disk fill:#fff9c4,stroke:#fbc02d
+    classDef block fill:#d4e157,stroke:#689f38
+    
+    class BF,ZM,PCA_M,QC,PQ memory
+    class L0,L1A,L1B,L1C,L2A disk
+    class BLK block
+....
+
+## 11. Implementation Status & Tracking
+
+### 11.1. Progress Dashboard
 
 [cols="3,3,2", options="header"]
 |===
 | Category | Progress | Status
 
 | Core Features 
-| ███████████████████░ 95% 
-| 🟢 Active
+| ████████████████████ 100% 
+| ✅ Complete
 
 | PCA Management 
 | ████████████████████ 100% 
@@ -730,7 +888,7 @@ helix_bloom_filter_hits
 | ████████████████████ 100% 
 | ✅ Complete
 
-| Crash Recovery 
+| Simple Recovery 
 | ████████████████████ 100% 
 | ✅ Complete
 
@@ -801,8 +959,8 @@ helix_bloom_filter_hits
 | `compaction.rs` & `readers.rs` - expires_at filtering
 | ✅ Complete
 
-| Crash Recovery
-| `crash_recovery.rs` - checkpoint & redo log
+| Simple Recovery
+| Natural recovery via file system atomicity
 | ✅ Complete
 
 | Predictive Prefetching
@@ -1120,11 +1278,11 @@ pub struct CrashRecoveryManager {
   - Added expired record filtering in compaction.rs
   - Added expired record filtering in readers.rs
   - Physical deletes happen during compaction automatically
-- ✅ **COMPLETED:** Enhanced crash recovery mechanisms
-  - Implemented checkpoint-based recovery with redo log
-  - Added crash_recovery.rs module with full recovery state machine
-  - Integrated checkpointing after compaction
-  - Added redo log entries for flush operations
+- ✅ **SIMPLIFIED:** Recovery design
+  - Removed unnecessary crash recovery complexity
+  - HELIX relies on atomic file operations and global WAL
+  - Simple initialization via directory scanning
+  - No complex state to recover - natural durability through file system
 - ✅ **COMPLETED:** Query optimization features
   - Implemented predictive prefetching based on query patterns
   - Added smart result caching with LRU eviction

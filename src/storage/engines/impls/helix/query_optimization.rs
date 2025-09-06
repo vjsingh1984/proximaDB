@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -23,8 +23,8 @@ pub struct QueryPattern {
     pub hilbert_key: Option<u64>,
     /// Files accessed during query
     pub accessed_files: Vec<String>,
-    /// Query timestamp
-    pub timestamp: Instant,
+    /// Query timestamp (epoch milliseconds)
+    pub timestamp_ms: u64,
     /// Query latency
     pub latency_ms: u64,
     /// Result count
@@ -232,12 +232,13 @@ impl SmartResultCache {
         
         if let Some(query_hashes) = tracker.remove(file_path) {
             let mut cache = self.cache.write().await;
+            let num_entries = query_hashes.len();
             for hash in query_hashes {
                 cache.pop(&hash);
             }
             
             info!("Invalidated {} cache entries for file {}", 
-                  query_hashes.len(), file_path);
+                  num_entries, file_path);
         }
     }
 
@@ -289,7 +290,7 @@ pub struct QueryOptimizer {
 }
 
 /// Query statistics for optimization decisions
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct QueryStats {
     total_queries: u64,
     cache_hits: u64,
@@ -418,7 +419,10 @@ mod tests {
             query_hash: 123,
             hilbert_key: Some(1000),
             accessed_files: vec!["file1.helix".to_string(), "file2.helix".to_string()],
-            timestamp: Instant::now(),
+            timestamp_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
             latency_ms: 25,
             result_count: 10,
         };

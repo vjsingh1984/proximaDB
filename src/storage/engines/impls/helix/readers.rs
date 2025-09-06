@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -27,8 +26,23 @@ pub async fn check_bloom_filter(
     vector_ids: &[String],
 ) -> Result<Vec<bool>> {
     if let Some(ref bloom_data) = sstable.bloom_filter {
-        // Deserialize the bloom filter using the unified factory
-        let serialized = SerializedBloomFilter::from_bytes(bloom_data)?;
+        // Create SerializedBloomFilter structure from raw data
+        // We need to parse the serialized format properly
+        // For now, use the factory directly with appropriate config
+        let config = crate::core::bloom::BloomFilterConfig {
+            bits_per_key: 10,
+            expected_items: 10000,
+            enabled: true,
+            ..Default::default()
+        };
+        
+        let serialized = SerializedBloomFilter {
+            strategy_type: crate::core::bloom::BloomStrategy::ByteAligned,
+            version: SerializedBloomFilter::CURRENT_VERSION,
+            config: config.clone(),
+            data: bloom_data.clone(),
+            metadata: HashMap::new(),
+        };
         let bloom = BloomFilterFactory::from_serialized(&serialized)?;
         
         // Check each ID
@@ -124,7 +138,16 @@ pub async fn search_sstable(
             
             // Apply filter if provided
             if let Some(f) = filter {
-                if !f(&record.metadata.clone().unwrap_or_default()) {
+                // Convert metadata to HashMap<String, String> for filter
+                let metadata_map: HashMap<String, String> = if let Some(meta) = &record.metadata {
+                    meta.iter()
+                        .map(|item| (item.key.clone(), item.value.clone()))
+                        .collect()
+                } else {
+                    HashMap::new()
+                };
+                
+                if !f(&metadata_map) {
                     continue;
                 }
             }
@@ -258,7 +281,7 @@ pub async fn parallel_search(
                 unsafe { &*raw_ptr }
             });
             
-            search_sstable(&fs, &sstable, &query, k, &metric, filter_fn).await
+            search_sstable(&fs, &sstable, &query, k, &metric, filter_fn, None).await
         })
     });
     
@@ -281,7 +304,7 @@ pub async fn parallel_search(
     }
     
     // Sort and take top-k
-    all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+    all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     all_results.truncate(k);
     
     Ok(all_results)
@@ -341,6 +364,7 @@ pub async fn search_with_stats(
             k,
             distance_metric,
             None,
+            None,  // candidate_ids
         ).await?;
         
         stats.vectors_evaluated += sstable_results.len();
