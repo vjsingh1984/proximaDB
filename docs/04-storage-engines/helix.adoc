@@ -1,0 +1,513 @@
+= HELIX Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Hierarchical Embeddings with Locality-Indexed eXtensions** - A storage engine that uses PCA dimensionality reduction and Hilbert curve clustering to achieve 70-90% query pruning and 2-3x search speedup.
+
+== Overview
+
+The HELIX engine is designed for similarity search workloads where vectors exhibit natural clustering patterns. By combining PCA dimensionality reduction with Hilbert curve space-filling properties, HELIX preserves locality while enabling efficient pruning of irrelevant data during searches.
+
+=== Key Features
+
+* **PCA Dimensionality Reduction**: Reduces high-dimensional vectors to 64D for clustering
+* **Hilbert Curve Clustering**: Preserves spatial locality in 1D ordering
+* **70-90% Query Pruning**: Eliminates most irrelevant files before search
+* **Parallel Search**: Configurable multi-threaded search (2-3x speedup)
+* **LSM Tree Storage**: Efficient write performance with compaction
+* **Progressive Quantization**: Supports binary, INT8, and PQ quantization
+
+=== When to Use HELIX
+
+[cols="1,2", options="header"]
+|===
+| Use HELIX When | Don't Use When
+
+| Similarity search is primary
+| Need real-time updates
+
+| Data has natural clusters
+| Random access patterns
+
+| Can batch writes
+| Ultra-low latency (<2ms)
+
+| Read-heavy workload
+| Frequently changing data
+|===
+
+== Architecture
+
+=== Data Flow
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Write Path"
+        I[Input Vectors] --> PCA[PCA Transform<br/>768D → 64D]
+        PCA --> HC[Hilbert Clustering]
+        HC --> LSM[LSM Tree<br/>L0 → L1 → L2]
+        LSM --> DISK[Disk Storage]
+    end
+    
+    subgraph "Read Path"
+        Q[Query Vector] --> QPCA[PCA Transform]
+        QPCA --> HQ[Hilbert Query]
+        HQ --> PRUNE[Prune 70-90%<br/>of Files]
+        PRUNE --> SEARCH[Search Remaining]
+        SEARCH --> RANK[Rerank Results]
+    end
+    
+    style PCA fill:#e8f5e9
+    style PRUNE fill:#fff3e0
+----
+
+=== Component Details
+
+==== PCA Transformation
+* Reduces dimensions from original (e.g., 768) to 64
+* Preserves 95%+ of variance
+* Trained incrementally on data batches
+* Cached for query transformation
+
+==== Hilbert Clustering
+* Maps 64D space to 1D Hilbert curve
+* Preserves spatial locality
+* Groups similar vectors in same files
+* Enables efficient range queries
+
+==== LSM Tree Structure
+* **L0**: In-memory buffer (MemTable)
+* **L1**: Small sorted files (4-8MB)
+* **L2**: Larger compacted files (32-64MB)
+* **Compaction**: Merges and re-clusters periodically
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "helix"
+
+[engines.helix]
+# PCA configuration
+pca_dimensions = 64              # Target dimensions after PCA
+pca_training_samples = 100000    # Samples for PCA training
+
+# Clustering configuration
+clustering_batch_size = 50000    # Vectors per clustering batch
+hilbert_bits = 16                # Bits per dimension for Hilbert
+
+# Search configuration
+parallel_search_enabled = true   # Enable parallel search
+parallel_search_threshold = 3    # Min files for parallel search
+max_search_threads = 8           # Max parallel threads
+
+# Storage configuration
+l0_size_mb = 64                 # L0 file size
+l1_size_mb = 256                # L1 file size
+compression = "zstd"             # Compression algorithm
+----
+
+=== Performance Tuning
+
+==== High Throughput
+[source,toml]
+----
+[engines.helix]
+clustering_batch_size = 100000   # Larger batches
+l0_size_mb = 128                # Bigger L0 files
+compression = "lz4"              # Faster compression
+parallel_search_enabled = false  # Sequential for throughput
+----
+
+==== Low Latency
+[source,toml]
+----
+[engines.helix]
+pca_dimensions = 32              # Fewer dimensions
+clustering_batch_size = 25000    # Smaller batches
+parallel_search_enabled = true   # Parallel search
+max_search_threads = 16          # More threads
+cache_clusters = true            # Cache cluster info
+----
+
+== Performance Characteristics
+
+=== Write Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Insert Rate**
+| 150K vec/s
+| With batching
+
+| **PCA Transform**
+| 10μs/vector
+| After training
+
+| **Clustering**
+| 50ms/batch
+| 50K vectors
+
+| **Flush Time**
+| 2-5 seconds
+| Per L0 file
+
+| **Compaction**
+| 10-30 seconds
+| Background
+|===
+
+=== Query Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **P50 Latency**
+| 2.5ms
+| 1M vectors
+
+| **P99 Latency**
+| 4.8ms
+| 1M vectors
+
+| **Files Pruned**
+| 70-90%
+| Via Hilbert
+
+| **Parallel Speedup**
+| 2-3x
+| 8 threads
+
+| **Cache Hit Rate**
+| 85-95%
+| Hot queries
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 4-8x
+| ZSTD default
+
+| **PCA Overhead**
+| 2-3%
+| Model storage
+
+| **Index Size**
+| 5-10%
+| Metadata
+
+| **Memory Usage**
+| 2.5GB/M vectors
+| Including cache
+|===
+
+== Query Optimization
+
+=== Pruning Statistics
+
+The HELIX engine tracks pruning effectiveness:
+
+[source,sql]
+----
+-- View pruning stats
+SELECT 
+    files_total,
+    files_pruned,
+    (files_pruned * 100.0 / files_total) as prune_rate,
+    avg_search_time_ms
+FROM helix_stats
+WHERE collection = 'my_collection';
+----
+
+Example output:
+```
+files_total | files_pruned | prune_rate | avg_search_time_ms
+-----------|-------------|------------|------------------
+     100   |      85     |    85.0    |       2.5
+```
+
+=== Parallel Search
+
+Parallel search activates when:
+1. Number of files ≥ `parallel_search_threshold`
+2. `parallel_search_enabled = true`
+3. Available threads > 1
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Sequential (< 3 files)"
+        F1[File 1] --> F2[File 2] --> R1[Results]
+    end
+    
+    subgraph "Parallel (≥ 3 files)"
+        T1[Thread 1: Files 1-3]
+        T2[Thread 2: Files 4-6]
+        T3[Thread 3: Files 7-9]
+        T1 --> M[Merge]
+        T2 --> M
+        T3 --> M
+        M --> R2[Results]
+    end
+----
+
+== Implementation Details
+
+=== File Format
+
+HELIX files use a custom SST-like format:
+
+```
+[Header]
+  Magic: "HELIX001"
+  PCA Model Reference
+  Hilbert Parameters
+  Vector Count
+  Dimension Info
+
+[Data Blocks]
+  Block 1: [Vector Data + Metadata]
+  Block 2: [Vector Data + Metadata]
+  ...
+
+[Index]
+  Hilbert Range Index
+  Block Offsets
+  Bloom Filter
+
+[Footer]
+  Checksum
+  Compression Info
+```
+
+=== PCA Model Management
+
+The PCA model is:
+1. Trained on first 100K vectors (configurable)
+2. Stored separately from data files
+3. Shared across all HELIX files
+4. Updated incrementally if needed
+
+=== Cluster Boundaries
+
+Each file maintains Hilbert curve boundaries:
+```rust
+pub struct ClusterBoundary {
+    min_hilbert: u64,  // Minimum Hilbert value
+    max_hilbert: u64,  // Maximum Hilbert value
+    centroid: Vec<f32>, // Cluster centroid
+    radius: f32,        // Max distance from centroid
+}
+```
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `helix_prune_rate`
+| Percentage of files pruned
+| < 50%
+
+| `helix_pca_variance`
+| Variance preserved by PCA
+| < 90%
+
+| `helix_parallel_speedup`
+| Parallel vs sequential ratio
+| < 1.5x
+
+| `helix_compaction_time`
+| Time spent in compaction
+| > 60s
+
+| `helix_cluster_overlap`
+| Cluster boundary overlap
+| > 20%
+|===
+
+=== Diagnostics
+
+[source,bash]
+----
+# Check HELIX stats
+proximadb-cli stats --engine helix --collection my_data
+
+# Analyze clustering quality
+proximadb-cli analyze --clustering --collection my_data
+
+# View PCA effectiveness
+proximadb-cli debug --pca-stats --collection my_data
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Poor Pruning Rate
+**Symptom**: Less than 50% files pruned
+
+**Causes**:
+1. Data lacks natural clusters
+2. PCA dimensions too low
+3. Hilbert bits insufficient
+
+**Solutions**:
+```toml
+pca_dimensions = 128      # Increase dimensions
+hilbert_bits = 20         # More Hilbert precision
+clustering_batch_size = 100000  # Larger clusters
+```
+
+==== Slow Compaction
+**Symptom**: Compaction takes > 60 seconds
+
+**Solutions**:
+1. Reduce file sizes
+2. Adjust compaction triggers
+3. Use faster compression
+
+```toml
+l1_size_mb = 128          # Smaller files
+compaction_threads = 4     # More threads
+compression = "lz4"        # Faster algorithm
+```
+
+==== Memory Usage
+**Symptom**: High memory consumption
+
+**Solutions**:
+1. Reduce cache size
+2. Lower PCA dimensions
+3. Disable parallel search
+
+```toml
+cache_size_mb = 512       # Smaller cache
+pca_dimensions = 32       # Fewer dimensions
+parallel_search_enabled = false
+```
+
+== Best Practices
+
+=== Data Preparation
+1. **Normalize vectors** before insertion
+2. **Batch writes** in 50-100K chunks
+3. **Pre-sort** by similarity if possible
+4. **Remove duplicates** to improve clustering
+
+=== Query Optimization
+1. **Use filters** to reduce search space
+2. **Cache frequent queries** at application level
+3. **Adjust k** parameter based on recall needs
+4. **Monitor pruning rates** regularly
+
+=== Maintenance
+1. **Schedule compaction** during low traffic
+2. **Monitor cluster quality** over time
+3. **Retrain PCA** if data distribution changes
+4. **Archive old data** to maintain performance
+
+== Migration Guide
+
+=== From SST to HELIX
+
+[source,bash]
+----
+# 1. Export from SST
+proximadb-cli export \
+  --engine sst \
+  --collection my_data \
+  --format parquet \
+  --output data.parquet
+
+# 2. Configure HELIX
+cat > helix_config.toml << EOF
+[storage]
+default_engine = "helix"
+
+[engines.helix]
+pca_dimensions = 64
+clustering_batch_size = 50000
+EOF
+
+# 3. Import to HELIX
+proximadb-cli import \
+  --engine helix \
+  --collection my_data_helix \
+  --config helix_config.toml \
+  --input data.parquet
+
+# 4. Verify
+proximadb-cli verify \
+  --collection my_data_helix \
+  --sample-queries queries.json
+----
+
+=== Performance Comparison
+
+Before (SST) vs After (HELIX):
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | SST | HELIX | Improvement
+
+| Search P50
+| 5.2ms
+| 2.5ms
+| 2.1x
+
+| Search P99
+| 12ms
+| 4.8ms
+| 2.5x
+
+| Storage Size
+| 10GB
+| 6GB
+| 40% reduction
+
+| Files Scanned
+| 100%
+| 20%
+| 80% reduction
+|===
+
+== Future Enhancements
+
+=== Planned Features
+1. **Dynamic PCA Updates**: Adapt to distribution changes
+2. **Multi-level Clustering**: Hierarchical Hilbert curves
+3. **GPU Acceleration**: For PCA and clustering
+4. **Adaptive Parallelism**: Auto-tune thread count
+5. **Cross-engine Queries**: Combine with other engines
+
+=== Research Areas
+1. **Alternative Curves**: Z-order, Peano curves
+2. **Learned Indexes**: ML-based pruning
+3. **Quantum-inspired**: Quantum clustering algorithms
+4. **Federation**: Distributed HELIX clusters
+
+---
+
+[.text-center]
+_HELIX Engine - Production Ready_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_

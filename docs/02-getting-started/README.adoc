@@ -1,0 +1,174 @@
+= Getting Started with ProximaDB
+:toc: left
+:toclevels: 2
+:icons: font
+
+[abstract]
+Everything you need to get ProximaDB up and running in minutes.
+
+== Section Contents
+
+[cols="1,3", frame=none, grid=none]
+|===
+| link:quickstart.adoc[Quick Start]
+| 5-minute guide to get ProximaDB running
+
+| link:installation.adoc[Installation]
+| Detailed installation instructions for all platforms
+
+| link:configuration.adoc[Configuration]
+| Configuration options and best practices
+
+| link:first-app.adoc[First Application]
+| Build your first vector search application
+|===
+
+== Prerequisites
+
+=== System Requirements
+
+[cols="1,3", options="header"]
+|===
+| Component | Requirement
+
+| **CPU**
+| x86_64 or ARM64, 4+ cores recommended
+
+| **Memory**
+| 8GB minimum, 16GB+ recommended
+
+| **Storage**
+| 50GB+ SSD recommended
+
+| **OS**
+| Linux, macOS, Windows (WSL2)
+
+| **Docker**
+| Version 20.10+ (optional)
+|===
+
+=== Development Requirements
+
+For building from source:
+* Rust 1.75+ (latest stable)
+* Protobuf compiler (protoc)
+* Git
+
+== Quick Decision Guide
+
+[cols="2,3,1", options="header"]
+|===
+| If you want to... | Use this method | Time
+
+| Try ProximaDB quickly
+| link:quickstart.adoc#docker[Docker Quick Start]
+| 5 min
+
+| Deploy to production
+| link:installation.adoc#production[Production Setup]
+| 30 min
+
+| Develop/contribute
+| link:installation.adoc#source[Build from Source]
+| 15 min
+
+| Integrate with your app
+| link:first-app.adoc[First Application Guide]
+| 20 min
+|===
+
+== Quick Start Commands
+
+=== Docker (Fastest)
+[source,bash]
+----
+# Pull and run ProximaDB
+docker run -d \
+  --name proximadb \
+  -p 5678:5678 -p 5679:5679 \
+  -v proximadb_data:/data \
+  proximadb/proximadb:latest
+
+# Verify it's running
+curl http://localhost:5678/health
+----
+
+=== From Source
+[source,bash]
+----
+# Clone and build
+git clone https://github.com/proximadb/proximadb
+cd proximadb
+cargo build --release
+
+# Run server
+./target/release/proximadb-server
+
+# Verify
+curl http://localhost:5678/health
+----
+
+=== Python Client
+[source,bash]
+----
+# Install client
+pip install proximadb
+
+# Test connection
+python -c "from proximadb import ProximaDBClient; \
+           client = ProximaDBClient('http://localhost:5678'); \
+           print(client.health())"
+----
+
+== What's Next?
+
+After getting ProximaDB running:
+
+1. **Create a Collection**: Store your vectors
+2. **Insert Data**: Add vectors with metadata
+3. **Search**: Query by similarity
+4. **Optimize**: Tune for your workload
+
+See link:first-app.adoc[First Application] for a complete walkthrough.
+
+== Common Issues
+
+=== Port Already in Use
+If ports 5678 or 5679 are occupied:
+[source,bash]
+----
+# Change ports in config
+PROXIMADB_REST_PORT=6678 \
+PROXIMADB_GRPC_PORT=6679 \
+./target/release/proximadb-server
+----
+
+=== Permission Denied (Docker)
+[source,bash]
+----
+# Add your user to docker group
+sudo usermod -aG docker $USER
+# Log out and back in
+----
+
+=== Out of Memory
+Adjust memory limits:
+[source,toml]
+----
+# config.toml
+[memory]
+memtable_size = "1GB"  # Reduce from default 2GB
+cache_size = "512MB"    # Reduce from default 1GB
+----
+
+== Getting Help
+
+* 📚 **Documentation**: You're here!
+* 💬 **Discord**: https://discord.gg/proximadb
+* 🐛 **Issues**: https://github.com/proximadb/proximadb/issues
+* 📧 **Email**: support@proximadb.com
+
+---
+
+[.text-center]
+_Ready to dive deeper? Continue to link:quickstart.adoc[Quick Start Guide] →_

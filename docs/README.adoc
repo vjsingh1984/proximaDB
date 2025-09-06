@@ -1,67 +1,153 @@
-= ProximaDB Documentation Hub
+= ProximaDB Documentation
 :toc: left
 :toclevels: 2
-:imagesdir: DIAGRAMS/images
 :icons: font
+:imagesdir: assets/images
 
-image::proximadb-logo.svg[ProximaDB Logo, width=400, align=center]
+image::logos/proximadb-logo.svg[ProximaDB, 180, 180, align="center"]
 
-[.lead]
-**High-performance vector database with sub-millisecond search at scale.**
+[.lead.text-center]
+**High-Performance Vector Database Documentation**
 
-Welcome to ProximaDB's comprehensive documentation. Choose your path based on your role and information needs:
+[.text-center]
+_Proto-first architecture. Hardware acceleration. Production ready._
 
-== 🎯 Quick Navigation by Role
+== 📚 Documentation Overview
 
-[cols="1,3,1,2", options="header"]
+[cols="1,3,1", frame=none, grid=none, options="header"]
 |===
-| Audience | What You'll Find | Time Needed | Start Here
+| Section | Description | Start Here
 
-| **📊 Decision Makers** +
-_C-level, Managers, Stakeholders_
-| Business value, ROI analysis, competitive advantages
-| 5-15 minutes
-| link:DECISION_MAKERS/index.adoc[Business Overview →]
+| **link:01-overview/README.adoc[Overview]**
+| Architecture, features, performance
+| link:01-overview/introduction.adoc[Introduction]
 
-| **👥 End Users** +
-_App Developers, Data Scientists_
-| Getting started, API guides, tutorials, examples
-| 30-60 minutes
-| link:END_USERS/index.adoc[User Guide →]
+| **link:02-getting-started/README.adoc[Getting Started]**
+| Installation and quick start
+| link:02-getting-started/quickstart.adoc[5-min Quick Start]
 
-| **🔧 Administrators** +
-_DevOps, System Administrators_
-| Deployment, configuration, monitoring, operations
-| 45-90 minutes
-| link:ADMINISTRATORS/index.adoc[Admin Guide →]
+| **link:03-user-guide/README.adoc[User Guide]**
+| API reference and usage
+| link:03-user-guide/concepts.adoc[Core Concepts]
 
-| **🏗️ Technical Architects** +
-_System Architects, Senior Developers_
-| Architecture deep-dive, design decisions, performance
-| 2-4 hours
-| link:TECHNICAL_ARCHITECTS/index.adoc[Architecture →]
+| **link:04-storage-engines/README.adoc[Storage Engines]**
+| Engine specifications
+| link:04-storage-engines/README.adoc[Engine Matrix]
 
-| **💻 Contributors** +
-_Open Source Contributors, Internal Devs_
-| Codebase structure, development workflow, contributing
-| 4-8 hours
-| link:CONTRIBUTORS/index.adoc[Contributor Guide →]
+| **link:05-operations/README.adoc[Operations]**
+| Deployment and monitoring
+| link:05-operations/deployment.adoc[Deployment Guide]
+
+| **link:06-architecture/README.adoc[Architecture]**
+| Technical deep dive
+| link:06-architecture/design-principles.adoc[Design Principles]
+
+| **link:07-development/README.adoc[Development]**
+| Building and contributing
+| link:07-development/building.adoc[Build Guide]
+
+| **link:08-reference/README.adoc[Reference]**
+| API and configuration
+| link:08-reference/api/rest.adoc[API Reference]
+
+| **link:09-roadmap/README.adoc[Roadmap]**
+| Future plans
+| link:09-roadmap/README.adoc[Roadmap Overview]
 |===
 
-== 🚀 QuickStart (60 seconds)
+== 🚀 Quick Links
 
-=== Docker Setup
+=== For New Users
+[cols="1,1,1", frame=none, grid=none]
+|===
+| link:01-overview/introduction.adoc[What is ProximaDB?]
+| link:02-getting-started/quickstart.adoc[5-Minute Setup]
+| link:03-user-guide/first-app.adoc[First Application]
+|===
+
+=== For Developers
+[cols="1,1,1", frame=none, grid=none]
+|===
+| link:08-reference/api/rest.adoc[REST API]
+| link:08-reference/api/grpc.adoc[gRPC API]
+| link:03-user-guide/client-libraries.adoc[Client SDKs]
+|===
+
+=== For Operators
+[cols="1,1,1", frame=none, grid=none]
+|===
+| link:05-operations/deployment.adoc[Deployment]
+| link:05-operations/monitoring.adoc[Monitoring]
+| link:05-operations/troubleshooting.adoc[Troubleshooting]
+|===
+
+== 📊 Key Features
+
+[cols="2,1,2", options="header"]
+|===
+| Feature | Status | Details
+
+| **7 Storage Engines**
+| 3 Production, 4 Dev
+| link:04-storage-engines/README.adoc[Engine Guide]
+
+| **2.5-3x Search Speed**
+| ✅ Production
+| link:01-overview/performance.adoc[Benchmarks]
+
+| **Progressive Search**
+| ✅ 7-phase pipeline
+| link:06-architecture/progressive-search.adoc[Details]
+
+| **Hardware Acceleration**
+| ✅ SIMD/GPU
+| link:06-architecture/compute-layer.adoc[Compute Layer]
+
+| **Cloud Native**
+| ✅ S3/Azure/GCS
+| link:05-operations/deployment.adoc[Cloud Deploy]
+|===
+
+== 🏗️ System Architecture
+
+[source,mermaid]
+----
+graph LR
+    subgraph "ProximaDB Core"
+        API[API Layer<br/>REST/gRPC]
+        SVC[Service Layer<br/>Business Logic]
+        ENG[Storage Engines<br/>SST/VIPER/HELIX]
+        IDX[Index Layer<br/>AXIS Engine]
+    end
+    
+    Client[Applications] --> API
+    API --> SVC
+    SVC --> ENG
+    SVC --> IDX
+    
+    style API fill:#e3f2fd
+    style ENG fill:#e8f5e9
+    style IDX fill:#fff3e0
+----
+
+== 📈 Performance Highlights
+
+* **Search Latency**: 2.5ms P50, 4.8ms P99
+* **Write Throughput**: 200-500K vectors/sec
+* **Memory Efficiency**: 45-65% reduction
+* **Storage Compression**: 80-90% savings
+* **Cloud Cost**: 97% API call reduction
+
+link:01-overview/performance.adoc[Full Performance Report →]
+
+== 🛠️ Quick Start
+
+=== Docker
 [source,bash]
 ----
-# Start ProximaDB server
-docker run -d \
-  -p 5678:5678 \
-  -p 5679:5679 \
-  -v proximadb_data:/data \
+docker run -d --name proximadb \
+  -p 5678:5678 -p 5679:5679 \
   proximadb/proximadb:latest
-
-# Verify it's running
-curl http://localhost:5678/health
 ----
 
 === Python Client
@@ -69,128 +155,58 @@ curl http://localhost:5678/health
 ----
 from proximadb import ProximaDBClient
 
-# Connect and create collection
 client = ProximaDBClient("http://localhost:5678")
-client.create_collection("vectors", dimension=384)
-
-# Insert and search
-client.insert_vectors("vectors", data)
-results = client.search("vectors", query_vector, top_k=10)
+client.create_collection("demo", dimension=768)
 ----
 
-== 📊 Key Performance Metrics
+link:02-getting-started/quickstart.adoc[Complete Quick Start →]
 
-[cols="2,1,2", options="header"]
+== 📝 Documentation Standards
+
+All documentation follows these principles:
+
+1. **Clear Structure**: Numbered sections for navigation
+2. **Progressive Disclosure**: Overview → Details → Reference
+3. **Practical Examples**: Code samples throughout
+4. **Visual Aids**: Diagrams where helpful
+5. **Cross-References**: Links to related topics
+
+== 🔄 Recent Updates
+
+* **2025-01-06**: Documentation reorganization
+* **2025-01-05**: Unified filter evaluator
+* **2025-01-04**: Progressive search implementation
+* **2024-12**: HELIX engine production release
+
+== 🤝 Contributing
+
+See link:07-development/contributing.adoc[Contributing Guide] for:
+* Documentation guidelines
+* Code standards
+* Testing requirements
+* Pull request process
+
+== 🔗 Resources
+
+[cols="1,1", frame=none, grid=none]
 |===
-| Metric | Performance | vs Industry Average
+| **Community**
+| https://discord.gg/proximadb[Discord]
 
-| **Insert Throughput (gRPC)** | 17K vectors/sec | 2.9x faster ⚡
-| **Search Latency (P99)** | < 1ms | 65% lower 🎯
-| **Storage Compression** | 50-80% reduction | 40% better 💾
-| **Test Coverage** | 2,700+ tests | 100% pass rate ✅
-| **Memory Usage** | 30% reduction | vs alternatives 🧠
-| **Background CPU** | 0.14% usage | 84% optimized ⚙️
+| **Repository**
+| https://github.com/proximadb/proximadb[GitHub]
+
+| **Issues**
+| https://github.com/proximadb/proximadb/issues[Issue Tracker]
+
+| **Support**
+| support@proximadb.com
 |===
-
-== 🏗️ Architecture at a Glance
-
-image::architecture/core_architecture.mmd[ProximaDB Core Architecture,width=800,align=center]
-
-=== 🔥 Production-Ready Storage Engines
-
-[cols="1,2,1,2", frame=none, grid=rows]
-|===
-| Engine | Optimization | Performance | Use Case
-
-| **SST** ✅
-| Write-optimized, Bloom filters
-| 17K writes/sec
-| Real-time OLTP workloads
-
-| **VIPER** ✅  
-| Columnar Parquet, Quantization
-| 70-80% compression
-| Analytics, Large datasets
-
-| **PRISM** 🚧
-| Memory-first, Progressive search
-| 0.3ms latency
-| Ultra-low latency apps
-
-| **SWIFT** 🚧
-| Hierarchical blocks, O(log n) lookups
-| 12K writes/sec
-| High-throughput streaming
-
-| **NOVA** 🔬
-| Zone maps, Hierarchical stats
-| 80-90% compression
-| Advanced analytics
-|===
-
-== 🎨 Visual Documentation
-
-=== Architecture Diagrams
-* link:DIAGRAMS/architecture/core_architecture.mmd[Core System Architecture]
-* link:DIAGRAMS/architecture/storage_engine_selection.mmd[Storage Engine Selection]
-* link:DIAGRAMS/architecture/hardware_acceleration.mmd[Hardware Acceleration]
-
-=== Flow Diagrams  
-* link:DIAGRAMS/flows/write_sequence.mmd[Write Path Sequence]
-* link:DIAGRAMS/flows/search_sequence.mmd[Search Path Sequence]
-* link:DIAGRAMS/flows/vector-lifecycle.mmd[Vector Lifecycle]
-
-=== Complete Visual Guide
-link:DIAGRAMS/index.adoc[**→ Browse All Diagrams**]
-
-== 🌟 Key Features Highlight
-
-=== Core Capabilities
-* **6 Index Types**: HNSW, IVF, PQ, FLAT, ANNOY, LSH
-* **13 Distance Metrics**: Cosine, Euclidean, Dot Product, Manhattan, Hamming, Jaccard, and more
-* **14 Compression Algorithms**: ZSTD, LZ4, Snappy, Gzip, Brotli, and intelligent "Mixed" strategy
-* **Multiple Query Interfaces**: SQL, REST API, gRPC, Python SDK
-* **Cloud Storage Support**: S3, Azure Blob, Google Cloud Storage, MinIO
-
-=== Advanced Features
-* **Zero-Copy Operations**: Proto-first architecture eliminates serialization overhead
-* **Hardware Acceleration**: Automatic SIMD/GPU detection (AVX-512, AVX2, CUDA, ROCm)
-* **Progressive Search**: 7-phase optimization (Bloom → Binary → INT8 → PQ → Hybrid → Full → Cache)
-* **Unified Quantization**: Smart defaults with hardware-aware optimization
-
-== 🔍 Find What You Need
-
-=== By Task
-* **Getting Started**: link:END_USERS/getting_started.adoc[Quick setup and first queries]
-* **Production Deployment**: link:ADMINISTRATORS/deployment_guide.adoc[Enterprise deployment guide]
-* **Performance Tuning**: link:TECHNICAL_ARCHITECTS/performance_analysis.adoc[Optimization strategies]
-* **API Integration**: link:END_USERS/api_reference.adoc[Complete API reference]
-
-=== By Technology
-* **Python SDK**: link:END_USERS/tutorials/python_quickstart.adoc[Python integration tutorial]
-* **REST API**: link:END_USERS/tutorials/rest_api_tutorial.adoc[HTTP API examples]
-* **gRPC**: link:END_USERS/tutorials/grpc_tutorial.adoc[High-performance gRPC client]
-* **Docker**: link:ADMINISTRATORS/deployment_guide.adoc#docker[Container deployment]
-
-=== By Use Case
-* **Semantic Search**: link:END_USERS/semantic_search_guide.adoc[Build intelligent search]
-* **Recommendation Systems**: link:DECISION_MAKERS/use_cases.adoc#recommendations[Personalization at scale]
-* **Similarity Detection**: link:DECISION_MAKERS/use_cases.adoc#similarity[Content matching]
-
-== 📚 Additional Resources
-
-=== External Links
-* link:https://github.com/vjsingh1984/proximadb[GitHub Repository] 
-* link:https://discord.gg/proximadb[Community Discord]
-* link:https://proximadb.com/blog[Technical Blog]
-
 
 ---
 
 [.text-center]
-**ProximaDB v0.1.4** | **Apache 2.0 License** | **Production Ready** +
-_Documentation last updated: 2025-09-03_
+**ProximaDB v1.0** | Apache 2.0 License | Production Ready
 
 [.text-center]
-💡 **Can't find what you're looking for?** +
-Check our link:DIAGRAMS/index.adoc[visual documentation] or link:https://github.com/vjsingh1984/proximadb/issues[open an issue] on GitHub.
+_Documentation version 2025-01-06_

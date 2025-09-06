@@ -183,14 +183,14 @@ impl SSTRowFilterEvaluator {
         Ok(metadata_map)
     }
 
-    /// Fast filter evaluation using optimized JSON comparison
+    /// Fast filter evaluation using unified filter evaluator
     fn evaluate_filter_fast(
         &self,
         expr: &FilterExpression,
         metadata: &HashMap<String, serde_json::Value>,
     ) -> bool {
-        // Use the centralized filter evaluation logic for consistency
-        crate::core::search::json_comparison::evaluate_filter(expr, metadata)
+        // Use the unified filter evaluator for consistency across engines
+        crate::storage::engines::core::evaluate_filter(expr, metadata)
     }
 
     /// Clear metadata cache to prevent memory bloat
@@ -227,7 +227,7 @@ impl SSTRowFilterEvaluator {
             let metadata_map =
                 crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
 
-            if self.evaluate_filter_fast(filter_expr, &metadata_map) {
+            if crate::storage::engines::core::evaluate_filter(filter_expr, &metadata_map) {
                 qualifying_indices.push(index);
             }
         }

@@ -233,7 +233,7 @@ impl VIPERColumnFilterEvaluator {
                                 let metadata_map = [(field.clone(), column_value.clone())]
                                     .into_iter()
                                     .collect();
-                                crate::core::search::json_comparison::evaluate_filter(
+                                crate::storage::engines::core::evaluate_filter(
                                     filter_expr,
                                     &metadata_map,
                                 )

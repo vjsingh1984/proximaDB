@@ -25,7 +25,6 @@ pub mod clustering;
 pub mod compaction;
 pub mod eventlog_integration;
 pub mod fastlane;
-pub mod filter_evaluator;
 pub mod hilbert_curve;
 pub mod liquid_clustering;
 pub mod pca_impl;
@@ -690,9 +689,10 @@ impl UnifiedStorageEngine for HelixEngine {
         
         info!("HELIX pruned {:.1}% of SSTables", pruning_ratio * 100.0);
         
-        // Create thread-safe filter if needed
-        let filter_fn = ctx.search_params.filter_expression.as_ref()
-            .and_then(|expr| filter_evaluator::create_filter_fn(Some(expr)));
+        // Create thread-safe filter using unified evaluator
+        let filter_fn = crate::storage::engines::core::create_filter_fn(
+            ctx.search_params.filter_expression.as_ref()
+        );
         
         // Decide whether to use parallel or sequential search based on config
         let use_parallel = self.config.parallel_search_enabled 
@@ -707,11 +707,8 @@ impl UnifiedStorageEngine for HelixEngine {
                 .map(|s| s.path.to_string_lossy().to_string())
                 .collect();
             
-            // Convert to owned Vec for parallel search
-            let sstables_vec: Vec<SStableMetadata> = sstables_to_search
-                .into_iter()
-                .cloned()
-                .collect();
+            // Use the Vec directly for parallel search
+            let sstables_vec = sstables_to_search;
             
             // Use parallel search for better performance
             let results = readers::parallel_search(

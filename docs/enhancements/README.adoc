@@ -1,0 +1,195 @@
+= ProximaDB Enhancement Designs
+:toc: left
+:toclevels: 2
+:icons: font
+
+[abstract]
+Design documents for planned and in-progress ProximaDB enhancements.
+
+== Active Enhancements
+
+=== Storage & Operations
+
+[cols="1,2,1", options="header"]
+|===
+| Document | Description | Status
+
+| link:helix_engine_comprehensive_spec.adoc[HELIX Engine Spec]
+| Complete specification for HELIX storage engine
+| ✅ Implemented
+
+| link:unified_operations_design.adoc[Unified Operations]
+| Flush, compaction, and re-quantization design
+| 🚧 In Progress
+|===
+
+=== Integration Features
+
+[cols="1,2,1", options="header"]
+|===
+| Document | Description | Status
+
+| link:mcp_protocol_integration_design.md[MCP Protocol]
+| Model Context Protocol integration
+| 📋 Planned Q1 2025
+
+| link:ml_embedding_service_integration.md[ML Embeddings]
+| Integrated embedding service
+| 📋 Planned Q2 2025
+
+| link:ml_embedding_market_leader_design.md[ML Market Leader]
+| Advanced embedding capabilities
+| 📋 Planned Q2 2025
+|===
+
+=== Advanced Features
+
+[cols="1,2,1", options="header"]
+|===
+| Document | Description | Status
+
+| link:semantic_knowledge_store_features.adoc[Knowledge Store]
+| Semantic knowledge storage system
+| 📋 Planned Q3 2025
+
+| link:source_content_storage_design.adoc[Content Storage]
+| Source content management
+| 📋 Planned Q3 2025
+|===
+
+== Design Process
+
+=== Enhancement Lifecycle
+
+[source,mermaid]
+----
+graph LR
+    IDEA[Idea/Request] --> DESIGN[Design Doc]
+    DESIGN --> REVIEW[Review]
+    REVIEW --> APPROVED[Approved]
+    APPROVED --> IMPLEMENT[Implementation]
+    IMPLEMENT --> TEST[Testing]
+    TEST --> RELEASE[Release]
+    
+    style DESIGN fill:#fff3e0
+    style IMPLEMENT fill:#e8f5e9
+    style RELEASE fill:#e3f2fd
+----
+
+=== Document Structure
+
+Each enhancement design should include:
+
+1. **Problem Statement**: What problem are we solving?
+2. **Goals & Non-Goals**: Clear scope definition
+3. **Design Overview**: High-level approach
+4. **Detailed Design**: Implementation specifics
+5. **Alternatives Considered**: Other approaches evaluated
+6. **Testing Plan**: How we'll validate the implementation
+7. **Migration Path**: For existing users
+8. **Timeline**: Implementation phases
+
+== Categories
+
+=== Storage Enhancements
+* **Unified Operations**: Streamlining flush, compaction, re-quantization
+* **HELIX Engine**: PCA+Hilbert clustering (completed)
+* **Advanced Engines**: RAPTOR, NOVA, SWIFT, PRISM (in development)
+
+=== Integration Enhancements
+* **MCP Protocol**: Enable ProximaDB as MCP server
+* **ML Embeddings**: Built-in embedding generation
+* **Cloud Providers**: Deeper cloud integration
+
+=== Intelligence Enhancements
+* **Semantic Knowledge**: Graph-based knowledge representation
+* **Content Storage**: Store and index source content
+* **Query Understanding**: Natural language to vector queries
+
+== Implementation Status
+
+=== Completed ✅
+* HELIX storage engine
+* Progressive search pipeline
+* Unified filter evaluator
+* EventLog queue system
+
+=== In Progress 🚧
+* Unified operations framework
+* Index quantization alignment
+* SearchOrchestrator foundation
+
+=== Planned 📋
+* MCP protocol integration
+* ML embedding service
+* Semantic knowledge store
+* Source content storage
+
+== Contributing
+
+To propose a new enhancement:
+
+1. **Create Design Doc**: Use the template below
+2. **Submit PR**: To this directory
+3. **Review Process**: Architecture review
+4. **Implementation**: After approval
+
+=== Design Template
+
+[source,asciidoc]
+----
+= Enhancement Title
+:toc: left
+:author: Your Name
+:date: YYYY-MM-DD
+:status: Draft/Review/Approved
+
+== Problem Statement
+[What problem are we solving?]
+
+== Goals
+* Goal 1
+* Goal 2
+
+== Non-Goals
+* What we're NOT doing
+
+== Design Overview
+[High-level approach]
+
+== Detailed Design
+[Implementation details]
+
+== Alternatives Considered
+[Other approaches and why rejected]
+
+== Testing Plan
+[How we'll validate]
+
+== Migration Path
+[For existing users]
+
+== Timeline
+* Phase 1: [What] - [When]
+* Phase 2: [What] - [When]
+----
+
+== Review Process
+
+1. **Draft Stage**: Initial design creation
+2. **Review Stage**: Architecture team review
+3. **Community Feedback**: Open for comments
+4. **Approval**: Sign-off from maintainers
+5. **Implementation**: Development begins
+
+== Quick Links
+
+* link:../09-roadmap/README.adoc[Product Roadmap]
+* link:../06-architecture/README.adoc[Architecture Documentation]
+* link:../07-development/contributing.adoc[Contributing Guide]
+* link:diagrams/[Design Diagrams]
+
+---
+
+[.text-center]
+_Enhancement designs are living documents that evolve during implementation._

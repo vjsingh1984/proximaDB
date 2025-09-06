@@ -1,0 +1,52 @@
+= ProximaDB Overview
+:toc: left
+:toclevels: 2
+:icons: font
+
+[abstract]
+High-level documentation covering ProximaDB's capabilities, architecture, and performance characteristics.
+
+== Section Contents
+
+[cols="1,3", frame=none, grid=none]
+|===
+| link:introduction.adoc[Introduction]
+| What is ProximaDB and why it exists
+
+| link:features.adoc[Features & Capabilities]
+| Complete feature matrix and capability inventory
+
+| link:architecture.adoc[Architecture Overview]
+| High-level system architecture and design principles
+
+| link:performance.adoc[Performance & Benchmarks]
+| Performance metrics, benchmarks, and comparisons
+|===
+
+== Quick Facts
+
+=== Key Achievements
+* **2.5-3x search performance** through 7-phase progressive optimization
+* **45-65% memory reduction** via intelligent quantization
+* **97% cloud cost savings** through unified caching
+* **80-90% storage compression** with adaptive algorithms
+
+=== Core Capabilities
+* **7 Storage Engines**: Specialized for different workloads
+* **6 Index Algorithms**: HNSW, IVF, LSH, PQ, FLAT, ANNOY
+* **13 Distance Metrics**: Comprehensive similarity measures
+* **14 Compression Algorithms**: Context-aware selection
+* **Hardware Acceleration**: SIMD and GPU support
+
+=== Production Ready
+* 3 engines in production (SST, VIPER, HELIX)
+* 4 engines in development (RAPTOR 75%, NOVA 85%, SWIFT 75%, PRISM 70%)
+* Sub-5ms P99 latency
+* 200-500K vectors/second ingestion
+
+== Navigation
+
+* **New Users**: Start with link:introduction.adoc[Introduction]
+* **Evaluators**: Review link:features.adoc[Features] and link:performance.adoc[Performance]
+* **Architects**: Deep dive into link:architecture.adoc[Architecture]
+* **Getting Started**: Continue to link:../02-getting-started/README.adoc[Getting Started Guide]

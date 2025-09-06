@@ -15,7 +15,7 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
-use super::filter_evaluator::ThreadSafeFilterEvaluator;
+// Filter evaluator now uses unified module from core
 use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{
     factory::BloomFilterFactory,
     BloomFilterStrategy, 

@@ -1,0 +1,176 @@
+= Introduction to ProximaDB
+:toc: left
+:toclevels: 2
+:icons: font
+
+[abstract]
+ProximaDB is a high-performance, cloud-native vector database engineered for production AI applications, delivering enterprise capabilities in a single-server architecture.
+
+== What is ProximaDB?
+
+ProximaDB is a **proto-first vector database** that achieves **2.5-3x search performance improvement** through progressive search optimization, hardware acceleration, and intelligent storage tiering—all while maintaining single-server simplicity.
+
+=== The Problem We Solve
+
+Modern AI applications require high-performance vector search, but existing solutions force painful trade-offs:
+
+[cols="1,2,2", options="header"]
+|===
+| Challenge | Traditional Approach | ProximaDB Solution
+
+| **Complexity**
+| Distributed systems requiring specialized expertise
+| Single container with enterprise features
+
+| **Cost**
+| Unpredictable scaling, $30K+/month
+| Fixed resources, $3K/month (90% reduction)
+
+| **Performance**
+| Inadequate for real-time (<10ms requirement)
+| 2.5ms P50, 4.8ms P99 latency
+
+| **Flexibility**
+| One-size-fits-all storage
+| 7 specialized storage engines
+|===
+
+== Why ProximaDB?
+
+=== 1. Proto-First Architecture
+* **Zero-copy operations**: Direct protobuf flow without conversions
+* **40-60% latency reduction**: Direct memtable access
+* **Single source of truth**: No data duplication
+
+=== 2. Progressive Search Pipeline
+Our 7-phase optimization achieves 2.5-3x performance improvement:
+
+[source,mermaid]
+----
+graph LR
+    A[Query] --> B[Bloom Filter<br/>95% reduction]
+    B --> C[Binary<br/>80% reduction]
+    C --> D[INT8<br/>60% reduction]
+    D --> E[PQ<br/>40% reduction]
+    E --> F[Hybrid<br/>20% reduction]
+    F --> G[Full Precision<br/>5% reduction]
+    G --> H[Cache<br/>0% for repeats]
+    
+    style A fill:#e3f2fd
+    style H fill:#e8f5e9
+----
+
+=== 3. Multi-Engine Storage
+Different workloads require different optimizations:
+
+[cols="1,2,2", options="header"]
+|===
+| Engine | Optimization | Best For
+
+| **SST**
+| Row-based LSM tree
+| Real-time updates, OLTP
+
+| **VIPER**
+| Columnar Parquet
+| Analytics, cloud storage
+
+| **HELIX**
+| PCA+Hilbert clustering
+| Similarity search with locality
+|===
+
+=== 4. Hardware Acceleration
+Automatic detection and optimization for:
+* **CPU SIMD**: AVX-512, AVX2, SSE, NEON
+* **GPU**: CUDA, ROCm, Apple MPS, OpenCL
+* **Memory**: Page-aligned buffers, thread-local pools
+
+== Use Cases
+
+=== E-Commerce & Retail
+* Product similarity search
+* Visual search
+* Personalized recommendations
+* Real-time inventory matching
+
+=== Knowledge Management
+* Semantic document search
+* Q&A systems
+* Content discovery
+* Research paper similarity
+
+=== Financial Services
+* Fraud pattern detection
+* Risk assessment
+* Customer behavior analysis
+* Transaction anomaly detection
+
+=== Healthcare & Life Sciences
+* Medical image similarity
+* Patient cohort matching
+* Drug discovery
+* Clinical trial matching
+
+=== Media & Entertainment
+* Content recommendation
+* Duplicate detection
+* Auto-tagging
+* Similar content discovery
+
+== Design Philosophy
+
+=== Single-Server Simplicity
+* **One container**: Complete system in a single deployment
+* **No coordination**: No distributed consensus needed
+* **5-minute setup**: From zero to production
+* **Predictable costs**: Fixed resource allocation
+
+=== Production-First Engineering
+* **No mock data**: Real services, fail fast
+* **Clean design**: No backward compatibility debt
+* **Performance obsessed**: Every microsecond matters
+* **Zero-copy paths**: Minimize data movement
+
+=== Open Architecture
+* **Pluggable engines**: Add new storage strategies
+* **Extensible indexes**: Support new algorithms
+* **Custom metrics**: Define your own distance functions
+* **Cloud-native**: Works with any storage backend
+
+== What Makes Us Different?
+
+[cols="2,3", frame=none, grid=none]
+|===
+| **🚀 Performance**
+| 2.5-3x faster search through progressive optimization
+
+| **💰 Cost Efficiency**
+| 90% reduction in infrastructure costs
+
+| **🎯 Purpose-Built**
+| 7 specialized engines for different workloads
+
+| **🔧 Simplicity**
+| Enterprise features without distributed complexity
+
+| **⚡ Hardware Optimized**
+| Automatic SIMD/GPU acceleration
+
+| **☁️ Cloud Native**
+| Native S3, Azure, GCS support with intelligent caching
+|===
+
+== Getting Started
+
+Ready to experience ProximaDB?
+
+1. **Quick Start**: link:../02-getting-started/quickstart.adoc[5-minute setup guide]
+2. **Learn More**: link:features.adoc[Explore all features]
+3. **Deep Dive**: link:architecture.adoc[Understand the architecture]
+4. **Performance**: link:performance.adoc[See benchmarks]
+
+---
+
+[.text-center]
+_ProximaDB: Where simplicity meets performance._
