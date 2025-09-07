@@ -119,59 +119,178 @@ use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, S
 /// 
 /// All operations are thread-safe through internal synchronization using
 /// `Arc<RwLock>` for shared state and `DashMap` for concurrent collections.
+///
+/// ## Index Selection Strategy:
+///
+/// ```text
+/// Dataset Size    Dimensions    QPS       → Recommended Index
+/// ------------------------------------------------------------
+/// < 10K          Any           Any       → Flat (exact)
+/// 10K-100K       < 100         < 1000    → HNSW
+/// 10K-100K       > 100         < 1000    → IVF + PQ
+/// 100K-1M        < 200         < 5000    → HNSW + PQ
+/// 100K-1M        > 200         Any       → IVF + PQ
+/// > 1M           Any           < 1000    → IVF + PQ
+/// > 1M           Any           > 1000    → LSH
+/// ```
+///
+/// ## Migration Triggers:
+///
+/// AXIS automatically triggers migration when:
+/// - Query latency degrades by >20%
+/// - Memory usage exceeds threshold
+/// - Dataset size crosses boundaries (10K, 100K, 1M)
+/// - Query pattern changes significantly
+///
+/// ## EventLog Integration:
+///
+/// AXIS receives index update events from the EventLog:
+/// ```text
+/// Storage Flush → EventLog → AXIS Consumer
+///                              ↓
+///                        Index Update
+///                              ↓
+///                        Background Build
+/// ```
 pub struct AxisManager {
     /// Core index components for different data types
+    
+    /// Global ID index for fast ID-based lookups
+    /// Maps vector IDs to storage locations across all collections
     global_id_index: Arc<GlobalIdIndex>,
+    
+    /// Metadata index for filtered search
+    /// Supports range queries, equality, and complex predicates
     metadata_index: Arc<MetadataIndex>,
+    
+    /// Dense vector index for similarity search
+    /// Supports HNSW, IVF, LSH, Annoy, PQ, Flat algorithms
     dense_vector_index: Arc<DenseVectorIndex>,
+    
+    /// Sparse vector index for keyword/document search
+    /// Optimized for high-dimensional sparse vectors
     sparse_vector_index: Arc<SparseVectorIndex>,
+    
+    /// Join engine for hybrid queries
+    /// Combines results from multiple indexes
     join_engine: Arc<JoinEngine>,
 
     /// Adaptive intelligence components for workload optimization
+    
+    /// Monitors workload patterns and triggers adaptations
+    /// Analyzes query distribution, data growth, and access patterns
     adaptive_engine: Arc<AdaptiveIndexEngine>,
+    
+    /// Handles zero-downtime index migrations
+    /// Builds new index in background, validates, then switches atomically
     migration_engine: Arc<IndexMigrationEngine>,
+    
+    /// Tracks performance metrics and anomalies
+    /// Monitors latency, throughput, accuracy, and resource usage
     performance_monitor: Arc<PerformanceMonitor>,
+    
+    /// Manages clustering for IVF indexes
+    /// Performs k-means clustering and centroid optimization
     clustering_engine: Arc<AxisClusteringEngine>,
 
     /// Collection-specific configurations
+    /// Maps collection_id → selected index strategy
+    /// Can be manually overridden or automatically determined
     collection_strategies: Arc<RwLock<HashMap<String, IndexSelectionStrategy>>>,
 
     /// Active migrations
+    /// Tracks ongoing index migrations for monitoring and rollback
     active_migrations: Arc<RwLock<HashMap<String, MigrationStatus>>>,
 
     /// Configuration and metrics
+    /// Global AXIS configuration (thresholds, intervals, etc.)
     config: AxisConfig,
+    
+    /// Aggregated metrics across all managed indexes
     metrics: Arc<RwLock<AxisMetrics>>,
 
     /// Collection service for IndexConfig retrieval
+    /// Provides access to collection metadata and index configurations
+    /// Set via set_collection_service() after initialization
     collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
 
     /// Shared collection cache from VectorOperationsService (read-only access)
     /// This avoids duplicating collection metadata in memory
+    /// Collections are cached by VectorOperationsService and shared here
+    /// for fast access during index operations
     shared_collection_cache:
         Option<Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>>,
 }
 
 /// Status of ongoing migrations
+///
+/// ## Migration Lifecycle:
+///
+/// 1. **Triggered**: Migration decision made
+/// 2. **Building**: New index being constructed (0-90%)
+/// 3. **Validating**: Comparing accuracy (90-95%)
+/// 4. **Switching**: Atomic switchover (95-99%)
+/// 5. **Cleanup**: Old index removal (100%)
+///
+/// Progress tracking enables:
+/// - User visibility into long-running migrations
+/// - Cancellation/rollback capabilities
+/// - Resource planning (CPU/memory allocation)
 #[derive(Debug, Clone)]
 pub struct MigrationStatus {
+    /// Unique identifier for tracking
     pub migration_id: uuid::Uuid,
+    
+    /// Source index strategy
     pub from_strategy: IndexSelectionStrategy,
+    
+    /// Target index strategy
     pub to_strategy: IndexSelectionStrategy,
+    
+    /// When migration started
     pub start_time: DateTime<Utc>,
+    
+    /// Current progress (0.0 to 100.0)
     pub progress_percentage: f64,
+    
+    /// Estimated completion based on current rate
     pub estimated_completion: Option<DateTime<Utc>>,
 }
 
 /// AXIS metrics
+///
+/// ## Key Metrics:
+///
+/// - **Migration Success Rate**: successful/total migrations
+/// - **Average Migration Time**: Indicates system adaptation speed
+/// - **Rebuild Frequency**: High rebuilds may indicate instability
+/// - **Vector Growth Rate**: Helps predict future resource needs
+///
+/// These metrics feed into:
+/// - Adaptive decision making
+/// - Capacity planning
+/// - Performance monitoring dashboards
 #[derive(Debug, Clone, Default)]
 pub struct AxisMetrics {
+    /// Total migration attempts
     pub total_migrations: u64,
+    
+    /// Successfully completed migrations
     pub successful_migrations: u64,
+    
+    /// Failed migrations (rolled back)
     pub failed_migrations: u64,
+    
+    /// Average time to complete migration
     pub average_migration_time_ms: u64,
+    
+    /// Number of collections under management
     pub total_collections_managed: u64,
+    
+    /// Total vectors across all indexes
     pub total_vectors_indexed: u64,
+    
+    /// Full index rebuilds (usually after corruption)
     pub total_rebuilds: u64,
 }
 
