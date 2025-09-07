@@ -3,7 +3,7 @@ pub mod viper_pipeline_tests {
     use super::*;
     use crate::core::VectorRecord;
     use crate::proto::proximadb::MetadataItem;
-    use crate::storage::engines::impls::viper::QuantizationLevel;
+    use crate::compute::QuantizationLevel;
     use crate::storage::engines::impls::viper::pipeline::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use chrono::Utc;

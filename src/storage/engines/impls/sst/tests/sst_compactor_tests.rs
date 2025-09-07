@@ -40,7 +40,7 @@ mod tests {
 
     /// Create a unique collection ID for tests
     fn unique_collection_id(prefix: &str) -> String {
-        format!("{}_{}", prefix, uuid::Uuid::new_v4())
+        format!("{}_{}", prefix, crate::utils::uuid::Uuid::new_v4())
     }
 
     /// Helper to create test configuration

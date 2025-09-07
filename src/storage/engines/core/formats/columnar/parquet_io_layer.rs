@@ -756,10 +756,21 @@ impl LocalDiskCache {
                 file_path.replace('/', "_").replace(':', "_")
             ));
 
-            // Remove all matching files
-            if let Ok(paths) = glob::glob(pattern.to_str().unwrap()) {
-                for path in paths.flatten() {
-                    std::fs::remove_file(path).ok();
+            // Remove all matching files using internal glob implementation
+            if let Some(parent_dir) = pattern.parent() {
+                if let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str()) {
+                    if let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name) {
+                        let matcher = crate::utils::glob::GlobMatcher::new(&glob_pattern);
+                        if let Ok(entries) = std::fs::read_dir(parent_dir) {
+                            for entry in entries.flatten() {
+                                if let Some(file_name) = entry.file_name().to_str() {
+                                    if matcher.is_match(file_name) {
+                                        std::fs::remove_file(entry.path()).ok();
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

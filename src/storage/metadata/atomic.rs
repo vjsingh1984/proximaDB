@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use super::{
     MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,

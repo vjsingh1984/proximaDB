@@ -5,7 +5,7 @@
 //! policy with configurable size limits.
 
 use anyhow::Result;
-use lru::LruCache;
+use crate::utils::cache::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;

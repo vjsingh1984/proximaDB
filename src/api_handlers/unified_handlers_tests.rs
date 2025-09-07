@@ -14,7 +14,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use uuid::Uuid;
+    use crate::utils::uuid::Uuid;
 
     /// Helper to create test collection config
     fn create_test_collection_config(name: &str) -> CollectionConfig {

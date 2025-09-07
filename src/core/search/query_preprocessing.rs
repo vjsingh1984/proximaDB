@@ -14,7 +14,7 @@ use crate::compute::quantization::types::QuantizationLevel;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use crate::proto::proximadb::QuantizationConfig;
-use lru::LruCache;
+use crate::utils::cache::LruCache;
 use parking_lot::RwLock;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

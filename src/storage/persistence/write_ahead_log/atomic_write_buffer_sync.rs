@@ -76,7 +76,7 @@ impl AtomicWalSync {
         // strategy removed -  SerializationStrategy,
     ) -> Result<BatchId> {
         let batch_id = BatchId::new();
-        let transaction_id = uuid::Uuid::new_v4().to_string();
+        let transaction_id = crate::utils::uuid::Uuid::new_v4().to_string();
         
         // Record sync progress
         {

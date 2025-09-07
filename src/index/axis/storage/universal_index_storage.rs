@@ -27,7 +27,7 @@
 
 use crate::core::error::{ProximaDBError, StorageError};
 use anyhow::{Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use crate::utils::encoding::{base64_encode, base64_decode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -505,7 +505,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     metadata: vec![crate::proto::proximadb::MetadataItem {
                         key: "serialized_data".to_string(),
                         value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                            BASE64.encode(&value),
+                            base64_encode(&value),
                         )),
                     }],
                     timestamp: std::time::SystemTime::now()

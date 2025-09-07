@@ -194,18 +194,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
-
-[[package]]
-name = "arrayvec"
-version = "0.7.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
-
-[[package]]
 name = "arrow-array"
 version = "53.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1093,38 +1081,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
 
 [[package]]
-name = "blake3"
-version = "1.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3888aaa89e4b2a40fca9848e400f6a658a5a3978de7be858e209cafa8be9a4a0"
-dependencies = [
- "arrayref",
- "arrayvec",
- "cc",
- "cfg-if",
- "constant_time_eq",
-]
-
-[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
-]
-
-[[package]]
-name = "bplustree"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a6e52e023da6470d56199cc4aaa36b90182fd5d458da47a85de6a8f001f95bc"
-dependencies = [
- "crossbeam-epoch",
- "parking_lot 0.11.2",
- "parking_lot_core 0.8.6",
- "smallvec",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -1453,12 +1415,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "constant_time_eq"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1631,16 +1587,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crossbeam-skiplist"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df29de440c58ca2cc6e587ec3d22347551a32435fbde9d2bff64e78a9ffa151b"
-dependencies = [
- "crossbeam-epoch",
- "crossbeam-utils",
-]
-
-[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1701,7 +1647,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
- "parking_lot_core 0.9.11",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -3214,7 +3160,7 @@ dependencies = [
  "event-listener 5.4.0",
  "futures-util",
  "loom",
- "parking_lot 0.12.4",
+ "parking_lot",
  "portable-atomic",
  "rustc_version",
  "smallvec",
@@ -3513,37 +3459,12 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
-version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d17b78036a60663b797adeaee46f5c9dfebb86948d1255007a1d6be0271ff99"
-dependencies = [
- "instant",
- "lock_api",
- "parking_lot_core 0.8.6",
-]
-
-[[package]]
-name = "parking_lot"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
 dependencies = [
  "lock_api",
- "parking_lot_core 0.9.11",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60a2cfe6f0ad2bfc16aefa463b497d5c7a5ecd44a23efa72aa342d90177356dc"
-dependencies = [
- "cfg-if",
- "instant",
- "libc",
- "redox_syscall 0.2.16",
- "smallvec",
- "winapi",
+ "parking_lot_core",
 ]
 
 [[package]]
@@ -3554,7 +3475,7 @@ checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall 0.5.13",
+ "redox_syscall",
  "smallvec",
  "windows-targets 0.52.6",
 ]
@@ -3834,7 +3755,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "memchr",
- "parking_lot 0.12.4",
+ "parking_lot",
  "protobuf",
  "thiserror 1.0.69",
 ]
@@ -3934,10 +3855,7 @@ dependencies = [
  "axum",
  "azure_storage",
  "azure_storage_blobs",
- "base64 0.21.7",
  "bincode",
- "blake3",
- "bplustree",
  "brotli 3.5.0",
  "bytemuck",
  "bytes",
@@ -3945,20 +3863,16 @@ dependencies = [
  "chrono",
  "clap",
  "config",
- "crc32fast",
  "criterion",
  "crossbeam",
- "crossbeam-skiplist",
  "dashmap",
  "env_logger",
  "flate2",
  "futures",
- "glob",
  "google-cloud-storage",
  "hyper 0.14.32",
  "lazy_static",
  "libc",
- "lru",
  "lz4_flex",
  "memmap2",
  "metrics",
@@ -3966,7 +3880,7 @@ dependencies = [
  "nalgebra",
  "num_cpus",
  "once_cell",
- "parking_lot 0.12.4",
+ "parking_lot",
  "parquet",
  "prometheus",
  "proptest",
@@ -3978,7 +3892,6 @@ dependencies = [
  "rayon",
  "regex",
  "reqwest",
- "roaring",
  "rocksdb",
  "serde",
  "serde_json",
@@ -3999,7 +3912,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
- "uuid",
  "xz2",
  "zstd",
 ]
@@ -4224,15 +4136,6 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.2.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
-dependencies = [
- "bitflags 1.3.2",
-]
-
-[[package]]
-name = "redox_syscall"
 version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d04b7d0ee6b4a0207a0a7adb104d23ecb0b47d6beae7152d0fa34b692b29fd6"
@@ -4372,16 +4275,6 @@ name = "rle-decode-fast"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
-
-[[package]]
-name = "roaring"
-version = "0.10.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19e8d2cfa184d94d0726d650a9f4a1be7f9b76ac9fdb954219878dc00c1c1e7b"
-dependencies = [
- "bytemuck",
- "byteorder",
-]
 
 [[package]]
 name = "rocksdb"
@@ -5165,7 +5058,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot 0.12.4",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",

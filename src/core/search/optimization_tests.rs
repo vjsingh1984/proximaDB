@@ -3,8 +3,13 @@ mod tests {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::hardware_capabilities::HardwareCapabilities;
+    use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
+    use crate::core::search::metadata_filter_pushdown::{MetadataFilterPushdown, ColumnStatistics};
+    use crate::core::search::unified_progressive_pipeline::{UnifiedProgressiveSearchPipeline, PipelineConfig};
+    use crate::core::search::results::InternalSearchResult;
     use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
     use crate::storage::cache::specialized::{MetadataStore, QueryCache, VectorStore};
+    use crate::storage::persistence::write_ahead_log::parallel_search::ParallelWALSearch;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio;
@@ -419,10 +424,10 @@ mod tests {
         1.0 - (dot / (norm_a * norm_b))
     }
 
-    fn calculate_recall(baseline: &[f32], optimized: &[SearchResult]) -> f32 {
+    fn calculate_recall(baseline: &[f32], optimized: &[InternalSearchResult]) -> f32 {
         let baseline_set: std::collections::HashSet<_> = baseline.iter().collect();
         let optimized_set: std::collections::HashSet<_> =
-            optimized.iter().map(|r| &r.distance).collect();
+            optimized.iter().map(|r| &r.score).collect();
 
         let intersection = baseline_set.intersection(&optimized_set).count();
         intersection as f32 / baseline.len() as f32

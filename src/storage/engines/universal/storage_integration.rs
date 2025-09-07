@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use crate::core::VectorRecord;
 

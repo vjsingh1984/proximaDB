@@ -48,7 +48,7 @@ impl Default for BatchConfig {
 /// Row group cache for recently accessed data
 #[derive(Clone)]
 struct RowGroupCache {
-    cache: Arc<RwLock<lru::LruCache<usize, Arc<RecordBatch>>>>,
+    cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
     current_size: Arc<RwLock<usize>>,
     max_size: usize,
 }
@@ -56,7 +56,7 @@ struct RowGroupCache {
 impl RowGroupCache {
     fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(lru::LruCache::new(
+            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
                 std::num::NonZeroUsize::new(100).unwrap(),
             ))),
             current_size: Arc::new(RwLock::new(0)),

@@ -2266,7 +2266,7 @@ impl UnifiedStorageEngine for SstStorage {
             .as_ref()
             .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST flush".into()))?;
 
-        let operation_id = uuid::Uuid::new_v4().to_string();
+        let operation_id = crate::utils::uuid::Uuid::new_v4().to_string();
         let vector_records = &params.vector_records;
 
         if vector_records.is_empty() {

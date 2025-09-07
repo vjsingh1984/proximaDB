@@ -1,7 +1,7 @@
 //! Filter bitmap cache with Roaring bitmap support
 
 use anyhow::Result;
-use roaring::RoaringBitmap;
+use crate::utils::bitmap::RoaringBitmap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

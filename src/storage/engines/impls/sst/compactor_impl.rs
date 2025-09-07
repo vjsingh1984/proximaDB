@@ -986,7 +986,7 @@ mod tests {
         StorageQuantizationConfig, StorageQuantizationEngine,
     };
     use crate::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuantizationEngine};
-    use crate::storage::quantization::sst_adapter::SstQuantizationConfig;
+    // Note: Using StorageQuantizationConfig instead of removed SstQuantizationConfig
 
     #[tokio::test]
     async fn test_k_way_merge_deduplication() {

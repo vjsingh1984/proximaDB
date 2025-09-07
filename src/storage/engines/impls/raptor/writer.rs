@@ -48,6 +48,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use crate::utils::hash::FastHash;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -2624,12 +2625,10 @@ impl RaptorWriter {
         // Update bloom filter and columnar ID index
         self.bloom_builder.add_id(id.clone());
         self.id_column_builder.ids.push(id.clone());
-        let hash_bytes = blake3::hash(id.as_bytes());
-        let mut hash_u64_bytes = [0u8; 8];
-        hash_u64_bytes.copy_from_slice(&hash_bytes.as_bytes()[0..8]);
+        let id_hash = crate::utils::hash::XxHasher::hash_bytes(id.as_bytes());
         self.id_column_builder
             .id_hashes
-            .push(u64::from_le_bytes(hash_u64_bytes));
+            .push(id_hash);
         self.id_column_builder
             .row_offsets
             .push(offset_in_page as u32);
@@ -4931,20 +4930,8 @@ impl RaptorWriter {
             }
 
             for i in 0..num_hashes {
-                let hash = blake3::hash(format!("{}{}", id, i).as_bytes());
-                let hash_bytes = hash.as_bytes();
-
-                // Safe conversion with validation
-                if hash_bytes.len() < 8 {
-                    return Err(anyhow::anyhow!("Invalid hash length for bloom filter"));
-                }
-
-                let bit_index = (u64::from_le_bytes(
-                    hash_bytes[0..8]
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("Failed to convert hash to u64"))?,
-                ) as usize)
-                    % num_bits;
+                let hash_u64 = crate::utils::hash::XxHasher::hash_bytes(format!("{}{}", id, i).as_bytes());
+                let bit_index = (hash_u64 as usize) % num_bits;
 
                 let byte_index = bit_index / 8;
                 let bit_offset = bit_index % 8;

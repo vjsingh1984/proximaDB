@@ -166,7 +166,7 @@ impl EngineMigrator {
         let risk_assessment = self.assess_migration_risks(&collection_plans);
 
         Ok(MigrationPlan {
-            migration_id: uuid::Uuid::new_v4().to_string(),
+            migration_id: crate::utils::uuid::Uuid::new_v4().to_string(),
             source_engine: self.config.source_engine,
             target_engine: self.config.target_engine,
             // strategy removed -  self.config.strategy.clone(),

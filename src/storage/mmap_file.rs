@@ -366,7 +366,7 @@ impl MmapParquetReader {
 
 /// Pool of memory-mapped files
 pub struct MmapPool {
-    files: Arc<parking_lot::RwLock<lru::LruCache<PathBuf, Arc<MmapFile>>>>,
+    files: Arc<parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, Arc<MmapFile>>>>,
     max_files: usize,
 }
 
@@ -374,7 +374,7 @@ impl MmapPool {
     pub fn new(max_files: usize) -> Self {
         Self {
             files: Arc::new(parking_lot::RwLock::new(
-                lru::LruCache::new(std::num::NonZeroUsize::new(max_files).unwrap())
+                crate::utils::cache::LruCache::new(max_files)
             )),
             max_files,
         }

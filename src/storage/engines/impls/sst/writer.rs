@@ -939,7 +939,7 @@ impl SstableWriter {
         // Convert VectorRecord iterator to (String, VectorRecord) iterator
         let sorted_with_keys = sorted_records.map(|record| {
             let key = if record.id.is_empty() {
-                format!("vec_{}", uuid::Uuid::new_v4())
+                format!("vec_{}", crate::utils::uuid::Uuid::new_v4())
             } else {
                 record.id.clone()
             };

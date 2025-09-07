@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;
-use uuid::Uuid;
+use proximadb::utils::uuid::Uuid;
 
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::{

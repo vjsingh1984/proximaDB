@@ -67,7 +67,7 @@ impl std::fmt::Debug for IndexMigrationEngine {
 /// Migration plan for transitioning between index strategies
 #[derive(Debug, Clone)]
 pub struct MigrationPlan {
-    pub migration_id: uuid::Uuid,
+    pub migration_id: crate::utils::uuid::Uuid,
     pub collection_id: String,
     pub from_strategy: IndexSelectionStrategy,
     pub to_strategy: IndexSelectionStrategy,
@@ -193,7 +193,7 @@ pub struct TrafficDistribution {
 /// Migration result
 #[derive(Debug, Clone)]
 pub struct MigrationResult {
-    pub migration_id: uuid::Uuid,
+    pub migration_id: crate::utils::uuid::Uuid,
     pub success: bool,
     pub new_strategy: IndexSelectionStrategy,
     pub duration_ms: u64,
@@ -238,7 +238,7 @@ pub trait StepExecutor {
 /// Migration context
 pub struct MigrationContext {
     pub collection_id: String,
-    pub migration_id: uuid::Uuid,
+    pub migration_id: crate::utils::uuid::Uuid,
     pub from_strategy: IndexSelectionStrategy,
     pub to_strategy: IndexSelectionStrategy,
     pub progress: Arc<RwLock<MigrationProgress>>,
@@ -284,7 +284,7 @@ pub struct MigrationProgressTracker {
 /// Migration progress
 #[derive(Debug, Clone)]
 pub struct MigrationProgress {
-    pub migration_id: uuid::Uuid,
+    pub migration_id: crate::utils::uuid::Uuid,
     pub current_step: usize,
     pub total_steps: usize,
     pub vectors_processed: u64,
@@ -311,7 +311,7 @@ pub enum MigrationPhase {
 /// Migration history entry
 #[derive(Debug, Clone)]
 pub struct MigrationHistory {
-    pub migration_id: uuid::Uuid,
+    pub migration_id: crate::utils::uuid::Uuid,
     pub collection_id: String,
     pub from_strategy: IndexSelectionStrategy,
     pub to_strategy: IndexSelectionStrategy,
@@ -446,7 +446,7 @@ impl IndexMigrationEngine {
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
     ) -> Result<MigrationPlan> {
-        let migration_id = uuid::Uuid::new_v4();
+        let migration_id = crate::utils::uuid::Uuid::new_v4();
         let mut steps = Vec::new();
         let rollback_points = Vec::new();
 

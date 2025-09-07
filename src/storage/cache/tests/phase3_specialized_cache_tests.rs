@@ -4,7 +4,7 @@ use super::super::specialized::bitmap_filter_cache::{FilterOp, FilterUpdateOp};
 use super::super::specialized::index_node_cache::IndexNode;
 use super::super::specialized::*;
 use super::super::*;
-use roaring::RoaringBitmap;
+use crate::utils::bitmap::RoaringBitmap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -27,13 +27,13 @@ async fn test_filter_bitmap_cache_roaring() {
     let cache = BitmapFilterCache::new(1024 * 1024); // 1MB
 
     // Create filter results with bitmaps
-    let mut bitmap1 = RoaringBitmap::new();
+    let mut bitmap1 = crate::utils::bitmap::RoaringBitmap::new();
     bitmap1.insert(1);
     bitmap1.insert(100);
     bitmap1.insert(1000);
     bitmap1.insert(10000);
 
-    let mut bitmap2 = RoaringBitmap::new();
+    let mut bitmap2 = crate::utils::bitmap::RoaringBitmap::new();
     bitmap2.insert(50);
     bitmap2.insert(100); // Overlap with bitmap1
     bitmap2.insert(5000);
@@ -75,7 +75,7 @@ async fn test_filter_bitmap_cache_roaring() {
     assert!(!decomposed.is_none());
 
     // Test incremental updates
-    let mut update_bitmap = RoaringBitmap::new();
+    let mut update_bitmap = crate::utils::bitmap::RoaringBitmap::new();
     update_bitmap.insert(200);
     update_bitmap.insert(300);
 
@@ -262,7 +262,7 @@ async fn test_cache_compression() {
     let cache = BitmapFilterCache::new(1024 * 1024);
 
     // Create large bitmap
-    let mut large_bitmap = RoaringBitmap::new();
+    let mut large_bitmap = crate::utils::bitmap::RoaringBitmap::new();
     for i in (0..1000000).step_by(100) {
         large_bitmap.insert(i);
     }

@@ -196,7 +196,7 @@ impl Flush {
             collection_id
         );
 
-        let operation_id = uuid::Uuid::new_v4().to_string();
+        let operation_id = crate::utils::uuid::Uuid::new_v4().to_string();
 
         if vector_records.is_empty() {
             info!(
@@ -954,7 +954,7 @@ impl Flush {
         // Create a temporary file for StreamingParquetWriter
         let temp_dir = std::env::temp_dir();
         let temp_file_path =
-            temp_dir.join(format!("viper_flush_{}.parquet.tmp", uuid::Uuid::new_v4()));
+            temp_dir.join(format!("viper_flush_{}.parquet.tmp", crate::utils::uuid::Uuid::new_v4()));
         debug!("Creating temporary Parquet file: {:?}", temp_file_path);
 
         debug!("🔍 VIPER FLUSH: Using core compression directly");

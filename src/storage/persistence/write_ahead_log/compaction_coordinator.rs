@@ -485,7 +485,7 @@ impl CompactionCoordinator {
 
     /// Trigger background compaction for a collection
     async fn trigger_background_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
-        let task_id = uuid::Uuid::new_v4().to_string();
+        let task_id = crate::utils::uuid::Uuid::new_v4().to_string();
         let collection_id = collection_id.to_string();
 
         // Mark compaction as in progress

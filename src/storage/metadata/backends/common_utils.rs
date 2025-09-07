@@ -10,7 +10,7 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use crate::proto::proximadb::Collection;
 use crate::storage::persistence::filesystem::FileSystem;

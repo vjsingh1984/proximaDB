@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tracing::{debug, info};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 // Core ProximaDB imports
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;

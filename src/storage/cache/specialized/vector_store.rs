@@ -33,7 +33,7 @@ use crate::proto::proximadb::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use crate::utils::encoding::{base64_encode, base64_decode};
 use serde::{Deserialize, Serialize};
 
 /// DEPRECATED: VectorStore is being phased out in favor of OS page cache + zero-copy system
@@ -345,7 +345,7 @@ impl VectorStore {
                 crate::proto::proximadb::MetadataItem {
                     key: "compressed_block".to_string(),
                     value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
-                        BASE64.encode(&compressed_data),
+                        base64_encode(&compressed_data),
                     )),
                 },
                 crate::proto::proximadb::MetadataItem {
@@ -389,7 +389,7 @@ impl VectorStore {
                     if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(data)) =
                         &item.value
                     {
-                        compressed_data = BASE64.decode(data).ok();
+                        compressed_data = base64_decode(data).ok();
                     }
                 }
                 "compression_type" => {

@@ -511,7 +511,8 @@ pub struct MemoryUsageStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::axis::*;
+    use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_state_transitions() {

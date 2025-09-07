@@ -129,7 +129,7 @@ impl FixedLengthSerializer {
         
         // Add checksum if enabled
         if self.config.enable_checksum {
-            let checksum = crc32fast::hash(&output);
+            let checksum = crate::utils::checksum::crc32_fast(&output);
             output.write_all(&checksum.to_le_bytes())?;
         }
         
@@ -200,7 +200,7 @@ impl FixedLengthSerializer {
                 data[checksum_start+2], data[checksum_start+3]
             ]);
             
-            let actual_checksum = crc32fast::hash(&data[..checksum_start]);
+            let actual_checksum = crate::utils::checksum::crc32_fast(&data[..checksum_start]);
             if expected_checksum != actual_checksum {
                 return Err(anyhow::anyhow!("Checksum mismatch"));
             }

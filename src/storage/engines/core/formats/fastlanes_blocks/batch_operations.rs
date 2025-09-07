@@ -11,6 +11,7 @@ use super::block_structures::FastLanesDataBlock;
 use super::index_structures::RowBasedIdIndex;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::utils::Uuid;
 // Quantization now handled by unified compute module
 
 /// Row-based batch operations handler
@@ -175,7 +176,7 @@ impl RowBasedBatchOperations {
         blocks: &[FastLanesDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
-        let operation_id = format!("batch_read_{}", uuid::Uuid::new_v4());
+        let operation_id = format!("batch_read_{}", Uuid::new_v4());
         let start_time = std::time::Instant::now();
 
         // Check cache first
@@ -277,7 +278,7 @@ impl RowBasedBatchOperations {
         blocks: &mut Vec<FastLanesDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
-        let operation_id = format!("batch_write_{}", uuid::Uuid::new_v4());
+        let operation_id = format!("batch_write_{}", Uuid::new_v4());
         let start_time = std::time::Instant::now();
 
         // Acquire semaphore for concurrency control
@@ -339,7 +340,7 @@ impl RowBasedBatchOperations {
         blocks: &mut [FastLanesDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
-        let operation_id = format!("batch_update_{}", uuid::Uuid::new_v4());
+        let operation_id = format!("batch_update_{}", Uuid::new_v4());
         let start_time = std::time::Instant::now();
 
         let _permit = self
@@ -422,7 +423,7 @@ impl RowBasedBatchOperations {
         blocks: &mut [FastLanesDataBlock],
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
-        let operation_id = format!("batch_delete_{}", uuid::Uuid::new_v4());
+        let operation_id = format!("batch_delete_{}", Uuid::new_v4());
         let start_time = std::time::Instant::now();
 
         let _permit = self
@@ -643,7 +644,7 @@ impl RowBasedBatchOperations {
         let throughput = (successful_operations as f64 / processing_time as f64) * 1000.0;
 
         Ok(BatchResult {
-            operation_id: format!("read_batch_{}", uuid::Uuid::new_v4()),
+            operation_id: format!("read_batch_{}", Uuid::new_v4()),
             batch_size: ids.len(),
             processing_time_ms: processing_time,
             successful_operations,
@@ -668,7 +669,7 @@ impl RowBasedBatchOperations {
         // Implementation would write records to appropriate blocks
         // For brevity, returning a mock result
         Ok(BatchResult {
-            operation_id: format!("write_batch_{}", uuid::Uuid::new_v4()),
+            operation_id: format!("write_batch_{}", Uuid::new_v4()),
             batch_size: records.len(),
             processing_time_ms: 10,
             successful_operations: records.len(),

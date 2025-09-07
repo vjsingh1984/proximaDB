@@ -7,7 +7,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Instant;
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::hardware_capabilities;

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 // Use crossbeam-skiplist for lock-free concurrent access
-use crossbeam_skiplist::SkipMap;
+use crate::utils::skiplist::SkipList;
 
 use super::super::core::{MemtableCore, MemtableMetrics};
 
@@ -29,7 +29,7 @@ where
     V: Clone + Send + Sync + Debug + 'static,
 {
     /// Main SkipList storage with lock-free concurrent access
-    data: Arc<SkipMap<K, V>>,
+    data: Arc<SkipList<K, V>>,
 
     /// Approximate memory usage tracking (atomic for concurrent access)
     size_bytes: Arc<std::sync::atomic::AtomicUsize>,
@@ -46,7 +46,7 @@ where
     /// Create new SkipList memtable
     pub fn new() -> Self {
         Self {
-            data: Arc::new(SkipMap::new()),
+            data: Arc::new(SkipList::new()),
             size_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             metrics: Arc::new(RwLock::new(MemtableMetrics::default())),
         }
@@ -226,7 +226,7 @@ where
     ) -> Result<Vec<(K, V)>> {
         let mut results = Vec::new();
 
-        let iter: Box<dyn Iterator<Item = crossbeam_skiplist::map::Entry<K, V>>> =
+        let iter: Box<dyn Iterator<Item = (K, V)>> =
             if let Some(to) = to {
                 Box::new(self.data.range(from..=to))
             } else {
@@ -247,7 +247,7 @@ where
 
     /// Count entries in range without loading values (memory efficient)
     pub async fn count_range(&self, from: K, to: Option<K>) -> usize {
-        let iter: Box<dyn Iterator<Item = crossbeam_skiplist::map::Entry<K, V>>> =
+        let iter: Box<dyn Iterator<Item = (K, V)>> =
             if let Some(to) = to {
                 Box::new(self.data.range(from..=to))
             } else {

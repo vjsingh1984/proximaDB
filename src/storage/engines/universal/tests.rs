@@ -8,7 +8,7 @@ mod tests {
     use crate::storage::engines::universal::adapter::*;
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
-    use uuid::Uuid;
+    use crate::utils::uuid::Uuid;
 
     #[tokio::test]
     async fn test_universal_adapter_creation() {
@@ -287,7 +287,7 @@ pub mod test_utils {
     ) -> DistanceComputationRequest {
         let query_vector = (0..query_dimension).map(|i| i as f32 * 0.1).collect();
         let candidates = (0..candidate_count)
-            .map(|_| create_test_candidate_vector(uuid::Uuid::new_v4(), query_dimension))
+            .map(|_| create_test_candidate_vector(crate::utils::uuid::Uuid::new_v4(), query_dimension))
             .collect();
 
         DistanceComputationRequest {
@@ -299,7 +299,7 @@ pub mod test_utils {
             max_results: 10,
             enable_acceleration: true,
             // quality_threshold removed -  Some(0.8),
-            collection_id: uuid::Uuid::new_v4(),
+            collection_id: crate::utils::uuid::Uuid::new_v4(),
             engine_type: EngineType::PRISM,
         }
     }

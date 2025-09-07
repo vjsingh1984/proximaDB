@@ -186,7 +186,7 @@ impl WALFlushCoordinator {
             collection_id
         );
 
-        let _flush_id = uuid::Uuid::new_v4().to_string();
+        let _flush_id = crate::utils::uuid::Uuid::new_v4().to_string();
 
         // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {

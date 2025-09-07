@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, trace};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use crate::compute::distance_computation::{
     DistanceMetric, SelectedFormat, SimilarityResult,

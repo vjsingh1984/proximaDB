@@ -79,7 +79,7 @@ use std::sync::Arc;
 // Duration for cache TTL
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 // Performance optimization handled internally
 
@@ -402,7 +402,7 @@ impl PrismEngine {
         Ok(results
             .into_iter()
             .map(|(id_str, score)| {
-                use uuid::Uuid;
+                use crate::utils::uuid::Uuid;
                 CandidateVector {
                     id: Uuid::parse_str(&id_str).unwrap_or(Uuid::nil()),
                     data: Vec::new(),

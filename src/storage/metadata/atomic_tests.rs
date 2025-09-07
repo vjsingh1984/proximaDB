@@ -24,7 +24,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
-    use uuid::Uuid;
+    use crate::utils::uuid::Uuid;
 
     /// Helper to create test metadata write buffer config
     fn create_test_wal_config(temp_dir: &TempDir) -> MetadataWALConfig {

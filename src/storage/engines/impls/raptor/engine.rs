@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 // Migrated to filesystem API - no longer using std::fs::File directly
 
 use super::consolidated_compactor::RaptorCompactor;

@@ -27,7 +27,7 @@ pub struct SwiftSuperBlockCache {
     tree_navigation_cache: Arc<DashMap<String, Arc<TreeNavigationHints>>>,
 
     /// DataBlock metadata cache with LRU eviction
-    datablock_cache: Arc<RwLock<lru::LruCache<String, Arc<CachedDataBlockMetadata>>>>,
+    datablock_cache: Arc<RwLock<crate::utils::cache::LruCache<String, Arc<CachedDataBlockMetadata>>>>,
     datablock_ttl_sec: u64,
 
     /// Bloom filter cache for instant filtering
@@ -276,7 +276,7 @@ impl SwiftSuperBlockCache {
         Self {
             superblock_cache: Arc::new(DashMap::new()),
             tree_navigation_cache: Arc::new(DashMap::new()),
-            datablock_cache: Arc::new(RwLock::new(lru::LruCache::new(
+            datablock_cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
                 std::num::NonZeroUsize::new(datablock_cache_size).unwrap_or(std::num::NonZeroUsize::new(100).unwrap())
             ))),
             datablock_ttl_sec,

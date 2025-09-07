@@ -42,7 +42,7 @@ impl Default for BatchConfig {
 /// Block cache for recently accessed blocks
 #[derive(Clone)]
 struct BlockCache {
-    cache: Arc<RwLock<lru::LruCache<(u32, u32), Arc<FastLanesDataBlock>>>>,
+    cache: Arc<RwLock<crate::utils::cache::LruCache<(u32, u32), Arc<FastLanesDataBlock>>>>,
     current_size: Arc<RwLock<usize>>,
     max_size: usize,
 }
@@ -50,8 +50,8 @@ struct BlockCache {
 impl BlockCache {
     fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(1000).unwrap(),
+            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
+                if max_size == 0 { 1000 } else { max_size },
             ))),
             current_size: Arc::new(RwLock::new(0)),
             max_size,

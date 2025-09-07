@@ -507,7 +507,7 @@ impl OptimizedWriteBufferWriter {
             OptimizedFormat::Avro => "avwal",
         }; */
 
-        let uuid_short = &uuid::Uuid::new_v4().to_string()[..8];
+        let uuid_short = &crate::utils::uuid::Uuid::new_v4().to_string()[..8];
         let wal_filename = format!(
             "wal_{}_{:010}_{:010}_{}.{}",
             timestamp,

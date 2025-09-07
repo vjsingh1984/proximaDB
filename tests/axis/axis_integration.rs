@@ -9,7 +9,7 @@ use proximadb::index::axis::{
     AxisConfig, AxisManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
 };
 use std::sync::Arc;
-use uuid::Uuid;
+use proximadb::utils::uuid::Uuid;
 
 static INIT: Once = Once::new();
 

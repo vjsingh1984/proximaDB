@@ -52,7 +52,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::monitoring::MetricsCollector;

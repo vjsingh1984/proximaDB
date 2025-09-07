@@ -851,9 +851,10 @@ mod tests {
 
         // Add test vectors
         let record1 = VectorRecord {
-            id: Some("vec1".to_string()),
+            id: "vec1".to_string(),
+            collection_id: "test_collection".to_string(),
             vector: vec![1.0, 0.0, 0.0],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -861,9 +862,10 @@ mod tests {
         };
 
         let record2 = VectorRecord {
-            id: Some("vec2".to_string()),
+            id: "vec2".to_string(),
+            collection_id: "test_collection".to_string(),
             vector: vec![0.0, 1.0, 0.0],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -871,9 +873,10 @@ mod tests {
         };
 
         let record3 = VectorRecord {
-            id: Some("vec3".to_string()),
+            id: "vec3".to_string(),
+            collection_id: "test_collection".to_string(),
             vector: vec![1.0, 1.0, 0.0],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -928,16 +931,14 @@ mod tests {
 
         for (id, vector) in test_vectors.iter() {
             let record = VectorRecord {
-                id: Some(id.to_string()),
+                id: id.to_string(),
+                collection_id: "test_collection".to_string(),
                 vector: vector.clone(),
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
             };
             index.add(id.to_string(), Arc::new(record)).await.unwrap();
         }
@@ -968,16 +969,14 @@ mod tests {
         for i in 0..50 {
             let vector = vec![(i as f32).sin(), (i as f32).cos(), (i as f32 * 0.5).sin()];
             let record = VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
+                collection_id: "test_collection".to_string(),
                 vector,
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
             };
             index
                 .add(format!("vec_{}", i), Arc::new(record))
@@ -1006,16 +1005,14 @@ mod tests {
         // Add vectors in a line to test pruning
         for i in 0..20 {
             let record = VectorRecord {
-                id: Some(format!("v{}", i)),
+                id: format!("v{}", i),
+                collection_id: "test_collection".to_string(),
                 vector: vec![i as f32, 0.0],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
             };
             index
                 .add(format!("v{}", i), Arc::new(record))
@@ -1073,9 +1070,10 @@ mod tests {
         let index = AxisHnswIndex::new(config, 2).unwrap();
 
         let record = VectorRecord {
-            id: Some("duplicate".to_string()),
+            id: "duplicate".to_string(),
+            collection_id: "test_collection".to_string(),
             vector: vec![1.0, 0.0],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,

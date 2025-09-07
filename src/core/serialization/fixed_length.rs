@@ -228,7 +228,7 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
         // Convert to bytes using bytemuck (zero-copy)
         let raw_bytes = cast_slice(data);
         let checksum = if self.config.enable_checksum {
-            crc32fast::hash(raw_bytes)
+            crate::utils::checksum::crc32_fast(raw_bytes)
         } else {
             0
         };
@@ -361,7 +361,7 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
 
         // Validate checksum
         if self.config.enable_checksum && header.checksum != 0 {
-            let actual_checksum = crc32fast::hash(&raw_bytes);
+            let actual_checksum = crate::utils::checksum::crc32_fast(&raw_bytes);
             if actual_checksum != header.checksum {
                 return Err(anyhow::anyhow!("Fixed vector checksum mismatch"));
             }

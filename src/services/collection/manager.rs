@@ -811,7 +811,7 @@ impl CollectionService {
         debug!("🔍 Getting UUID for collection: {}", collection_id);
 
         // First check if it's already a UUID
-        if uuid::Uuid::parse_str(collection_id).is_ok() {
+        if crate::utils::uuid::Uuid::parse(collection_id).is_ok() {
             // Verify it exists
             if let Some(collection) = self.collection(collection_id).await? {
                 return Ok(Some(collection.id));

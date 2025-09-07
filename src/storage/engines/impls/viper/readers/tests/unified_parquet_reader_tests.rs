@@ -9,13 +9,13 @@ mod tests {
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::core::{String, VectorRecord};
     use crate::proto::proximadb::MetadataItem;
-    use crate::storage::engines::impls::viper::readers::unified_parquet_reader::{
+    use crate::storage::engines::core::formats::columnar::{
         CollectionContext, UnifiedParquetReader,
     };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use anyhow::Result;
     use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
-    use arrow_schema::{Data, Field, Schema};
+    use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::WriterProperties;
     use serde_json::json;

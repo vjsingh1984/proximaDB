@@ -4,7 +4,7 @@
 use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
-use lru::LruCache;
+use crate::utils::cache::LruCache;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;

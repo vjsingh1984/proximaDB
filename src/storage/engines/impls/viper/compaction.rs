@@ -1101,7 +1101,7 @@ impl Compaction {
             let temp_dir = std::env::temp_dir();
             let temp_file_path = temp_dir.join(format!(
                 "viper_compaction_{}.parquet.tmp",
-                uuid::Uuid::new_v4()
+                crate::utils::uuid::Uuid::new_v4()
             ));
             debug!(
                 "Creating temporary compacted Parquet file: {:?}",

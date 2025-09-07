@@ -740,7 +740,7 @@ async fn test_search_vectors_unified() {
     // Additional debug: Create a simple reader test to verify the parquet file
     {
         use crate::core::search::SearchParams;
-        use crate::storage::engines::impls::viper::readers::unified_parquet_reader::{
+        use crate::storage::engines::core::formats::columnar::{
             CollectionContext, UnifiedParquetReader,
         };
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();

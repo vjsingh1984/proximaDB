@@ -188,7 +188,7 @@ impl StreamingSearchService {
         distance_metric: DistanceMetric,
     ) -> Result<SearchResultStream> {
         let start_time = std::time::Instant::now();
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = crate::utils::uuid::Uuid::new_v4().to_string();
 
         info!(
             "🔍 STREAMING_SEARCH: Starting for collection={}, k={}, metric={:?}, request={}",

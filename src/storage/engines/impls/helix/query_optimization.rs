@@ -150,7 +150,7 @@ impl PredictivePrefetcher {
 /// Smart result cache with invalidation
 pub struct SmartResultCache {
     /// LRU cache for query results
-    cache: Arc<RwLock<lru::LruCache<u64, CachedResult>>>,
+    cache: Arc<RwLock<crate::utils::cache::LruCache<u64, CachedResult>>>,
     /// Dependency tracking for invalidation
     invalidation_tracker: Arc<RwLock<HashMap<String, Vec<u64>>>>, // file -> query hashes
     /// TTL manager for time-based eviction
@@ -172,7 +172,7 @@ impl SmartResultCache {
     /// Create a new result cache
     pub fn new(capacity: usize, default_ttl_secs: u64) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(lru::LruCache::new(
+            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
                 std::num::NonZeroUsize::new(capacity).unwrap()
             ))),
             invalidation_tracker: Arc::new(RwLock::new(HashMap::new())),

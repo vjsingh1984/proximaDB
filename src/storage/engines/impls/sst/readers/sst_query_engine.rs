@@ -132,7 +132,7 @@ impl std::fmt::Debug for UnifiedSstableReader {
 /// Block cache for frequently accessed data blocks
 #[derive(Debug)]
 pub struct BlockCache {
-    cache: Arc<tokio::sync::RwLock<lru::LruCache<BlockCacheKey, Arc<FastLanesDataBlock>>>>,
+    cache: Arc<tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<FastLanesDataBlock>>>>,
     max_size: usize,
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
@@ -3483,7 +3483,7 @@ impl UnifiedSstableReader {
             // For now, we'll use a simple in-memory cache (should be improved)
 
             // Store a marker in the bitmap cache that bloom filter exists
-            let mut bitmap = roaring::RoaringBitmap::new();
+            let mut bitmap = crate::utils::bitmap::RoaringBitmap::new();
             // We'll use a hash of the file path as the marker
             let file_hash = file_path
                 .as_bytes()
@@ -4482,9 +4482,7 @@ impl ReadingStrategySelector {
 impl BlockCache {
     pub fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(tokio::sync::RwLock::new(lru::LruCache::new(
-                std::num::NonZeroUsize::new(max_size).unwrap(),
-            ))),
+            cache: Arc::new(tokio::sync::RwLock::new(crate::utils::cache::LruCache::new(max_size))),
             max_size,
             hit_rate: Arc::new(tokio::sync::RwLock::new(CacheStats::default())),
         }

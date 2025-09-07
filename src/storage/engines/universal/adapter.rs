@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
-use uuid::Uuid;
+use crate::utils::uuid::Uuid;
 
 use crate::compute::distance_computation::{
     DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData, SelectedFormat,
