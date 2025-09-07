@@ -10,7 +10,7 @@ mod helix_integration_tests {
     use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
     use proximadb::storage::engines::impls::helix::{HelixEngine, HelixConfig};
     use proximadb::storage::traits::{
-        FlushParameters, CompactionParameters, StorageQueryContext, UnifiedStorageEngine, StorageQueryMetadata
+        FlushParameters, CompactionParameters, StorageQueryContext, UnifiedStorageEngine, StorageQueryMetadata, OperationPriority
     };
     use proximadb::core::search::SearchParams;
     use rand::{Rng, SeedableRng};
@@ -68,20 +68,10 @@ mod helix_integration_tests {
         
         // Test flush
         let vectors = create_test_vectors(100, 128, 42);
+        let query = vectors[0].vector.clone(); // Store query before moving vectors
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: vectors.clone().into_iter().map(|v| {
-                // Convert proto VectorRecord to core VectorRecord  
-                proximadb::core::VectorRecord {
-                    id: Some(v.id),
-                    vector: v.vector,
-                    metadata: vec![],
-                    timestamp: v.timestamp as i64,
-                    updated_at: v.updated_at.map(|t| t as i64),
-                    expires_at: v.expires_at.map(|t| t as i64),
-                    version: v.version,
-                }
-            }).collect(),
+            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
             force: true,
             synchronous: true,
             hints: HashMap::new(),
@@ -93,34 +83,34 @@ mod helix_integration_tests {
         };
         
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
-        assert_eq!(flush_result.entries_flushed, 100);
+        assert_eq!(flush_result.entries_flushed, Some(100));
         assert!(flush_result.bytes_written.unwrap_or(0) > 0);
         
         // Test search
-        let query = vectors[0].vector.clone();
         let search_params = Arc::new(SearchParams {
-            collection_id: "test_collection".to_string(),
-            vector: query,
-            k: 5,
-            distance_metric: DistanceMetric::Euclidean,
-            filter: None,
-            include_vectors: true,
-            ef: None,
+            query_vectors: Some(vec![query]),
+            top_k: Some(5),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            ..Default::default()
         });
         
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            dimension: 128,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            index_type: 0,
-            storage_engine: 0,
-            quantization_config: None,
-            index_config: None,
-            storage_assignment: None,
+            config: Some(proximadb::proto::proximadb::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 128,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            stats: Some(proximadb::proto::proximadb::CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
             created_at: 0,
             updated_at: 0,
-            version: 0,
-            metadata: vec![],
+            storage_assignment: None,
         });
         
         let ctx = StorageQueryContext {
@@ -135,7 +125,7 @@ mod helix_integration_tests {
         
         // The first result should be the query vector itself
         assert_eq!(results[0].id, "test_vec_0");
-        assert!(results[0].similarity > 0.999); // Should be very close to 1 for cosine similarity
+        assert!(results[0].similarity > Some(0.999)); // Should be very close to 1 for cosine similarity
     }
 
     #[tokio::test]
@@ -158,13 +148,15 @@ mod helix_integration_tests {
             let vectors = create_test_vectors(50, 128, batch);
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                vector_records: vectors,
+                vector_records: vectors.into_iter().map(|v| v.into()).collect(),
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),
                 timeout_ms: None,
                 trigger_compaction: false,
+                batch_ids: vec![],
                 collection_config: None,
+                estimated_size: 0,
             };
             engine.do_flush(&flush_params).await.unwrap();
         }
@@ -172,39 +164,45 @@ mod helix_integration_tests {
         // Trigger manual compaction
         let compact_params = CompactionParameters {
             collection_id: Some("test_collection".to_string()),
-            level: Some(0),
+            force: true,
+            synchronous: true,
+            hints: HashMap::new(),
+            timeout_ms: None,
+            priority: OperationPriority::Medium,
             collection_config: None,
+            estimated_input_size: 0,
         };
         
         let compact_result = engine.do_compact(&compact_params).await.unwrap();
-        assert!(compact_result.files_compacted > 0);
-        assert!(compact_result.bytes_written > 0);
+        assert!(compact_result.success);
+        assert!(compact_result.bytes_written > Some(0));
         
         // Verify data is still searchable after compaction
         let query = vec![0.0; 128];
         let search_params = Arc::new(SearchParams {
-            collection_id: "test_collection".to_string(),
-            vector: query,
-            k: 10,
-            distance_metric: DistanceMetric::Euclidean,
-            filter: None,
-            include_vectors: false,
-            ef: None,
+            query_vectors: Some(vec![query]),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            ..Default::default()
         });
         
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            dimension: 128,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            index_type: 0,
-            storage_engine: 0,
-            quantization_config: None,
-            index_config: None,
-            storage_assignment: None,
+            config: Some(proximadb::proto::proximadb::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 128,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            stats: Some(proximadb::proto::proximadb::CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
             created_at: 0,
             updated_at: 0,
-            version: 0,
-            metadata: vec![],
+            storage_assignment: None,
         });
         
         let ctx = StorageQueryContext {
@@ -247,7 +245,11 @@ mod helix_integration_tests {
                         value: Some(metadata_item::Value::StringValue("1".to_string())),
                     },
                 ],
-                quantized_vector: vec![],
+                timestamp: i as u32,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: Some(vec![]),
                 source: None,
             });
         }
@@ -265,7 +267,11 @@ mod helix_integration_tests {
                         value: Some(metadata_item::Value::StringValue("2".to_string())),
                     },
                 ],
-                quantized_vector: vec![],
+                timestamp: (50 + i) as u32,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: Some(vec![]),
                 source: None,
             });
         }
@@ -273,41 +279,44 @@ mod helix_integration_tests {
         // Flush the data
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: all_vectors,
+            vector_records: all_vectors.into_iter().map(|v| v.into()).collect(),
             force: true,
             synchronous: true,
             hints: HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
+            batch_ids: vec![],
             collection_config: None,
+            estimated_size: 0,
         };
         engine.do_flush(&flush_params).await.unwrap();
         
         // Search for a vector from cluster 1
         let query = vec![1.0; 128];
         let search_params = Arc::new(SearchParams {
-            collection_id: "test_collection".to_string(),
-            vector: query,
-            k: 10,
-            distance_metric: DistanceMetric::Euclidean,
-            filter: None,
-            include_vectors: false,
-            ef: None,
+            query_vectors: Some(vec![query]),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            ..Default::default()
         });
         
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            dimension: 128,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            index_type: 0,
-            storage_engine: 0,
-            quantization_config: None,
-            index_config: None,
-            storage_assignment: None,
+            config: Some(proximadb::proto::proximadb::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 128,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            stats: Some(proximadb::proto::proximadb::CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
             created_at: 0,
             updated_at: 0,
-            version: 0,
-            metadata: vec![],
+            storage_assignment: None,
         });
         
         let ctx = StorageQueryContext {
@@ -358,20 +367,26 @@ mod helix_integration_tests {
                         value: Some(metadata_item::Value::NumberValue((i / 10) as f64)),
                     },
                 ],
-                quantized_vector: vec![],
+                timestamp: i as u32,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: Some(vec![]),
                 source: None,
             });
         }
         
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: vectors,
+            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
             force: true,
             synchronous: true,
             hints: HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
+            batch_ids: vec![],
             collection_config: None,
+            estimated_size: 0,
         };
         engine.do_flush(&flush_params).await.unwrap();
         
@@ -385,28 +400,30 @@ mod helix_integration_tests {
         
         let query = vec![0.5; 128];
         let search_params = Arc::new(SearchParams {
-            collection_id: "test_collection".to_string(),
-            vector: query,
-            k: 10,
-            distance_metric: DistanceMetric::Euclidean,
-            filter: Some(filter),
-            include_vectors: false,
-            ef: None,
+            query_vectors: Some(vec![query]),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Euclidean),
+            filter_expression: Some(filter),
+            ..Default::default()
         });
         
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            dimension: 128,
-            distance_metric: DistanceMetric::Euclidean as i32,
-            index_type: 0,
-            storage_engine: 0,
-            quantization_config: None,
-            index_config: None,
-            storage_assignment: None,
+            config: Some(proximadb::proto::proximadb::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 128,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            stats: Some(proximadb::proto::proximadb::CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
             created_at: 0,
             updated_at: 0,
-            version: 0,
-            metadata: vec![],
+            storage_assignment: None,
         });
         
         let ctx = StorageQueryContext {

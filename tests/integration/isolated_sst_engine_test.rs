@@ -7,7 +7,7 @@
 //! and reliable test infrastructure across all ProximaDB test modules.
 
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
 mod common {
@@ -15,10 +15,10 @@ mod common {
 }
 use common::unified_test_utils::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::VectorRecord;
-use proximadb::core::search::{ComparisonOperator, FilterExpression};
-use proximadb::proto::proximadb::StorageEngine;
-use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
+use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+use proximadb::proto::proximadb::{StorageEngine, VectorRecord, MetadataItem, metadata_item};
+use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine, StorageQueryContext};
+use std::sync::Arc;
 
 /// Test SST engine basic vector insert, flush and search in isolated environment
 ///
@@ -41,36 +41,32 @@ async fn test_isolated_sst_vector_insert_flush_search() -> Result<()> {
     let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
-    debug!("📝 Flushed {} vectors", result.entries_flushed);
+    debug!("📝 Flushed {} vectors", result.entries_flushed.unwrap_or(0));
 
     // Search using production code directly with correct storage URL
     let query_vector = env.create_query_vector();
-    let storage_url = operations::build_sst_storage_url(&env);
-    let results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &query_vector,
-            5,
-            &DistanceMetric::Cosine,
-            None,
-            true,
-            true,
-        )
-        .await?;
+    let search_params = SearchParams {
+        vector: Some(query_vector.clone()),
+        top_k: Some(5),
+        distance_metric: Some(DistanceMetric::Cosine),
+        ..Default::default()
+    };
+    let collection = Arc::new(env.create_test_collection());
+    let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+    let results = engine.search_vectors_unified(&ctx).await?;
 
     // Verify results
     debug!("🔍 Search returned {} results", results.len());
     for (i, result) in results.iter().enumerate() {
-        debug!("  Result {}: id={}, similarity={}", i, result.id, result.similarity);
+        debug!("  Result {}: id={}, score={}", i, result.id, result.score);
     }
     assert!(!results.is_empty(), "Should find search results");
     assert!(results.len() <= 5, "Should not return more than requested");
 
-    // Verify first result is closest (similarity should be highest)
+    // Verify first result is closest (score should be highest)
     assert!(
-        results[0].similarity > 0.0,
-        "Closest result should have high similarity"
+        results[0].score > 0.0,
+        "Closest result should have high score"
     );
 
     // Verify all results belong to this collection
@@ -113,20 +109,16 @@ async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
     };
 
     // Use unified storage URL construction
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-    info!("🔍 Using storage URL for filtered search: {}", storage_url);
-    let filtered_results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &env.create_query_vector(),
-            10,
-            &DistanceMetric::Cosine,
-            Some(&filter),
-            true,
-            true,
-        )
-        .await?;
+    let search_params = SearchParams {
+        vector: Some(env.create_query_vector()),
+        top_k: Some(10),
+        distance_metric: Some(DistanceMetric::Cosine),
+        filter_expression: Some(filter.clone()),
+        ..Default::default()
+    };
+    let collection = Arc::new(env.create_test_collection());
+    let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+    let filtered_results = engine.search_vectors_unified(&ctx).await?;
 
     // Verify all results have category "A"
     assert!(
@@ -145,18 +137,16 @@ async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
         value: serde_json::Value::String("primary".to_string()),
     };
 
-    let type_results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &env.create_query_vector(),
-            10,
-            &DistanceMetric::Cosine,
-            Some(&type_filter),
-            true,
-            true,
-        )
-        .await?;
+    let search_params2 = SearchParams {
+        vector: Some(env.create_query_vector()),
+        top_k: Some(10),
+        distance_metric: Some(DistanceMetric::Cosine),
+        filter_expression: Some(type_filter.clone()),
+        ..Default::default()
+    };
+    let collection2 = Arc::new(env.create_test_collection());
+    let ctx2 = StorageQueryContext::new(Arc::new(search_params2), collection2);
+    let type_results = engine.search_vectors_unified(&ctx2).await?;
 
     assert!(
         !type_results.is_empty(),
@@ -225,7 +215,7 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Batch {} flush should succeed", batch + 1);
         assert_eq!(
-            result.entries_flushed,
+            result.entries_flushed.unwrap_or(0),
             batch_size as u64,
             "Batch {} should flush exactly {} entries",
             batch + 1,
@@ -234,8 +224,8 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
         println!(
             "✅ Batch {} flushed {} entries, created {} files",
             batch + 1,
-            result.entries_flushed,
-            result.files_created
+            result.entries_flushed.unwrap_or(0),
+            result.files_created.unwrap_or(0)
         );
 
         // Add a small delay to ensure separate SST files are created
@@ -320,42 +310,43 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
 
     println!("✅ COMPACTION COMPLETED:");
     println!("   - Success: {}", result.success);
-    println!("   - Entries processed: {}", result.entries_processed);
-    println!("   - Input files: {}", result.input_files);
-    println!("   - Output files: {}", result.output_files);
+    println!("   - Entries processed: {}", result.entries_processed.unwrap_or(0));
+    println!("   - Input files: {}", result.input_files.unwrap_or(0));
+    println!("   - Output files: {}", result.output_files.unwrap_or(0));
 
     assert!(result.success, "Compaction should succeed");
 
     // CRITICAL: Verify compaction doesn't duplicate data
-    if result.entries_processed > 0 {
+    if result.entries_processed.unwrap_or(0) > 0 {
         // We inserted exactly total_vectors (20)
         let expected_entries = total_vectors as u64;
+        let processed_entries = result.entries_processed.unwrap_or(0);
         assert!(
-            result.entries_processed <= expected_entries,
+            processed_entries <= expected_entries,
             "❌ SST Compaction processed {} entries but we only inserted {}! This indicates data duplication.",
-            result.entries_processed,
+            processed_entries,
             expected_entries
         );
 
         // Allow up to 20% overhead for versioning/metadata/deduplication
         let max_allowed = (expected_entries as f64 * 1.2) as u64;
         assert!(
-            result.entries_processed <= max_allowed,
+            processed_entries <= max_allowed,
             "❌ SST Compaction processed {} entries, exceeding 20% threshold of {} (max allowed: {})",
-            result.entries_processed,
+            processed_entries,
             expected_entries,
             max_allowed
         );
 
         println!(
             "✅ Compaction entry count validated: {} entries (expected: {})",
-            result.entries_processed, expected_entries
+            processed_entries, expected_entries
         );
-    } else if result.entries_processed == 0 && result.input_files > 0 && result.output_files > 0 {
+    } else if result.entries_processed.unwrap_or(0) == 0 && result.input_files.unwrap_or(0) > 0 && result.output_files.unwrap_or(0) > 0 {
         // KNOWN BUG: SST compaction processes files but returns 0 entries_processed
         println!(
             "⚠️ KNOWN BUG: SST compaction processed {} input files -> {} output files",
-            result.input_files, result.output_files
+            result.input_files.unwrap_or(0), result.output_files.unwrap_or(0)
         );
         println!("   but entries_processed = 0 (should be {})", total_vectors);
         println!("   This is a bug in SST compaction entry counting logic.");
@@ -425,16 +416,26 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                             ),
                         ),
                     }],
-                    quantized_vector: vec![],
+                    timestamp: chrono::Utc::now().timestamp() as u32,
+                    updated_at: None,
+                    expires_at: None,
+                    quantized_vector: Some(vec![]),
                     source: None,
+                    version: None,
                 })
                 .collect();
 
             let flush_params = FlushParameters {
                 collection_id: Some(env_collection_id),
-                records: vectors,
+                vector_records: vectors,
                 collection_config: Some(collection_config),
-                level: None,
+                force: true,
+                synchronous: true,
+                hints: std::collections::HashMap::new(),
+                timeout_ms: None,
+                trigger_compaction: false,
+                batch_ids: vec![],
+                estimated_size: 1024, // Rough estimate
             };
 
             engine_clone.do_flush(&flush_params).await
@@ -452,7 +453,7 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
             Ok(result) => {
                 if result.success {
                     successful_flushes += 1;
-                    total_flushed += result.entries_flushed;
+                    total_flushed += result.entries_flushed.unwrap_or(0);
                 }
             }
             Err(e) => {
@@ -473,22 +474,15 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
     );
 
     // Verify all vectors are searchable
-    // Storage URL: SST creates {base_location}/{collection_id}/data
-    // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-    info!("🔍 Using storage URL for filtered search: {}", storage_url);
-    let search_results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &env.create_query_vector(),
-            100,
-            &DistanceMetric::Euclidean,
-            None,
-            true,
-            true,
-        )
-        .await?;
+    let search_params = SearchParams {
+        vector: Some(env.create_query_vector()),
+        top_k: Some(100),
+        distance_metric: Some(DistanceMetric::Euclidean),
+        ..Default::default()
+    };
+    let collection = Arc::new(env.create_test_collection());
+    let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+    let search_results = engine.search_vectors_unified(&ctx).await?;
 
     assert_eq!(
         search_results.len(),
@@ -524,9 +518,15 @@ async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
         let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
-            records: original_vectors.clone(),
+            vector_records: original_vectors.clone(),
             collection_config: Some(collection_config),
-            level: None,
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            estimated_size: 1024 * original_vectors.len(), // Rough estimate
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
@@ -537,22 +537,15 @@ async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
         let engine = env.create_sst_engine().await?;
 
         // Search for persisted data
-        // Storage URL: SST creates {base_location}/{collection_id}/data
-        // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
-        let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-        info!("🔍 Using storage URL for filtered search: {}", storage_url);
-        let results = engine
-            .search_vectors_unified(
-                env.collection_id(),
-                &storage_url,
-                &env.create_query_vector(),
-                10,
-                &DistanceMetric::Cosine,
-                None,
-                true,
-                true,
-            )
-            .await?;
+        let search_params = SearchParams {
+            vector: Some(env.create_query_vector()),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Cosine),
+            ..Default::default()
+        };
+        let collection = Arc::new(env.create_test_collection());
+        let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+        let results = engine.search_vectors_unified(&ctx).await?;
 
         // Verify data persisted
         assert_eq!(
@@ -615,25 +608,29 @@ async fn test_isolated_sst_multi_collection_data_isolation() -> Result<()> {
         let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
-            vector_records: vectors,
+            vector_records: vectors.clone(),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config),
-            ..Default::default()
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            estimated_size: 1024 * vectors.len(), // Rough estimate
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
         assert!(
-            result.entries_flushed > 0,
+            result.entries_flushed.unwrap_or(0) > 0,
             "Should have flushed some entries"
         );
-        assert!(result.files_created > 0, "Should have created SST files");
+        assert!(result.files_created.unwrap_or(0) > 0, "Should have created SST files");
         debug!(
             "📁 Inserted data in collection {}: {} - Flushed {} entries, created {} files",
             i,
             env.collection_id(),
-            result.entries_flushed,
-            result.files_created
+            result.entries_flushed.unwrap_or(0),
+            result.files_created.unwrap_or(0)
         );
 
         // Verify files exist
@@ -667,22 +664,16 @@ async fn test_isolated_sst_multi_collection_data_isolation() -> Result<()> {
         .zip(engines.iter())
         .enumerate()
     {
-        // Storage URL: SST creates {base_location}/{collection_id}/data
-        // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
-        let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-        info!("🔍 Using storage URL for filtered search: {}", storage_url);
-        let results = engine
-            .search_vectors_unified(
-                env.collection_id(),
-                &storage_url,
-                &env.create_query_vector(),
-                10,
-                &DistanceMetric::Cosine,
-                None,
-                true,
-                true,
-            )
-            .await?;
+        // Search for data in this collection
+        let search_params = SearchParams {
+            vector: Some(env.create_query_vector()),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Cosine),
+            ..Default::default()
+        };
+        let collection = Arc::new(env.create_test_collection());
+        let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+        let results = engine.search_vectors_unified(&ctx).await?;
 
         // Should find exactly the vectors from this collection
         assert_eq!(
@@ -737,55 +728,53 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
 
     // Create vectors with known relationships for distance testing
     let vectors = vec![
-        proximadb::core::VectorRecord {
-            id: Some(format!("{}_identical", env.collection_id())),
+        VectorRecord {
+            id: format!("{}_identical", env.collection_id()),
             vector: vec![1.0, 0.0, 0.0], // Identical to query
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            quantized_vector: Some(vec![]),
+            source: None,
             version: None,
-            ..Default::default()
         },
-        proximadb::core::VectorRecord {
-            id: Some(format!("{}_orthogonal", env.collection_id())),
+        VectorRecord {
+            id: format!("{}_orthogonal", env.collection_id()),
             vector: vec![0.0, 1.0, 0.0], // Orthogonal to query
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            quantized_vector: Some(vec![]),
+            source: None,
             version: None,
-            ..Default::default()
         },
-        proximadb::core::VectorRecord {
-            id: Some(format!("{}_opposite", env.collection_id())),
+        VectorRecord {
+            id: format!("{}_opposite", env.collection_id()),
             vector: vec![-1.0, 0.0, 0.0], // Opposite to query
             metadata: vec![],
             timestamp: chrono::Utc::now().timestamp() as u32,
             updated_at: None,
             expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
+            quantized_vector: Some(vec![]),
+            source: None,
             version: None,
-            ..Default::default()
         },
     ];
 
     let collection_config = env.create_test_collection();
     let flush_params = FlushParameters {
         collection_id: Some(env.collection_id().to_string()),
-        vector_records: vectors,
+        vector_records: vectors.clone(),
         force: true,
         synchronous: true,
         collection_config: Some(collection_config),
-        ..Default::default()
+        hints: std::collections::HashMap::new(),
+        timeout_ms: None,
+        trigger_compaction: false,
+        batch_ids: vec![],
+        estimated_size: 1024 * vectors.len(), // Rough estimate
     };
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
@@ -799,23 +788,16 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
         DistanceMetric::DotProduct,
     ];
 
-    // Storage URL: SST creates {base_location}/{collection_id}/data
-    // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-    info!("🔍 Using storage URL for filtered search: {}", storage_url);
     for metric in metrics {
-        let results = engine
-            .search_vectors_unified(
-                env.collection_id(),
-                &storage_url,
-                &query_vector,
-                3,
-                &metric,
-                None,
-                true,
-                true,
-            )
-            .await?;
+        let search_params = SearchParams {
+            vector: Some(query_vector.clone()),
+            top_k: Some(3),
+            distance_metric: Some(metric.clone()),
+            ..Default::default()
+        };
+        let collection = Arc::new(env.create_test_collection());
+        let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+        let results = engine.search_vectors_unified(&ctx).await?;
 
         assert_eq!(
             results.len(),
@@ -831,25 +813,25 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             metric
         );
 
-        // Distance should be 0 or very close to 0 for identical vector
-        let distance = results[0].distance.unwrap();
+        // Score should indicate high similarity for identical vector
+        let score = results[0].score;
         match metric {
             DistanceMetric::Cosine => assert!(
-                distance < 0.01,
-                "Cosine distance should be ~0 for identical vectors"
+                score > 0.99,
+                "Cosine score should be ~1 for identical vectors"
             ),
             DistanceMetric::Euclidean => assert!(
-                distance < 0.01,
-                "Euclidean distance should be ~0 for identical vectors"
+                score > 0.0,
+                "Euclidean score should be > 0 for identical vectors"
             ),
             DistanceMetric::DotProduct => assert!(
-                distance > 0.99,
-                "Dot product should be ~1 for identical vectors"
+                score > 0.99,
+                "Dot product score should be ~1 for identical vectors"
             ),
             _ => {} // Other metrics not tested in this specific test
         }
 
-        debug!("📐 {:?} metric: closest distance = {:.4}", metric, distance);
+        debug!("📐 {:?} metric: closest score = {:.4}", metric, score);
     }
 
     debug!(
@@ -877,29 +859,29 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
 
     for batch in 0..num_batches {
         let start_id = batch * batch_size;
-        let vectors = (0..batch_size)
+        let vectors: Vec<VectorRecord> = (0..batch_size)
             .map(|i| {
                 let global_id = start_id + i;
-                proximadb::core::VectorRecord {
-                    id: Some(format!("{}_{:03}", env.collection_id(), global_id)),
+                VectorRecord {
+                    id: format!("{}_{:03}", env.collection_id(), global_id),
                     vector: vec![
                         (global_id as f32) / 100.0,
                         ((global_id + 1) as f32) / 100.0,
                         ((global_id + 2) as f32) / 100.0,
                     ],
                     metadata: vec![
-                        proximadb::proto::proximadb::MetadataItem {
+                        MetadataItem {
                             key: "batch".to_string(),
                             value: Some(
-                                proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                                metadata_item::Value::NumberValue(
                                     batch as f64,
                                 ),
                             ),
                         },
-                        proximadb::proto::proximadb::MetadataItem {
+                        MetadataItem {
                             key: "id_mod_10".to_string(),
                             value: Some(
-                                proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                                metadata_item::Value::NumberValue(
                                     (global_id % 10) as f64,
                                 ),
                             ),
@@ -908,11 +890,9 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                     timestamp: chrono::Utc::now().timestamp() as u32,
                     updated_at: None,
                     expires_at: None,
-                    distance: None,
-                    rank: None,
-                    score: None,
+                    quantized_vector: Some(vec![]),
+                    source: None,
                     version: None,
-                    ..Default::default()
                 }
             })
             .collect();
@@ -920,11 +900,15 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
         let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
-            vector_records: vectors,
+            vector_records: vectors.clone(),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config),
-            ..Default::default()
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            estimated_size: 1024 * vectors.len(), // Rough estimate
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
@@ -945,22 +929,15 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
     // Test various search scenarios
 
     // 1. Search for top-k results
-    // Storage URL: SST creates {base_location}/{collection_id}/data
-    // Since base_location is parent of persistent_dir, the actual path is persistent_dir/data
-    let storage_url = format!("file://{}/data", env.persistent_dir.to_str().unwrap());
-    info!("🔍 Using storage URL for filtered search: {}", storage_url);
-    let top_k_results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &vec![0.1, 0.2, 0.3],
-            15,
-            &DistanceMetric::Euclidean,
-            None,
-            true,
-            true,
-        )
-        .await?;
+    let search_params = SearchParams {
+        vector: Some(vec![0.1, 0.2, 0.3]),
+        top_k: Some(15),
+        distance_metric: Some(DistanceMetric::Euclidean),
+        ..Default::default()
+    };
+    let collection = Arc::new(env.create_test_collection());
+    let ctx = StorageQueryContext::new(Arc::new(search_params), collection);
+    let top_k_results = engine.search_vectors_unified(&ctx).await?;
 
     assert_eq!(top_k_results.len(), 15, "Should return exactly 15 items");
 
@@ -971,35 +948,30 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
         value: serde_json::Value::Number(serde_json::Number::from(2)),
     };
 
-    let batch_results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &vec![0.5, 0.6, 0.7],
-            30,
-            &DistanceMetric::Cosine,
-            Some(&batch_filter),
-            true,
-            true,
-        )
-        .await?;
+    let search_params2 = SearchParams {
+        vector: Some(vec![0.5, 0.6, 0.7]),
+        top_k: Some(30),
+        distance_metric: Some(DistanceMetric::Cosine),
+        filter_expression: Some(batch_filter.clone()),
+        ..Default::default()
+    };
+    let collection2 = Arc::new(env.create_test_collection());
+    let ctx2 = StorageQueryContext::new(Arc::new(search_params2), collection2);
+    let batch_results = engine.search_vectors_unified(&ctx2).await?;
 
     debug!("DEBUG: batch_filter = {:?}", batch_filter);
     debug!("DEBUG: batch_results.len() = {}", batch_results.len());
     if batch_results.is_empty() {
         // Let's check without filter to see what metadata we have
-        let debug_results = engine
-            .search_vectors_unified(
-                env.collection_id(),
-                &storage_url,
-                &vec![0.5, 0.6, 0.7],
-                5,
-                &DistanceMetric::Cosine,
-                None,
-                true,
-                true,
-            )
-            .await?;
+        let debug_search_params = SearchParams {
+            vector: Some(vec![0.5, 0.6, 0.7]),
+            top_k: Some(5),
+            distance_metric: Some(DistanceMetric::Cosine),
+            ..Default::default()
+        };
+        let debug_collection = Arc::new(env.create_test_collection());
+        let debug_ctx = StorageQueryContext::new(Arc::new(debug_search_params), debug_collection);
+        let debug_results = engine.search_vectors_unified(&debug_ctx).await?;
         debug!("DEBUG: Sample results without filter:");
         for (i, result) in debug_results.iter().enumerate() {
             debug!(
@@ -1017,18 +989,15 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
     );
 
     // 3. Search across all data to verify completeness
-    let all_results = engine
-        .search_vectors_unified(
-            env.collection_id(),
-            &storage_url,
-            &vec![0.5, 0.5, 0.5],
-            200, // Request more than we have
-            &DistanceMetric::DotProduct,
-            None,
-            true,
-            true,
-        )
-        .await?;
+    let search_params3 = SearchParams {
+        vector: Some(vec![0.5, 0.5, 0.5]),
+        top_k: Some(200), // Request more than we have
+        distance_metric: Some(DistanceMetric::DotProduct),
+        ..Default::default()
+    };
+    let collection3 = Arc::new(env.create_test_collection());
+    let ctx3 = StorageQueryContext::new(Arc::new(search_params3), collection3);
+    let all_results = engine.search_vectors_unified(&ctx3).await?;
 
     assert_eq!(
         all_results.len(),

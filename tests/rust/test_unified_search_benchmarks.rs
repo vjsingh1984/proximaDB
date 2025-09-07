@@ -14,7 +14,7 @@ use proximadb::proto::proximadb::{
     VectorRecord, MetadataItem, StorageEngine,
 };
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::SearchResult;
+use proximadb::core::search::results::InternalSearchResult;
 use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::engines::viper::ViperEngine;

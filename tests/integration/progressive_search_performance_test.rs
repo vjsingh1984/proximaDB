@@ -19,7 +19,7 @@ use proximadb::storage::engines::sst::{
     readers::unified_sstable_reader::{UnifiedSstableReader, ModularBlockReader},
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::core::search::{SearchResult, SearchRequest};
+use proximadb::core::search::{results::InternalSearchResult, SearchParams};
 
 /// Performance metrics for search operations
 #[derive(Debug, Clone)]

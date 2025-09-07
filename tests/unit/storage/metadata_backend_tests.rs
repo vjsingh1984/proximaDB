@@ -20,13 +20,13 @@ use proximadb::core::config::{MetadataBackendConfig, StorageConfig};
 use proximadb::network::multi_server::SharedServices;
 use proximadb::proto::proximadb::{
     Collection as ProtoCollection, CollectionConfig as ProtoCollectionConfig, CollectionStats,
-    DistanceMetric, IndexingAlgorithm, StorageEngine as ProtoStorageEngine,
+    DistanceMetric, StorageEngine as ProtoStorageEngine,
 };
-use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::StorageEngine;
 use proximadb::storage::metadata::backends::universal_backend::{
     UniversalMetadataBackend, UniversalMetadataConfig,
 };
+use proximadb::storage::traits::MetadataProvider;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 // CollectionMetadataProvider import removed - trait not found
 use std::sync::Arc;
@@ -78,7 +78,7 @@ async fn test_single_metadata_backend_instance() {
 
     // Verify collection service was injected into storage engine
     {
-        let storage = storage_engine.read().await;
+        let _storage = storage_engine.read().await;
         // The storage engine should now have access to collection metadata
         // Collection metadata access is now through the metadata backend
         let collection_exists = false;
@@ -91,15 +91,13 @@ async fn test_single_metadata_backend_instance() {
         dimension: 128,
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: ProtoStorageEngine::Viper as i32,
-        primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+        storage_config: None,
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        compression: None,
-        optimization_hints: None,
-        storage_location: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
+        embedding_models: None,
+        primary_index: Some("default".to_string()),
+        auto_index_selection: Some(false),
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
@@ -147,7 +145,7 @@ async fn test_collection_service_dependency_injection() {
     // Create metadata backend with minimal configuration to prevent stack overflow
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        enable_compression: false, // Disable compression to reduce complexity
+        compression: false, // Disable compression to reduce complexity
         enable_snapshots: false,   // Disable snapshots to prevent recursion
         snapshot_threshold: 100000, // Very high threshold to prevent snapshots
         keep_snapshots: 0,         // No snapshots
@@ -172,15 +170,13 @@ async fn test_collection_service_dependency_injection() {
             dimension: 256,
             distance_metric: DistanceMetric::Euclidean as i32,
             storage_engine: ProtoStorageEngine::Viper as i32,
-            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+            storage_config: None,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            embedding_models: None,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             description: Some("Test proto-first collection".to_string()),
             tags: vec!["test".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
@@ -248,7 +244,7 @@ async fn test_metadata_backend_persistence() {
 
         let filestore_config = UniversalMetadataConfig {
             storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-            enable_compression: false, // Disable compression to prevent complexity
+            compression: false, // Disable compression to prevent complexity
             enable_snapshots: false,   // Disable snapshots to prevent hanging
             snapshot_threshold: 10000, // High threshold
             keep_snapshots: 1,         // Minimal snapshots
@@ -270,10 +266,10 @@ async fn test_metadata_backend_persistence() {
                 id: format!("persist-uuid-{}", i),
                 config: Some(ProtoCollectionConfig {
                     name: format!("persist_collection_{}", i),
-                    dimension: 128 * (i + 1) as i32,
+                    dimension: 128 * (i + 1) as u32,
                     distance_metric: DistanceMetric::Cosine as i32,
                     storage_engine: ProtoStorageEngine::Viper as i32,
-                    primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+                    storage_config: None,
                     filterable_columns: vec![
                         proximadb::proto::proximadb::FilterableColumnSpec {
                             name: "category".to_string(),
@@ -293,34 +289,10 @@ async fn test_metadata_backend_persistence() {
                     },
                     ],
                     index_configs: vec![],
-                    quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
-                        enabled: true,
-                        strategy: 0, // SMART_DEFAULTS
-                        custom_levels: vec![
-                            proximadb::proto::proximadb::QuantizationLevel {
-                                level_id: "pq8".to_string(),
-                                r#type: 2, // PRODUCT  
-                                bits: 8,
-                                num_subvectors: Some(8),
-                                adaptive_subvectors: Some(false),
-                                storage_engine_compatibility: 0,
-                                selectivity_threshold: 0.1,
-                                enabled: true,
-                            },
-                        ],
-                        enable_progressive_search: true,
-                        binary_filter_selectivity: 0.3,
-                        int8_ranking_selectivity: 0.1,
-                        pq_ranking_selectivity: 0.05,
-                        training_sample_size: 10000,
-                        quality_threshold: 0.9,
-                        auto_tuning: false,
-                    }),
-                    compression: None,
-                    optimization_hints: None,
-                    storage_location: None,
-                    primary_index: "default".to_string(),
-                    auto_index_selection: false,
+                    quantization: None,
+                    embedding_models: None,
+                    primary_index: Some("default".to_string()),
+                    auto_index_selection: Some(false),
                     description: Some(format!("Proto-first collection {}", i)),
                     tags: vec![format!("proto-tag{}", i), "persist-test".to_string()],
                     owner: Some("test_user".to_string()),
@@ -352,8 +324,8 @@ async fn test_metadata_backend_persistence() {
         assert!(collection_0.config.as_ref().unwrap().quantization.is_some());
         let quantization = collection_0.config.as_ref().unwrap().quantization.as_ref().unwrap();
         assert!(quantization.enabled);
-        assert!(quantization.storage_quantization.is_some());
-        assert!(quantization.search_quantization.is_some());
+        assert!(!quantization.custom_levels.is_empty());
+        assert!(quantization.enable_progressive_search);
     }
 
     // Second session - verify proto-first persistence and recovery
@@ -383,15 +355,14 @@ async fn test_metadata_backend_persistence() {
         // Verify proto-first quantization config persisted
         let quantization = collection_1.config.as_ref().unwrap().quantization.as_ref().unwrap();
         assert!(quantization.enabled);
-        assert!(quantization.storage_quantization.is_some());
-        assert!(quantization.search_quantization.is_some());
-        let search_config = quantization.search_quantization.as_ref().unwrap();
-        assert!(search_config.enabled);
-        assert_eq!(search_config.candidate_multiplier, 3);
+        assert!(!quantization.custom_levels.is_empty());
+        assert!(quantization.enable_progressive_search);
+        assert_eq!(quantization.quality_threshold, 0.9);
+        assert_eq!(quantization.training_sample_size, 10000);
 
         // Test get by UUID
         let by_uuid = metadata_backend
-            .get_collection("persist-uuid-2")
+            .get_collection("persist_collection_2")
             .await
             .unwrap();
         assert!(by_uuid.is_some());
@@ -420,7 +391,7 @@ async fn test_metadata_backend_deletion() {
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        enable_compression: false,
+        compression: false,
         enable_snapshots: true,
         snapshot_threshold: 1000,
         keep_snapshots: 3,
@@ -443,15 +414,13 @@ async fn test_metadata_backend_deletion() {
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
                 storage_engine: ProtoStorageEngine::Sst as i32,
-                primary_indexing_algorithm: IndexingAlgorithm::Flat as i32,
+                storage_config: None,
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
-                compression: None,
-                optimization_hints: None,
-                storage_location: None,
-                primary_index: "default".to_string(),
-                auto_index_selection: false,
+                embedding_models: None,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(false),
                 description: None,
                 tags: vec!["deletable".to_string()],
                 owner: None,
@@ -501,7 +470,7 @@ async fn test_metadata_backend_deletion() {
 
     // Verify specific deletions
     let deleted_1 = metadata_backend
-        .get_collection("delete-uuid-1")
+        .get_collection("delete_collection_1")
         .await
         .unwrap();
     assert!(deleted_1.is_none());
@@ -524,7 +493,7 @@ async fn test_concurrent_metadata_operations() {
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        enable_compression: true,
+        compression: true,
         enable_snapshots: false,
         snapshot_threshold: 1000,
         keep_snapshots: 0,
@@ -553,15 +522,13 @@ async fn test_concurrent_metadata_operations() {
                     dimension: 64,
                     distance_metric: DistanceMetric::Cosine as i32,
                     storage_engine: ProtoStorageEngine::Viper as i32,
-                    primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+                    storage_config: None,
                     filterable_columns: vec![],
                     index_configs: vec![],
                     quantization: None,
-                    compression: None,
-                    optimization_hints: None,
-                    storage_location: None,
-                    primary_index: "default".to_string(),
-                    auto_index_selection: false,
+                    embedding_models: None,
+                    primary_index: Some("default".to_string()),
+                    auto_index_selection: Some(false),
                     description: None,
                     tags: vec!["concurrent".to_string()],
                     owner: None,
@@ -626,7 +593,7 @@ async fn test_metadata_backend_updates() {
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        enable_compression: false,
+        compression: false,
         enable_snapshots: true,
         snapshot_threshold: 1000,
         keep_snapshots: 5,
@@ -648,15 +615,13 @@ async fn test_metadata_backend_updates() {
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: ProtoStorageEngine::Viper as i32,
-            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+            storage_config: None,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            embedding_models: None,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             description: Some("Initial description".to_string()),
             tags: vec!["v1".to_string()],
             owner: Some("user1".to_string()),
@@ -732,9 +697,9 @@ async fn test_metadata_backend_updates() {
     assert_eq!(updated.id, "update-test-uuid");
 }
 
-/// Test CollectionMetadataProvider trait implementation with proto-first architecture
+/// Test metadata backend trait implementation with proto-first architecture
 #[tokio::test]
-async fn test_collection_metadata_provider_trait() {
+async fn test_metadata_backend_trait_implementation() {
     let temp_dir = TempDir::new().unwrap();
     let metadata_path = temp_dir.path().join("metadata");
     let temp_path = temp_dir.path().join("temp");
@@ -755,7 +720,7 @@ async fn test_collection_metadata_provider_trait() {
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        enable_compression: false, // Disable compression to prevent complexity
+        compression: false, // Disable compression to prevent complexity
         enable_snapshots: false,   // Disable snapshots to prevent stack overflow
         snapshot_threshold: 100000, // Very high threshold
         keep_snapshots: 0,         // No snapshots
@@ -772,8 +737,8 @@ async fn test_collection_metadata_provider_trait() {
     // Test the trait implementation directly on the metadata backend
     // instead of creating a full CollectionService to avoid stack overflow
 
-    // Test the metadata backend as a CollectionMetadataProvider trait object
-    let provider: Arc<dyn CollectionMetadataProvider> = metadata_backend.clone();
+    // Test the metadata backend implementation directly
+    let provider = metadata_backend.clone();
 
     // Create a proto-first collection directly through the metadata backend
     let collection_record = proximadb::proto::proximadb::Collection {
@@ -783,7 +748,7 @@ async fn test_collection_metadata_provider_trait() {
             dimension: 512,
             distance_metric: DistanceMetric::Manhattan as i32,
             storage_engine: ProtoStorageEngine::Viper as i32,
-            primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
+            storage_config: None,
             filterable_columns: vec![
                 proximadb::proto::proximadb::FilterableColumnSpec {
                     name: "category".to_string(),
@@ -805,34 +770,10 @@ async fn test_collection_metadata_provider_trait() {
                 },
             ],
             index_configs: vec![],
-            quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
-                enabled: true,
-                strategy: 0, // SMART_DEFAULTS
-                custom_levels: vec![
-                    proximadb::proto::proximadb::QuantizationLevel {
-                        level_id: "pq8".to_string(),
-                        r#type: 2, // PRODUCT  
-                        bits: 8,
-                        num_subvectors: Some(8),
-                        adaptive_subvectors: Some(false),
-                        storage_engine_compatibility: 0,
-                        selectivity_threshold: 0.1,
-                        enabled: true,
-                    },
-                ],
-                enable_progressive_search: true,
-                binary_filter_selectivity: 0.3,
-                int8_ranking_selectivity: 0.1,
-                pq_ranking_selectivity: 0.05,
-                training_sample_size: 10000,
-                quality_threshold: 0.9,
-                auto_tuning: false,
-            }),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
-            primary_index: "default".to_string(),
-            auto_index_selection: false,
+            quantization: None,
+            embedding_models: None,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
             description: Some("Testing proto-first trait implementation".to_string()),
             tags: vec!["trait".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
@@ -877,10 +818,9 @@ async fn test_collection_metadata_provider_trait() {
         .as_ref()
         .unwrap();
     assert!(quantization.enabled);
-    assert!(quantization.storage_quantization.is_some());
-    assert!(quantization.search_quantization.is_some());
-    let search_config = quantization.search_quantization.as_ref().unwrap();
-    assert!(search_config.enabled);
+    assert!(!quantization.custom_levels.is_empty());
+    assert!(quantization.enable_progressive_search);
+    assert_eq!(quantization.quality_threshold, 0.9);
 
     let exists = provider
         .collection_exists("trait_test_proto")

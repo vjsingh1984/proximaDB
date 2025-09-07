@@ -4,7 +4,7 @@
 :icons: font
 
 [abstract]
-**Progressive Retrieval with In-memory Storage Management** - A memory-first storage engine optimized for ultra-low latency (<1ms) through progressive quantization, lock-free data structures, and NUMA-aware memory management.
+**Progressive Retrieval with In-memory Storage Management** - A memory-first storage engine in development (2,725 lines, 70% complete). Optimized for ultra-low latency (<1ms) through progressive quantization, FastLanes serialization, and memory optimization techniques.
 
 image::../assets/logos/prism-engine-logo.svg[PRISM Engine Logo, 200, align="center"]
 

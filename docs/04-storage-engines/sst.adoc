@@ -17,9 +17,9 @@ The SST engine implements a classic Log-Structured Merge (LSM) tree architecture
 * **Zero-Copy Compaction**: 80% memory reduction, 3x faster than traditional
 * **Three-Stage Filtering**: Bloom → Quantized → Full precision pipeline
 * **Hierarchical Bloom Filters**: File-level, block-level, and composite filters
-* **No Embedded MemTable**: Pure SSTable storage with external WAL handling
+* **Integrated MemTable/WAL**: Full LSM architecture with write-ahead logging
 * **Unified Infrastructure**: Full integration with quantization and compression
-* **Production Ready**: 47K+ lines of battle-tested code
+* **Production Ready**: 26,488 lines of battle-tested code
 
 === When to Use SST
 
@@ -47,7 +47,7 @@ The SST engine implements a classic Log-Structured Merge (LSM) tree architecture
 
 === Architecture Overview
 
-NOTE: SST engine operates as pure SSTable storage without embedded MemTable. Memory management is handled by the WAL subsystem.
+NOTE: SST engine implements a complete LSM tree with integrated MemTable and WAL for durability. The three-stage filtering pipeline ensures optimal query performance.
 
 [source,mermaid]
 ----

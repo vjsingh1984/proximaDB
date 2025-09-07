@@ -12,63 +12,63 @@ NOTE: For detailed implementation analysis, see link:IMPLEMENTATION_STATUS.adoc[
 
 [cols="1,1,1,1,1,1,1", options="header"]
 |===
-| Logo | Engine | Type | Status | Best For | Performance | Compression
+| Engine | Type | Status | Best For | Performance | Compression | Logo
 
-| include::../assets/logos/sst-engine-logo.svg[]
 | link:sst.adoc[SST]
 | Row LSM
 | ✅ Production
 | Real-time OLTP
 | 200K vec/s
 | 3-5x
+| link:sst.adoc[image:../assets/logos/sst-engine-logo.svg[SST,50]]
 
-| include::../assets/logos/viper-engine-logo.svg[]
 | link:viper.adoc[VIPER]
 | Columnar
 | ✅ Production
 | Analytics
 | 500K vec/s
 | 5-10x
+| link:viper.adoc[image:../assets/logos/viper-engine-logo.svg[VIPER,50]]
 
-| include::../assets/logos/helix-engine-logo.svg[]
 | link:helix.adoc[HELIX]
 | PCA+Hilbert
 | ✅ Production
 | Similarity
 | 150K vec/s
 | 4-8x
+| link:helix.adoc[image:../assets/logos/helix-engine-logo.svg[HELIX,50]]
 
-| include::../assets/logos/raptor-engine-logo.svg[]
 | link:raptor.adoc[RAPTOR]
 | Matrix Trinity
 | ✅ Production
 | Graph Search
 | 100K vec/s
 | 3-6x
+| link:raptor.adoc[image:../assets/logos/raptor-engine-logo.svg[RAPTOR,50]]
 
-| include::../assets/logos/nova-engine-logo.svg[]
 | link:nova.adoc[NOVA]
 | SuperBlocks
 | 🚧 85%
 | Complex Query
 | TBD
 | 8-12x
+| link:nova.adoc[image:../assets/logos/nova-engine-logo.svg[NOVA,50]]
 
-| include::../assets/logos/swift-engine-logo.svg[]
 | link:swift.adoc[SWIFT]
 | Hierarchical
 | 🚧 75%
 | Billion-scale
 | 300K vec/s
 | 6-10x
+| link:swift.adoc[image:../assets/logos/swift-engine-logo.svg[SWIFT,50]]
 
-| include::../assets/logos/prism-engine-logo.svg[]
 | link:prism.adoc[PRISM]
 | Memory-first
 | 🚧 70%
 | Ultra-low latency
 | 1M QPS
 | 2-4x
+| link:prism.adoc[image:../assets/logos/prism-engine-logo.svg[PRISM,50]]
 |===
 
 == Choosing the Right Engine
@@ -82,6 +82,7 @@ graph TD
     
     Q1 -->|Real-time Updates| SST[SST Engine]
     Q1 -->|Batch Analytics| VIPER[VIPER Engine]
+    Q1 -->|Graph Navigation| RAPTOR[RAPTOR Engine]
     Q1 -->|Similarity Search| Q2{Dataset Size?}
     
     Q2 -->|<100M vectors| HELIX[HELIX Engine]
@@ -92,12 +93,14 @@ graph TD
     
     SST --> DONE[Configure & Deploy]
     VIPER --> DONE
+    RAPTOR --> DONE
     HELIX --> DONE
     PRISM --> DONE
     SWIFT --> DONE
     
     style SST fill:#e8f5e9
     style VIPER fill:#e8f5e9
+    style RAPTOR fill:#e8f5e9
     style HELIX fill:#e8f5e9
     style PRISM fill:#fff9c4
     style SWIFT fill:#fff9c4
@@ -121,9 +124,17 @@ graph TD
 | SST
 | Real-time updates for user interactions
 
+| **Knowledge Graph**
+| RAPTOR
+| Matrix Trinity navigation for connected data
+
 | **Document Search**
 | HELIX
 | Semantic similarity with locality
+
+| **Social Network Analysis**
+| RAPTOR
+| Graph traversal with HNSW integration
 
 | **Financial Fraud Detection**
 | SST
@@ -147,51 +158,54 @@ graph TD
 === SST Engine
 **Sorted String Table** - Zero-copy LSM with three-stage filtering
 
-* **Implementation**: 47,406 lines of production code
-* **Architecture**: Pure SSTable (no embedded memtable)
-* **Optimization**: Zero-copy compaction, hierarchical bloom filters
-* **Performance**: 200K vectors/sec, <5ms P99
+* **Implementation**: 26,488 lines of production code
+* **Architecture**: Row-based LSM with WAL and MemTable integration
+* **Optimization**: Three-stage filtering (Bloom → Quantized → Full), zero-copy compaction
+* **Performance**: 200K vectors/sec write, <5ms P99 latency
 
 link:sst.adoc[Full SST Documentation →]
 
 === VIPER Engine
-**Vectorized Intelligence Parquet Engine for Retrieval** - Columnar storage
+**Vectorized Intelligence Parquet Engine for Retrieval** - Columnar analytics storage
 
-* **Implementation**: 13,604 lines of production code
-* **Architecture**: Shared columnar infrastructure with Parquet
-* **Optimization**: 7-phase progressive search, predicate pushdown
-* **Performance**: 500K vectors/sec batch, 60-90% I/O reduction
+* **Implementation**: 22,581 lines of production code
+* **Architecture**: Apache Parquet-based columnar format
+* **Optimization**: Advanced quantization pipeline, predicate pushdown, zone maps
+* **Performance**: 500K vectors/sec batch write, 5-10x compression
 
 link:viper.adoc[Full VIPER Documentation →]
 
-=== HELIX Engine  
-**High-Efficiency Locality-Indexed eXecution** - Disk-only LSM with clustering
+=== HELIX Engine
+**High-Efficiency Locality-Indexed eXecution** - Similarity-optimized storage
 
-* **Implementation**: 7,798 lines of production code
-* **Architecture**: Disk-only LSM with FastLane blocks
-* **Optimization**: PCA+Hilbert, liquid clustering, zone maps
-* **Performance**: 70-90% pruning, parallel search
+* **Implementation**: 7,783 lines of production code
+* **Architecture**: Disk-only LSM with PCA+Hilbert clustering
+* **Optimization**: FastLane blocks, liquid clustering, aggressive pruning
+* **Performance**: 150K vectors/sec, 70-90% query pruning
 
 link:helix.adoc[Full HELIX Documentation →]
 
-== In-Development Engines (🚧 Coming Soon)
+== Production Engines (Continued)
 
 === RAPTOR Engine
-**Row-Aligned Predicated Tensor Optimized Repository**
+**Row-Aligned Predicated Tensor Optimized Repository** - Graph-optimized storage
 
-* **Implementation**: ~15,000 lines of production code
-* **Innovation**: Matrix Trinity navigation (P²+K²+P×K)
-* **Features**: Artus bloom filters (200x memory savings)
-* **Performance**: 100K vec/s, production ready
+* **Implementation**: 18,191 lines of production code
+* **Architecture**: Matrix Trinity navigation (P²+K²+P×K) replacing HNSW
+* **Optimization**: Artus bloom filters (200x memory savings vs B-tree)
+* **Performance**: 100K vec/s, O(1) centroid lookup, <10ms graph traversal
 
-link:raptor.adoc[RAPTOR Design →]
+link:raptor.adoc[Full RAPTOR Documentation →]
+
+== In-Development Engines (🚧 Coming Soon)
 
 === NOVA Engine (85% Complete)
 **Next-generation Optimized Vector Architecture**
 
-* **Innovation**: SuperBlock statistics with zone maps
-* **Target**: Complex analytical queries
-* **Features**: Advanced columnar with predictive indexing
+* **Implementation**: 10,410 lines in development
+* **Innovation**: Hierarchical SuperBlocks with zone maps
+* **Target**: Complex analytical queries with multi-field predicates
+* **Features**: Streaming processor, quantized columns, hierarchical cache
 * **ETA**: Q1 2025
 
 link:nova.adoc[NOVA Design →]
@@ -199,9 +213,10 @@ link:nova.adoc[NOVA Design →]
 === SWIFT Engine (75% Complete)
 **Scalable Write-optimized Index File Technology**
 
-* **Innovation**: Hierarchical SuperBlocks
+* **Implementation**: 5,935 lines in development
+* **Innovation**: Hierarchical block organization with adaptive sizing
 * **Target**: Billion-scale vector datasets
-* **Features**: Multi-tier architecture, adaptive granularity
+* **Features**: SuperBlock cache, unified reader, ID index optimization
 * **ETA**: Q2 2025
 
 link:swift.adoc[SWIFT Design →]
@@ -209,9 +224,10 @@ link:swift.adoc[SWIFT Design →]
 === PRISM Engine (70% Complete)
 **Progressive Retrieval with In-memory Storage Management**
 
-* **Innovation**: Memory-first with progressive quantization
-* **Target**: Ultra-low latency (<1ms)
-* **Features**: Lock-free data structures, NUMA optimization
+* **Implementation**: 2,725 lines in development
+* **Innovation**: Memory-first architecture with progressive quantization
+* **Target**: Ultra-low latency (<1ms) for hot data
+* **Features**: FastLanes serialization, memory optimization, lock-free access
 * **ETA**: Q2 2025
 
 link:prism.adoc[PRISM Design →]
@@ -282,6 +298,12 @@ clustering_batch_size = 50000
 | 100K/s
 | 200K/s
 | 80K/s
+
+| RAPTOR
+| 100K/s
+| 80K/s
+| 150K/s
+| 60K/s
 |===
 
 === Query Performance
@@ -306,6 +328,12 @@ clustering_batch_size = 50000
 | 4.8
 | 1770
 | 90%
+
+| RAPTOR
+| 3.0
+| 6.0
+| 1500
+| 75%
 |===
 
 === Storage Efficiency
@@ -327,6 +355,11 @@ clustering_batch_size = 50000
 | 4-8x
 | 2.5GB
 | 400MB
+
+| RAPTOR
+| 3-6x
+| 1.8GB
+| 500MB
 |===
 
 == Migration Guide

@@ -4,7 +4,7 @@
 :icons: font
 
 [abstract]
-**Scalable Write-optimized Index File Technology** - A hierarchical storage engine designed for billion-scale vector datasets with adaptive SuperBlock organization and multi-tier optimization.
+**Scalable Write-optimized Index File Technology** - A hierarchical storage engine in development (5,935 lines, 75% complete). Designed for billion-scale vector datasets with adaptive SuperBlock organization, unified reader, and ID index optimization.
 
 image::../assets/logos/swift-engine-logo.svg[SWIFT Engine Logo, 200, align="center"]
 

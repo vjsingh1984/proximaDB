@@ -313,18 +313,18 @@ mod consolidation_tests {
     /// Test migration compatibility
     #[tokio::test]
     async fn test_migration_helpers() {
-        use proximadb::storage::engines::common::metadata_filters;
+        use proximadb::query::unified_query_optimizer;
         
         // Create old-style filter
-        let old_filter = metadata_filters::UniversalMetadataFilter {
+        let old_filter = unified_query_optimizer::UniversalMetadataFilter {
             conditions: vec![
-                metadata_filters::UniversalFilterCondition::Equals {
+                unified_query_optimizer::UniversalFilterCondition::Equals {
                     column: "test".to_string(),
                     value: serde_json::json!(123),
                     case_sensitive: false,
                 },
             ],
-            logic: metadata_filters::UniversalFilterLogic::And,
+            logic: unified_query_optimizer::UniversalFilterLogic::And,
             optimization_hints: Default::default(),
             engine_optimizations: Default::default(),
         };

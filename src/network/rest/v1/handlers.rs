@@ -24,8 +24,9 @@ use axum::{
     extract::{Json, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, get_service},
 };
+use tower_http::services::{ServeDir, ServeFile};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -767,6 +768,8 @@ pub fn create_router(state: AppState) -> Router {
             "/debug/vectors/:collection_id",
             get(debug_list_unflushed_vectors),
         )
+        // Serve static files from the 'ui/build' directory
+        .fallback(get_service(ServeDir::new("ui/build").not_found_service(ServeFile::new("ui/build/index.html"))))
         .with_state(state)
 }
 

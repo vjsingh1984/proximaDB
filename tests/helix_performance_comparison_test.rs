@@ -8,7 +8,7 @@ mod performance_comparison_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
     use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
-    use proximadb::storage::engines::impls::helix::engine::{HelixEngine, HelixConfig};
+    use proximadb::storage::engines::impls::helix::{HelixEngine, HelixConfig};
     use proximadb::storage::engines::impls::sst::SstStorage;
     use proximadb::storage::engines::impls::viper::engine::ViperEngine;
     use proximadb::storage::traits::{
@@ -48,10 +48,14 @@ use proximadb::storage::traits::StorageQueryMetadata;
                         metadata: vec![
                             MetadataItem {
                                 key: "distribution".to_string(),
-                                value: Some(metadata_item::Value::String("uniform".to_string())),
+                                value: Some(metadata_item::Value::StringValue("uniform".to_string())),
                             },
                         ],
-                        quantized_vector: vec![],
+                        timestamp: i as u32,
+                        updated_at: None,
+                        expires_at: None,
+                        version: None,
+                        quantized_vector: Some(vec![]),
                         source: None,
                     })
                     .collect()
@@ -88,7 +92,11 @@ use proximadb::storage::traits::StorageQueryMetadata;
                                     value: Some(metadata_item::Value::StringValue(cluster_id.to_string())),
                                 },
                             ],
-                            quantized_vector: vec![],
+                            timestamp: (cluster_id * vectors_per_cluster + i) as u32,
+                            updated_at: None,
+                            expires_at: None,
+                            version: None,
+                            quantized_vector: Some(vec![]),
                             source: None,
                         });
                     }
@@ -111,7 +119,11 @@ use proximadb::storage::traits::StorageQueryMetadata;
                                     value: Some(metadata_item::Value::StringValue("skewed".to_string())),
                                 },
                             ],
-                            quantized_vector: vec![],
+                            timestamp: i as u32,
+                            updated_at: None,
+                            expires_at: None,
+                            version: None,
+                            quantized_vector: Some(vec![]),
                             source: None,
                         }
                     })
@@ -182,13 +194,15 @@ use proximadb::storage::traits::StorageQueryMetadata;
         let flush_start = Instant::now();
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
-            vector_records: vectors.to_vec(),
+            vector_records: vectors.iter().map(|v| v.clone().into()).collect(),
             force: true,
             synchronous: true,
             hints: HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
+            batch_ids: vec![],
             collection_config: None,
+            estimated_size: 0,
         };
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         let flush_time = flush_start.elapsed();
@@ -199,8 +213,13 @@ use proximadb::storage::traits::StorageQueryMetadata;
             let compact_start = Instant::now();
             let compact_params = CompactionParameters {
                 collection_id: Some(collection_id.to_string()),
-                level: Some(0),
+                force: true,
+                synchronous: true,
+                hints: HashMap::new(),
+                timeout_ms: None,
+                priority: proximadb::storage::traits::OperationPriority::Medium,
                 collection_config: None,
+                estimated_input_size: 0,
             };
             let compact_result = engine.do_compact(&compact_params).await.unwrap();
             let compact_time = compact_start.elapsed();
@@ -219,34 +238,34 @@ use proximadb::storage::traits::StorageQueryMetadata;
         for query in query_vectors {
             let query_start = Instant::now();
             let search_params = Arc::new(proximadb::core::search::SearchParams {
-                collection_id: collection_id.to_string(),
-                vector: query.clone(),
-                k: K_NEIGHBORS,
-                distance_metric: DistanceMetric::Euclidean,
-                filter: None,
-                include_vectors: false,
-                ef: None,
+                query_vectors: Some(vec![query.clone()]),
+                top_k: Some(K_NEIGHBORS),
+                distance_metric: Some(DistanceMetric::Euclidean),
+                filter_expression: None,
+                include_vectors: Some(false),
+                ef_runtime: None,
+                ..Default::default()
             });
             
             let collection = Arc::new(proximadb::proto::proximadb::Collection {
                 id: collection_id.to_string(),
-                dimension: VECTOR_DIMS as i32,
-                distance_metric: DistanceMetric::Euclidean as i32,
-                index_type: 0,
-                storage_engine: 0,
-                quantization_config: None,
-                index_config: None,
-                storage_assignment: None,
+                config: Some(proximadb::proto::proximadb::CollectionConfig {
+                    name: collection_id.to_string(),
+                    dimension: VECTOR_DIMS as i32,
+                    distance_metric: DistanceMetric::Euclidean as i32,
+                    storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                    ..Default::default()
+                }),
+                stats: None,
                 created_at: 0,
                 updated_at: 0,
-                version: 0,
-                metadata: vec![],
+                storage_assignment: None,
             });
             
             let ctx = StorageQueryContext {
                 search_params,
                 collection,
-                metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+                metadata: StorageQueryMetadata::default(),
             };
             
             let _ = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -306,7 +325,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
             ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
         };
         
-        use proximadb::storage::engines::impls::sst::SstConfig;
+        use proximadb::core::config::SstConfig;
         use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
         use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
         
@@ -394,7 +413,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
             ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
         };
         
-        use proximadb::storage::engines::impls::sst::SstConfig;
+        use proximadb::core::config::SstConfig;
         use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
         use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
         
@@ -480,11 +499,20 @@ use proximadb::storage::traits::StorageQueryMetadata;
             
             // Test SST
             {
+                use proximadb::core::config::SstConfig;
+                use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+                use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+                
                 let temp_dir = TempDir::new().unwrap();
+                let sst_config = SstConfig::default();
+                let fs_config = FilesystemConfig::default();
+                let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+                
                 let engine = Arc::new(SstStorage::new(
-                    sst_config.clone(),
-                    filesystem.clone(),
-                    distance_compute.clone(),
+                    sst_config,
+                    filesystem,
+                    distance_compute,
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
                 
                 let metrics = benchmark_engine(
@@ -555,9 +583,15 @@ use proximadb::storage::traits::StorageQueryMetadata;
         for chunk in vectors.chunks(1000) {
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                records: chunk.to_vec(),
+                vector_records: chunk.iter().map(|v| v.clone().into()).collect(),
+                force: true,
+                synchronous: true,
+                hints: HashMap::new(),
+                timeout_ms: None,
+                trigger_compaction: false,
+                batch_ids: vec![],
                 collection_config: None,
-                level: None,
+                estimated_size: 0,
             };
             engine.do_flush(&flush_params).await.unwrap();
         }
@@ -565,8 +599,13 @@ use proximadb::storage::traits::StorageQueryMetadata;
         // Force compaction to organize data
         let compact_params = CompactionParameters {
             collection_id: Some("test_collection".to_string()),
-            level: Some(0),
+            force: true,
+            synchronous: true,
+            hints: HashMap::new(),
+            timeout_ms: None,
+            priority: proximadb::storage::traits::OperationPriority::Medium,
             collection_config: None,
+            estimated_input_size: 0,
         };
         engine.do_compact(&compact_params).await.unwrap();
         
@@ -579,14 +618,35 @@ use proximadb::storage::traits::StorageQueryMetadata;
         
         for (i, query) in cluster_queries.iter().enumerate() {
             let start = Instant::now();
+            let search_params = Arc::new(proximadb::core::search::SearchParams {
+                query_vectors: Some(vec![query.clone()]),
+                top_k: Some(10),
+                distance_metric: Some(DistanceMetric::Euclidean),
+                filter_expression: None,
+                include_vectors: Some(false),
+                ef_runtime: None,
+                ..Default::default()
+            });
+            
+            let collection = Arc::new(proximadb::proto::proximadb::Collection {
+                id: "test_collection".to_string(),
+                config: Some(proximadb::proto::proximadb::CollectionConfig {
+                    name: "test_collection".to_string(),
+                    dimension: VECTOR_DIMS as i32,
+                    distance_metric: DistanceMetric::Euclidean as i32,
+                    storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                    ..Default::default()
+                }),
+                stats: None,
+                created_at: 0,
+                updated_at: 0,
+                storage_assignment: None,
+            });
+            
             let ctx = StorageQueryContext {
-                collection_id: Arc::new("test_collection".to_string()),
-                vector: Arc::new(query.clone()),
-                k: 10,
-                distance_metric: DistanceMetric::Euclidean,
-                filter: None,
-                include_vectors: false,
-                query_id: format!("pruning_test_{}", i),
+                search_params,
+                collection,
+                metadata: StorageQueryMetadata::default(),
             };
             
             let results = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -599,7 +659,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                     r.metadata.iter().any(|item| {
                         item.key == "cluster_id" && 
                         match &item.value {
-                            Some(metadata_item::Value::String(s)) => s == &expected_cluster,
+                            Some(metadata_item::Value::StringValue(s)) => s == &expected_cluster,
                             _ => false,
                         }
                     })
@@ -641,20 +701,38 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
             }),
             ("SST", {
+                use proximadb::core::config::SstConfig;
+                use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+                use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+                
                 let temp_dir = TempDir::new().unwrap();
+                let sst_config = SstConfig::default();
+                let fs_config = FilesystemConfig::default();
+                let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+                
                 Arc::new(SstStorage::new(
-                    sst_config.clone(),
+                    sst_config,
                     filesystem.clone(),
                     distance_compute.clone(),
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
             }),
             ("VIPER", {
+                use proximadb::core::config::ViperConfig;
+                use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+                use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+                
                 let temp_dir = TempDir::new().unwrap();
+                let viper_config = ViperConfig::default();
+                let fs_config = FilesystemConfig::default();
+                let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+                let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+                
                 Arc::new(ViperEngine::new(
                     "test_collection".to_string(),
-                    viper_config.clone(),
-                    filesystem.clone(),
-                    distance_compute.clone(),
+                    viper_config,
+                    filesystem,
+                    distance_compute,
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
             }),
         ];
@@ -663,9 +741,15 @@ use proximadb::storage::traits::StorageQueryMetadata;
             // Flush data
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                records: vectors.clone(),
+                vector_records: vectors.iter().map(|v| v.clone().into()).collect(),
+                force: true,
+                synchronous: true,
+                hints: HashMap::new(),
+                timeout_ms: None,
+                trigger_compaction: false,
+                batch_ids: vec![],
                 collection_config: None,
-                level: None,
+                estimated_size: 0,
             };
             let flush_result = engine.do_flush(&flush_params).await.unwrap();
             
@@ -711,9 +795,15 @@ use proximadb::storage::traits::StorageQueryMetadata;
         // Load data
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            records: vectors,
+            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+            force: true,
+            synchronous: true,
+            hints: HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
             collection_config: None,
-            level: None,
+            estimated_size: 0,
         };
         engine.do_flush(&flush_params).await.unwrap();
         
@@ -727,14 +817,35 @@ use proximadb::storage::traits::StorageQueryMetadata;
                     let engine_clone = engine.clone();
                     let query_clone = query.clone();
                     let handle = tokio::spawn(async move {
+                        let search_params = Arc::new(proximadb::core::search::SearchParams {
+                            query_vectors: Some(vec![query_clone]),
+                            top_k: Some(10),
+                            distance_metric: Some(DistanceMetric::Euclidean),
+                            filter_expression: None,
+                            include_vectors: Some(false),
+                            ef_runtime: None,
+                            ..Default::default()
+                        });
+                        
+                        let collection = Arc::new(proximadb::proto::proximadb::Collection {
+                            id: "test_collection".to_string(),
+                            config: Some(proximadb::proto::proximadb::CollectionConfig {
+                                name: "test_collection".to_string(),
+                                dimension: VECTOR_DIMS as i32,
+                                distance_metric: DistanceMetric::Euclidean as i32,
+                                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                                ..Default::default()
+                            }),
+                            stats: None,
+                            created_at: 0,
+                            updated_at: 0,
+                            storage_assignment: None,
+                        });
+                        
                         let ctx = StorageQueryContext {
-                            collection_id: Arc::new("test_collection".to_string()),
-                            vector: Arc::new(query_clone),
-                            k: 10,
-                            distance_metric: DistanceMetric::Euclidean,
-                            filter: None,
-                            include_vectors: false,
-                            query_id: "concurrent_test".to_string(),
+                            search_params,
+                            collection,
+                            metadata: StorageQueryMetadata::default(),
                         };
                         engine_clone.search_vectors_unified(&ctx).await
                     });

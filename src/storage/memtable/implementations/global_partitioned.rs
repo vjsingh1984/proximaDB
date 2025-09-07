@@ -1,10 +1,72 @@
-//! Global Partitioned Memtable Implementation for WAL
+//! # Global Partitioned Memtable - High-Performance In-Memory Vector Storage
 //!
-//! Optimized for global WAL with collection partitioning:
-//! - Global sequence ordering for flush coordination
-//! - Per-collection data partitions for efficient operations
-//! - Content-based search within collections
-//! - Efficient per-collection flush isolation
+//! This module implements ProximaDB's global partitioned memtable, a critical component that
+//! serves as the primary in-memory buffer between the WAL and storage engines. It provides
+//! high-speed vector access with collection-level isolation and efficient batch management.
+//!
+//! ## Architecture Overview
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │                   Global Partitioned Memtable                │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │  Global Sequence Counter (Atomic)                           │
+//! │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+//! │  │ Collection A │  │ Collection B │  │ Collection C │ ... │
+//! │  │  Partition   │  │  Partition   │  │  Partition   │     │
+//! │  └──────────────┘  └──────────────┘  └──────────────┘     │
+//! │        ↓                 ↓                 ↓               │
+//! │  ┌──────────────────────────────────────────────┐         │
+//! │  │ WAL Batches (HashMap<BatchId, WALVectorBatch>)│         │
+//! │  │ Vector ID Index (HashMap<VectorId, BatchId>)  │         │
+//! │  │ Bloom Filters (Per-batch metadata filtering)  │         │
+//! │  └──────────────────────────────────────────────┘         │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Key Design Decisions
+//!
+//! ### 1. Collection Partitioning
+//! - **Why**: Isolates collections for independent flush/compaction operations
+//! - **How**: Each collection gets its own partition with dedicated data structures
+//! - **Benefit**: No cross-collection interference, parallel operations possible
+//!
+//! ### 2. WAL Batch Storage
+//! - **Why**: Preserves batch boundaries for efficient group operations
+//! - **How**: Stores complete WALVectorBatch objects instead of individual vectors
+//! - **Benefit**: Atomic batch operations, better memory locality, efficient flush
+//!
+//! ### 3. Dual Indexing Strategy
+//! - **Primary**: WAL batches stored by batch ID for sequential access
+//! - **Secondary**: Vector ID to batch ID mapping for O(1) lookups
+//! - **Benefit**: Fast both for batch operations and individual vector retrieval
+//!
+//! ### 4. Global Sequence Counter
+//! - **Why**: Ensures total ordering across all collections for consistency
+//! - **How**: Atomic counter incremented for each operation
+//! - **Benefit**: MVCC support, consistent snapshots, ordered recovery
+//!
+//! ## Performance Characteristics
+//!
+//! - **Insert**: O(1) amortized for batch operations
+//! - **Get by ID**: O(1) via vector ID index
+//! - **Search**: O(n) but optimized with bloom filters and parallel search
+//! - **Flush**: O(n) streaming with minimal memory overhead
+//! - **Memory**: ~100-200 bytes overhead per vector
+//!
+//! ## Concurrency Model
+//!
+//! - **Read-Write Lock**: Collection-level RwLock for concurrent reads
+//! - **Atomic Sequence**: Lock-free sequence generation
+//! - **Copy-on-Write**: Vector records are cloned on read (immutable)
+//! - **Batch Atomicity**: Entire batches succeed or fail together
+//!
+//! ## Integration Points
+//!
+//! - **WAL System**: Primary consumer, stores WAL batches directly
+//! - **Storage Engines**: Provides vectors during flush operations
+//! - **Query Layer**: Serves vectors for search before flush
+//! - **AXIS Indexing**: Supplies vectors for index building
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -22,22 +84,36 @@ use crate::compute::distance_computation::engine::{
 use crate::core::VectorRecord;
 
 /// Collection partition within the global memtable
+///
+/// Each collection gets its own isolated partition to enable:
+/// - Independent flush operations without blocking other collections
+/// - Collection-specific memory limits and eviction policies
+/// - Efficient collection deletion (drop entire partition)
+/// - Parallel search within collection boundaries
 #[derive(Debug)]
 struct CollectionPartition {
     /// WAL Batches stored as native deserialized batches (PRIMARY STORAGE)
+    /// 
+    /// Key design: We store complete WALVectorBatch objects rather than individual
+    /// vectors to preserve batch atomicity and enable efficient group operations.
+    /// The batch ID is globally unique (CompactBatchId) ensuring no collisions.
     wal_batches:
         HashMap<String, crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
 
     /// Vector ID to batch lookup index for fast get operations
+    /// 
+    /// Secondary index mapping vector IDs to their containing batch.
+    /// This enables O(1) retrieval of individual vectors by ID.
+    /// Note: Only vectors with client-provided IDs are indexed.
     vector_id_index: HashMap<String, String>, // vector_id -> batch_id
 
-    /// Collection statistics
-    total_size: usize,
-    vector_count: usize,
-    batch_count: usize,
-    last_flush_sequence: u64,
-    timestamp: std::time::SystemTime,
-    created_at: std::time::SystemTime,
+    /// Collection statistics for monitoring and management
+    total_size: usize,          // Total bytes consumed by all batches
+    vector_count: usize,        // Total number of vectors across all batches
+    batch_count: usize,         // Number of batches in this partition
+    last_flush_sequence: u64,   // Sequence number of last successful flush
+    timestamp: std::time::SystemTime,     // Last modification time
+    created_at: std::time::SystemTime,    // Partition creation time
 }
 
 impl CollectionPartition {
@@ -54,8 +130,21 @@ impl CollectionPartition {
         }
     }
 
-    /// Add WAL batch to this collection partition
-    /// Add batch to collection partition - CRITICAL HOT PATH
+    /// Add WAL batch to this collection partition - CRITICAL HOT PATH
+    ///
+    /// This is one of the most performance-critical functions in the system as it's
+    /// called for every batch insert. Optimizations:
+    /// - Inline always for hot path optimization
+    /// - Lazy bloom filter creation (only when needed)
+    /// - Batch-level operations to amortize costs
+    /// - Pre-allocated index updates
+    ///
+    /// # Arguments
+    /// * `batch` - Complete WAL batch containing vectors and metadata
+    ///
+    /// # Returns
+    /// * `Ok(())` - Batch successfully added
+    /// * `Err` - Failed to create bloom filter (non-fatal, logged as warning)
     #[inline(always)]
     fn add_batch(
         &mut self,
@@ -65,7 +154,11 @@ impl CollectionPartition {
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
 
-        // Create bloom filter for this batch
+        // Create bloom filter for this batch if not already present
+        // Bloom filters enable fast metadata filtering without scanning all vectors.
+        // We use a 1% false positive rate as a good balance between memory and accuracy.
+        // The filter is created lazily here rather than during batch creation to
+        // avoid overhead when metadata filtering isn't used.
         if batch.metadata_bloom_filter.is_none() {
             match batch.create_bloom_filter() {
                 Ok(_) => {
@@ -76,6 +169,7 @@ impl CollectionPartition {
                     );
                 }
                 Err(e) => {
+                    // Non-fatal: System works without bloom filters, just slower filtering
                     tracing::warn!(
                         "⚠️ Failed to create bloom filter for batch {}: {}",
                         batch_id,
@@ -86,8 +180,12 @@ impl CollectionPartition {
         }
 
         // Update vector ID index for fast lookups
+        // Only index vectors with client-provided IDs (non-empty).
+        // This secondary index enables O(1) retrieval by vector ID.
+        // Trade-off: Extra memory for index vs fast lookups.
         for vector_record in batch.vector_records.iter() {
             if !vector_record.id.is_empty() {
+                // Clone is necessary as we need owned strings in the index
                 self.vector_id_index
                     .insert(vector_record.id.clone(), batch_id.clone());
             }
@@ -105,8 +203,23 @@ impl CollectionPartition {
     }
 
     /// Get vector by ID within this collection with MVCC + logical delete support
+    ///
+    /// Implements Multi-Version Concurrency Control (MVCC) by:
+    /// 1. Finding all versions of a vector across batches
+    /// 2. Selecting the latest version based on version number and timestamp
+    /// 3. Checking TTL expiration for temporal validity
+    /// 4. Verifying the vector isn't logically deleted
+    ///
+    /// # MVCC Resolution Strategy
+    /// - Primary: Higher version number wins
+    /// - Secondary: If versions equal, newer timestamp wins
+    /// - Tertiary: Check TTL expiration
+    ///
+    /// # Returns
+    /// - `Some(VectorRecord)` - Latest valid version of the vector
+    /// - `None` - Vector not found, expired, or deleted
     fn vector_by_id(&self, vector_id: &str) -> Option<VectorRecord> {
-        // 🔧 FLEXIBLE: Skip immutable vectors (those without client-provided IDs)
+        // Skip if no ID provided (immutable vectors don't have IDs)
         if vector_id.is_empty() {
             return None;
         }

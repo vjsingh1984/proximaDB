@@ -11,13 +11,12 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use proximadb::core::search::{
-        DeduplicationStorageEngine, MultiTierDeduplicator, SearchResult, StorageTier,
-        TieredSearchCandidate,
+        DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate, DataFreshnessTier,
     };
     use proximadb::core::{
         ComparisonOperator, FieldQuery, MetadataQuery, MetadataQueryBuilder, MetadataQueryEngine,
-        VectorRecord,
     };
+    use proximadb::proto::proximadb::VectorRecord;
 
     /// Create a test vector record with metadata
     fn create_test_vector(id: &str, metadata: HashMap<String, serde_json::Value>) -> VectorRecord {
@@ -57,25 +56,24 @@ mod tests {
             .collect();
 
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: metadata_items,
             timestamp: Utc::now().timestamp() as u32,
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
+            source: None,
         }
     }
 
     /// Create test tiered search result
-    fn create_tiered_result(vector_record: VectorRecord, score: f32) -> TieredSearchCandidate {
+    fn create_tiered_result(vector_record: VectorRecord, similarity: f32) -> TieredSearchCandidate {
         TieredSearchCandidate {
             vector_record,
-            score,
-            tier: StorageTier::Unflushed,
+            similarity,
+            tier: DataFreshnessTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: chrono::Utc::now(),
             sequence: 0,
@@ -451,8 +449,8 @@ mod tests {
         let final_results = deduplicator.get_final_results(10);
 
         assert_eq!(final_results.len(), 1);
-        assert_eq!(final_results[0].vector_record.id, Some("vec1".to_string()));
-        assert_eq!(final_results[0].score, 0.9);
+        assert_eq!(final_results[0].vector_record.id, "vec1".to_string());
+        assert_eq!(final_results[0].similarity, 0.9);
     }
 
     #[test]

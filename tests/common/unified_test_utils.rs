@@ -14,15 +14,14 @@ use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 // Core ProximaDB imports
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
 use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
-use proximadb::core::hardware_capabilities::HardwareBackend;
-use proximadb::core::{BloomFilterConfig, SstConfig};
+use proximadb::core::config::{BloomFilterConfig, SstConfig};
 use proximadb::proto::proximadb::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, MetadataItem, StorageAssignment,
     StorageEngine, VectorRecord, metadata_item,
@@ -140,6 +139,7 @@ impl UnifiedTestEnvironment {
             distance_compute,
         )
         .await
+        .map_err(|e| anyhow::anyhow!("Failed to create SST storage: {}", e))
     }
 
     /// Create a VIPER storage engine for this environment
@@ -149,7 +149,12 @@ impl UnifiedTestEnvironment {
             self.collection_id
         );
 
-        ViperEngine::from_core_config(self.viper_config.clone(), self.filesystem.clone()).await
+        ViperEngine::new(
+            self.collection_id.clone(),
+            self.viper_config.clone(),
+            self.filesystem.clone(),
+            Arc::new(UnifiedDistanceCompute::default()),
+        ).await
     }
 
     /// Get the data directory path for SST operations
@@ -765,42 +770,46 @@ pub mod operations {
         top_k: usize,
     ) -> Result<Vec<proximadb::core::search::results::InternalSearchResult>> {
         let storage_url = build_sst_storage_url(environment);
+        let collection = Arc::new(environment.create_test_collection());
+        let search_params = Arc::new(proximadb::core::search::SearchParams::default());
+        let query_context = proximadb::storage::traits::StorageQueryContext {
+            search_params,
+            collection,
+        };
 
         // Direct production call
         engine
-            .search_vectors_unified(
-                environment.collection_id(),
-                &storage_url,
+            .search_vectors(
+                &query_context,
                 query_vector,
                 top_k,
-                &DistanceMetric::Cosine,
                 None,
-                true,
-                true,
             )
             .await
     }
 
     /// Search vectors in VIPER engine - REAL search, not simulated
     pub async fn search_vectors_viper(
-        engine: &proximadb::storage::engines::viper::ViperEngine,
+        engine: &proximadb::storage::engines::impls::viper::engine::ViperEngine,
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
     ) -> Result<Vec<proximadb::core::search::results::InternalSearchResult>> {
         let storage_url = build_viper_storage_url(environment);
+        let collection = Arc::new(environment.create_test_collection());
+        let search_params = Arc::new(proximadb::core::search::SearchParams::default());
+        let query_context = proximadb::storage::traits::StorageQueryContext {
+            search_params,
+            collection,
+        };
 
-        // Direct production call to VIPER's search_vectors_unified
+        // Direct production call to VIPER's search_vectors
         engine
-            .search_vectors_unified(
-                environment.collection_id(),
-                &storage_url,
+            .search_vectors(
+                &query_context,
                 query_vector,
                 top_k,
-                &DistanceMetric::Cosine,
                 None,
-                true,
-                true,
             )
             .await
     }
@@ -1037,10 +1046,10 @@ pub async fn flush_sst_with_block_stats(
         1.0
     };
 
-    // Extract block statistics from engine metrics
+    // Extract block statistics from engine metrics - use default if not available
     let blocks_created = flush_result
         .engine_metrics
-        .get(key)
+        .get("blocks_created")
         .and_then(|v| v.as_u64())
         .unwrap_or(1) as usize;
 

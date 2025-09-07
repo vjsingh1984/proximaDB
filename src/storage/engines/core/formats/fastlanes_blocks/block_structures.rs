@@ -1,5 +1,47 @@
-// Shared Block Structures for SST and SWIFT engines
-// Common data block, metadata, and layout structures
+//! # FastLanes Block Structures - High-Performance Columnar Storage Format
+//!
+//! This module implements the FastLanes block format, a SIMD-optimized columnar storage
+//! format shared between SST and SWIFT storage engines. FastLanes provides efficient
+//! encoding, compression, and access patterns for vector data.
+//!
+//! ## FastLanes Encoding Philosophy
+//!
+//! FastLanes is designed around SIMD-friendly data layouts that enable:
+//! - **Vectorized Operations**: Process multiple values in single CPU instructions
+//! - **Cache-Friendly Access**: Sequential memory access patterns
+//! - **Compression-Aware**: Encoding schemes that compress well
+//! - **Zero-Copy Deserialization**: Direct memory mapping when possible
+//!
+//! ## Block Structure Overview
+//!
+//! ```text
+//! ┌───────────────────────────────────────────────────────┐
+//! │                    FastLanes Data Block                │
+//! ├───────────────────────────────────────────────────────┤
+//! │ [1 byte]  Encoding Marker (BitPacked/Delta/etc)       │
+//! │ [4 bytes] Block ID (u32)                              │
+//! │ [Variable] Encoding Metadata                          │
+//! ├───────────────────────────────────────────────────────┤
+//! │           Vector Data (Columnar Layout)               │
+//! │ ┌──────────────────────────────────────────────────┐    │
+//! │ │ Dimension 0: [v0_d0, v1_d0, v2_d0, ...]       │    │
+//! │ │ Dimension 1: [v0_d1, v1_d1, v2_d1, ...]       │    │
+//! │ │ ...                                            │    │
+//! │ │ Dimension N: [v0_dN, v1_dN, v2_dN, ...]       │    │
+//! │ └──────────────────────────────────────────────────┘    │
+//! ├───────────────────────────────────────────────────────┤
+//! │           Quantized Vectors (Optional)                │
+//! │ ┌──────────────────────────────────────────────────┐    │
+//! │ │ Binary: 1-bit per dimension                    │    │
+//! │ │ INT8: 8-bit quantized values                   │    │
+//! │ │ PQ: Product quantization codes                 │    │
+//! │ └──────────────────────────────────────────────────┘    │
+//! ├───────────────────────────────────────────────────────┤
+//! │ Metadata (IDs, timestamps, custom fields)             │
+//! │ Bloom Filter (for existence checks)                   │
+//! │ Statistics (min/max, cardinality, etc)                │
+//! └───────────────────────────────────────────────────────┘
+//! ```
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,6 +52,18 @@ use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 // Quantization now handled by unified compute module
 
 /// FastLanes encoding metadata for efficient vector block encoding
+///
+/// This metadata structure contains all information needed to decode
+/// a FastLanes-encoded block. Different encoding schemes require different
+/// metadata fields, hence the use of Option types.
+///
+/// ## Encoding Schemes Supported:
+/// - **BitPacked**: Dense packing of integers using minimum bits
+/// - **Delta**: Store deltas from previous value
+/// - **FrameOfReference**: Delta from a base value
+/// - **PatchedBase**: Base encoding with exceptions
+/// - **Dictionary**: Replace values with dictionary indices
+/// - **RunLength**: Compress runs of identical values
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastLanesMetadata {
     /// Encoding scheme used for this block
@@ -19,18 +73,22 @@ pub struct FastLanesMetadata {
     /// Number of vectors in this block
     pub vector_count: usize,
     /// Bits per value (for BitPacked encoding)
+    /// Example: If values fit in 12 bits, we pack them densely
     pub bits_per_value: Option<u8>,
     /// Base value (for Delta/FrameOfReference)
+    /// All values are stored as offsets from this base
     pub base_value: Option<i64>,
     /// Dictionary size (for Dictionary encoding)
+    /// Number of unique values in the dictionary
     pub dict_size: Option<usize>,
     /// Patch count (for PatchedBase)
+    /// Number of exceptions that don't fit base encoding
     pub patch_count: Option<usize>,
     /// Statistics for adaptive decoding
-    pub min_value: f32,
-    pub max_value: f32,
-    pub range_bits: u8,
-    /// Compression ratio achieved
+    pub min_value: f32,       // Minimum value in block
+    pub max_value: f32,       // Maximum value in block
+    pub range_bits: u8,       // Bits needed for value range
+    /// Compression ratio achieved (original_size / compressed_size)
     pub compression_ratio: f32,
 }
 
@@ -53,33 +111,50 @@ pub struct BlockMetadataStats {
 }
 
 /// Shared data block structure using FastLanes columnar encoding
-/// Used by SST and SWIFT engines for efficient SIMD-optimized storage
+/// 
+/// This is the core data structure for storing vectors in both SST and SWIFT engines.
+/// It provides SIMD-optimized columnar storage with multiple encoding schemes,
+/// quantization levels, and compression algorithms.
+///
+/// ## Design Principles:
+/// 1. **Columnar Layout**: Store each dimension separately for SIMD processing
+/// 2. **Adaptive Encoding**: Choose best encoding based on data characteristics
+/// 3. **Progressive Refinement**: Support multiple quantization levels
+/// 4. **Zero-Copy**: Enable direct memory mapping when possible
+/// 5. **Extensibility**: Encoding marker allows future format evolution
 #[derive(Debug, Clone)]
 pub struct FastLanesDataBlock {
     /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
+    /// 
+    /// This marker identifies the encoding scheme used for the block.
     /// Format: [7:4] Major encoding type | [3:0] Sub-variant
-    /// 0x00: Raw/Uncompressed (backward compatible)
-    /// 0x10-0x1F: FastLanes BitPacked variants
-    /// 0x20-0x2F: FastLanes Delta encoding
-    /// 0x30-0x3F: FastLanes FrameOfReference
-    /// 0x40-0x4F: FastLanes PatchedBase
-    /// 0x50-0x5F: FastLanes Dictionary
-    /// 0x60-0x6F: FastLanes RunLength
-    /// 0x70-0x7F: Reserved for future
+    /// 
+    /// Encoding Types:
+    /// - 0x00: Raw/Uncompressed (backward compatible)
+    /// - 0x10-0x1F: FastLanes BitPacked variants (pack integers using minimum bits)
+    /// - 0x20-0x2F: FastLanes Delta encoding (store differences)
+    /// - 0x30-0x3F: FastLanes FrameOfReference (delta from base value)
+    /// - 0x40-0x4F: FastLanes PatchedBase (base + exceptions)
+    /// - 0x50-0x5F: FastLanes Dictionary (replace with indices)
+    /// - 0x60-0x6F: FastLanes RunLength (compress repeated values)
+    /// - 0x70-0x7F: Reserved for future encoding schemes
     pub encoding_marker: u8,
 
     /// FastLanes encoding metadata (when marker != 0x00)
     pub encoding_metadata: Option<FastLanesMetadata>,
 
-    /// Block identification - u32 supports 4.3 billion blocks (4.3 trillion vectors)
-    /// This is sufficient for 34+ petabytes of storage
-    ///
-    /// Rationale for 4-byte u32 (future-proofing for larger files):
-    /// - With 384D vectors: ~2KB per vector (1.6KB data + 0.4KB metadata)
-    /// - 1MB blocks hold ~500 vectors
-    /// - 100GB file = 100,000 blocks (well within u32's limit)
-    /// - u16 (65,536) would be insufficient for large files
-    /// - u32 provides conservative headroom even though files rarely exceed 10GB in practice
+    /// Block identification - u32 supports 4.3 billion blocks
+    /// 
+    /// ## Capacity Planning:
+    /// - u32 = 4,294,967,296 blocks maximum
+    /// - With 1000 vectors/block = 4.3 trillion vectors
+    /// - With 384D vectors @ 2KB each = 8.6 petabytes
+    /// 
+    /// ## Why u32 instead of u16?
+    /// - u16 limit: 65,536 blocks = 65M vectors (too small)
+    /// - Real-world: 100GB file = 100,000 blocks (exceeds u16)
+    /// - u32 provides headroom for future growth
+    /// - 4 bytes overhead is negligible vs block size
     pub block_id: u32,
 
     /// Data organization
