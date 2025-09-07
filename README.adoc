@@ -21,11 +21,11 @@ _The Future of AI Search, Delivered Today_
 ****
 
 [.lead.text-center]
-**Transform Your AI Applications with Production-Ready Vector Search** +
-_Deploy in minutes. Scale on demand. Own your infrastructure._
+**Modern Vector Search Platform for AI Applications** +
+_Open-source. Hardware-optimized. Built from the ground up._
 
 [.text-center]
-image:https://img.shields.io/badge/Fortune%20500-Trusted-green[Enterprise] image:https://img.shields.io/badge/ROI-3--5x-blue[ROI] image:https://img.shields.io/badge/Deployment-5%20Minutes-orange[Quick Start]
+image:https://img.shields.io/badge/Status-Early%20Access-yellow[Status] image:https://img.shields.io/badge/License-Apache%202.0-blue[License] image:https://img.shields.io/badge/Rust-Performance-orange[Language]
 
 ---
 
@@ -33,66 +33,61 @@ toc::[]
 
 == 🎯 Executive Summary
 
-ProximaDB revolutionizes vector search by delivering **enterprise-grade performance in a single server**, eliminating the complexity and cost of distributed systems while maintaining the scalability your business demands.
+ProximaDB is a next-generation vector database designed to deliver **high-performance vector search with simplified architecture**, targeting reduced operational complexity and infrastructure costs through innovative storage engine design.
 
 [cols="1,1,1", frame=none, grid=none]
 |===
-^.^| **💰 90% Cost Reduction**
-Replace complex clusters
-with optimized single-server
-architecture
+^.^| **💰 Reduced Complexity**
+Optimized architecture
+designed for efficiency
+and simplicity
 
-^.^| **⚡ 3x Faster Performance**
-Patented 7-phase optimization
-delivers sub-millisecond
-search latency
+^.^| **⚡ Hardware Optimized**
+7-phase search pipeline
+with SIMD acceleration
+and adaptive storage
 
-^.^| **🚀 5-Minute Deployment**
-From download to production
-in minutes, not weeks
-or months
+^.^| **🚀 Quick Start**
+Docker-based deployment
+with minimal configuration
+requirements
 |===
 
-== 📊 Business Impact
+== 📊 Technical Advantages
 
-=== Return on Investment
+=== Architecture Benefits
 
-[cols="2,1,1,1", options="header"]
+[cols="2,1,1", options="header"]
 |===
-| Metric | Traditional Solutions | ProximaDB | Your Savings
+| Feature | Traditional Approach | ProximaDB Approach
 
-| **Infrastructure Cost**
-| $50,000-200,000/year
-| $5,000-20,000/year
-| 90% reduction
+| **Storage Architecture**
+| Single engine for all workloads
+| 7 specialized engines optimized for different patterns
 
-| **Engineering Resources**
-| 3-5 dedicated engineers
-| 0.5-1 engineer
-| 80% reduction
+| **Hardware Utilization**
+| Generic implementation
+| Auto-detection and use of SIMD/GPU acceleration
 
-| **Time to Market**
-| 3-6 months
-| 1 week
-| 95% faster
+| **Memory Management**
+| Standard allocation
+| Zero-copy operations with memory-mapped files
 
-| **Operational Overhead**
-| 24/7 monitoring required
-| Self-managing
-| Near zero
+| **Search Pipeline**
+| Single-phase search
+| Progressive 7-phase refinement
 |===
 
-=== Customer Success Stories
+=== Performance Benchmarks
 
-[quote, CTO, Fortune 500 Retailer]
-____
-ProximaDB reduced our recommendation system latency by 65% while cutting infrastructure costs by $2.8M annually. The single-server architecture eliminated our DevOps bottlenecks completely.
-____
+**Early benchmark results show promising performance:**
 
-[quote, VP Engineering, Leading FinTech]
-____
-We replaced our 12-node Elasticsearch cluster with a single ProximaDB instance, improving fraud detection speed by 3x while reducing false positives by 40%.
-____
+* **Distance Computation**: 13.5M - 20.8M ops/sec (128D vectors)
+* **Search Latency**: Sub-microsecond for small dimensions
+* **Memory Efficiency**: 45-65% reduction through progressive search
+* **Hardware Acceleration**: Automatic SIMD optimization across platforms
+
+_Note: These are preliminary benchmarks from our test environment. Production performance may vary based on hardware and workload._
 
 == 🎯 Strategic Advantages
 
@@ -123,73 +118,68 @@ ____
 | Production-ready in minutes, intuitive APIs, zero-downtime migration tools
 |===
 
-== 🏢 Industry Solutions
+== 🏢 Potential Use Cases
 
-=== Tailored for Your Sector
+=== Ideal for Early-Stage AI Projects
 
 [cols="1,3", frame=none]
 |===
-| **🛍️ Retail & E-Commerce**
+| **🛍️ E-Commerce Startups**
 a| 
-* Real-time product recommendations
-* Visual similarity search
-* Inventory optimization
-* Customer behavior analysis
-* _Case Study: 42% increase in conversion rates_
+* Build MVP recommendation systems quickly
+* Prototype visual search features
+* Test similarity-based product discovery
+* Experiment with personalization algorithms
 
-| **🏦 Financial Services**
+| **🤖 AI/ML Developers**
 a|
-* Fraud pattern detection
-* Risk assessment models
-* Customer intelligence
-* Regulatory compliance search
-* _Case Study: 3x faster fraud detection, 40% fewer false positives_
+* RAG (Retrieval Augmented Generation) applications
+* Semantic search for documentation
+* Embedding storage for LLM applications
+* Prototype similarity matching systems
 
-| **🏥 Healthcare & Life Sciences**
+| **📊 Data Science Teams**
 a|
-* Medical image similarity
-* Patient cohort analysis
-* Drug discovery acceleration
-* Clinical trial matching
-* _Case Study: 60% reduction in diagnostic time_
+* Vector similarity experiments
+* Feature store for ML models
+* Clustering and classification tasks
+* Proof-of-concept development
 
-| **📚 Knowledge Management**
+| **🔬 Research Projects**
 a|
-* Semantic document search
-* Intelligent Q&A systems
-* Content deduplication
-* Expertise location
-* _Case Study: 75% improvement in search relevance_
+* Academic research in vector search
+* Benchmark different search algorithms
+* Test quantization strategies
+* Evaluate storage optimizations
 
-| **🎮 Media & Entertainment**
+| **🚀 Startups & MVPs**
 a|
-* Content recommendation
-* Automated tagging
-* Duplicate detection
-* Personalization engines
-* _Case Study: 2.5x engagement improvement_
+* Quick prototype development
+* Test market fit with vector search
+* Build demo applications
+* Validate use cases before scaling
 |===
 
 == 💎 Key Differentiators
 
-=== Patent-Pending Technology
+=== Technical Innovation
 
 [cols="1,1,1", frame=none, grid=none]
 |===
-^.^| **7-Phase Progressive Search™**
-Our revolutionary pipeline reduces
-search space by 95% while
-maintaining 99.9% accuracy
+^.^| **7-Phase Progressive Search**
+Multi-stage pipeline that progressively
+refines search results from coarse
+to fine-grained matching
 
-^.^| **Adaptive Storage Engines**
-6 specialized engines automatically
-optimize for your workload
-without manual configuration
+^.^| **7 Specialized Storage Engines**
+Different engines optimized for
+specific workload patterns
+(SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX)
 
-^.^| **Hardware Acceleration**
-Automatic detection and utilization
-of SIMD, GPU, and specialized
-hardware for maximum performance
+^.^| **Hardware Optimization**
+Automatic detection and use of
+SIMD instructions (AVX-512, AVX2, NEON)
+for accelerated distance computation
 |===
 
 === Performance Benchmarks
@@ -240,62 +230,48 @@ graph LR
 | Full production cutover, decommission legacy systems
 |===
 
-== 💼 Pricing & Licensing
+== 🔓 Open Source Project
 
-=== Transparent, Predictable Pricing
+=== Apache 2.0 License
 
-[cols="1,2,1,2", options="header"]
-|===
-| Edition | Best For | Price | Features
+**ProximaDB is 100% open source and free to use**
 
-| **Community**
-| Startups, POCs
-| Free
-| Full features, community support
+* ✅ **Free for any use** - Commercial or non-commercial
+* ✅ **No vendor lock-in** - Full control over your data and deployment
+* ✅ **Community-driven** - We welcome contributions and feedback
+* ✅ **Transparent development** - All development happens in the open
 
-| **Professional**
-| Growing businesses
-| $2,000/month
-| Priority support, advanced monitoring
+=== Early Access Program
 
-| **Enterprise**
-| Large organizations
-| Custom
-| SLA, dedicated support, custom features
+**We're seeking early adopters to help shape ProximaDB's future:**
 
-| **Cloud Managed**
-| Zero operations
-| $0.50/hour
-| Fully managed, auto-scaling, backups
-|===
+* Provide feedback on features and performance
+* Help identify use cases and requirements
+* Contribute to the codebase and documentation
+* Join our growing community of vector search enthusiasts
 
-=== Open Source Commitment
+_Contact us at singhvjd@gmail.com to discuss your use case._
 
-* ✅ Apache 2.0 License - use freely in commercial applications
-* ✅ No vendor lock-in - export your data anytime
-* ✅ Community-driven development - influence the roadmap
-* ✅ Transparent development - all code publicly available
+== 🎯 Getting Started
 
-== 🎯 Next Steps
-
-=== Get Started Today
+=== Quick Start Guide
 
 [cols="1,1,1", frame=none, grid=none]
 |===
-^.^| **📞 Schedule a Demo**
-See ProximaDB in action
-with your use case
-link:https://proximadb.com/demo[Book 30-min call]
+^.^| **📦 Clone & Build**
+Get the source code
+and build locally
+`git clone https://github.com/vjsingh1984/proximaDB`
 
-^.^| **📦 Try It Now**
-Deploy in your environment
-in under 5 minutes
-link:https://proximadb.com/quickstart[Download Now]
+^.^| **🐳 Docker Deploy**
+Run with Docker
+for quick testing
+`docker run -p 5678:5678 proximadb/proximadb:latest`
 
-^.^| **📊 ROI Calculator**
-Calculate your savings
-and performance gains
-link:https://proximadb.com/roi[Calculate ROI]
+^.^| **📖 Documentation**
+Explore the docs
+and examples
+See `/docs` folder
 |===
 
 === Quick Deploy
@@ -309,32 +285,32 @@ docker run -d -p 5678:5678 proximadb/proximadb:latest
 # Access at http://localhost:5678
 ----
 
-== 📈 Proven Results
+== 📈 Project Status
 
 [cols="1,1,1,1", frame=none, grid=none]
 |===
-^.^| **2.5-3x**
-Faster searches
+^.^| **Early Access**
+Pre-release stage
 
-^.^| **90%**
-Cost reduction
+^.^| **7 Engines**
+Multi-engine architecture
 
-^.^| **99.9%**
-Uptime SLA
+^.^| **Open Source**
+Apache 2.0 License
 
-^.^| **5 minutes**
-To production
+^.^| **Active Development**
+Regular updates
 |===
 
-== 🤝 Trusted By Industry Leaders
+== 🤝 Join Our Early Adopter Program
 
 [.text-center]
-_ProximaDB powers mission-critical AI applications for Fortune 500 companies across industries_
+_We're looking for early adopters to help shape ProximaDB's future_
 
-* **Retail Giants**: Powering 100M+ daily recommendations
-* **Financial Institutions**: Processing 10M+ fraud checks/hour
-* **Healthcare Networks**: Analyzing 1B+ medical records
-* **Tech Innovators**: Enabling next-gen AI applications
+* **Provide Feedback**: Help us understand your use cases and requirements
+* **Test Performance**: Benchmark against your workloads
+* **Contribute Code**: Join our open-source development effort
+* **Shape the Roadmap**: Influence feature prioritization
 
 == 📞 Contact Our Team
 
@@ -356,8 +332,8 @@ Global partner network
 ---
 
 [.text-center]
-**ProximaDB** - _Where Simplicity Meets Scale_ +
-🌐 link:https://proximadb.com[proximadb.com] | 🐦 link:https://twitter.com/proximadb[@proximadb] | 💼 link:https://linkedin.com/company/proximadb[LinkedIn] | ⭐ link:https://github.com/proximadb/proximadb[GitHub]
+**ProximaDB** - _High-Performance Vector Search, Simplified_ +
+⭐ link:https://github.com/vjsingh1984/proximaDB[GitHub] | 💼 link:https://www.linkedin.com/company/proximadb[LinkedIn] | 📧 singhvjd@gmail.com
 
 [.small.text-center]
-© 2025 ProximaDB Inc. All rights reserved. ProximaDB and Progressive Search are trademarks of ProximaDB Inc.
+© 2025 ProximaDB Project. Apache 2.0 License.
