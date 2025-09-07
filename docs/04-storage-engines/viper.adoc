@@ -51,22 +51,22 @@ The VIPER engine leverages Apache Parquet's columnar format to provide exception
 ----
 graph TD
     subgraph "VIPER Engine Components"
-        VE[ViperEngine<br/>2,117 lines]
-        VP[ViperPipeline<br/>3,538 lines]
-        VF[Flush Manager<br/>1,608 lines]
-        VC[Compaction<br/>1,954 lines]
+        VE["ViperEngine<br/>22,581 lines"]
+        VP["ViperPipeline<br/>3,538 lines"]
+        VF["Flush Manager<br/>1,608 lines"]
+        VC["Compaction<br/>1,954 lines"]
     end
     
     subgraph "Shared Infrastructure"
-        CM[Columnar Module<br/>Common]
-        QE[Quantization Engine<br/>Unified]
-        EL[EventLog Queue]
+        CM["Columnar Module<br/>Common"]
+        QE["Quantization Engine<br/>Unified"]
+        EL["EventLog Queue"]
     end
     
     subgraph "Parquet Layer"
-        PW[StreamingParquetWriter]
-        PR[UnifiedParquetReader]
-        CF[Column Filter<br/>541 lines]
+        PW["StreamingParquetWriter"]
+        PR["UnifiedParquetReader"]
+        CF["Column Filter<br/>541 lines"]
     end
     
     VE --> VP
@@ -75,25 +75,13 @@ graph TD
     VE --> CM
     VE --> QE
     VF --> EL
-        
-        subgraph "Row Group 2"
-            C4[Vector Column<br/>Compressed]
-            C5[ID Column<br/>Dictionary]
-            C6[Metadata Column<br/>RLE Encoded]
-            S2[Column Statistics]
-        end
-        
-        F[File Footer<br/>Schema + Metadata]
-    end
+    VC --> PR
+    PR --> CF
     
-    H --> C1
-    C3 --> C4
-    C6 --> F
-    
-    style C1 fill:#e8f5e9
-    style C4 fill:#e8f5e9
-    style S1 fill:#fff3e0
-    style S2 fill:#fff3e0
+    style VE fill:#e8f5e9
+    style VP fill:#e8f5e9
+    style CM fill:#fff3e0
+    style QE fill:#fff3e0
 ----
 
 === Write Path
