@@ -4,7 +4,8 @@
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::storage::engines::universal::*;
+    use crate::storage::engines::universal::adapter::*;
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
     use uuid::Uuid;
@@ -55,8 +56,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_engine_adapters() {
-        use super::config::StorageEngineConfig;
-        use super::storage_integration::*;
+        use crate::storage::engines::universal::config::StorageEngineConfig;
+        use crate::storage::engines::universal::storage_integration::*;
 
         // Test PRISM adapter
         let prism_config = StorageEngineConfig::prism_default();
@@ -79,7 +80,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_conversion() {
-        use super::conversion::*;
+        use crate::storage::engines::universal::conversion::*;
 
         let converter = FormatConverter::new().await.unwrap();
 
@@ -99,8 +100,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_quantized_calculator() {
-        use super::config::UniversalAdapterConfig;
-        use super::quantized_calculator::*;
+        use crate::storage::engines::universal::config::UniversalAdapterConfig;
+        use crate::storage::engines::universal::quantized_calculator::*;
         use crate::core::hardware_capabilities::HardwareCapabilities;
 
         let config = UniversalAdapterConfig::default();
@@ -116,8 +117,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_hardware_acceleration_manager() {
-        use super::config::HardwareAccelerationConfig;
-        use super::hardware_manager::*;
+        use crate::storage::engines::universal::config::HardwareAccelerationConfig;
+        use crate::storage::engines::universal::hardware_manager::*;
         use crate::core::hardware_capabilities::HardwareCapabilities;
 
         let config = HardwareAccelerationConfig::default();
@@ -140,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_storage_format_properties() {
-        use super::conversion::StorageFormat;
+        use crate::storage::engines::universal::conversion::StorageFormat;
 
         let fp32_format = StorageFormat::FP32;
         assert_eq!(fp32_format.data_size_per_vector(128), 512);

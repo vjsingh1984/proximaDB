@@ -332,7 +332,7 @@ mod tests {
 
         // Should recommend faster tier for HNSW if accessed
         if let Some(rec) = recommendation {
-            debug!(
+            tracing::debug!(
                 "Recommendation: {} -> {:?}",
                 rec.collection_id, rec.recommended_tier
             );
