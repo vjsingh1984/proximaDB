@@ -133,7 +133,7 @@
     </circle>
   </g>
 
-  <!-- ProximaDB Text with proper spacing - no overlap -->
+  <!-- ProximaDB Text with increased spacing to eliminate overlap -->
   <g transform="translate(85, 0)">
     <!-- "Proxima" text -->
     <text x="0" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
@@ -141,8 +141,8 @@
       Proxima
     </text>
     
-    <!-- "DB" text with proper spacing to prevent overlap -->
-    <text x="115" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+    <!-- "DB" text with increased spacing to fully prevent overlap -->
+    <text x="125" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
           font-size="32" font-weight="800" fill="url(#proximaGradient)">
       DB
     </text>
