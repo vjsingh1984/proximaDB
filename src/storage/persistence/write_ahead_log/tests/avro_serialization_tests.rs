@@ -524,14 +524,7 @@ mod integration_tests {
 
         async fn search_vectors_unified(
             &self,
-            _collection_id: &str,
-            _storage_url: &str,
-            _query_vector: &[f32],
-            _k: usize,
-            _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-            _metadata_filters: Option<&crate::core::search::FilterExpression>,
-            _include_vectors: bool,
-            _include_metadata: bool,
+            _request: crate::core::search::UnifiedSearchRequest,
         ) -> Result<Vec<crate::core::search::SearchResult>> {
             Ok(vec![])
         }

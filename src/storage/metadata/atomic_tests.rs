@@ -9,7 +9,7 @@ mod tests {
         StagingConfig, TransactionCoordinator, TransactionStageType,
     };
     use super::super::{
-        AccessPattern, CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
+        MetadataFilter, MetadataOperation, MetadataStorageStats,
         MetadataStoreInterface, SystemMetadata, write_ahead_log::MetadataWALConfig,
     };
     use crate::storage::metadata::atomic::{

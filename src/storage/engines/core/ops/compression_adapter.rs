@@ -534,7 +534,7 @@ impl CompressionPerformanceStats {
 mod tests {
     use super::*;
     use crate::storage::engines::core::ops::compression_common::{
-        AdaptiveCompressionSettings, AdaptiveStrategy, CompressionData,
+        AdaptiveCompressionSettings, AdaptiveStrategy,
         ContextAwareCompressionConfig, UniversalCompressionConfig,
     };
 

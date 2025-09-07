@@ -787,7 +787,8 @@ impl Default for BatchOperationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::engines::core::formats::row_based::index_structures::IndexConfiguration;
+    // IndexConfiguration moved to a different module or is no longer needed
+    // use crate::storage::engines::core::formats::row_based::index_structures::IndexConfiguration;
 
     #[tokio::test]
     async fn test_batch_operations_creation() {

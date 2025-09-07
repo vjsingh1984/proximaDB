@@ -154,7 +154,7 @@ impl StorageEngineFactory {
         info!("Creating VIPER storage engine");
         // VIPER needs async initialization, block on it for now
         // TODO: Consider making factory methods async
-        let runtime = tokio::runtime::Runtime::new()?
+        let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
             let filesystem_config =
                 crate::storage::persistence::filesystem::FilesystemConfig::default();
@@ -192,7 +192,7 @@ impl StorageEngineFactory {
     fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
         // SST needs async initialization, block on it for now
-        let runtime = tokio::runtime::Runtime::new()?
+        let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
             let sst_config = crate::core::config::SstConfig::default();
             let filesystem_config =

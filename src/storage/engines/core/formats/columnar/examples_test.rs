@@ -7,6 +7,7 @@
 //! - Progressive search for fast similarity queries
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -20,7 +21,7 @@ pub async fn viper_optimization_example() -> Result<()> {
     println!("=== VIPER Engine Optimization Example ===");
 
     // Initialize hardware capabilities
-    let _ = HardwareCapabilities::initialize_default();
+    let _ = HardwareCapabilities::initialize_hardware_capabilities_default();
 
     // Setup
     let temp_dir = tempdir()?;
@@ -76,18 +77,20 @@ pub async fn viper_optimization_example() -> Result<()> {
         for i in 0..10_000 {
             let vector: Vec<f32> = (0..768).map(|j| ((i + j) as f32) * 0.001).collect();
 
+            let mut metadata = HashMap::new();
+            metadata.insert("category".to_string(), serde_json::json!(format!("cat_{}", i % 10)));
+            metadata.insert("batch_id".to_string(), serde_json::json!(i / 1000));
+
             let record = VectorRecord {
                 id: if !recommendations.use_id_less_storage {
-                    Some(format!("viper_vec_{:06}", i))
+                    format!("viper_vec_{:06}", i)
                 } else {
-                    None // ID-less storage uses implicit IDs
+                    format!("implicit_{:06}", i) // ID-less storage uses implicit IDs
                 },
+                collection_id: "viper_example".to_string(),
                 vector,
-                metadata: Some(serde_json::json!({
-                    "category": format!("cat_{}", i % 10),
-                    "batch_id": i / 1000,
-                })),
-                timestamp: i as u32,
+                metadata,
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -137,7 +140,6 @@ pub async fn viper_optimization_example() -> Result<()> {
                 &query_vector,
                 10, // top-10
                 &crate::compute::distance_computation::DistanceMetric::Cosine,
-                None,
             )
             .await?;
 
@@ -147,7 +149,7 @@ pub async fn viper_optimization_example() -> Result<()> {
         );
 
         // Test optimized batch lookup
-        let test_ids = if recommendations.use_id_less_storage {
+        let test_ids: Vec<String> = if recommendations.use_id_less_storage {
             // Generate implicit IDs
             (0..5)
                 .map(|i| IdLessLookup::generate_implicit_id(0, i))
@@ -247,20 +249,22 @@ pub async fn nova_optimization_example() -> Result<()> {
                 })
                 .collect();
 
+            let mut metadata = HashMap::new();
+            metadata.insert("department".to_string(), serde_json::json!(format!("dept_{}", i % 50)));
+            metadata.insert("project_id".to_string(), serde_json::json!(i / 5000));
+            metadata.insert("data_source".to_string(), serde_json::json!("analytics_pipeline"));
+            metadata.insert("embedding_model".to_string(), serde_json::json!("text-embedding-ada-002"));
+
             let record = VectorRecord {
                 id: if !recommendations.use_id_less_storage {
-                    Some(format!("nova_analytics_{:08}", i))
+                    format!("nova_analytics_{:08}", i)
                 } else {
-                    None // ID-less saves ~8 bytes per vector
+                    format!("implicit_{:08}", i) // ID-less saves ~8 bytes per vector
                 },
+                collection_id: "nova_example".to_string(),
                 vector,
-                metadata: Some(serde_json::json!({
-                    "department": format!("dept_{}", i % 50),
-                    "project_id": i / 5000,
-                    "data_source": "analytics_pipeline",
-                    "embedding_model": "text-embedding-ada-002",
-                })),
-                timestamp: (1700000000 + i) as u32,
+                metadata,
+                timestamp: (1700000000 + i) as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -298,7 +302,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             ..Default::default()
         };
 
-        let reader = UnifiedParquetReader::with_id_less_mode(filesystem, config);
+        let reader = UnifiedParquetReader::with_id_less_mode(filesystem, config).await?;
 
         println!("📊 NOVA Analytical Queries:");
 

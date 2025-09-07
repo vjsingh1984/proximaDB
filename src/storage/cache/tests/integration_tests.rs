@@ -296,15 +296,12 @@ async fn test_config_hot_reload() {
 async fn simulate_vector_workload(orchestrator: &CrossCacheOrchestrator, cache: &Arc<VectorStore>) {
     for i in 0..50 {
         let record = VectorRecord {
-            id: Some(format!("vec{}", i)),
+            id: format!("vec{}", i),
             vector: vec![i as f32; 128],
-            metadata: vec![],
+            metadata: None,
             timestamp: 0,
             updated_at: Some(0),
             expires_at: None,
-            similarity: None,
-            // rank removed -  None,
-            similarity: None,
             ..Default::default()
         };
 

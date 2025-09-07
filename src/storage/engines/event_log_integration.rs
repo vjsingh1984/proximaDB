@@ -313,6 +313,7 @@ mod tests {
             base_storage_url: base_url,
             max_events_in_memory: 100,
             cleanup_interval_secs: 60,
+            enable_recovery: true,
         };
 
         let event_log =

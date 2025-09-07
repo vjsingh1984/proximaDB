@@ -1,3 +1,34 @@
+//! # Vector Store Cache Module
+//!
+//! Specialized cache implementation for high-dimensional vector data with
+//! collection-aware partitioning and batch operation optimizations.
+//!
+//! ## Design Philosophy
+//!
+//! While this module provides in-memory caching for vectors, it's being phased
+//! out in favor of OS page cache + zero-copy I/O for several reasons:
+//!
+//! 1. **Memory Efficiency**: High-dimensional vectors (768-1536 dims) consume
+//!    significant memory. OS page cache manages this better.
+//!
+//! 2. **Zero-Copy Benefits**: Direct memory mapping eliminates serialization
+//!    overhead and reduces CPU usage.
+//!
+//! 3. **Automatic Eviction**: OS kernel's LRU page eviction is more sophisticated
+//!    than application-level cache eviction.
+//!
+//! ## Migration Path
+//!
+//! ```rust
+//! // Old approach (VectorStore)
+//! let cache = VectorStore::new(1024);
+//! cache.put("vec_123", vector).await;
+//!
+//! // New approach (ZeroCopyIOSystem)
+//! let zero_copy = ZeroCopyIOSystem::new();
+//! zero_copy.mmap_file("vectors/vec_123.bin")?;
+//! ```
+
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
@@ -16,6 +47,19 @@ use serde::{Deserialize, Serialize};
 /// Use `ZeroCopyIOSystem` with filename-based cache keys instead.
 
 /// Partitioned key for collection-aware storage
+///
+/// ## Purpose:
+///
+/// Enables collection-level isolation in the cache, preventing one collection's
+/// vectors from evicting another's. This is critical for multi-tenant scenarios.
+///
+/// ## Key Format:
+///
+/// The key combines collection_id and vector_id to create a unique identifier:
+/// - `collection_id`: Namespace for isolation
+/// - `vector_id`: Unique within the collection
+///
+/// Example: `{"collection_id": "products", "vector_id": "sku_12345"}`
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartitionedVectorKey {
     pub collection_id: String,

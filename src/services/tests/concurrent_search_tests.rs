@@ -172,7 +172,7 @@ mod tests {
                 // 3. Search indexes OR storage (not both if indexes exist)
                 // 4. Merge results
 
-                if phases.is_none() {
+                if phases.is_empty() {
                     return false;
                 }
 
@@ -182,7 +182,7 @@ mod tests {
                 }
 
                 // WAL scan should happen
-                if !phases.contains_hash(&SearchPhase::ScanWal) {
+                if !phases.contains(&SearchPhase::ScanWal) {
                     return false;
                 }
 
@@ -317,7 +317,7 @@ mod tests {
                 let storage = self.storage_filters.read().await;
 
                 // All layers should have the same filter
-                wal.contains_hash(&expected_filter.to_string())
+                wal.contains(&expected_filter.to_string())
                     && (index.contains_hash(&expected_filter.to_string())
                         || storage.contains_hash(&expected_filter.to_string()))
             }

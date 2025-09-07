@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_engine_type_serialization() {
-        use super::storage_integration::EngineType;
+        use crate::storage::engines::universal::storage_integration::EngineType;
 
         let engine_types = vec![
             EngineType::PRISM,
@@ -199,8 +199,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_adapter_vector_conversion() {
-        use super::config::StorageEngineConfig;
-        use super::storage_integration::*;
+        use crate::storage::engines::universal::config::StorageEngineConfig;
+        use crate::storage::engines::universal::storage_integration::*;
 
         let config = StorageEngineConfig::prism_default();
         let adapter = PRISMAdapter::new(&config).await.unwrap();
@@ -228,8 +228,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_usage_estimation() {
-        use super::config::StorageEngineConfig;
-        use super::storage_integration::*;
+        use crate::storage::engines::universal::config::StorageEngineConfig;
+        use crate::storage::engines::universal::storage_integration::*;
 
         let config = StorageEngineConfig::nova_default();
         let adapter = NOVAAdapter::new(&config).await.unwrap();

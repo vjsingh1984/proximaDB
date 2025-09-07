@@ -3,14 +3,68 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Metadata Storage System with WAL backing and filesystem abstraction
+//! # Metadata Storage System
 //!
-//! This module provides a robust metadata storage system that:
-//! - Uses Avro WAL for durability and schema evolution
-//! - Supports atomic operations with MVCC
-//! - Uses B+Tree memtable for sorted access patterns
-//! - Abstracts storage backends (file:, s3:, adls:, gcs:)
-//! - Enables compute-storage separation for serverless deployment
+//! This module provides ProximaDB's robust metadata storage infrastructure that
+//! manages collection configurations, statistics, and system metadata with
+//! ACID guarantees and cloud-native storage support.
+//!
+//! ## Architecture Overview
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────┐
+//! │            API Layer (CRUD Operations)        │
+//! ├──────────────────────────────────────────────┤
+//! │         Atomic Operations (MVCC)              │
+//! ├──────────────────────────────────────────────┤
+//! │    WAL (Write-Ahead Log) │ B+Tree MemTable   │
+//! ├──────────────────────────────────────────────┤
+//! │         Unified Storage Backend               │
+//! │    (Local FS / S3 / Azure / GCS)             │
+//! └──────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Key Features
+//!
+//! ### 1. **ACID Guarantees**
+//! - **Atomicity**: All-or-nothing operations via WAL
+//! - **Consistency**: Schema validation and invariant checks
+//! - **Isolation**: MVCC (Multi-Version Concurrency Control)
+//! - **Durability**: WAL ensures crash recovery
+//!
+//! ### 2. **Schema Evolution**
+//! - Avro format for backward/forward compatibility
+//! - Versioned metadata with migration support
+//! - Zero-downtime schema updates
+//!
+//! ### 3. **Cloud-Native Storage**
+//! - Unified abstraction over storage backends
+//! - Support for S3, Azure Blob, Google Cloud Storage
+//! - Compute-storage separation for serverless
+//! - Automatic retry and failover
+//!
+//! ### 4. **Performance Optimizations**
+//! - B+Tree memtable for sorted range queries
+//! - Checkpoint mechanism to compact WAL
+//! - Batch operations for efficiency
+//! - Async I/O throughout
+//!
+//! ## Design Principles
+//!
+//! 1. **Write-Ahead Logging**: Every mutation goes through WAL first
+//! 2. **Eventual Consistency**: Async checkpoint to persistent storage
+//! 3. **Schema-First**: All metadata has defined Avro schemas
+//! 4. **Cloud-First**: Designed for object storage semantics
+//! 5. **Recovery-Oriented**: Built-in crash recovery and repair
+//!
+//! ## Module Organization
+//!
+//! - **`atomic/`**: MVCC transactions and isolation levels
+//! - **`backends/`**: Storage backend implementations (S3, Azure, GCS)
+//! - **`checkpoint/`**: WAL compaction and checkpointing
+//! - **`indexes/`**: Secondary indexes for metadata queries
+//! - **`store/`**: Main metadata store implementation
+//! - **`write_ahead_log/`**: WAL for durability
 
 pub use crate::storage::transaction_coordinator;
 pub mod atomic;

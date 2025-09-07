@@ -14,9 +14,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::{Config, VectorRecord};
     use crate::proto::proximadb::{MetadataItem, VectorRecord as ProtoVectorRecord, metadata_item};
-    use crate::services::operations::vectors::{
-        OptimizedFormat, VectorOperationsService, WorkloadType,
-    };
+    use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstStorage;
     use crate::storage::engines::impls::viper::ViperEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;

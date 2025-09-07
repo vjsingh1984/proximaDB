@@ -1,4 +1,63 @@
-//! Core ProximaDB error types
+//! # Core Error Handling Module
+//!
+//! This module defines ProximaDB's comprehensive error handling system with
+//! structured error types, automatic conversions, and serialization support
+//! for network transmission.
+//!
+//! ## Design Philosophy
+//!
+//! 1. **Structured Errors**: Each error category has its own enum variant
+//! 2. **Contextual Information**: Errors include relevant context (IDs, types)
+//! 3. **Network-Ready**: All errors are serializable for gRPC/REST responses
+//! 4. **Automatic Conversion**: `From` traits for seamless error propagation
+//! 5. **User-Friendly**: Clear error messages for debugging and logging
+//!
+//! ## Error Categories
+//!
+//! ### Configuration Errors
+//! - Invalid configuration values
+//! - Missing required settings
+//! - Environment variable issues
+//!
+//! ### Storage Errors
+//! - Disk I/O failures
+//! - WAL corruption
+//! - Compaction failures
+//! - Lock contention
+//!
+//! ### Service Errors
+//! - RPC failures
+//! - Timeout issues
+//! - Resource exhaustion
+//!
+//! ### Index Errors
+//! - Index build failures
+//! - Search errors
+//! - Quantization issues
+//!
+//! ## Error Propagation
+//!
+//! ```rust
+//! // Automatic conversion with ? operator
+//! fn process_vector() -> Result<(), ProximaDBError> {
+//!     let config = load_config()?;  // ConfigError -> ProximaDBError
+//!     let storage = open_storage()?; // StorageError -> ProximaDBError
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Network Serialization
+//!
+//! All errors implement Serialize/Deserialize for network transmission:
+//!
+//! ```rust
+//! // Convert to gRPC status
+//! let status = match error {
+//!     ProximaDBError::NotFound { .. } => Status::not_found(error.to_string()),
+//!     ProximaDBError::PermissionDenied(_) => Status::permission_denied(error.to_string()),
+//!     _ => Status::internal(error.to_string()),
+//! };
+//! ```
 
 use super::{ConfigError, MetadataError, ServiceError};
 use serde::{Deserialize, Serialize};
@@ -6,6 +65,14 @@ use std::io;
 use thiserror::Error;
 
 /// Main ProximaDB error type
+///
+/// ## Usage Guidelines
+///
+/// 1. **Choose Specific Variants**: Use the most specific error variant available
+/// 2. **Include Context**: Always provide meaningful error messages with context
+/// 3. **Avoid Internal**: Reserve `Internal` for truly unexpected failures
+/// 4. **Resource Errors**: Use `NotFound`/`AlreadyExists` for resource operations
+/// 5. **Validation**: Use `InvalidInput` for user input validation failures
 #[derive(Debug, Clone, Error, Serialize, Deserialize)]
 pub enum ProximaDBError {
     #[error("Configuration error: {0}")]
