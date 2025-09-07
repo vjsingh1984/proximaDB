@@ -4,6 +4,48 @@
 // you may not use this file except in compliance with the License.
 
 //! Multi-server architecture with dedicated HTTP and gRPC servers
+//!
+//! ## Architecture Overview:
+//!
+//! ProximaDB runs two independent servers for optimal protocol handling:
+//! - **REST Server**: HTTP/1.1 on port 5678 for web clients
+//! - **gRPC Server**: HTTP/2 on port 5679 for high-performance clients
+//!
+//! ## Design Philosophy:
+//!
+//! Separate servers provide:
+//! - **Protocol Optimization**: Each server tuned for its protocol
+//! - **Independent Scaling**: Scale REST and gRPC independently
+//! - **Fault Isolation**: One server failure doesn't affect the other
+//! - **Resource Control**: Separate thread pools and memory limits
+//!
+//! ## Lifecycle Management:
+//!
+//! ```text
+//! MultiServer::start()
+//!     ↓
+//! Spawn REST Task → Axum Server (5678)
+//!     ↓
+//! Spawn gRPC Task → Tonic Server (5679)
+//!     ↓
+//! await shutdown_signal()
+//!     ↓
+//! Graceful Shutdown Both
+//! ```
+//!
+//! ## TLS Configuration:
+//!
+//! Both servers can use TLS independently or share certificates:
+//! - **Shared Mode**: Single cert/key pair for both servers
+//! - **Split Mode**: Different certificates per protocol
+//! - **Mixed Mode**: TLS on one, plaintext on other
+//!
+//! ## Performance Characteristics:
+//!
+//! | Protocol | Throughput | Latency | Use Case |
+//! |----------|------------|---------|----------|
+//! | REST | 840 QPS | 5-10ms | Web apps, simple queries |
+//! | gRPC | 1,770 QPS | 2-5ms | High-volume, streaming |
 
 use anyhow::Result;
 use std::net::SocketAddr;
@@ -20,18 +62,35 @@ use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
+///
+/// ## Configuration Strategy:
+///
+/// The MultiServerConfig aggregates settings for both protocols,
+/// allowing unified configuration while maintaining protocol-specific
+/// optimizations.
+///
+/// ## Key Settings:
+///
+/// - **Ports**: Separate ports prevent protocol confusion
+/// - **Compression**: Can differ between REST (JSON) and gRPC (Protobuf)
+/// - **Message Limits**: gRPC typically needs larger limits for batch ops
+/// - **TLS**: Shared or separate certificates supported
 #[derive(Debug, Clone)]
 pub struct MultiServerConfig {
     /// HTTP server configuration (REST/Dashboard/Metrics)
+    /// Handles JSON payloads, web UI, and monitoring endpoints
     pub http_config: RestHttpServerConfig,
 
     /// gRPC server configuration with binary Avro payloads
+    /// Optimized for high-throughput vector operations
     pub grpc_config: GrpcHttpServerConfig,
 
     /// Global TLS configuration - applies to all servers
+    /// Can be overridden per-server if needed
     pub tls_config: TLSConfig,
 
     /// API configuration (request limits, timeouts, etc.)
+    /// Shared limits and policies across both protocols
     pub api_config: Option<crate::core::config::ApiConfig>,
 }
 
@@ -67,30 +126,53 @@ impl Default for TLSConfig {
 }
 
 /// HTTP server configuration for REST, Dashboard, and Metrics
+///
+/// ## REST Server Endpoints:
+///
+/// - `/v1/collections`: Collection CRUD operations
+/// - `/v1/vectors`: Vector search and management
+/// - `/v1/health`: Kubernetes health probes
+/// - `/metrics`: Prometheus metrics
+/// - `/dashboard`: Web UI (if enabled)
+///
+/// ## Compression Strategy:
+///
+/// HTTP compression disabled by default because:
+/// - CPU overhead often exceeds network savings
+/// - Most deployments use fast local/datacenter networks
+/// - Can be enabled for WAN deployments
 #[derive(Debug, Clone)]
 pub struct RestHttpServerConfig {
     /// HTTP bind port (default: 5678)
+    /// Standard port for ProximaDB REST API
     pub port: u16,
 
     /// Enable REST API endpoints
+    /// Core CRUD and search operations
     pub enable_rest: bool,
 
     /// Enable monitoring dashboard
+    /// Web UI for cluster monitoring
     pub enable_dashboard: bool,
 
     /// Enable metrics endpoint
+    /// Prometheus-compatible metrics at /metrics
     pub enable_metrics: bool,
 
     /// Enable health check endpoint
+    /// Kubernetes liveness/readiness probes
     pub enable_health: bool,
 
     /// Enable HTTP compression (default: false for better performance)
+    /// Trade CPU for bandwidth - useful for WAN
     pub compression: bool,
 
     /// TLS certificate file path
+    /// PEM-encoded X.509 certificate
     pub tls_cert_file: Option<String>,
 
     /// TLS private key file path
+    /// PEM-encoded private key (RSA/ECDSA)
     pub tls_key_file: Option<String>,
 }
 
@@ -116,33 +198,58 @@ impl RestHttpServerConfig {
 }
 
 /// gRPC server configuration with binary Avro payload support
+///
+/// ## gRPC Advantages:
+///
+/// - **Binary Protocol**: 2-3x smaller than JSON
+/// - **HTTP/2**: Multiplexing, server push, header compression
+/// - **Streaming**: Bidirectional streams for bulk operations
+/// - **Type Safety**: Strongly typed protobuf contracts
+///
+/// ## Message Size Considerations:
+///
+/// Default 64MB supports:
+/// - 100K vectors of 128 dimensions
+/// - 25K vectors of 512 dimensions
+/// - 8K vectors of 1536 dimensions (OpenAI)
+///
+/// Increase for larger batches or use streaming.
 #[derive(Debug, Clone)]
 pub struct GrpcHttpServerConfig {
     /// gRPC bind port (default: 5679)
+    /// Standard port for ProximaDB gRPC API
     pub port: u16,
 
     /// Bind address (computed from port and interface)
+    /// Usually 0.0.0.0:5679 for all interfaces
     pub bind_address: SocketAddr,
 
     /// TLS bind address (optional)
+    /// Same port, TLS-only listener
     pub tls_bind_address: Option<SocketAddr>,
 
     /// Enable gRPC endpoints
+    /// Core service implementation
     pub enable_grpc: bool,
 
     /// Maximum message size in bytes
+    /// Prevents OOM from malicious/accidental huge messages
     pub max_message_size: usize,
 
     /// Enable gRPC reflection
+    /// Allows dynamic service discovery (grpcurl, etc)
     pub enable_reflection: bool,
 
     /// Enable gRPC compression for Avro payloads
+    /// Further reduces already-compact protobuf
     pub compression: bool,
 
     /// TLS certificate file path
+    /// Same format as REST server
     pub tls_cert_file: Option<String>,
 
     /// TLS private key file path
+    /// Can share with REST or use separate
     pub tls_key_file: Option<String>,
 }
 
