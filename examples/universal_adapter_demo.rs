@@ -306,7 +306,7 @@ async fn demo_performance_comparison(adapter: &UniversalDistanceAdapter) -> Resu
 
             let request = DistanceComputationRequest {
                 query_vector: query_vector.clone(),
-                candidates,
+                candidates: candidates.clone(),
                 distance_metric: DistanceMetric::Euclidean,
                 storage_format: StorageFormat::FP32,
                 refinement_config: None,

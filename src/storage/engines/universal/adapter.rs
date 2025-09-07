@@ -77,7 +77,7 @@ pub struct DistanceComputationRequest {
     pub storage_format: StorageFormat,
 
     /// Progressive refinement configuration
-    pub refinement_config: Option<ProgressiveRefinementConfig>,
+    pub refinement_config: Option<ConfigProgressiveRefinementConfig>,
 
     /// Maximum number of results to return
     pub max_results: usize,

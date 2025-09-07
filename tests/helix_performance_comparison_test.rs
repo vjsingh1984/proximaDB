@@ -223,8 +223,8 @@ use proximadb::storage::traits::StorageQueryMetadata;
             };
             let compact_result = engine.do_compact(&compact_params).await.unwrap();
             let compact_time = compact_start.elapsed();
-            let throughput = if compact_result.bytes_written > 0 {
-                (compact_result.bytes_written as f64 / 1_048_576.0) / compact_time.as_secs_f64()
+            let throughput = if compact_result.bytes_written.unwrap_or(0) > 0 {
+                (compact_result.bytes_written.unwrap_or(0) as f64 / 1_048_576.0) / compact_time.as_secs_f64()
             } else {
                 0.0
             };
@@ -242,8 +242,6 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 top_k: Some(K_NEIGHBORS),
                 distance_metric: Some(DistanceMetric::Euclidean),
                 filter_expression: None,
-                include_vectors: Some(false),
-                ef_runtime: None,
                 ..Default::default()
             });
             
@@ -251,7 +249,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 id: collection_id.to_string(),
                 config: Some(proximadb::proto::proximadb::CollectionConfig {
                     name: collection_id.to_string(),
-                    dimension: VECTOR_DIMS as i32,
+                    dimension: VECTOR_DIMS as u32,
                     distance_metric: DistanceMetric::Euclidean as i32,
                     storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
                     ..Default::default()
@@ -281,7 +279,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
         let memory_usage_mb = metrics.get("memory_usage_mb")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
-        let disk_usage_mb = flush_result.bytes_written as f64 / 1_048_576.0;
+        let disk_usage_mb = flush_result.bytes_written.unwrap_or(0) as f64 / 1_048_576.0;
         
         PerformanceMetrics {
             engine_name,
@@ -332,7 +330,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
         let sst_config = SstConfig::default();
         let fs_config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
         
         let sst_engine = Arc::new(SstStorage::new(
             sst_config,
@@ -420,7 +418,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
         let sst_config = SstConfig::default();
         let fs_config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
         
         let sst_engine = Arc::new(SstStorage::new(
             sst_config,
@@ -507,7 +505,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 let sst_config = SstConfig::default();
                 let fs_config = FilesystemConfig::default();
                 let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-                let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+                let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
                 
                 let engine = Arc::new(SstStorage::new(
                     sst_config,
@@ -623,8 +621,6 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 top_k: Some(10),
                 distance_metric: Some(DistanceMetric::Euclidean),
                 filter_expression: None,
-                include_vectors: Some(false),
-                ef_runtime: None,
                 ..Default::default()
             });
             
@@ -632,7 +628,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 id: "test_collection".to_string(),
                 config: Some(proximadb::proto::proximadb::CollectionConfig {
                     name: "test_collection".to_string(),
-                    dimension: VECTOR_DIMS as i32,
+                    dimension: VECTOR_DIMS as u32,
                     distance_metric: DistanceMetric::Euclidean as i32,
                     storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
                     ..Default::default()
@@ -656,10 +652,11 @@ use proximadb::storage::traits::StorageQueryMetadata;
             let expected_cluster = i.to_string();
             let correct_cluster = results.iter()
                 .filter(|r| {
-                    r.metadata.iter().any(|item| {
-                        item.key == "cluster_id" && 
-                        match &item.value {
-                            Some(metadata_item::Value::StringValue(s)) => s == &expected_cluster,
+                    // Convert to tuple access for HashMap-style metadata
+                    r.metadata.iter().any(|(key, value)| {
+                        key == "cluster_id" && 
+                        match value {
+                            serde_json::Value::String(s) => s == &expected_cluster,
                             _ => false,
                         }
                     })
@@ -709,7 +706,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 let sst_config = SstConfig::default();
                 let fs_config = FilesystemConfig::default();
                 let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-                let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+                let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
                 
                 Arc::new(SstStorage::new(
                     sst_config,
@@ -726,7 +723,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                 let viper_config = ViperConfig::default();
                 let fs_config = FilesystemConfig::default();
                 let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
-                let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+                let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
                 
                 Arc::new(ViperEngine::new(
                     "test_collection".to_string(),
@@ -759,7 +756,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
             let memory_mb = metrics.get("memory_usage_mb")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            let disk_mb = flush_result.bytes_written as f64 / 1_048_576.0;
+            let disk_mb = flush_result.bytes_written.unwrap_or(0) as f64 / 1_048_576.0;
             let vectors_per_mb = vectors.len() as f64 / memory_mb;
             
             println!("{} Engine:", name);
@@ -767,7 +764,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
             println!("  Disk: {:.2} MB", disk_mb);
             println!("  Vectors per MB RAM: {:.0}", vectors_per_mb);
             println!("  Compression ratio: {:.2}x", 
-                (vectors.len() * VECTOR_DIMS * 4) as f64 / flush_result.bytes_written as f64);
+                (vectors.len() * VECTOR_DIMS * 4) as f64 / flush_result.bytes_written.unwrap_or(0) as f64);
         }
     }
 
@@ -822,8 +819,6 @@ use proximadb::storage::traits::StorageQueryMetadata;
                             top_k: Some(10),
                             distance_metric: Some(DistanceMetric::Euclidean),
                             filter_expression: None,
-                            include_vectors: Some(false),
-                            ef_runtime: None,
                             ..Default::default()
                         });
                         
@@ -831,7 +826,7 @@ use proximadb::storage::traits::StorageQueryMetadata;
                             id: "test_collection".to_string(),
                             config: Some(proximadb::proto::proximadb::CollectionConfig {
                                 name: "test_collection".to_string(),
-                                dimension: VECTOR_DIMS as i32,
+                                dimension: VECTOR_DIMS as u32,
                                 distance_metric: DistanceMetric::Euclidean as i32,
                                 storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
                                 ..Default::default()

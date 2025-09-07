@@ -4,7 +4,9 @@ use super::*;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{FlushParameters, CompactionParameters, StorageQueryContext};
+use crate::storage::traits::{FlushParameters, CompactionParameters, StorageQueryContext, StorageQueryMetadata};
+use crate::core::search::SearchParams;
+use crate::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -100,14 +102,31 @@ async fn test_vector_search() {
     
     // Search for nearest neighbors
     let query_vector = vec![0.5; 128];
+    
+    let collection_config = CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 128,
+        distance_metric: ProtoDistanceMetric::Euclidean as i32,
+        storage_engine: StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+    
+    let collection = Arc::new(Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config),
+        ..Default::default()
+    });
+    
+    let mut search_params = SearchParams::single_vector(query_vector);
+    search_params.top_k = Some(5);
+    search_params.distance_metric = Some(DistanceMetric::Euclidean);
+    
+    let metadata = StorageQueryMetadata::default();
+    
     let ctx = StorageQueryContext {
-        collection_id: Arc::new("test_collection".to_string()),
-        vector: Arc::new(query_vector),
-        k: 5,
-        distance_metric: DistanceMetric::Euclidean,
-        filter: None,
-        include_vectors: true,
-        query_id: "test_query".to_string(),
+        search_params: Arc::new(search_params),
+        collection,
+        metadata,
     };
     
     let results = engine.search_vectors_unified(&ctx).await.unwrap();

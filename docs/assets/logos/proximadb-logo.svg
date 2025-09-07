@@ -53,63 +53,71 @@
   <!-- Background highlight -->
   <rect x="0" y="0" width="360" height="80" fill="url(#proximaGradient)" opacity="0.03"/>
 
-  <!-- Logo Icon: Distributed Multi-Engine Database Visualization -->
+  <!-- Logo Icon: Distributed Multi-Engine Database Visualization with 7 Engines -->
   <g transform="translate(20, 15)">
-    <!-- Central hexagon representing core platform -->
-    <path d="M 20 10 L 35 10 L 43 20 L 35 30 L 20 30 L 12 20 Z" 
+    <!-- Central heptagon representing core platform (7-sided for 7 engines) -->
+    <path d="M 27.5 8 L 38 12 L 42 22 L 38 32 L 27.5 36 L 17 32 L 13 22 L 17 12 Z" 
           fill="url(#proximaGradient)" opacity="0.15" stroke="url(#proximaGradient)" stroke-width="2"/>
     
-    <!-- Multi-engine nodes distributed around core -->
-    <!-- SST Engine (top-left) -->
-    <g transform="translate(10, 5)">
+    <!-- Multi-engine nodes distributed around core - 7 engines total -->
+    <!-- SST Engine (top) -->
+    <g transform="translate(27.5, 0)">
       <circle cx="0" cy="0" r="5" fill="#10b981" opacity="0.9" filter="url(#glow)"/>
       <circle cx="0" cy="0" r="3" fill="#ffffff"/>
-      <text x="0" y="1" font-size="4" fill="#10b981" text-anchor="middle" font-weight="bold">S</text>
+      <text x="0" y="1" font-size="3" fill="#10b981" text-anchor="middle" font-weight="bold">SST</text>
     </g>
     
-    <!-- VIPER Engine (top) -->
-    <g transform="translate(28, 0)">
+    <!-- VIPER Engine (top-right) -->
+    <g transform="translate(42, 8)">
       <circle cx="0" cy="0" r="5" fill="#8b5cf6" opacity="0.9" filter="url(#glow)"/>
       <circle cx="0" cy="0" r="3" fill="#ffffff"/>
       <text x="0" y="1" font-size="4" fill="#8b5cf6" text-anchor="middle" font-weight="bold">V</text>
     </g>
     
-    <!-- NOVA Engine (top-right) -->
-    <g transform="translate(45, 5)">
+    <!-- NOVA Engine (right) -->
+    <g transform="translate(48, 20)">
       <circle cx="0" cy="0" r="5" fill="#f59e0b" opacity="0.9" filter="url(#glow)"/>
       <circle cx="0" cy="0" r="3" fill="#ffffff"/>
       <text x="0" y="1" font-size="4" fill="#f59e0b" text-anchor="middle" font-weight="bold">N</text>
     </g>
     
     <!-- SWIFT Engine (bottom-right) -->
-    <g transform="translate(45, 35)">
+    <g transform="translate(42, 32)">
       <circle cx="0" cy="0" r="5" fill="#06b6d4" opacity="0.9" filter="url(#glow)"/>
       <circle cx="0" cy="0" r="3" fill="#ffffff"/>
-      <text x="0" y="1" font-size="4" fill="#06b6d4" text-anchor="middle" font-weight="bold">S</text>
+      <text x="0" y="1" font-size="3" fill="#06b6d4" text-anchor="middle" font-weight="bold">SW</text>
     </g>
     
     <!-- RAPTOR Engine (bottom) -->
-    <g transform="translate(28, 40)">
+    <g transform="translate(27.5, 40)">
       <circle cx="0" cy="0" r="5" fill="#ef4444" opacity="0.9" filter="url(#glow)"/>
       <circle cx="0" cy="0" r="3" fill="#ffffff"/>
       <text x="0" y="1" font-size="4" fill="#ef4444" text-anchor="middle" font-weight="bold">R</text>
     </g>
     
     <!-- PRISM Engine (bottom-left) -->
-    <g transform="translate(10, 35)">
+    <g transform="translate(13, 32)">
       <circle cx="0" cy="0" r="5" fill="#a855f7" opacity="0.9" filter="url(#glow)"/>
       <circle cx="0" cy="0" r="3" fill="#ffffff"/>
       <text x="0" y="1" font-size="4" fill="#a855f7" text-anchor="middle" font-weight="bold">P</text>
     </g>
     
-    <!-- Distributed connections -->
+    <!-- HELIX Engine (top-left) -->
+    <g transform="translate(13, 8)">
+      <circle cx="0" cy="0" r="5" fill="#22d3ee" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#22d3ee" text-anchor="middle" font-weight="bold">H</text>
+    </g>
+    
+    <!-- Distributed connections for 7 engines -->
     <g opacity="0.4">
-      <line x1="10" y1="5" x2="20" y2="15" stroke="url(#accentGradient)" stroke-width="1.5"/>
-      <line x1="28" y1="0" x2="28" y2="10" stroke="url(#accentGradient)" stroke-width="1.5"/>
-      <line x1="45" y1="5" x2="35" y2="15" stroke="url(#accentGradient)" stroke-width="1.5"/>
-      <line x1="45" y1="35" x2="35" y2="25" stroke="url(#accentGradient)" stroke-width="1.5"/>
-      <line x1="28" y1="40" x2="28" y2="30" stroke="url(#accentGradient)" stroke-width="1.5"/>
-      <line x1="10" y1="35" x2="20" y2="25" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="27.5" y1="0" x2="27.5" y2="10" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="42" y1="8" x2="35" y2="14" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="48" y1="20" x2="38" y2="20" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="42" y1="32" x2="35" y2="26" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="27.5" y1="40" x2="27.5" y2="30" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="13" y1="32" x2="20" y2="26" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="13" y1="8" x2="20" y2="14" stroke="url(#accentGradient)" stroke-width="1.5"/>
     </g>
     
     <!-- Central core with "P" for ProximaDB -->

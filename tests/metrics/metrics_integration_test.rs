@@ -3,7 +3,8 @@
 
 use anyhow::Result;
 use proximadb::{
-    core::{VectorRecord, hardware_capabilities},
+    core::hardware_capabilities,
+    proto::proximadb::{VectorRecord, MetadataItem, metadata_item},
     storage::{
         engines::{StorageEngineFactory},
         traits::{UnifiedStorageEngine, FlushParameters},
@@ -262,18 +263,26 @@ async fn test_error_tracking() -> Result<()> {
 fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| VectorRecord {
-            id: Some(format!("vec_{:04}", i)),
+            id: format!("vec_{:04}", i),
             vector: (0..dimension)
                 .map(|d| ((i + d) as f32).sin())
                 .collect(),
-            metadata: Some(HashMap::from([
-                ("test".to_string(), serde_json::json!(true)),
-                ("index".to_string(), serde_json::json!(i)),
-            ])),
-            timestamp: i as i64,
+            metadata: vec![
+                MetadataItem {
+                    key: "test".to_string(),
+                    value: Some(metadata_item::Value::BoolValue(true)),
+                },
+                MetadataItem {
+                    key: "index".to_string(),
+                    value: Some(metadata_item::Value::NumberValue(i as f64)),
+                },
+            ],
+            timestamp: i as u32,
             updated_at: None,
             expires_at: None,
             version: Some(1),
+            quantized_vector: None,
+            source: None,
         })
         .collect()
 }

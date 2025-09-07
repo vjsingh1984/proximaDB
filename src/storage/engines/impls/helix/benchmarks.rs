@@ -12,7 +12,9 @@ mod benchmarks {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::VectorRecord;
-    use crate::storage::traits::{FlushParameters, StorageQueryContext};
+    use crate::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata};
+    use crate::core::search::SearchParams;
+    use crate::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};
     use criterion::{black_box, Criterion};
     use rand::{Rng, SeedableRng};
     use std::collections::HashMap;
@@ -196,14 +198,31 @@ mod benchmarks {
         let query_vector = vectors[50].vector.clone(); // Vector from cluster 0
         
         let start = Instant::now();
+        
+        let collection_config = CollectionConfig {
+            name: "bench_collection".to_string(),
+            dimension: 128,
+            distance_metric: ProtoDistanceMetric::Euclidean as i32,
+            storage_engine: StorageEngine::Helix as i32,
+            ..Default::default()
+        };
+        
+        let collection = Arc::new(Collection {
+            id: "bench_collection".to_string(),
+            config: Some(collection_config),
+            ..Default::default()
+        });
+        
+        let mut search_params = SearchParams::single_vector(query_vector);
+        search_params.top_k = Some(10);
+        search_params.distance_metric = Some(DistanceMetric::Euclidean);
+        
+        let metadata = StorageQueryMetadata::default();
+        
         let ctx = StorageQueryContext {
-            collection_id: Arc::new("bench_collection".to_string()),
-            vector: Arc::new(query_vector),
-            k: 10,
-            distance_metric: DistanceMetric::Euclidean,
-            filter: None,
-            include_vectors: true,
-            query_id: "bench_query".to_string(),
+            search_params: Arc::new(search_params),
+            collection,
+            metadata,
         };
         
         let results = engine.search_vectors_unified(&ctx).await.unwrap();

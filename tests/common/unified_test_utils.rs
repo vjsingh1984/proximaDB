@@ -775,6 +775,7 @@ pub mod operations {
         let query_context = proximadb::storage::traits::StorageQueryContext {
             search_params,
             collection,
+            metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
         };
 
         // Direct production call
@@ -801,6 +802,7 @@ pub mod operations {
         let query_context = proximadb::storage::traits::StorageQueryContext {
             search_params,
             collection,
+            metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
         };
 
         // Direct production call to VIPER's search_vectors
@@ -983,7 +985,7 @@ pub async fn flush_sst_with_block_stats(
     
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new()?);
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Euclidean));
     
     let sst_storage = SstStorage::new(
         sst_config.clone(),

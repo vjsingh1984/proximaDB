@@ -788,30 +788,16 @@ impl Default for BatchOperationStats {
 mod tests {
     use super::*;
     // IndexConfiguration moved to a different module or is no longer needed
-    // use crate::storage::engines::core::formats::row_based::index_structures::IndexConfiguration;
+    // use crate::storage::engines::core::formats::fastlanes_blocks::IndexConfiguration;
 
     #[tokio::test]
     async fn test_batch_operations_creation() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
-        let quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-                hardware.clone(),
-                memory_pool.clone(),
-            ),
-        );
-        let quantization_adapter = Arc::new(
-            crate::storage::engines::core::formats::row_based::quantization_adapter::RowBasedQuantizationAdapter::new(
-                quantization_engine,
-                hardware.clone(),
-                memory_pool.clone(),
-                QuantizationBlockConfig::default(),
-            )
-        );
 
         let config = BatchConfig::default();
         let batch_ops =
-            RowBasedBatchOperations::new(hardware, memory_pool, quantization_adapter, config);
+            RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         assert_eq!(batch_ops.config.default_batch_size, 1000);
         assert!(batch_ops.config.parallel_processing);
@@ -821,24 +807,10 @@ mod tests {
     fn test_batch_size_calculation() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
-        let quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-                hardware.clone(),
-                memory_pool.clone(),
-            ),
-        );
-        let quantization_adapter = Arc::new(
-            crate::storage::engines::core::formats::row_based::quantization_adapter::RowBasedQuantizationAdapter::new(
-                quantization_engine,
-                hardware.clone(),
-                memory_pool.clone(),
-                QuantizationBlockConfig::default(),
-            )
-        );
 
         let config = BatchConfig::default();
         let batch_ops =
-            RowBasedBatchOperations::new(hardware, memory_pool, quantization_adapter, config);
+            RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         let batch_size = batch_ops.calculate_optimal_batch_size(10000);
         assert!(batch_size > 0);

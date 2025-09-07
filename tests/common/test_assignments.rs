@@ -63,21 +63,22 @@ impl PersistentTestAssignments {
         // First check cache
         {
             let cache = self.cache.read().await;
-            if let Some(assignment) = cache.get(&key) {
+            if let Some(assignment) = cache.get(collection_id) {
                 return Ok(assignment.clone());
             }
         }
 
         // Acquire semaphore for file access
         let _permit = self
-            .file_semaphore /* TODO: Fix VectorMemoryPool::acquire() method */
+            .file_semaphore
+            .acquire()
             .await
             .unwrap();
 
         // Double-check cache after acquiring lock
         {
             let cache = self.cache.read().await;
-            if let Some(assignment) = cache.get(&key) {
+            if let Some(assignment) = cache.get(collection_id) {
                 return Ok(assignment.clone());
             }
         }
@@ -86,7 +87,7 @@ impl PersistentTestAssignments {
         let mut assignments = self.load_assignments_from_disk().await?;
 
         // Check if assignment exists on disk
-        if let Some(mut assignment) = assignments.get(key).cloned() {
+        if let Some(mut assignment) = assignments.get(collection_id).cloned() {
             // Fill in missing fields for backward compatibility
             if assignment.write_ahead_log_url.is_empty() {
                 assignment.write_ahead_log_url = format!(
@@ -168,7 +169,8 @@ impl PersistentTestAssignments {
     ) -> Result<()> {
         // Acquire semaphore for file access
         let _permit = self
-            .file_semaphore /* TODO: Fix VectorMemoryPool::acquire() method */
+            .file_semaphore
+            .acquire()
             .await
             .unwrap();
 
@@ -192,7 +194,8 @@ impl PersistentTestAssignments {
     pub async fn remove_assignment(&self, collection_id: &str) -> Result<()> {
         // Acquire semaphore for file access
         let _permit = self
-            .file_semaphore /* TODO: Fix VectorMemoryPool::acquire() method */
+            .file_semaphore
+            .acquire()
             .await
             .unwrap();
 
@@ -217,7 +220,8 @@ impl PersistentTestAssignments {
     pub async fn clear_all_assignments(&self) -> Result<()> {
         // Acquire semaphore for file access
         let _permit = self
-            .file_semaphore /* TODO: Fix VectorMemoryPool::acquire() method */
+            .file_semaphore
+            .acquire()
             .await
             .unwrap();
 
