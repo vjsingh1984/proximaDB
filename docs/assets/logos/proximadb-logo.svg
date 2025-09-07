@@ -1,4 +1,4 @@
-<svg width="320" height="80" viewBox="0 0 320 80" xmlns="http://www.w3.org/2000/svg">
+<svg width="360" height="80" viewBox="0 0 360 80" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <!-- Vibrant gradient with bright colors -->
     <linearGradient id="proximaGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -51,7 +51,7 @@
   </defs>
 
   <!-- Background highlight -->
-  <rect x="0" y="0" width="320" height="80" fill="url(#proximaGradient)" opacity="0.03"/>
+  <rect x="0" y="0" width="360" height="80" fill="url(#proximaGradient)" opacity="0.03"/>
 
   <!-- Logo Icon: Distributed Multi-Engine Database Visualization -->
   <g transform="translate(20, 15)">
@@ -133,15 +133,20 @@
     </circle>
   </g>
 
-  <!-- ProximaDB Text with bright colors -->
-  <text x="85" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
-        font-size="32" font-weight="600" fill="#1e3a8a" filter="url(#shadow)">
-    Proxima
-  </text>
-  <text x="188" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
-        font-size="32" font-weight="800" fill="url(#proximaGradient)">
-    DB
-  </text>
+  <!-- ProximaDB Text with proper spacing - no overlap -->
+  <g transform="translate(85, 0)">
+    <!-- "Proxima" text -->
+    <text x="0" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+          font-size="32" font-weight="600" fill="#1e3a8a" filter="url(#shadow)">
+      Proxima
+    </text>
+    
+    <!-- "DB" text with proper spacing to prevent overlap -->
+    <text x="115" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+          font-size="32" font-weight="800" fill="url(#proximaGradient)">
+      DB
+    </text>
+  </g>
   
   <!-- Full tagline with emphasis on key features -->
   <text x="85" y="58" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
