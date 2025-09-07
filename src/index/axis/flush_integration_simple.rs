@@ -202,7 +202,8 @@ impl SimpleFlushNotifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::axis::metadata::MetadataQueueServiceConfig;
+    // MetadataQueueServiceConfig moved or removed
+    // use crate::index::axis::metadata::MetadataQueueServiceConfig;
     use crate::proto::proximadb::Collection;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use dashmap::DashMap;

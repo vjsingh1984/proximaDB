@@ -39,7 +39,8 @@ mod tests {
     // use crate::storage::engines::impls::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig}; // Removed
     use crate::compute::quantization::unified::UnifiedQuantizationEngine;
     use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-    use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
+    // UnifiedParquetReader moved to different module
+    // use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 
     /// Test data structure for comprehensive testing
     #[derive(Debug, Clone)]

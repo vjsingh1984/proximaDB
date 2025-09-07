@@ -4,7 +4,8 @@ mod tests {
     use super::super::writer::RaptorWriter;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-    use crate::infrastructure::P2Matrix;
+    // P2Matrix not available in infrastructure module
+    // use crate::infrastructure::P2Matrix;
     use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
     use anyhow::Result;
     use tempfile::TempDir;
