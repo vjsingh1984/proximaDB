@@ -10,11 +10,10 @@
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 use uuid::Uuid;
 
 use crate::proto::proximadb::Collection;
-use crate::storage::persistence::filesystem::{FileSystem, DirEntry, FileOptions};
+use crate::storage::persistence::filesystem::FileSystem;
 
 /// Common serialization utilities
 pub mod serialization {
@@ -210,7 +209,7 @@ pub mod retry {
 
 /// Common batch operation utilities
 pub mod batch {
-    use super::*;
+    
     
     /// Batch size configuration
     pub struct BatchConfig {

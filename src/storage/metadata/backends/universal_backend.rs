@@ -26,7 +26,7 @@ use crate::proto::proximadb::Collection;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
-    MetadataProvider, MetricsOperationType, UnifiedMetricsCollector
+    MetadataProvider, UnifiedMetricsCollector
 };
 
 /// Protobuf operation for incremental collection storage

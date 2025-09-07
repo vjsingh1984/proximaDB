@@ -16,7 +16,6 @@
 //! - **ML-Guided Compaction**: Background optimization with learned patterns
 //! - **Performance Monitoring**: Comprehensive statistics and analytics
 
-use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema;

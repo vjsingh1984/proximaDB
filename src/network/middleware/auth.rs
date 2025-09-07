@@ -18,7 +18,7 @@
 
 use axum::{
     extract::State,
-    http::{Request, StatusCode, header},
+    http::{Request, StatusCode},
     middleware::Next,
     response::{Json, Response},
 };

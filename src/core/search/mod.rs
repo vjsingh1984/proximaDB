@@ -724,7 +724,7 @@ pub mod protocol_conversions {
     pub fn from_sql_condition(
         condition: &crate::query::sql_engine::parser::Condition,
     ) -> Result<FilterExpression, String> {
-        use crate::query::sql_engine::parser::{ComparisonOp, Condition, Value};
+        use crate::query::sql_engine::parser::{ComparisonOp, Condition};
 
         match condition {
             Condition::Comparison {

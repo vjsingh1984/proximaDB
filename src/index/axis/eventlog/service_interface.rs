@@ -12,7 +12,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
 
 use super::{ExtractionMode, FileIndexingStatus, IndexEvent, StorageEngineType};
 

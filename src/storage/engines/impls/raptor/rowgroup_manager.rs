@@ -2,14 +2,12 @@
 // Manages row groups with columnar storage within each group for SIMD optimization
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use super::common::{
     ColumnarBlock, FastLanesEncodedData, FastLanesScheme, MetadataColumns, QuantizationParams,
-    QuantizedColumnarData, RowGroup, RowGroupMetadata, TransposedVectors,
+    QuantizedColumnarData, RowGroup, TransposedVectors,
 };
 use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};

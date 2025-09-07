@@ -22,9 +22,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::core::VectorRecord;
 use crate::core::search::mvcc_resolution::MvccResolver;
 
-use crate::storage::common::compaction_utils::{
-    CompactionFileDiscovery, StorageEngineType as CompactionEngineType,
-};
+use crate::storage::common::compaction_utils::StorageEngineType as CompactionEngineType;
 use crate::storage::common::*;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{

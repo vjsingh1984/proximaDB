@@ -16,10 +16,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use crate::core::VectorRecord;
-use crate::core::search::{FilterExpression, MetadataFilter};
+use crate::core::search::FilterExpression;
 use crate::proto::proximadb::Collection;
 
 /// Unified scan strategy based on RAPTOR's successful pattern
@@ -204,7 +203,7 @@ pub struct ScanCostEstimate {
 
 /// Engine-specific implementations based on actual code patterns
 pub mod engine_impl {
-    use super::*;
+    
 
     /// SST scan implementation traits
     pub struct SSTScanIterator {

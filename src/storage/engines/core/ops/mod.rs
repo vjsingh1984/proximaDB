@@ -153,10 +153,8 @@ pub use crate::storage::engines::core::search::search_common::{
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::CompressionAlgorithm;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 // Temporary placeholder types until modules are created

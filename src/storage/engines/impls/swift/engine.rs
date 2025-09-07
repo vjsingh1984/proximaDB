@@ -465,7 +465,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .unwrap_or(384);
 
         // Create new SWIFT file from flush parameters
-        let mut swift_file = SwiftFile::new(
+        let swift_file = SwiftFile::new(
             collection_id.to_string(),
             dimension as usize,
             DistanceMetric::Euclidean,

@@ -41,7 +41,7 @@ use super::constants;
 use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 
 // Additional imports for component boosting and hierarchical search
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::HashSet;
 
 /// Wrapper for f32 to make it orderable for priority queues
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -832,7 +832,7 @@ impl RaptorReader {
         batch: &RecordBatch,
     ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
         use arrow_array::cast::AsArray;
-        use arrow_array::{Float32Array, ListArray, StringArray, UInt8Array, UInt32Array};
+        
 
         let mut records = Vec::new();
         let num_rows = batch.num_rows();
@@ -3397,7 +3397,7 @@ impl RaptorReader {
         compressed: &[u8],
         algorithm: CompressionAlgorithm,
     ) -> Result<Vec<u8>> {
-        use crate::core::compression::StandardCompression;
+        
 
         crate::core::compression::decompress(
             compressed,
@@ -3466,7 +3466,7 @@ impl RaptorReader {
     pub async fn read_rowgroup(&self, rg_id: u16) -> Result<RecordBatch> {
         // This would read from the actual file using the row group metadata
         // For now, return empty batch with correct schema
-        use arrow_array::{Float32Array, StringArray};
+        
         use arrow_schema::{DataType, Field, Schema};
         use std::sync::Arc as StdArc;
 

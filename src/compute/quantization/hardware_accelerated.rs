@@ -519,7 +519,7 @@ impl AcceleratedQuantization {
     */
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    unsafe fn reduce_min_avx2(&self, v: std::arch::x86_64::__m256) -> f32 {
+    unsafe fn reduce_min_avx2(&self, v: std::arch::x86_64::__m256) -> f32 { unsafe {
         use std::arch::x86_64::*;
         // Reduce 256-bit to 128-bit
         let low = _mm256_extractf128_ps(v, 0);
@@ -528,10 +528,10 @@ impl AcceleratedQuantization {
 
         // Reduce 128-bit to scalar
         self.reduce_min_sse(min128)
-    }
+    }}
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    unsafe fn reduce_max_avx2(&self, v: std::arch::x86_64::__m256) -> f32 {
+    unsafe fn reduce_max_avx2(&self, v: std::arch::x86_64::__m256) -> f32 { unsafe {
         use std::arch::x86_64::*;
         // Reduce 256-bit to 128-bit
         let low = _mm256_extractf128_ps(v, 0);
@@ -540,27 +540,27 @@ impl AcceleratedQuantization {
 
         // Reduce 128-bit to scalar
         self.reduce_max_sse(max128)
-    }
+    }}
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    unsafe fn reduce_min_sse(&self, v: std::arch::x86_64::__m128) -> f32 {
+    unsafe fn reduce_min_sse(&self, v: std::arch::x86_64::__m128) -> f32 { unsafe {
         use std::arch::x86_64::*;
         let shuf = _mm_shuffle_ps(v, v, 0b00001110);
         let min1 = _mm_min_ps(v, shuf);
         let shuf = _mm_shuffle_ps(min1, min1, 0b00000001);
         let min2 = _mm_min_ps(min1, shuf);
         _mm_cvtss_f32(min2)
-    }
+    }}
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    unsafe fn reduce_max_sse(&self, v: std::arch::x86_64::__m128) -> f32 {
+    unsafe fn reduce_max_sse(&self, v: std::arch::x86_64::__m128) -> f32 { unsafe {
         use std::arch::x86_64::*;
         let shuf = _mm_shuffle_ps(v, v, 0b00001110);
         let max1 = _mm_max_ps(v, shuf);
         let shuf = _mm_shuffle_ps(max1, max1, 0b00000001);
         let max2 = _mm_max_ps(max1, shuf);
         _mm_cvtss_f32(max2)
-    }
+    }}
 
     // GPU implementations (stubs for now)
     #[cfg(feature = "gpu")]

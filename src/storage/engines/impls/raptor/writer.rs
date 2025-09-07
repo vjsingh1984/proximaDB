@@ -52,7 +52,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 // Reuse existing platform capabilities
-use super::common::{RowPageMetadata, VectorStats};
+use super::common::VectorStats;
 use crate::core::compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
@@ -67,12 +67,11 @@ use super::matrix_builder::MatrixBuilder;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb::{VectorRecord, metadata_item};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::FileSystem;
 
 // Import AXIS clustering for reuse
 use crate::index::axis::clustering::{

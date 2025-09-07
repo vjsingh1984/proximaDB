@@ -4,16 +4,14 @@
 use anyhow::Result;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::storage::persistence::filesystem::{
-    FileSystem, zero_copy_filesystem::ZeroCopyFilesystem,
-};
+use crate::storage::persistence::filesystem::FileSystem;
 
 /// NOVA's 3-tier hierarchical statistics structure
 #[derive(Debug, Clone, Serialize, Deserialize)]

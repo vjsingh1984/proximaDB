@@ -1235,7 +1235,7 @@ impl InterCentroidMatrix {
         use crate::compute::QuantizedVector;
         use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
         use crate::compute::quantization::types::UnifiedQuantizationLevel;
-        use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+        use crate::core::hardware_capabilities::get_hardware_capabilities;
 
         let hw = get_hardware_capabilities();
 
@@ -1620,7 +1620,7 @@ impl VectorCentroidMatrix {
 
     /// Hardware-optimized batch distance retrieval using unified modules
     pub fn get_distances_batch_optimized(&self, queries: &[(usize, usize)]) -> Vec<f32> {
-        use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+        use crate::core::hardware_capabilities::get_hardware_capabilities;
 
         match self.storage_strategy {
             VectorCentroidStorageStrategy::Full => {
@@ -1949,7 +1949,7 @@ impl RowGroupBloomFilter {
         footer: &RaptorFooter,
         vector_ids: &[String],
     ) -> Vec<Vec<u16>> {
-        use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+        use crate::core::hardware_capabilities::get_hardware_capabilities;
 
         let hw = get_hardware_capabilities();
         let batch_size = if hw.has_avx512() {

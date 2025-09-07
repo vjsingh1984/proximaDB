@@ -5,6 +5,7 @@
 
 //! gRPC protocol implementation with thin handlers
 
-pub mod service;
+pub mod v1;
 
-pub use service::ProximaDbGrpcService;
+// Re-export the service from v1
+pub use v1::service::ProximaDbGrpcService;

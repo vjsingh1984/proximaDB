@@ -3,7 +3,6 @@
 //! This module provides compile-time quantization for known vector dimensions
 //! and quantization levels, eliminating runtime overhead.
 
-use std::marker::PhantomData;
 
 /// Compile-time quantization trait
 pub trait CompileTimeQuantization {
@@ -107,7 +106,7 @@ pub mod simd {
 
     /// SIMD INT8 quantization for 128-dimensional vectors
     #[target_feature(enable = "avx2")]
-    pub unsafe fn quantize_int8_128_simd(input: &[f32; 128]) -> [i8; 128] {
+    pub unsafe fn quantize_int8_128_simd(input: &[f32; 128]) -> [i8; 128] { unsafe {
         let mut output = [0i8; 128];
 
         // Process 8 floats at a time with AVX2
@@ -126,7 +125,7 @@ pub mod simd {
         }
 
         output
-    }
+    }}
 }
 
 #[cfg(test)]

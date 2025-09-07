@@ -34,7 +34,7 @@ use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::info;
 
 /// AXIS Tiering Integration Manager
 ///

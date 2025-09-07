@@ -10,14 +10,9 @@
 // - Leverages Rust's LLVM backend for automatic SIMD
 
 use anyhow::Result;
-use bytemuck::{Pod, Zeroable};
-use std::mem;
 
 // Reuse existing unified modules
-use crate::compute::quantization::StorageQuantizationEngine;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::core::compression::{decompress, CompressionAlgorithm, CompressionContext};
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::compression::CompressionContext;
 
 // ============================================================================
 // UNIFIED ENCODING MARKERS (Used by all engines)

@@ -2,8 +2,9 @@
 
 use crate::core::config::SstConfig;
 use crate::storage::engines::impls::sst::{
-    DataBlock, IndexEntry, SstRecord, SstableHeader, SstableWriter,
+    IndexEntry, SstableHeader, SstableWriter,
 };
+use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::BTreeMap;
 use std::sync::Arc;

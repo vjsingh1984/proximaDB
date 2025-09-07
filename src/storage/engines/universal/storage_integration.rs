@@ -3,10 +3,8 @@
 //! This module provides integration adapters for all storage engines to work
 //! with the universal distance adapter system.
 
-use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 

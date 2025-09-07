@@ -4,15 +4,14 @@
 //! while maintaining NOVA-specific optimizations like hierarchical statistics,
 //! zone maps, and streaming processing.
 
-use crate::compute::ComputationMethod;
 use crate::compute::distance_computation::DistanceMetric;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 use crate::compute::distance_computation::{
-    Int8VectorData, PQVectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig,
+    Int8VectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig,
     QuantizedVectorData, SelectedFormat,
 };
 use crate::core::VectorRecord;
@@ -20,8 +19,8 @@ use crate::storage::engines::core::formats::columnar::common::{
     NovaOptimizations, StreamingProcessingConfig, ZoneMapOptimization,
 };
 use crate::storage::engines::core::formats::columnar::{
-    ColumnarSchemaBuilder, ColumnarSerializer, CommonColumnarConfig, CommonColumnarOperations,
-    FilterableColumnSpec, FilterableData, FormatPreference, QuantizationConfig,
+    CommonColumnarConfig, CommonColumnarOperations,
+    FilterableColumnSpec, QuantizationConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

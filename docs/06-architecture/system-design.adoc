@@ -1,0 +1,493 @@
+= System Design
+:toc:
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+ProximaDB is designed as a high-performance vector database with a focus on hardware acceleration, storage engine specialization, and zero-copy operations.
+
+== Design Philosophy
+
+=== Core Principles
+
+[cols="1,3", options="header"]
+|===
+| Principle | Description
+
+| *Proto-First*
+| All data flows as protobuf messages, eliminating serialization overhead
+
+| *Hardware-Aware*
+| Automatic detection and utilization of SIMD, GPU, and cache hierarchies
+
+| *Zero-Copy*
+| Minimize data movement through memory-mapped files and direct buffers
+
+| *Engine Specialization*
+| Multiple storage engines optimized for specific workloads
+
+| *Progressive Refinement*
+| Multi-stage search from coarse to fine-grained matching
+|===
+
+== System Architecture
+
+=== High-Level Architecture
+
+[plantuml, system-architecture, svg]
+----
+@startuml
+!theme plain
+
+actor Client
+
+rectangle "ProximaDB Server" {
+  rectangle "API Gateway" {
+    component "REST Handler" as REST
+    component "gRPC Handler" as GRPC
+  }
+  
+  rectangle "Service Layer" {
+    component "Request Router" as Router
+    component "Query Planner" as Planner
+    component "Result Aggregator" as Aggregator
+  }
+  
+  rectangle "Execution Layer" {
+    component "Vector Operations" as VecOps
+    component "Index Operations" as IndexOps
+    component "Storage Operations" as StorageOps
+  }
+  
+  rectangle "Storage Engines" {
+    database "VIPER\n(Columnar)" as VIPER
+    database "SST\n(Row-based)" as SST
+    database "RAPTOR\n(Graph)" as RAPTOR
+  }
+  
+  rectangle "Hardware Layer" {
+    component "SIMD" as SIMD
+    component "GPU" as GPU
+    component "Cache" as Cache
+  }
+}
+
+Client --> REST : HTTP/REST
+Client --> GRPC : gRPC
+
+REST --> Router
+GRPC --> Router
+
+Router --> Planner
+Planner --> VecOps
+Planner --> IndexOps
+Planner --> StorageOps
+
+VecOps --> SIMD
+VecOps --> GPU
+IndexOps --> Cache
+
+StorageOps --> VIPER
+StorageOps --> SST
+StorageOps --> RAPTOR
+
+@enduml
+----
+
+=== Component Interactions
+
+[plantuml, component-interactions, svg]
+----
+@startuml
+!theme plain
+
+participant Client
+participant "API Layer" as API
+participant "Query Planner" as Planner
+participant "Storage Router" as Router
+participant "Storage Engine" as Engine
+participant "Index" as Index
+participant "Hardware Accel" as Hardware
+
+Client -> API: Search Request
+API -> Planner: Parse & Validate
+Planner -> Router: Route to Engine
+Router -> Engine: Select Engine
+
+alt Indexed Search
+  Engine -> Index: Query Index
+  Index -> Hardware: SIMD Distance
+  Hardware -> Index: Results
+  Index -> Engine: Candidates
+else Brute Force
+  Engine -> Hardware: Scan All
+  Hardware -> Engine: Results
+end
+
+Engine -> Planner: Raw Results
+Planner -> API: Formatted Response
+API -> Client: Search Results
+
+@enduml
+----
+
+== Request Processing Pipeline
+
+=== Write Path
+
+[source,rust]
+----
+// Simplified write path
+async fn insert_vector(request: InsertRequest) -> Result<InsertResponse> {
+    // 1. Validation
+    validate_request(&request)?;
+    
+    // 2. Select storage engine
+    let engine = select_engine(&request.collection)?;
+    
+    // 3. Transform to internal format
+    let record = VectorRecord::from_proto(request.vector);
+    
+    // 4. Write to memtable (fast path)
+    engine.write_to_memtable(&record).await?;
+    
+    // 5. Async write to EventLog
+    event_log.append(Event::Insert(record.clone())).await?;
+    
+    // 6. Background indexing
+    spawn_indexing_task(record);
+    
+    Ok(InsertResponse::success())
+}
+----
+
+=== Read Path
+
+[source,rust]
+----
+// Simplified search path
+async fn search_vectors(request: SearchRequest) -> Result<SearchResponse> {
+    // 1. Query planning
+    let plan = QueryPlanner::plan(&request)?;
+    
+    // 2. Progressive search stages
+    let candidates = match plan.strategy {
+        Strategy::Progressive => {
+            // Stage 1: Bloom filter
+            let filtered = bloom_filter_check(&request.vector)?;
+            
+            // Stage 2: Binary quantization
+            let binary_matches = binary_search(&filtered, &request.vector)?;
+            
+            // Stage 3: INT8 refinement
+            let int8_matches = int8_refine(&binary_matches, &request.vector)?;
+            
+            // Stage 4: Full precision
+            full_precision_search(&int8_matches, &request.vector)?
+        }
+        Strategy::Direct => {
+            direct_search(&request.vector)?
+        }
+    };
+    
+    // 3. Re-rank and return
+    let results = rerank(candidates, request.k);
+    Ok(SearchResponse::from(results))
+}
+----
+
+== Data Structures
+
+=== Vector Record
+
+[source,rust]
+----
+pub struct VectorRecord {
+    pub id: String,
+    pub vector: Vec<f32>,
+    pub metadata: HashMap<String, Value>,
+    pub timestamp: u64,
+    pub version: u32,
+    pub quantized: Option<QuantizedVector>,
+}
+
+pub struct QuantizedVector {
+    pub binary: Option<BitVec>,
+    pub int8: Option<Vec<i8>>,
+    pub pq: Option<PQData>,
+}
+
+pub struct PQData {
+    pub codes: Vec<u8>,
+    pub codebook: Vec<Vec<f32>>,
+    pub codebook_hash: u64,
+}
+----
+
+=== Index Structures
+
+[source,rust]
+----
+// HNSW Graph Node
+pub struct HNSWNode {
+    pub id: VectorId,
+    pub level: u8,
+    pub connections: Vec<Vec<VectorId>>, // Per-level connections
+}
+
+// IVF Cluster
+pub struct IVFCluster {
+    pub centroid: Vec<f32>,
+    pub members: Vec<VectorId>,
+    pub stats: ClusterStats,
+}
+
+// LSH Hash Table
+pub struct LSHTable {
+    pub hash_functions: Vec<HashFunction>,
+    pub buckets: HashMap<u64, Vec<VectorId>>,
+}
+----
+
+== Concurrency Model
+
+=== Thread Architecture
+
+[plantuml, thread-architecture, svg]
+----
+@startuml
+!theme plain
+
+rectangle "Main Thread Pool" {
+  component "API Handlers" as API
+  component "Query Executors" as Query
+}
+
+rectangle "Background Thread Pool" {
+  component "Compaction" as Compact
+  component "Indexing" as Index
+  component "Flush" as Flush
+}
+
+rectangle "I/O Thread Pool" {
+  component "Disk I/O" as DiskIO
+  component "Network I/O" as NetIO
+}
+
+rectangle "Compute Thread Pool" {
+  component "SIMD Workers" as SIMD
+  component "GPU Workers" as GPU
+}
+
+API --> Query : Dispatch
+Query --> SIMD : Distance Computation
+Query --> DiskIO : Data Fetch
+
+Index --> SIMD : Build Index
+Compact --> DiskIO : Merge Files
+Flush --> DiskIO : Write SST
+
+@enduml
+----
+
+=== Synchronization
+
+[source,rust]
+----
+// Lock-free data structures
+use dashmap::DashMap;
+use crossbeam::queue::SegQueue;
+
+pub struct MemTable {
+    data: DashMap<String, VectorRecord>,
+    write_queue: SegQueue<WriteOp>,
+}
+
+// Read-write lock for collection metadata
+pub struct Collection {
+    metadata: RwLock<CollectionMetadata>,
+    memtable: Arc<MemTable>,
+    sstables: Arc<RwLock<Vec<SSTable>>>,
+}
+
+// Atomic operations for metrics
+pub struct Metrics {
+    queries: AtomicU64,
+    inserts: AtomicU64,
+    latency: AtomicU64,
+}
+----
+
+== Memory Management
+
+=== Memory Layout
+
+[source,rust]
+----
+// Aligned memory for SIMD
+#[repr(align(64))]
+pub struct AlignedVector {
+    data: Vec<f32>,
+}
+
+// Memory pool for vector operations
+pub struct VectorPool {
+    pools: [ObjectPool<AlignedVector>; MAX_DIMENSIONS],
+}
+
+// Zero-copy buffer
+pub struct ZeroCopyBuffer {
+    mmap: Mmap,
+    offset: usize,
+    len: usize,
+}
+----
+
+=== Cache Hierarchy
+
+[plantuml, cache-hierarchy, svg]
+----
+@startuml
+!theme plain
+
+rectangle "L1 Cache (64KB)" {
+  component "Hot Vectors" as L1
+}
+
+rectangle "L2 Cache (256KB)" {
+  component "Index Nodes" as L2
+}
+
+rectangle "L3 Cache (8MB)" {
+  component "Metadata" as L3
+}
+
+rectangle "RAM (Memory)" {
+  component "Vector Cache" as VCache
+  component "Query Cache" as QCache
+}
+
+rectangle "Disk (Storage)" {
+  component "SST Files" as SST
+  component "Parquet Files" as Parquet
+}
+
+L1 --> L2 : Miss
+L2 --> L3 : Miss
+L3 --> VCache : Miss
+VCache --> SST : Miss
+
+@enduml
+----
+
+== Fault Tolerance
+
+=== Error Handling
+
+[source,rust]
+----
+// Comprehensive error types
+#[derive(Error, Debug)]
+pub enum ProximaError {
+    #[error("Storage error: {0}")]
+    Storage(#[from] StorageError),
+    
+    #[error("Index error: {0}")]
+    Index(#[from] IndexError),
+    
+    #[error("Validation error: {0}")]
+    Validation(String),
+    
+    #[error("Resource exhausted: {0}")]
+    ResourceExhausted(String),
+}
+
+// Retry logic
+async fn with_retry<T, F>(
+    operation: F,
+    max_retries: u32,
+) -> Result<T>
+where
+    F: Fn() -> Future<Output = Result<T>>,
+{
+    let mut retries = 0;
+    loop {
+        match operation().await {
+            Ok(result) => return Ok(result),
+            Err(e) if retries < max_retries => {
+                retries += 1;
+                sleep(exponential_backoff(retries)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+----
+
+=== Recovery Mechanisms
+
+* Write-Ahead Logging (WAL)
+* Checkpoint and replay
+* Automatic corruption detection
+* Background verification
+
+== Performance Optimizations
+
+=== SIMD Utilization
+
+[source,rust]
+----
+// Platform-specific SIMD
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn distance_avx2(a: &[f32], b: &[f32]) -> f32 {
+    // AVX2 implementation
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe fn distance_neon(a: &[f32], b: &[f32]) -> f32 {
+    // NEON implementation
+}
+----
+
+=== Memory Prefetching
+
+[source,rust]
+----
+// Prefetch next vectors
+#[inline]
+fn prefetch_vectors(vectors: &[Vector], idx: usize) {
+    if idx + PREFETCH_DISTANCE < vectors.len() {
+        unsafe {
+            std::intrinsics::prefetch_read_data(
+                vectors[idx + PREFETCH_DISTANCE].as_ptr(),
+                3, // Temporal locality
+            );
+        }
+    }
+}
+----
+
+=== Batch Processing
+
+[source,rust]
+----
+// Vectorized operations
+fn batch_distance(
+    query: &[f32],
+    vectors: &[Vec<f32>],
+) -> Vec<f32> {
+    vectors
+        .par_chunks(BATCH_SIZE)
+        .flat_map(|batch| {
+            simd_batch_distance(query, batch)
+        })
+        .collect()
+}
+----
+
+---
+_Next: link:storage-layer.adoc[Storage Layer Architecture]_ +
+_Back to: link:README.adoc[Architecture Index]_

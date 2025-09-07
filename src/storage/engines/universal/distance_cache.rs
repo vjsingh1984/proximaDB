@@ -79,7 +79,7 @@ impl DistanceTableCache {
     {
         // Check cache first
         {
-            let mut cache = self.cache.read().await;
+            let cache = self.cache.read().await;
             if let Some(table) = cache.get(&key) {
                 let mut stats = self.stats.write().await;
                 stats.hits += 1;

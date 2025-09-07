@@ -111,18 +111,10 @@ pub use sst_io_layer::{
 // NEW: Export zero-copy metadata serialization components
 pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadataSerializer};
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::memory::pool::VectorMemoryPool;
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 /// Common configuration for row-based storage engines
 #[derive(Debug, Clone, Serialize, Deserialize)]

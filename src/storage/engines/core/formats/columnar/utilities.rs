@@ -5,9 +5,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use super::{ColumnarConfig, ColumnarFileMetadata, RowGroupStats};
+use super::{ColumnarConfig, ColumnarFileMetadata};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

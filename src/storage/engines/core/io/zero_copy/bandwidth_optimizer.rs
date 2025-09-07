@@ -3,15 +3,14 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, trace};
+use tracing::debug;
 
 use super::config::{
     AccessPredictionConfig, CostOptimizationConfig, DownloadOptimizerConfig, NetworkAdjustments,
-    RangeOptimizationConfig, SizeBasedThresholds,
+    RangeOptimizationConfig,
 };
 use super::traits::{DataRange, FileAccessRequest, QueryContext, QueryType, RequestPriority};
 use crate::core::error::ProximaDBError;

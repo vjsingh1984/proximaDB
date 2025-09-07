@@ -4,34 +4,27 @@
 //! eliminating code duplication while providing specialized optimizations
 //! for each engine through composition and configuration.
 
-use anyhow::{Context, Result};
-use arrow_array::{ArrayRef, RecordBatch};
+use anyhow::Result;
+use arrow_array::ArrayRef;
 use arrow_schema::Schema;
-use parquet::file::{
-    metadata::{FileMetaData, RowGroupMetaData},
-    properties::WriterProperties,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use super::schema::{ColumnarSchemaBuilder, ColumnarSchemaConfig};
 use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{
-    ColumnarConfig, ColumnarFileMetadata, ColumnarSearchMode, CompressionMetadata, MetadataFilter,
+    ColumnarConfig, ColumnarFileMetadata, CompressionMetadata,
     QuantizationConfig,
 };
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
-use crate::compute::distance_computation::{
-    DistanceMetric, SimilarityResult, engine::UnifiedDistanceCompute,
-};
 use crate::core::compression::CompressionAlgorithm;
 
 /// Common configuration for VIPER and NOVA engines
@@ -803,7 +796,7 @@ impl CommonColumnarOperations {
         // For now, return placeholder data
         warn!("File metadata loading from disk not fully implemented");
 
-        use super::ColumnStatistics;
+        
         use crate::compute::distance_computation::DistanceMetric;
 
         let metadata = ColumnarFileMetadata {
@@ -893,7 +886,7 @@ impl PerformanceMonitor {
 
     async fn record_deserialization(&self, duration_ms: f64, record_count: usize) {
         if self.config.enable_metrics {
-            let mut metrics = self.operation_metrics.write().await;
+            let metrics = self.operation_metrics.write().await;
             // Deserialization metrics would be tracked separately if needed
         }
     }

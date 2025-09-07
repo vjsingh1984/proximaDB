@@ -1,7 +1,7 @@
 // Batch operations for SST - optimized ID lookups
 // Clean implementation with parallel block loading
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};

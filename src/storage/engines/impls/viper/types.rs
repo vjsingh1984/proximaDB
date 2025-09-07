@@ -263,7 +263,7 @@ pub enum PartitionStrategy {
 /// Cluster ID type
 pub type ClusterId = String;
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 
 /// Engine statistics - using atomic counters for lock-free updates
 /// Integrated with unified metrics framework for consistent monitoring

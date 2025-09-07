@@ -18,7 +18,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 use std::cmp::Ordering;
 use std::sync::{Arc, OnceLock};
 
@@ -38,8 +38,7 @@ impl DistanceMetricExt for DistanceMetric {
         }
     }
 }
-use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
-use crate::services::collection::manager::CollectionService;
+use crate::core::hardware_capabilities::get_hardware_capabilities;
 
 // Re-export HardwareBackend for public use
 pub use crate::core::hardware_capabilities::HardwareBackend;
@@ -515,7 +514,7 @@ impl UnifiedDistanceCompute {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn cosine_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn cosine_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
         let chunks = a.len() / 8;
         
         let mut dot = _mm256_setzero_ps();
@@ -555,7 +554,7 @@ impl UnifiedDistanceCompute {
         }
 
         1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
-    }
+    }}
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -656,7 +655,7 @@ impl UnifiedDistanceCompute {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn euclidean_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn euclidean_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
         let chunks = a.len() / 8;
         let mut sum = _mm256_setzero_ps();
 
@@ -678,7 +677,7 @@ impl UnifiedDistanceCompute {
         }
 
         result.sqrt()
-    }
+    }}
 
     #[cfg(target_arch = "aarch64")]
     unsafe fn euclidean_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -737,7 +736,7 @@ impl UnifiedDistanceCompute {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn dot_product_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn dot_product_avx2(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
         let chunks = a.len() / 8;
         let mut sum = _mm256_setzero_ps();
 
@@ -757,7 +756,7 @@ impl UnifiedDistanceCompute {
         }
 
         result
-    }
+    }}
 
     #[cfg(target_arch = "aarch64")]
     unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 {

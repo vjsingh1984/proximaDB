@@ -5,11 +5,11 @@
 //!
 //! Expected Performance Improvement: 30-40% reduction in WAL search time
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use parking_lot::RwLock;
 use rayon::prelude::*;
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -88,7 +88,7 @@ impl ParallelWALSearch {
             .collect();
 
         // Use parallel sorting for large result sets
-        let mut sorted_candidates = if candidates.len() > 1000 {
+        let sorted_candidates = if candidates.len() > 1000 {
             self.parallel_top_k_sort(candidates, top_k)
         } else {
             self.sequential_top_k_sort(candidates, top_k)

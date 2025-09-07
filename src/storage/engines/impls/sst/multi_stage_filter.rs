@@ -23,7 +23,7 @@ use crate::storage::engines::impls::sst::readers::sst_query_engine::ReadStrategy
 use crate::storage::engines::impls::sst::row_filter::{
     SSTBatchFilterEvaluator, SSTRowFilterEvaluator,
 };
-use crate::storage::engines::impls::sst::{IndexEntry, VectorFormat};
+use crate::storage::engines::impls::sst::IndexEntry;
 
 /// Complete SST filtering pipeline with all three stages
 /// Uses immutable Arc types for optimal read performance

@@ -1,7 +1,5 @@
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use super::clustering::{ClusteringAlgorithm, ClusteringConfig, KMeansConfig};
 use super::types::ClusterAssignment;

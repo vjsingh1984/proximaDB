@@ -644,7 +644,7 @@ impl VectorPoolStats {
             + self.metadata.total_acquisitions;
 
         if total_acquisitions > 0 {
-            (total_hits as f32 / total_acquisitions as f32)
+            total_hits as f32 / total_acquisitions as f32
         } else {
             0.0
         }

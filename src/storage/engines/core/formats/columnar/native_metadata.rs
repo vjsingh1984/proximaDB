@@ -10,21 +10,18 @@
 //! - Backward compatible JSON fallback
 //! - Optimized predicate pushdown for metadata queries
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Float64Array, Int64Array, ListArray, MapArray, StringArray,
+    Array, ArrayRef,
     builder::{
-        BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, MapBuilder, StringBuilder,
+        BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, StringBuilder,
     },
 };
 use arrow_schema::{DataType, Field, Schema};
-use parquet::arrow::ArrowWriter;
-use parquet::file::properties::WriterProperties;
-use serde_json::json;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info};
 
 /// Type detection strategy for metadata fields
 #[derive(Debug, Clone, PartialEq)]
@@ -703,6 +700,7 @@ pub enum PredicateOperator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_field_type_inference() {

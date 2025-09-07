@@ -7,9 +7,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::{
     FilterExpression, SearchParams,
     integrated_search_optimization::IntegratedSearchOptimizer,

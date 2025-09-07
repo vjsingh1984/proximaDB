@@ -1,18 +1,18 @@
-# ProximaDB Test Configuration
+# ProximaDB Configuration
 
 [server]
-node_id = "test-node-1"
-bind_address = "0.0.0.0"
+node_id = "proximadb-local"
+bind_address = "127.0.0.1"
 port = 5678
-data_dir = "./test_data"
+data_dir = "/tmp/proximadb/data"
 
 [storage]
-# Single metadata URL for consistency
-metadata_url = "file:///home/vsingh/code/proximaDB/test_data/metadata"
+# Local metadata URL
+metadata_url = "file:///tmp/proximadb/metadata"
 
 # Storage locations
 [[storage.storage_locations]]
-url = "file:///home/vsingh/code/proximaDB/test_data/storage"
+url = "file:///tmp/proximadb/data"
 weight = 1
 tags = ["local", "test"]
 
@@ -21,18 +21,16 @@ tags = ["local", "test"]
 strategy = "hash"
 affinity = true
 
-# Storage engine settings
+# Memory and performance settings for local testing
 mmap_enabled = true
-cache_size_mb = 512
-bloom_filter_bits = 10
+cache_size_mb = 256
 
 [storage.write_buffer_config]
 write_buffer_size_mb = 8192  # 8GB total across all collections
-memory_flush_size_bytes = 16777216  # 16MB per collection (aggregate of all unflushed batches)
-vector_count_threshold = 20000  # 20k vectors per collection
+memory_flush_size_bytes = 16777216  # 16MB per batch
 memtable_type = "BTree"
-sync_mode = "perbatch"
-write_buffer_directory = "./test_data/write_buffer"
+sync_mode = "PerBatch"
+write_buffer_directory = "/tmp/proximadb/write_buffer"
 enable_wal = true
 
 [storage.sst_config]
@@ -48,7 +46,7 @@ max_files_per_level = 10
 level_size_multiplier = 10.0
 max_levels = 7
 background_thread_count = 4
-data_directory = "./test_data/sst_data"
+data_directory = "/tmp/proximadb/sst_data"
 mmap_enabled = true
 prefetch_enabled = true
 prefetch_size_kb = 64
@@ -63,13 +61,8 @@ compression = "zstd"  # ZSTD for columnar data
 compression_enabled = true  # Enable compression by default
 compression_level = 3  # Balanced speed/compression (1-22)
 enable_statistics = true
-data_directory = "./test_data/viper_data"
+data_directory = "/tmp/proximadb/viper_data"
 cache_size_mb = 512
-
-# WAL configuration - URLs now derived from storage_locations
-# WAL settings moved to appropriate sections
-
-# Storage layout configuration removed - now part of storage_locations
 
 [storage.filesystem_config]
 enable_write_strategy_cache = true
@@ -80,17 +73,15 @@ enable_local_atomic = true
 enable_object_store_atomic = false
 cleanup_temp_on_startup = true
 
-# Metadata backend configuration removed - metadata_url is now in main storage section
-
 [api]
 grpc_port = 5679
 rest_port = 5678
-max_request_size_mb = 32
+max_request_size_mb = 64
 timeout_seconds = 30
 enable_tls = false
 
 [monitoring]
-metrics_enabled = false
+metrics_enabled = true
 log_level = "info"
 
 [consensus]

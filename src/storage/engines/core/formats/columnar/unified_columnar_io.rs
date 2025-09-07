@@ -20,20 +20,19 @@
 //!    - Engine-specific optimizations via feature flags
 //!    - Automatic selection based on workload
 
-use anyhow::{Context, Result};
-use arrow_array::{ArrayRef, RecordBatch};
+use anyhow::Result;
+use arrow_array::RecordBatch;
 use arrow_ipc::{reader::FileReader as IpcFileReader, writer::FileWriter as IpcFileWriter};
 use arrow_ipc::{reader::StreamReader as IpcStreamReader, writer::StreamWriter as IpcStreamWriter};
 use arrow_schema::{DataType, Field, Schema};
-use parquet::arrow::{ArrowWriter, ProjectionMask, arrow_reader::ArrowReaderBuilder};
+use parquet::arrow::{ArrowWriter, arrow_reader::ArrowReaderBuilder};
 use parquet::basic::{Compression, Encoding, ZstdLevel};
-use parquet::bloom_filter::Sbbf;
-use parquet::file::properties::{BloomFilterProperties, WriterProperties, WriterPropertiesBuilder};
+use parquet::file::properties::WriterProperties;
 use std::fs::File;
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 use crate::core::VectorRecord;
 use crate::storage::unified_scan_strategy::{ScanIterator, ScanStrategy};

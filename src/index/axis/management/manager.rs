@@ -85,7 +85,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
-use crate::storage::traits::InternalCollectionProvider;
 
 use crate::core::{String, VectorId, VectorRecord};
 use crate::index::axis::management::{
@@ -97,7 +96,6 @@ use crate::index::axis::{
     clustering::ClusteringConfig,
     management::adaptive_engine::AdaptiveIndexEngine,
     types::{AxisConfig, Data, IndexSelectionStrategy},
-    zero_overhead_vector::QuantizationMethod,
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved

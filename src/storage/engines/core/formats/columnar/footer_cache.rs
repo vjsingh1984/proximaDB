@@ -11,8 +11,7 @@
 //! - Cache persistence for restart resilience
 //! - Metrics and monitoring integration
 
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
+use anyhow::Result;
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

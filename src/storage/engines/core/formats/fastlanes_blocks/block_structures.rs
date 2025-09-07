@@ -1,7 +1,6 @@
 // Shared Block Structures for SST and SWIFT engines
 // Common data block, metadata, and layout structures
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -696,7 +695,7 @@ impl FastLanesDataBlock {
 
                     // Serialize value
                     if let Some(value) = &item.value {
-                        use prost::Message;
+                        
                         // Encode the metadata value based on its type
                         let value_bytes = match value {
                             crate::proto::proximadb::metadata_item::Value::StringValue(s) => s.as_bytes().to_vec(),
@@ -752,7 +751,7 @@ impl FastLanesDataBlock {
     /// Deserialize a block
     /// Delegates decoding to the fastlanes module
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
-        use crate::core::compression::{CompressionContext, compress};
+        use crate::core::compression::CompressionContext;
         use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
         use std::io::Read;
 

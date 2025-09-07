@@ -18,7 +18,6 @@
 // - src/storage/engines/viper/flush_eventlog_integration.rs
 // - src/index/axis/eventlog_consumer.rs
 
-use std::sync::Arc;
 
 /// Placeholder for compatibility
 pub struct FlushIntegration;

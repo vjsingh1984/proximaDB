@@ -3,7 +3,6 @@
 use super::{ConfigError, MetadataError, ServiceError};
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::sync::Arc;
 use thiserror::Error;
 
 /// Main ProximaDB error type

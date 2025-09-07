@@ -16,7 +16,7 @@ mod tests {
     use tracing::{debug, info, warn};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{SearchParams, SearchResult};
+    use crate::core::search::{SearchParams, results::InternalSearchResult};
 
     #[tokio::test]
     async fn test_concurrent_searches_no_interference() -> Result<()> {

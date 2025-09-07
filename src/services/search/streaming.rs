@@ -23,10 +23,9 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::search::{InternalSearchResult, SearchDebugInfo};
-use crate::proto::proximadb::{SearchVectorRecord, metadata_item};
+use crate::core::search::InternalSearchResult;
+use crate::proto::proximadb::metadata_item;
 use crate::services::operations::vectors::VectorOperationsService;
-use std::collections::HashMap;
 
 /// Helper function to convert proto metadata Value to serde_json::Value
 fn convert_proto_value_to_json(value: metadata_item::Value) -> serde_json::Value {

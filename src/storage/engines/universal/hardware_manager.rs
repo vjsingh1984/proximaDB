@@ -5,8 +5,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
 

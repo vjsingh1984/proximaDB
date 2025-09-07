@@ -4,8 +4,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable, bytes_of, from_bytes};
-use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::core::error::ProximaDBError;

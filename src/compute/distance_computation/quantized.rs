@@ -444,7 +444,7 @@ impl QuantizedDistanceCalculator {
     ) -> Result<QuantizedDistanceResult> {
         let start_time = std::time::Instant::now();
         let mut cache_hits = 0;
-        let mut cache_misses = 0;
+        let cache_misses = 0;
 
         trace!("Computing distance using format: {:?}", format);
 

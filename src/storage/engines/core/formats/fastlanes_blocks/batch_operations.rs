@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use super::block_structures::{BlockLocation, FastLanesDataBlock, SuperBlock};
+use super::block_structures::FastLanesDataBlock;
 use super::index_structures::RowBasedIdIndex;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};

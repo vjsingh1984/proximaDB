@@ -3,7 +3,6 @@
 //! This module provides predictive prefetching and result caching to improve
 //! query performance through intelligent resource management.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -12,7 +11,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::core::search::InternalSearchResult;
-use super::SStableMetadata;
 
 /// Query pattern for tracking and prediction
 #[derive(Debug, Clone, Serialize, Deserialize)]

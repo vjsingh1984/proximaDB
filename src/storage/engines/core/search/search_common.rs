@@ -10,8 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::{SimilarityResult, UnifiedDistanceCompute};
-use crate::compute::quantization::storage_engine::StorageQuantizedData;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;

@@ -1,0 +1,652 @@
+= Deployment Guide
+:toc:
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+This guide covers various deployment options for ProximaDB, from single-node installations to distributed clusters.
+
+== Deployment Options
+
+=== Single Node Deployment
+
+==== Binary Installation
+
+[source,bash]
+----
+# Download latest release
+wget https://github.com/proximadb/releases/latest/proximadb-server
+chmod +x proximadb-server
+
+# Create configuration
+cat > config.toml <<EOF
+[server]
+rest_port = 5678
+grpc_port = 5679
+
+[storage]
+data_dir = "/var/lib/proximadb/data"
+default_engine = "VIPER"
+
+[performance]
+enable_simd = true
+enable_gpu = false
+EOF
+
+# Start server
+./proximadb-server --config config.toml
+----
+
+==== Systemd Service
+
+[source,ini]
+----
+# /etc/systemd/system/proximadb.service
+[Unit]
+Description=ProximaDB Vector Database
+After=network.target
+
+[Service]
+Type=simple
+User=proximadb
+Group=proximadb
+ExecStart=/usr/local/bin/proximadb-server --config /etc/proximadb/config.toml
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+----
+
+[source,bash]
+----
+# Enable and start service
+sudo systemctl daemon-reload
+sudo systemctl enable proximadb
+sudo systemctl start proximadb
+sudo systemctl status proximadb
+----
+
+=== Docker Deployment
+
+==== Single Container
+
+[source,bash]
+----
+# Run with Docker
+docker run -d \
+  --name proximadb \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v /data/proximadb:/data \
+  -v /config/proximadb:/config \
+  proximadb/proximadb:latest
+
+# With custom configuration
+docker run -d \
+  --name proximadb \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v $(pwd)/config.toml:/config/config.toml \
+  -v /data/proximadb:/data \
+  proximadb/proximadb:latest \
+  --config /config/config.toml
+----
+
+==== Docker Compose
+
+[source,yaml]
+----
+# docker-compose.yml
+version: '3.8'
+
+services:
+  proximadb:
+    image: proximadb/proximadb:latest
+    container_name: proximadb
+    restart: unless-stopped
+    ports:
+      - "5678:5678"  # REST API
+      - "5679:5679"  # gRPC API
+      - "9090:9090"  # Metrics
+    volumes:
+      - proximadb_data:/data
+      - ./config:/config
+    environment:
+      - PROXIMADB_LOG_LEVEL=info
+      - PROXIMADB_STORAGE_ENGINE=VIPER
+      - PROXIMADB_PERFORMANCE_ENABLE_GPU=false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+
+volumes:
+  proximadb_data:
+    driver: local
+----
+
+=== Kubernetes Deployment
+
+==== Basic Deployment
+
+[source,yaml]
+----
+# proximadb-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proximadb
+  namespace: proximadb
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: proximadb
+  template:
+    metadata:
+      labels:
+        app: proximadb
+    spec:
+      containers:
+      - name: proximadb
+        image: proximadb/proximadb:latest
+        ports:
+        - containerPort: 5678
+          name: rest
+        - containerPort: 5679
+          name: grpc
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: PROXIMADB_STORAGE_DATA_DIR
+          value: "/data"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /config
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5678
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5678
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: proximadb-data-pvc
+      - name: config
+        configMap:
+          name: proximadb-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proximadb
+  namespace: proximadb
+spec:
+  selector:
+    app: proximadb
+  ports:
+  - name: rest
+    port: 5678
+    targetPort: 5678
+  - name: grpc
+    port: 5679
+    targetPort: 5679
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  type: LoadBalancer
+----
+
+==== StatefulSet for Persistent Storage
+
+[source,yaml]
+----
+# proximadb-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: proximadb
+  namespace: proximadb
+spec:
+  serviceName: proximadb
+  replicas: 3
+  selector:
+    matchLabels:
+      app: proximadb
+  template:
+    metadata:
+      labels:
+        app: proximadb
+    spec:
+      containers:
+      - name: proximadb
+        image: proximadb/proximadb:latest
+        ports:
+        - containerPort: 5678
+        - containerPort: 5679
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: 100Gi
+----
+
+==== Helm Chart
+
+[source,bash]
+----
+# Install with Helm
+helm repo add proximadb https://charts.proximadb.io
+helm repo update
+
+# Basic installation
+helm install proximadb proximadb/proximadb
+
+# With custom values
+helm install proximadb proximadb/proximadb \
+  --set replicaCount=3 \
+  --set storage.size=100Gi \
+  --set storage.storageClass=fast-ssd \
+  --set resources.requests.memory=4Gi \
+  --set resources.requests.cpu=2
+----
+
+=== Cloud Deployments
+
+==== AWS EC2
+
+[source,bash]
+----
+# Launch EC2 instance (example with AWS CLI)
+aws ec2 run-instances \
+  --image-id ami-0c55b159cbfafe1f0 \
+  --instance-type m5.2xlarge \
+  --key-name my-key \
+  --security-group-ids sg-xxxxxx \
+  --subnet-id subnet-xxxxxx \
+  --block-device-mappings '[
+    {
+      "DeviceName": "/dev/sda1",
+      "Ebs": {
+        "VolumeSize": 100,
+        "VolumeType": "gp3",
+        "Iops": 10000
+      }
+    }
+  ]' \
+  --user-data file://proximadb-init.sh
+----
+
+==== Google Cloud Platform
+
+[source,bash]
+----
+# Create GCE instance
+gcloud compute instances create proximadb-node \
+  --machine-type=n2-standard-8 \
+  --boot-disk-size=100GB \
+  --boot-disk-type=pd-ssd \
+  --image-family=ubuntu-2204-lts \
+  --image-project=ubuntu-os-cloud \
+  --metadata-from-file startup-script=proximadb-init.sh
+----
+
+==== Azure
+
+[source,bash]
+----
+# Create Azure VM
+az vm create \
+  --resource-group proximadb-rg \
+  --name proximadb-vm \
+  --image UbuntuLTS \
+  --size Standard_D8s_v3 \
+  --data-disk-sizes-gb 128 \
+  --public-ip-address proximadb-ip \
+  --custom-data proximadb-init.sh
+----
+
+== Configuration Management
+
+=== Environment-Specific Configs
+
+[source,toml]
+----
+# config/production.toml
+[server]
+rest_port = 5678
+grpc_port = 5679
+enable_tls = true
+tls_cert_path = "/certs/server.crt"
+tls_key_path = "/certs/server.key"
+
+[storage]
+data_dir = "/data/proximadb"
+default_engine = "VIPER"
+compression = "zstd"
+sync_writes = true
+
+[performance]
+enable_simd = true
+enable_gpu = true
+vector_cache_size_mb = 8192
+num_search_threads = 16
+
+[monitoring]
+enable_metrics = true
+metrics_port = 9090
+enable_tracing = true
+log_level = "info"
+----
+
+=== Configuration Templating
+
+[source,bash]
+----
+#!/bin/bash
+# generate-config.sh
+
+# Template configuration with environment variables
+cat > config.toml <<EOF
+[server]
+rest_port = ${REST_PORT:-5678}
+grpc_port = ${GRPC_PORT:-5679}
+
+[storage]
+data_dir = "${DATA_DIR:-/var/lib/proximadb}"
+default_engine = "${STORAGE_ENGINE:-VIPER}"
+
+[performance]
+enable_gpu = ${ENABLE_GPU:-false}
+vector_cache_size_mb = ${CACHE_SIZE_MB:-1024}
+EOF
+----
+
+== Network Configuration
+
+=== Load Balancing
+
+==== HAProxy Configuration
+
+[source,conf]
+----
+# /etc/haproxy/haproxy.cfg
+global
+    maxconn 4096
+    
+defaults
+    mode tcp
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+frontend proximadb_rest
+    bind *:5678
+    default_backend proximadb_rest_nodes
+
+backend proximadb_rest_nodes
+    balance roundrobin
+    server node1 10.0.1.10:5678 check
+    server node2 10.0.1.11:5678 check
+    server node3 10.0.1.12:5678 check
+
+frontend proximadb_grpc
+    bind *:5679
+    default_backend proximadb_grpc_nodes
+
+backend proximadb_grpc_nodes
+    balance leastconn
+    server node1 10.0.1.10:5679 check
+    server node2 10.0.1.11:5679 check
+    server node3 10.0.1.12:5679 check
+----
+
+==== NGINX Configuration
+
+[source,nginx]
+----
+# /etc/nginx/nginx.conf
+upstream proximadb_rest {
+    least_conn;
+    server 10.0.1.10:5678;
+    server 10.0.1.11:5678;
+    server 10.0.1.12:5678;
+}
+
+upstream proximadb_grpc {
+    least_conn;
+    server 10.0.1.10:5679;
+    server 10.0.1.11:5679;
+    server 10.0.1.12:5679;
+}
+
+server {
+    listen 80;
+    server_name api.proximadb.example.com;
+    
+    location / {
+        proxy_pass http://proximadb_rest;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+
+server {
+    listen 5679 http2;
+    
+    location / {
+        grpc_pass grpc://proximadb_grpc;
+    }
+}
+----
+
+== Storage Configuration
+
+=== Local Storage
+
+[source,bash]
+----
+# Prepare local storage
+sudo mkdir -p /var/lib/proximadb/data
+sudo chown -R proximadb:proximadb /var/lib/proximadb
+
+# Mount dedicated disk
+sudo mkfs.ext4 /dev/nvme1n1
+sudo mount /dev/nvme1n1 /var/lib/proximadb/data
+echo "/dev/nvme1n1 /var/lib/proximadb/data ext4 defaults 0 0" | sudo tee -a /etc/fstab
+----
+
+=== Network Storage
+
+==== NFS
+
+[source,bash]
+----
+# Mount NFS share
+sudo apt-get install nfs-common
+sudo mkdir -p /mnt/proximadb
+sudo mount -t nfs nfs-server:/export/proximadb /mnt/proximadb
+echo "nfs-server:/export/proximadb /mnt/proximadb nfs defaults 0 0" | sudo tee -a /etc/fstab
+----
+
+==== AWS EBS
+
+[source,bash]
+----
+# Attach and mount EBS volume
+aws ec2 attach-volume \
+  --volume-id vol-xxxxx \
+  --instance-id i-xxxxx \
+  --device /dev/xvdf
+
+sudo mkfs.ext4 /dev/xvdf
+sudo mount /dev/xvdf /var/lib/proximadb/data
+----
+
+== Security Hardening
+
+=== TLS Configuration
+
+[source,bash]
+----
+# Generate certificates
+openssl req -x509 -newkey rsa:4096 \
+  -keyout server.key \
+  -out server.crt \
+  -days 365 \
+  -nodes \
+  -subj "/CN=proximadb.example.com"
+
+# Configure TLS in config.toml
+cat >> config.toml <<EOF
+[server]
+enable_tls = true
+tls_cert_path = "/certs/server.crt"
+tls_key_path = "/certs/server.key"
+EOF
+----
+
+=== Firewall Rules
+
+[source,bash]
+----
+# UFW configuration
+sudo ufw allow 22/tcp  # SSH
+sudo ufw allow 5678/tcp  # REST API
+sudo ufw allow 5679/tcp  # gRPC API
+sudo ufw allow 9090/tcp  # Metrics (internal only)
+sudo ufw enable
+----
+
+== Monitoring Setup
+
+=== Prometheus Integration
+
+[source,yaml]
+----
+# prometheus.yml
+scrape_configs:
+  - job_name: 'proximadb'
+    static_configs:
+      - targets: ['proximadb:9090']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+----
+
+=== Grafana Dashboard
+
+[source,json]
+----
+{
+  "dashboard": {
+    "title": "ProximaDB Monitoring",
+    "panels": [
+      {
+        "title": "QPS",
+        "targets": [
+          {
+            "expr": "rate(proximadb_queries_total[1m])"
+          }
+        ]
+      },
+      {
+        "title": "Latency",
+        "targets": [
+          {
+            "expr": "proximadb_query_duration_seconds"
+          }
+        ]
+      }
+    ]
+  }
+}
+----
+
+== Validation
+
+=== Health Checks
+
+[source,bash]
+----
+# Check service health
+curl http://localhost:5678/health
+
+# Check readiness
+curl http://localhost:5678/ready
+
+# Verify metrics endpoint
+curl http://localhost:9090/metrics
+----
+
+=== Smoke Tests
+
+[source,python]
+----
+# smoke_test.py
+from proximadb import Client
+import numpy as np
+
+client = Client("localhost:5678")
+
+# Create test collection
+collection = client.create_collection(
+    name="smoke_test",
+    dimension=128
+)
+
+# Insert test vector
+vector = np.random.rand(128).astype('float32')
+collection.insert(id="test", vector=vector)
+
+# Search
+results = collection.search(vector=vector, k=1)
+assert len(results) == 1
+assert results[0].id == "test"
+
+print("✓ Smoke test passed")
+
+# Cleanup
+client.delete_collection("smoke_test")
+----
+
+---
+_Next: link:monitoring.adoc[Monitoring & Observability]_ +
+_Back to: link:README.adoc[Operations Guide]_

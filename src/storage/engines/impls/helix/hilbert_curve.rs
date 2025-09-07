@@ -3,7 +3,6 @@
 //! This module provides a production-ready n-dimensional Hilbert curve
 //! implementation for locality-preserving clustering.
 
-use anyhow::Result;
 
 /// Hilbert curve encoder for n-dimensional spaces
 pub struct HilbertCurve {

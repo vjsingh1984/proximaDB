@@ -10,10 +10,9 @@
 
 use anyhow::Result;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::index::axis::eventlog::{EventLogManager as MetadataQueueService, StorageEngineType};
-use crate::proto::proximadb::VectorRecord;
 use crate::storage::engines::{CompactionParameters, FlushParameters};
 
 /// Simple flush-to-AXIS notifier

@@ -241,7 +241,7 @@ impl SstCompactor {
         // Use streaming approach for memory-efficient compaction
         info!("🔄 Using streaming approach for zero-copy compaction_info");
         let mut streaming_iterators = Vec::new();
-        let mut total_records_estimate = 0;
+        let total_records_estimate = 0;
         for (idx, file_path) in input_files.iter().enumerate() {
             debug!("   📂 Opening file {}: {}", idx, file_path);
             let mut direct_reader =
@@ -428,7 +428,7 @@ impl SstCompactor {
             }
 
             // Add the highest continuous version to output
-            if let Some(mut record) = last_valid {
+            if let Some(record) = last_valid {
                 let selected_version = Self::normalize_version(record.version);
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)
@@ -610,7 +610,7 @@ impl SstCompactor {
             }
 
             // Add the highest continuous version to output
-            if let Some(mut record) = last_valid {
+            if let Some(record) = last_valid {
                 let selected_version = Self::normalize_version(record.version);
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)

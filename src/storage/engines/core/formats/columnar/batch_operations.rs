@@ -2,7 +2,6 @@
 // Efficient batch processing for columnar storage engines
 
 use anyhow::Result;
-use arrow_array::{ArrayRef, RecordBatch};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

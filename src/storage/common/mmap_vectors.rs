@@ -193,14 +193,14 @@ impl MmapVectorStorage {
         start_idx: usize,
         count: usize,
         dimension: usize,
-    ) -> &'a [f32] {
+    ) -> &'a [f32] { unsafe {
         let floats_per_vector = dimension;
         let start_float = start_idx * floats_per_vector;
         let total_floats = count * floats_per_vector;
 
         let ptr = mmap.as_ptr() as *const f32;
         std::slice::from_raw_parts(ptr.add(start_float), total_floats)
-    }
+    }}
 
     /// Prefetch vectors into CPU cache
     #[cfg(target_arch = "x86_64")]

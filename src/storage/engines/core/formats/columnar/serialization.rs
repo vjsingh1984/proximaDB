@@ -6,23 +6,20 @@
 
 use anyhow::{Context, Result};
 use arrow_array::builder::{
-    BinaryBuilder, FixedSizeBinaryBuilder, Float32Builder, Int8Builder, UInt8Builder,
+    FixedSizeBinaryBuilder, Float32Builder, Int8Builder,
 };
 use arrow_array::{
-    Array, ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int8Array, RecordBatch,
-    UInt8Array,
+    Array, ArrayRef, FixedSizeBinaryArray, Float32Array, Int8Array,
 };
-use arrow_schema::{DataType, Field, Schema};
-use bytemuck::{Pod, Zeroable, cast_slice, try_cast_slice};
+use arrow_schema::{DataType, Schema};
+use bytemuck::{cast_slice, try_cast_slice};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{info, trace, warn};
 
-use super::{CompressionMetadata, QuantizationConfig};
-use crate::compute::distance_computation::{
-    Int8VectorData, PQVectorData, QuantizedVectorData, SelectedFormat,
-};
+use super::QuantizationConfig;
+use crate::compute::distance_computation::SelectedFormat;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
@@ -364,7 +361,7 @@ impl ColumnarSerializer {
         let start_time = std::time::Instant::now();
         let mut quantization_time = 0.0;
         let mut compression_time = 0.0;
-        let mut memory_pool_hits = 0;
+        let memory_pool_hits = 0;
 
         info!(
             "Serializing {} vector records with transparent quantization",

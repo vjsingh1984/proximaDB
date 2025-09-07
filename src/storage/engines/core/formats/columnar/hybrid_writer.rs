@@ -10,7 +10,7 @@
 //! - Concurrent write support with lock-free coordination
 //! - Metrics and monitoring for mode transitions
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,7 +21,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
-    BatchParquetWriter, ParquetWriterConfig, StreamingParquetWriter, StreamingParquetWriterStats,
+    BatchParquetWriter, ParquetWriterConfig, StreamingParquetWriter,
 };
 
 /// Hybrid writer mode

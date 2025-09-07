@@ -1,14 +1,13 @@
 // Zone maps and cost-based optimization for NOVA engine
 // Advanced multi-dimensional pruning and search cost estimation
 
-use anyhow::{Result, anyhow};
-use parquet::file::metadata::{ColumnChunkMetaData, RowGroupMetaData};
+use anyhow::Result;
+use parquet::file::metadata::RowGroupMetaData;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tracing::{debug, info, instrument};
+use tracing::instrument;
 
-use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::hierarchical_stats::ZoneMap;
 use crate::compute::distance_computation::DistanceMetric;
 
 /// Advanced zone map with multiple optimization strategies

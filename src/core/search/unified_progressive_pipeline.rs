@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;

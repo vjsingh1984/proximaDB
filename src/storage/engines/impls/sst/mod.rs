@@ -136,6 +136,7 @@ use crate::core::bloom::factory::BloomFilterFactory;
 use crate::core::bloom::{self as bloom_filter, BloomFilterConfig, BloomFilterStrategy};
 pub mod compaction;
 pub mod decompression_cache;
+pub mod error;
 pub mod flush_eventlog_integration;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
@@ -183,15 +184,16 @@ use crate::storage::transaction_coordinator::TransactionCoordinator;
 // Unified search engine removed - using direct search methods
 // MetadataItem is part of VectorRecord proto
 use crate::query::unified_query_optimizer::UnifiedMetadataFilter;
-use anyhow::{Context, Result};
+use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
+
+use self::error::{Result, SstError};
 
 // Performance optimization - import what we need
 use crate::storage::engines::core::ops::{
@@ -203,8 +205,8 @@ use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
 // Import FastLanes common structures (shared with SWIFT)
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-    BlockCompressionConfig, BlockMetadataStats, BlockStatistics, ColumnStatistics,
-    FastLanesBlockMetadata, FastLanesDataBlock, QuantizationStatistics, SuperBlock,
+    BlockCompressionConfig, BlockStatistics, ColumnStatistics,
+    FastLanesBlockMetadata, FastLanesDataBlock,
 };
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
@@ -1042,11 +1044,6 @@ pub fn optimal_block_size(vector_dim: usize) -> usize {
 }
 
 // Import centralized compression markers and helper functions
-use crate::core::compression::markers::{
-    MARKER_UNCOMPRESSED,
-    compression_algorithm_from_marker as get_compression_algorithm_from_marker,
-    compression_marker as get_compression_marker,
-};
 
 // SST uses FastLanesDataBlock directly from the shared module
 // Additional SST-specific methods are implemented as utility functions
@@ -1555,7 +1552,7 @@ impl SstStorage {
         let atomic_coordinator = Arc::new(
             TransactionCoordinator::new(filesystem.clone(), None)
                 .await
-                .context("Failed to create atomic coordinator")?,
+                .map_err(|e| SstError::Internal(format!("Failed to create atomic coordinator: {}", e)))?,
         );
 
         // Create Zero-copy IO system for the reader
@@ -1567,7 +1564,8 @@ impl SstStorage {
                 filesystem.clone(),
                 vec![], // No custom serializers
             )
-            .await?,
+            .await
+            .map_err(|e| SstError::Internal(format!("Failed to create zero-copy IO system: {}", e)))?,
         );
 
         // SST will create IntelligentFilesystem instances per collection for optimal caching
@@ -1594,13 +1592,14 @@ impl SstStorage {
         ));
 
         // Initialize compaction manager (always enabled)
-        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await?));
+        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await
+            .map_err(|e| SstError::Internal(format!("Failed to create compaction manager: {}", e)))?));
 
         // Initialize universal performance optimization
         let universal_optimizer =
             UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
                 .await
-                .context("Failed to create universal performance optimizer")?;
+                .map_err(|e| SstError::Internal(format!("Failed to create universal performance optimizer: {}", e)))?;
 
         Ok(Self {
             config,
@@ -1653,7 +1652,7 @@ impl SstStorage {
         let collection_id = params
             .collection_id
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST operations"))?;
+            .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST operations".into()))?;
 
         // For tests, use temp directory; for production, use /var/lib/proximadb
         let base_path = if cfg!(test) {
@@ -1674,10 +1673,12 @@ impl SstStorage {
                 self.config.clone(),
                 Some(self.atomic_coordinator.clone()),
             )
-            .await?;
+            .await
+            .map_err(|e| SstError::Internal(format!("Failed to create compaction manager: {}", e)))?;
 
             // Start background workers
-            compaction_manager.start_workers(worker_count).await?;
+            compaction_manager.start_workers(worker_count).await
+                .map_err(|e| SstError::Internal(format!("Failed to start compaction workers: {}", e)))?;
 
             self.compaction_manager = Some(Arc::new(compaction_manager));
 
@@ -1699,7 +1700,8 @@ impl SstStorage {
         if let Some(mmap) = self
             .universal_optimizer
             .get_memory_mapped_file(file_path)
-            .await?
+            .await
+            .map_err(|e| SstError::Internal(format!("Failed to get memory-mapped file: {}", e)))?
         {
             Ok(mmap.to_vec())
         } else {
@@ -1707,6 +1709,7 @@ impl SstStorage {
             self.universal_optimizer
                 .read_data_optimized(file_path)
                 .await
+                .map_err(|e| SstError::Internal(format!("Failed to read data: {}", e)))
         }
     }
 
@@ -1729,7 +1732,8 @@ impl SstStorage {
         let results = self
             .universal_optimizer
             .parallel_operations(read_operations, |operation| operation)
-            .await?;
+            .await
+            .map_err(|e| SstError::Internal(format!("Failed in parallel operations: {}", e)))?;
 
         // Extract successful results - results is Vec<Result<Vec<u8>>>
         let mut final_results = Vec::new();
@@ -1739,10 +1743,10 @@ impl SstStorage {
                     // data is Result<Vec<u8>, Error>, so we need to unwrap it
                     match data {
                         Ok(bytes) => final_results.push(bytes),
-                        Err(e) => return Err(anyhow::anyhow!("Block read failed: {}", e)),
+                        Err(e) => return Err(SstError::Internal(format!("Block read failed: {}", e))),
                     }
                 }
-                Err(e) => return Err(anyhow::anyhow!("Task failed: {}", e)),
+                Err(e) => return Err(SstError::Internal(format!("Task failed: {}", e))),
             }
         }
         Ok(final_results)
@@ -1777,11 +1781,13 @@ impl SstStorage {
         self.universal_optimizer
             .compute_distances_accelerated(query, candidates, metric)
             .await
+            .map_err(|e| SstError::Internal(format!("Failed to compute distances: {}", e)))
     }
 
     /// Memory pool optimization using universal optimizer
     async fn sstable_buffer(&self, size: usize) -> Result<Vec<f32>> {
         self.universal_optimizer.get_memory_buffer(size).await
+            .map_err(|e| SstError::Internal(format!("Failed to get memory buffer: {}", e)))
     }
 }
 
@@ -1795,7 +1801,7 @@ impl UniversallyOptimized for SstStorage {
         &self.universal_optimizer
     }
 
-    async fn setup_engine_optimizations(&self) -> Result<()> {
+    async fn setup_engine_optimizations(&self) -> anyhow::Result<()> {
         // SST-specific optimizations: Setup SSTable-specific caching and prefetching
         info!("🔧 SST: Setting up engine-specific optimizations");
 
@@ -1803,16 +1809,18 @@ impl UniversallyOptimized for SstStorage {
         let sstable_files = vec!["example_sstable.sst".to_string()]; // TODO: Get actual SSTable files
         self.universal_optimizer
             .prefetch_data(&sstable_files)
-            .await?;
+            .await
+            .context("Failed to prefetch SSTable data")?;
 
         // Setup SSTable-specific cache eviction if needed
-        self.universal_optimizer.evict_cache_if_needed().await?;
+        self.universal_optimizer.evict_cache_if_needed().await
+            .context("Failed to evict cache")?;
 
         info!("✅ SST: Engine-specific optimizations setup complete");
         Ok(())
     }
 
-    async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+    async fn collect_performance_metrics(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
 
         // SST-specific metrics
@@ -2084,13 +2092,13 @@ impl UniversallyOptimized for SstStorage {
             writer
         };
         writer.write_sorted_vector_records(sorted_records_iter, record_count).await
-            .map_err(|e| anyhow::anyhow!("Failed to write SSTable to staging: {}", e))?;
+            .map_err(|e| SstError::Flush(format!("Failed to write SSTable to staging: {}", e)))?;
 
         // Get file size from staging
         let fs = self.filesystem.get_filesystem(&staging_url)?;
         let metadata = fs.metadata(&staging_url)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get staging file size: {}", e))?;
+            .map_err(|e| SstError::Internal(format!("Failed to get staging file size: {}", e)))?;
         let file_size = metadata.size;
 
         // Finalize atomic operation
@@ -2187,7 +2195,7 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     /// SST-specific flush implementation - Extract records from WAL vector record batches
-    async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+    async fn do_flush(&self, params: &FlushParameters) -> anyhow::Result<FlushResult> {
         info!("🚀 SST FLUSH START");
         info!("   - Collection ID: {:?}", params.collection_id);
         info!("   - Vector count: {}", params.vector_records.len());
@@ -2230,7 +2238,7 @@ impl UnifiedStorageEngine for SstStorage {
         let collection_id = params
             .collection_id
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST flush"))?;
+            .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST flush".into()))?;
 
         let operation_id = uuid::Uuid::new_v4().to_string();
         let vector_records = &params.vector_records;
@@ -2418,12 +2426,12 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     /// SST-specific compaction using level-based merge strategy with vector tracking
-    async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
+    async fn do_compact(&self, params: &CompactionParameters) -> anyhow::Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
         let collection_id = params
             .collection_id
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for SST compaction_info"))?;
+            .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST compaction".into()))?;
 
         info!(
             "🗜️ SST COMPACTION START: Collection {} (force: {}, priority: {:?})",
@@ -2719,7 +2727,7 @@ impl UnifiedStorageEngine for SstStorage {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::core::VectorRecord>> {
+    ) -> anyhow::Result<Option<crate::core::VectorRecord>> {
         debug!(
             "🔍 SST: Looking up vector {} in collection {} using manifest",
             vector_id, collection_id
@@ -2830,17 +2838,17 @@ impl UnifiedStorageEngine for SstStorage {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> anyhow::Result<Vec<crate::core::search::InternalSearchResult>> {
         let search_start = std::time::Instant::now();
 
         // Extract parameters from context
         let collection_id = ctx.collection_id();
         let storage_url = ctx
             .collection_storage_path()
-            .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
+            .ok_or_else(|| SstError::InvalidArgument("No storage URL in context".into()))?;
         let query_vector = ctx
             .query_vector()
-            .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
+            .ok_or_else(|| SstError::InvalidArgument("No query vector in context".into()))?;
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         let filter_expression = ctx.search_params.filter_expression.as_ref();
@@ -2888,7 +2896,8 @@ impl UnifiedStorageEngine for SstStorage {
                             include_vectors,
                             include_metadata,
                         )
-                        .await;
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Fallback search failed: {}", e));
                 }
             };
 
@@ -3201,7 +3210,7 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     /// SST-specific engine metrics
-    async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+    async fn collect_engine_metrics(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
 
         metrics.insert(
@@ -3464,7 +3473,7 @@ impl SstStorage {
             if let Some(parent) = sst_path.parent() {
                 tokio::fs::create_dir_all(parent)
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to create directory: {}", e))?;
+                    .map_err(|e| SstError::Internal(format!("Failed to create directory: {}", e)))?;
             }
 
             // Convert VectorRecords to BTreeMap for SstableWriter (OPTIMIZED: Direct conversion)
@@ -3526,7 +3535,7 @@ impl SstStorage {
             writer
                 .write_sorted_vector_records(sorted_records_iter, record_count)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to write SSTable: {}", e))?;
+                .map_err(|e| SstError::Flush(format!("Failed to write SSTable: {}", e)))?;
             debug!(
                 "🔍 SST: Successfully wrote SSTable file: {}",
                 sst_path.display()
@@ -3732,7 +3741,7 @@ impl SstStorage {
         let bloom_filter = self.build_bloom_filter(records).await?;
         let bloom_data = bloom_filter
             .serialize()
-            .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))?;
+            .map_err(|e| SstError::Internal(format!("Failed to serialize bloom filter: {}", e)))?;
 
         // Step 3: Organize records into blocks for better cache performance
         let data_blocks = self
@@ -3746,7 +3755,7 @@ impl SstStorage {
 
         // Step 5: Serialize header
         let header_data = bincode::serialize(&header)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize header: {}", e))?;
+            .map_err(|e| SstError::Internal(format!("Failed to serialize header: {}", e)))?;
         sstable_data.extend((header_data.len()).to_le_bytes());
         sstable_data.extend(header_data);
 
@@ -3759,7 +3768,7 @@ impl SstStorage {
         for entry in &index_entries {
             let entry_data = entry
                 .serialize()
-                .map_err(|e| anyhow::anyhow!("Failed to serialize index entry: {}", e))?;
+                .map_err(|e| SstError::Internal(format!("Failed to serialize index entry: {}", e)))?;
             index_data.extend_from_slice(&(entry_data.len()).to_le_bytes());
             index_data.extend_from_slice(&entry_data);
         }
@@ -3807,7 +3816,7 @@ impl SstStorage {
             let filename = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .ok_or_else(|| anyhow::anyhow!("Invalid SSTable filename"))?;
+                .ok_or_else(|| SstError::InvalidArgument("Invalid SSTable filename".to_string()))?;
 
             // Parse level from filename using centralized utility
             let level = Some(FilenameCodec::new().parse_level(filename) as u8);
@@ -3884,7 +3893,7 @@ impl SstStorage {
         let mut count = 0;
         let mut dir_entries = tokio::fs::read_dir(&level_dir)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to read level directory: {}", e))?;
+            .map_err(|e| SstError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read level directory: {}", e))))?;
 
         while let Ok(Some(entry)) = dir_entries.next_entry().await {
             if let Some(filename) = entry.file_name().to_str() {
@@ -3990,8 +3999,10 @@ impl SstStorage {
 
         let sstable_filter = SstableBloomFilter::new(
             key_filter_config,
-            key_filter.serialize()?,
-            BloomFilterStrategy::serialize(&metadata_filter)?,
+            key_filter.serialize()
+                .map_err(|e| SstError::Internal(format!("Failed to serialize key filter: {}", e)))?,
+            BloomFilterStrategy::serialize(&metadata_filter)
+                .map_err(|e| SstError::Internal(format!("Failed to serialize metadata filter: {}", e)))?,
             stats,
         );
 
@@ -4128,7 +4139,7 @@ impl SstStorage {
             if current_block_size + record_size > block_size && !current_block_records.is_empty() {
                 let records = std::mem::take(&mut current_block_records);
                 let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
-                let mut block = FastLanesDataBlock {
+                let block = FastLanesDataBlock {
                     encoding_marker: 0x00,
                     encoding_metadata: None,
                     block_id,
@@ -4212,7 +4223,7 @@ impl SstStorage {
             // Use the new DataBlock serialization with compression
             let serialized_block = block
                 .serialize_with_config(&compression_config)
-                .map_err(|e| anyhow::anyhow!("Failed to serialize data block: {}", e))?;
+                .map_err(|e| SstError::Internal(format!("Failed to serialize data block: {}", e)))?;
 
             let final_data = serialized_block;
 
@@ -4345,7 +4356,8 @@ impl SstStorage {
         };
 
         // Use the consolidated do_compact implementation
-        let mut result = self.do_compact(&params).await?;
+        let mut result = self.do_compact(&params).await
+            .map_err(|e| SstError::Compaction(format!("Compaction failed: {}", e)))?;
 
         // Extract vector tracking data from engine_metrics
         let deleted_vector_ids = result
@@ -4433,8 +4445,8 @@ impl SstStorage {
     ) -> Result<Arc<crate::index::axis::management::manager::AxisManager>> {
         // Create a mock AXIS manager
         // In real implementation, this would come from the service container
-        Err(anyhow::anyhow!(
-            "AXIS manager not available in mock implementation"
+        Err(SstError::Internal(
+            "AXIS manager not available in mock implementation".to_string()
         ))
     }
 
@@ -4482,6 +4494,7 @@ impl SstStorage {
 
         // Use the unified search implementation with context
         self.search_vectors_unified(ctx).await
+            .map_err(|e| SstError::Search(format!("Search failed: {}", e)))
     }
 }
 

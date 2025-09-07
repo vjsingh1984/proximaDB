@@ -6,7 +6,7 @@
 [abstract]
 **Rapid Adaptive Precision Tensor Operations Runtime** - A hybrid storage engine combining row-aligned storage with HNSW indexing and bloom filter optimization for graph-based similarity search.
 
-include::../assets/logos/raptor-engine-logo.svg[]
+image::../assets/logos/raptor-engine-logo.svg[RAPTOR Engine Logo, 200, align="center"]
 
 == Overview
 

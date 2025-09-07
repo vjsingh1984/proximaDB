@@ -65,16 +65,12 @@
 //! - **Smart Defaults**: Automatic selection of optimal configurations
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
-use parking_lot::RwLock;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::core::config::StorageConfig;
 use crate::proto::proximadb::{Collection, CollectionConfig};
-use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
 

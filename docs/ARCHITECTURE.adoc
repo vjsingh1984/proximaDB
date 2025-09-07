@@ -1,0 +1,374 @@
+= ProximaDB Architecture
+:toc:
+:toclevels: 3
+:icons: font
+:imagesdir: ../docs/assets
+:source-highlighter: rouge
+
+== System Overview
+
+ProximaDB is a high-performance vector database designed for similarity search at scale. It features hardware acceleration, multiple storage engines, and a proto-first design for zero serialization overhead.
+
+== Core Design Principles
+
+. *Proto-First*: VectorRecord flows natively as protobuf types
+. *Direct Access*: Zero-copy paths wherever possible
+. *Hardware Aware*: Automatic SIMD/GPU detection and utilization
+. *Engine Specialization*: Six engines optimized for different workloads
+
+== System Architecture
+
+[plantuml, system-architecture, svg]
+----
+@startuml
+!theme plain
+
+package "Client Applications" {
+  [REST Clients]
+  [gRPC Clients]
+}
+
+package "ProximaDB Server" {
+  package "API Layer" {
+    [REST API] #LightBlue
+    [gRPC API] #LightBlue
+  }
+  
+  package "Service Layer" {
+    [VectorOperationsService] #LightGreen
+    note right: Direct Memtable Access
+  }
+  
+  package "Storage Engine Router" {
+    [Engine Selection] #Yellow
+  }
+  
+  package "Storage Engines" {
+    [VIPER] #Orange
+    [SST] #Orange
+    [RAPTOR] #Orange
+    [NOVA] #LightGray
+    [SWIFT] #LightGray
+    [PRISM] #LightGray
+  }
+  
+  package "Hardware Layer" {
+    [SIMD AVX2] #Pink
+    [GPU CUDA] #Pink
+    [ARM NEON] #Pink
+  }
+  
+  package "Storage Layer" {
+    [Parquet] #Cyan
+    [SSTable] #Cyan
+    [mmap] #Cyan
+  }
+}
+
+[REST Clients] --> [REST API]
+[gRPC Clients] --> [gRPC API]
+[REST API] --> [VectorOperationsService]
+[gRPC API] --> [VectorOperationsService]
+[VectorOperationsService] --> [Engine Selection]
+[Engine Selection] --> [VIPER]
+[Engine Selection] --> [SST]
+[Engine Selection] --> [RAPTOR]
+[VIPER] --> [SIMD AVX2]
+[SST] --> [GPU CUDA]
+[RAPTOR] --> [ARM NEON]
+[VIPER] --> [Parquet]
+[SST] --> [SSTable]
+[RAPTOR] --> [mmap]
+
+@enduml
+----
+
+== Storage Engines
+
+=== Production Engines
+
+[cols="1,2,3,3", options="header"]
+|===
+| Engine | Type | Best For | Key Features
+
+| *VIPER*
+| Columnar (Parquet)
+| Analytics, batch operations
+| Compression, column pruning
+
+| *SST*
+| Row-based (SSTable)
+| High-throughput writes
+| Bloom filters, LSM-tree
+
+| *RAPTOR*
+| Row + HNSW
+| Graph similarity search
+| Bloom filters for ID lookup
+|===
+
+=== Advanced Engines (Beta)
+
+[cols="1,2,3,1", options="header"]
+|===
+| Engine | Type | Best For | Status
+
+| *NOVA*
+| Enhanced columnar
+| Zone maps, statistics
+| 85% complete
+
+| *SWIFT*
+| High-perf row-based
+| Adaptive blocks
+| 75% complete
+
+| *PRISM*
+| Metadata-first
+| Progressive quantization
+| 70% complete
+|===
+
+[NOTE]
+====
+For detailed engine documentation, see:
+
+* link:../docs/04-storage-engines/viper.adoc[VIPER Engine]
+* link:../docs/04-storage-engines/sst.adoc[SST Engine]
+* link:../docs/04-storage-engines/raptor.adoc[RAPTOR Engine]
+* link:../docs/04-storage-engines/nova.adoc[NOVA Engine]
+* link:../docs/04-storage-engines/swift.adoc[SWIFT Engine]
+* link:../docs/04-storage-engines/prism.adoc[PRISM Engine]
+====
+
+== Key Components
+
+=== 1. Vector Operations Service
+
+* Direct memtable access for 40-60% latency reduction
+* Bypasses storage layer for hot data
+* Automatic cache management
+
+=== 2. EventLog Queue System
+
+* Lightweight async indexing queue
+* Metadata-only (1.05x write amplification)
+* Queue-aware compaction
+
+=== 3. Hardware Acceleration
+
+[source,rust]
+----
+// Automatic detection and routing
+HardwareCapabilities {
+    SIMD: AVX2/SSE2/NEON detection
+    GPU: Lazy initialization
+    Cache: L1/L2/L3 optimization
+}
+----
+
+=== 4. Distance Computation
+
+* *Metrics*: Cosine, Euclidean, DotProduct, Manhattan, Hamming, Jaccard
+* *Performance*: 20.8M ops/sec (128D), 1.2M ops/sec (1536D)
+* *Optimization*: Direct SIMD bypass, zero allocations
+
+=== 5. Quantization Pipeline
+
+....
+Binary → INT8 → PQ4/8/16 → Hybrid → Full Precision
+....
+
+* Progressive refinement
+* Hardware-accelerated
+* Auto-configuration based on dimensions
+
+== Data Flow
+
+=== Write Path
+
+[plantuml, write-path, svg]
+----
+@startuml
+!theme plain
+
+start
+:Client Request;
+:VectorOperationsService;
+:Memtable (Direct Write);
+:EventLog Queue (Async);
+:Storage Engine;
+:AXIS Index (Background);
+stop
+
+@enduml
+----
+
+=== Read Path
+
+[plantuml, read-path, svg]
+----
+@startuml
+!theme plain
+
+start
+:Search Request;
+:Query Preprocessing;
+:Progressive Search;
+note right
+  1. Bloom Filter Check
+  2. Binary Search
+  3. INT8 Refinement
+  4. PQ Refinement
+  5. Full Precision
+end note
+:Result Ranking;
+:Response;
+stop
+
+@enduml
+----
+
+== Performance Optimizations
+
+=== Memory Management
+
+* *Zero-Copy*: Direct proto serialization
+* *Memory Pools*: Pre-allocated vector buffers
+* *Chunked Processing*: Prevents stack overflow
+* *mmap*: Memory-mapped file access
+
+=== Caching Strategy
+
+* *Hierarchical*: L1 → L2 → L3 → RAM → Disk
+* *Integrated*: Query, metadata, vector caches
+* *Adaptive*: LRU with frequency tracking
+* *Hit Rate*: 60-90% in production
+
+=== SIMD Optimization
+
+[source,rust]
+----
+// Platform-specific implementations
+#[cfg(target_arch = "x86_64")]
+AVX2: 8-wide float operations
+
+#[cfg(target_arch = "aarch64")]  
+NEON: 4-wide float operations
+----
+
+== Indexing Algorithms
+
+[cols="1,2,2,1", options="header"]
+|===
+| Algorithm | Use Case | Performance | Memory
+
+| *HNSW*
+| High recall
+| O(log n) search
+| High
+
+| *IVF*
+| Large scale
+| O(√n) search
+| Medium
+
+| *LSH*
+| Approximate
+| O(1) search
+| Low
+
+| *PQ*
+| Compression
+| 4-16x reduction
+| Very Low
+
+| *FLAT*
+| Exact search
+| O(n) search
+| High
+|===
+
+== Configuration
+
+=== Storage Engine Selection
+
+[source,rust]
+----
+// Automatic selection based on workload
+match workload {
+    Analytics => VIPER,      // Columnar for scanning
+    Streaming => SST,        // Write-optimized
+    GraphSearch => RAPTOR,   // HNSW integration
+    _ => VIPER,             // Default
+}
+----
+
+=== Hardware Detection
+
+[source,rust]
+----
+// Global initialization (once at startup)
+initialize_hardware_capabilities_default();
+
+// Automatic routing
+if dimension > 1024 && has_gpu() {
+    use_gpu_acceleration()
+} else if has_avx2() {
+    use_simd_avx2()
+} else {
+    use_scalar_fallback()
+}
+----
+
+== Deployment Patterns
+
+=== Single Node
+
+* All engines available
+* Local disk storage
+* In-process caching
+
+=== Distributed (Planned)
+
+* Sharded by vector ID
+* Replicated indexes
+* Consistent hashing
+
+== Monitoring & Observability
+
+=== Metrics
+
+* Operations per second
+* Latency percentiles (P50, P95, P99)
+* Cache hit rates
+* Memory usage
+* Index statistics
+
+=== Health Checks
+
+[source,json]
+----
+GET /health
+{
+  "status": "healthy",
+  "version": "0.1.4",
+  "uptime": "24h",
+  "metrics": {
+    "qps": 10000,
+    "latency_p99": 0.8
+  }
+}
+----
+
+== Security
+
+* *Authentication*: JWT tokens
+* *Authorization*: RBAC per collection
+* *Encryption*: TLS for transport
+* *Audit*: Query and modification logs
+
+---
+
+_For implementation details, see link:../CLAUDE.md[CLAUDE.md]_ +
+_For performance metrics, see link:BENCHMARKS.adoc[BENCHMARKS.adoc]_

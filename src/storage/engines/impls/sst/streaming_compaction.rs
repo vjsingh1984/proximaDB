@@ -17,9 +17,8 @@
 use anyhow::Result;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::core::VectorRecord;
 use crate::proto::proximadb::CompressionConfig;

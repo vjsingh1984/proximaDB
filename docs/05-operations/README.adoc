@@ -1,0 +1,73 @@
+= ProximaDB Operations Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide covers operational aspects of ProximaDB including deployment, monitoring, backup, recovery, and maintenance.
+
+== Guide Contents
+
+[cols="1,3", options="header"]
+|===
+| Document | Description
+
+| link:deployment.adoc[Deployment]
+| Installation, configuration, and deployment strategies
+
+| link:monitoring.adoc[Monitoring & Observability]
+| Metrics, logging, tracing, and alerting
+
+| link:backup-recovery.adoc[Backup & Recovery]
+| Data backup strategies and disaster recovery
+
+| link:scaling.adoc[Scaling]
+| Horizontal and vertical scaling strategies
+
+| link:security.adoc[Security]
+| Authentication, authorization, encryption, and compliance
+
+| link:maintenance.adoc[Maintenance]
+| Routine maintenance, upgrades, and optimization
+
+| link:troubleshooting.adoc[Troubleshooting]
+| Common issues, debugging, and problem resolution
+
+| link:performance.adoc[Performance Management]
+| Tuning, optimization, and capacity planning
+
+| link:high-availability.adoc[High Availability]
+| Clustering, replication, and failover
+
+| link:migration.adoc[Migration]
+| Data migration and version upgrades
+|===
+
+== Quick Start for Operators
+
+=== Essential Tasks
+
+. link:deployment.adoc[Deploy ProximaDB] in your environment
+. Set up link:monitoring.adoc[monitoring and alerting]
+. Configure link:backup-recovery.adoc[automated backups]
+. Review link:security.adoc[security configurations]
+. Plan link:maintenance.adoc[maintenance windows]
+
+=== Daily Operations
+
+* Check link:monitoring.adoc#health-checks[health status]
+* Review link:monitoring.adoc#metrics[performance metrics]
+* Monitor link:monitoring.adoc#logs[system logs]
+* Verify link:backup-recovery.adoc#verification[backup completion]
+
+=== Emergency Procedures
+
+* link:troubleshooting.adoc#emergency[Emergency response]
+* link:backup-recovery.adoc#disaster-recovery[Disaster recovery]
+* link:high-availability.adoc#failover[Failover procedures]
+* link:troubleshooting.adoc#support[Getting support]
+
+---
+_For development setup, see link:../07-development/README.adoc[Development Guide]_ +
+_For user documentation, see link:../03-user-guide/README.adoc[User Guide]_

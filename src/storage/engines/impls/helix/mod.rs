@@ -41,7 +41,6 @@ mod tests;
 #[path = "tests/integration_tests.rs"]
 mod integration_tests;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::InternalSearchResult;
 use crate::core::VectorRecord;
 use crate::services::EventLog;
@@ -56,8 +55,6 @@ use crate::storage::traits::{
 use self::clustering::{HilbertKey, PCAModel};
 use self::compaction::LeveledCompactor;
 use self::query_optimization::QueryOptimizer;
-use self::clustering::LiquidClusteringConfig;
-use self::fastlane::{FastLaneMetadata, HelixBlockMetadata};
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata;
 
 /// HELIX engine configuration
@@ -391,7 +388,7 @@ impl UnifiedStorageEngine for HelixEngine {
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         info!("HELIX flush started for collection {}", self.collection_id);
         
-        let mut records = params.vector_records.clone();
+        let records = params.vector_records.clone();
         let num_records = records.len();
         
         if records.is_empty() {

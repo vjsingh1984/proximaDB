@@ -11,11 +11,10 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::index::axis::eventlog::{EventLogQuery, EventLogService};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Unique identifier for operations

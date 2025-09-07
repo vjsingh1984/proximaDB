@@ -4,29 +4,24 @@
 //! that integrates PQ and INT8 optimized distance computations across all storage engines.
 
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 use uuid::Uuid;
 
 use crate::compute::distance_computation::{
-    DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceCalculator,
-    QuantizedDistanceConfig, QuantizedDistanceResult, QuantizedVectorData, SelectedFormat,
+    DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData, SelectedFormat,
     SimilarityResult, UnifiedDistanceCompute,
-};
-use crate::compute::quantization::storage_engine::{
-    SearchStage, StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 use super::{
     config::ProgressiveRefinementConfig as ConfigProgressiveRefinementConfig,
-    config::{CacheConfig, UniversalAdapterConfig},
-    conversion::{ConversionResult, FormatConverter, StorageFormat},
-    distance_cache::{DistanceTableCache, DistanceTableKey},
+    config::UniversalAdapterConfig,
+    conversion::{FormatConverter, StorageFormat},
+    distance_cache::DistanceTableCache,
     hardware_manager::{HardwareAccelerationManager, OptimizationStrategy},
     progressive_refinement::{
         ProgressiveRefinementConfig, ProgressiveRefinementPipeline, QualityMetrics, RefinementStage,

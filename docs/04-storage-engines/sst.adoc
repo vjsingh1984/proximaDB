@@ -6,7 +6,7 @@
 [abstract]
 **Sorted String Table** - A sophisticated LSM tree storage engine with zero-copy compaction, three-stage filtering pipeline, and hierarchical bloom filters. Optimized for real-time OLTP workloads with sub-5ms P99 latency.
 
-include::../assets/logos/sst-engine-logo.svg[]
+image::../assets/logos/sst-engine-logo.svg[SST Engine Logo, 200, align="center"]
 
 == Overview
 

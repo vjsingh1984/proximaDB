@@ -184,6 +184,33 @@ match hardware_capabilities {
 }
 ```
 
+== Operations
+
+=== Monitoring
+ProximaDB exposes a Prometheus endpoint for monitoring key metrics. The endpoint is available at `http://<host>:5678/metrics`.
+
+=== Backup and Restore
+ProximaDB supports online backup and restore to and from a variety of storage backends, including local filesystem, S3, GCS, and Azure Blob Storage.
+
+== Security
+
+ProximaDB provides a comprehensive security model that includes authentication, authorization, and encryption.
+
+=== Authentication
+ProximaDB supports multiple authentication mechanisms, including:
+
+* **mTLS:** Mutual TLS for secure client-server communication.
+* **JWT:** JSON Web Tokens for stateless authentication.
+
+=== Authorization
+ProximaDB uses a Role-Based Access Control (RBAC) model to control access to resources. Users can be assigned to roles, and roles can be granted permissions to perform specific actions on specific resources.
+
+=== Encryption
+ProximaDB supports encryption at rest and in transit.
+
+* **Encryption at Rest:** Data is encrypted at rest using AES-256.
+* **Encryption in Transit:** Data is encrypted in transit using TLS 1.3.
+
 == Data Flow
 
 === Write Flow

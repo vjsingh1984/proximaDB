@@ -22,16 +22,10 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 // Use core compression directly instead of adapter
-use crate::core::compression::{
-    CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
-};
-use crate::storage::engines::core::ops::compression_common::{
-    AdaptiveCompressionSettings, AdaptiveStrategy, ContextAwareCompressionConfig,
-};
+use crate::core::compression::StandardCompression;
 // Use unified quantization engine
 use crate::compute::distance_computation::UnifiedDistanceCompute;
 use crate::compute::quantization::{UnifiedQuantizationEngine, unified::InMemoryCodebookStore};
-use crate::metrics::compression::CompressionData;
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -1525,7 +1519,7 @@ impl Flush {
         batch: &arrow_array::RecordBatch,
     ) -> Result<parquet::file::properties::WriterPropertiesBuilder> {
         use crate::core::compression::{
-            CompressionContext, detect_column_type, map_to_parquet_compression,
+            CompressionContext, detect_column_type,
             optimal_compression_for_column,
         };
 

@@ -6,7 +6,7 @@
 [abstract]
 **High-Efficiency Locality-Indexed eXecution** - A disk-only LSM engine with 7,798 lines of implementation. Uses PCA dimensionality reduction and Hilbert curve clustering for physical co-location of similar vectors, achieving 70-90% query pruning.
 
-include::../assets/logos/helix-engine-logo.svg[]
+image::../assets/logos/helix-engine-logo.svg[HELIX Engine Logo, 200, align="center"]
 
 == Overview
 

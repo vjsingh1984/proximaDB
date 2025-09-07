@@ -1,25 +1,24 @@
 //! Unit tests for multi-tier deduplication system
 
 use chrono::{Duration, Utc};
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
 use proximadb::core::search::multi_tier_deduplication::{
-    DeduplicationStorageEngine, MultiTierDeduplicator, StorageTier, TieredSearchCandidate,
+    DeduplicationStorageEngine, MultiTierDeduplicator, DataFreshnessTier, TieredSearchCandidate,
 };
-use proximadb::proto::proximadb::MetadataItem;
 use serde_json::json;
 use std::collections::HashMap;
 
 #[test]
 fn test_storage_tier_ordering() {
     // Verify tier priority ordering
-    assert!(StorageTier::Unflushed > StorageTier::Flushed);
-    assert!(StorageTier::Flushed > StorageTier::Compacted);
-    assert!(StorageTier::Unflushed > StorageTier::Compacted);
+    assert!(DataFreshnessTier::Unflushed > DataFreshnessTier::Flushed);
+    assert!(DataFreshnessTier::Flushed > DataFreshnessTier::Compacted);
+    assert!(DataFreshnessTier::Unflushed > DataFreshnessTier::Compacted);
 
     // Verify numeric values
-    assert_eq!(StorageTier::Compacted as u8, 0);
-    assert_eq!(StorageTier::Flushed as u8, 1);
-    assert_eq!(StorageTier::Unflushed as u8, 2);
+    assert_eq!(DataFreshnessTier::Compacted as u8, 0);
+    assert_eq!(DataFreshnessTier::Flushed as u8, 1);
+    assert_eq!(DataFreshnessTier::Unflushed as u8, 2);
 }
 
 #[test]
@@ -28,29 +27,28 @@ fn test_basic_deduplication() {
 
     // Create a base vector record
     let base_record = VectorRecord {
-        id: Some("vec1".to_string()),
+        id: "vec1".to_string(),
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![MetadataItem {
             key: "type".to_string(),
             value: Some(
-                proximadb::proto::proximadb::metadata_item::Value::StringValue("test".to_string()),
+                metadata_item::Value::StringValue("test".to_string()),
             ),
         }],
         timestamp: Utc::now().timestamp() as u32,
         updated_at: Some(Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        quantized_vector: None,
+        source: None,
     };
 
     // Add same vector from different tiers
     let results = vec![
         TieredSearchCandidate {
             vector_record: base_record.clone(),
-            score: 0.8,
-            tier: StorageTier::Compacted,
+            similarity: 0.8,
+            tier: DataFreshnessTier::Compacted,
             engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now() - Duration::hours(2),
             sequence: 100,
@@ -62,8 +60,8 @@ fn test_basic_deduplication() {
                 rec.version = Some(2);
                 rec
             },
-            score: 0.85,
-            tier: StorageTier::Flushed,
+            similarity: 0.85,
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now() - Duration::hours(1),
             sequence: 200,
@@ -76,7 +74,7 @@ fn test_basic_deduplication() {
 
     assert_eq!(merged.len(), 1);
     assert_eq!(merged[0].vector_record.version, Some(2)); // Should get the newer version
-    assert_eq!(merged[0].score, 0.85);
+    assert_eq!(merged[0].similarity, 0.85);
 }
 
 #[test]
@@ -88,19 +86,18 @@ fn test_deduplication_without_ids() {
     let results = vec![
         TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: None,
+                id: String::new(),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: vec![],
                 timestamp: Utc::now().timestamp() as u32,
                 updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: None,
+                source: None,
             },
-            score: 0.9,
-            tier: StorageTier::Flushed,
+            similarity: 0.9,
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::VIPER,
             timestamp: Utc::now(),
             sequence: 100,
@@ -108,19 +105,18 @@ fn test_deduplication_without_ids() {
         },
         TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: None,
+                id: String::new(),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: vec![],
                 timestamp: Utc::now().timestamp() as u32,
                 updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: None,
+                source: None,
             },
-            score: 0.85,
-            tier: StorageTier::Flushed,
+            similarity: 0.85,
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::VIPER,
             timestamp: Utc::now(),
             sequence: 101,
@@ -134,8 +130,8 @@ fn test_deduplication_without_ids() {
     // Both vectors should be included (no deduplication for ID-less vectors)
     // Results are sorted by score in descending order (highest score first)
     assert_eq!(merged.len(), 2);
-    assert_eq!(merged[0].score, 0.9); // Highest score comes first
-    assert_eq!(merged[1].score, 0.85); // Lower score comes second
+    assert_eq!(merged[0].similarity, 0.9); // Highest score comes first
+    assert_eq!(merged[1].similarity, 0.85); // Lower score comes second
 }
 
 #[test]
@@ -149,7 +145,7 @@ fn test_metadata_filtering() {
 
     let records = vec![
         VectorRecord {
-            id: Some("doc1".to_string()),
+            id: "doc1".to_string(),
             vector: vec![1.0, 0.0],
             metadata: vec![
                 MetadataItem {
@@ -173,12 +169,11 @@ fn test_metadata_filtering() {
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
+                source: None,
         },
         VectorRecord {
-            id: Some("doc2".to_string()),
+            id: "doc2".to_string(),
             vector: vec![0.0, 1.0],
             metadata: vec![
                 MetadataItem {
@@ -202,9 +197,8 @@ fn test_metadata_filtering() {
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
+                source: None,
         },
     ];
 
@@ -213,8 +207,8 @@ fn test_metadata_filtering() {
         .enumerate()
         .map(|(i, record)| TieredSearchCandidate {
             vector_record: record,
-            score: 0.9 - (i as f32 * 0.1),
-            tier: StorageTier::Flushed,
+            similarity: 0.9 - (i as f32 * 0.1),
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now(),
             sequence: i as u64,
@@ -227,7 +221,7 @@ fn test_metadata_filtering() {
 
     // Only doc1 should match the filters
     assert_eq!(merged.len(), 1);
-    assert_eq!(merged[0].vector_record.id, Some("doc1".to_string()));
+    assert_eq!(merged[0].vector_record.id, "doc1".to_string());
 }
 
 #[test]
@@ -241,7 +235,7 @@ fn test_simple_metadata_query() {
 
     let records = vec![
         VectorRecord {
-            id: Some("doc1".to_string()),
+            id: "doc1".to_string(),
             vector: vec![1.0, 0.0],
             metadata: vec![
                 MetadataItem {
@@ -265,12 +259,11 @@ fn test_simple_metadata_query() {
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
+                source: None,
         },
         VectorRecord {
-            id: Some("doc2".to_string()),
+            id: "doc2".to_string(),
             vector: vec![0.0, 1.0],
             metadata: vec![
                 MetadataItem {
@@ -294,9 +287,8 @@ fn test_simple_metadata_query() {
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
+                source: None,
         },
     ];
 
@@ -305,8 +297,8 @@ fn test_simple_metadata_query() {
         .enumerate()
         .map(|(i, record)| TieredSearchCandidate {
             vector_record: record,
-            score: 0.9 - (i as f32 * 0.1),
-            tier: StorageTier::Flushed,
+            similarity: 0.9 - (i as f32 * 0.1),
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::VIPER,
             timestamp: Utc::now(),
             sequence: i as u64,
@@ -319,7 +311,7 @@ fn test_simple_metadata_query() {
 
     // Only doc1 should match (language=en)
     assert_eq!(merged.len(), 1);
-    assert_eq!(merged[0].vector_record.id, Some("doc1".to_string()));
+    assert_eq!(merged[0].vector_record.id, "doc1".to_string());
 }
 
 #[test]
@@ -327,24 +319,23 @@ fn test_mixed_engine_deduplication() {
     let mut deduplicator = MultiTierDeduplicator::new();
 
     let base_record = VectorRecord {
-        id: Some("vec1".to_string()),
+        id: "vec1".to_string(),
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![],
         timestamp: Utc::now().timestamp() as u32,
         updated_at: Some(Utc::now().timestamp() as u32),
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        quantized_vector: None,
+                source: None,
     };
 
     // Add results from different engines
     let results = vec![
         TieredSearchCandidate {
             vector_record: base_record.clone(),
-            score: 0.8,
-            tier: StorageTier::Compacted,
+            similarity: 0.8,
+            tier: DataFreshnessTier::Compacted,
             engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now() - Duration::hours(2),
             sequence: 100,
@@ -356,8 +347,8 @@ fn test_mixed_engine_deduplication() {
                 rec.version = Some(2);
                 rec
             },
-            score: 0.85,
-            tier: StorageTier::Compacted,
+            similarity: 0.85,
+            tier: DataFreshnessTier::Compacted,
             engine: DeduplicationStorageEngine::VIPER,
             timestamp: Utc::now() - Duration::hours(1),
             sequence: 200,
@@ -369,8 +360,8 @@ fn test_mixed_engine_deduplication() {
                 rec.version = Some(3);
                 rec
             },
-            score: 0.9,
-            tier: StorageTier::Unflushed,
+            similarity: 0.9,
+            tier: DataFreshnessTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
             timestamp: Utc::now(),
             sequence: 300,
@@ -384,7 +375,7 @@ fn test_mixed_engine_deduplication() {
     // Should get the unflushed WAL version (highest priority)
     assert_eq!(merged.len(), 1);
     assert_eq!(merged[0].vector_record.version, Some(3));
-    assert_eq!(merged[0].score, 0.9);
+    assert_eq!(merged[0].similarity, 0.9);
 }
 
 #[test]
@@ -396,19 +387,18 @@ fn test_k_limit_enforcement() {
     for i in 0..20 {
         results.push(TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some(format!("vec{}", i)),
+                id: format!("vec{}", i),
                 vector: vec![i as f32, 0.0, 0.0],
                 metadata: vec![],
                 timestamp: Utc::now().timestamp() as u32,
                 updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: None,
+                source: None,
             },
-            score: (i as f32 * 0.01), // Increasing scores (ascending order)
-            tier: StorageTier::Flushed,
+            similarity: (i as f32 * 0.01), // Increasing scores (ascending order)
+            tier: DataFreshnessTier::Flushed,
             engine: DeduplicationStorageEngine::SST,
             timestamp: Utc::now(),
             sequence: i as u64,
@@ -424,10 +414,10 @@ fn test_k_limit_enforcement() {
     assert_eq!(merged.len(), 10);
     // Results are sorted by score in descending order (highest score first)
     // Top 10 results should be vec19 (0.19) to vec10 (0.10)
-    assert_eq!(merged[0].vector_record.id, Some("vec19".to_string())); // Highest score (0.19)
+    assert_eq!(merged[0].vector_record.id, "vec19".to_string()); // Highest score (0.19)
     assert_eq!(
         merged[merged.len() - 1].vector_record.id,
-        Some("vec10".to_string())
+        "vec10".to_string()
     ); // 10th highest score (0.10)
 }
 
@@ -442,21 +432,21 @@ fn test_complex_deduplication_scenario() {
     for (version, tier, engine, hours_ago) in vec![
         (
             1,
-            StorageTier::Compacted,
+            DataFreshnessTier::Compacted,
             DeduplicationStorageEngine::SST,
             24,
         ),
-        (2, StorageTier::Flushed, DeduplicationStorageEngine::SST, 12),
+        (2, DataFreshnessTier::Flushed, DeduplicationStorageEngine::SST, 12),
         (
             3,
-            StorageTier::Unflushed,
+            DataFreshnessTier::Unflushed,
             DeduplicationStorageEngine::WAL,
             0,
         ),
     ] {
         results.push(TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vecA".to_string()),
+                id: "vecA".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
                 metadata: vec![MetadataItem {
                     key: "version".to_string(),
@@ -470,11 +460,10 @@ fn test_complex_deduplication_scenario() {
                 updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(version),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: None,
+                source: None,
             },
-            score: 0.95,
+            similarity: 0.95,
             tier,
             engine,
             timestamp: Utc::now() - Duration::hours(hours_ago),
@@ -487,20 +476,20 @@ fn test_complex_deduplication_scenario() {
     for (version, tier, engine, hours_ago) in vec![
         (
             1,
-            StorageTier::Compacted,
+            DataFreshnessTier::Compacted,
             DeduplicationStorageEngine::VIPER,
             20,
         ),
         (
             2,
-            StorageTier::Flushed,
+            DataFreshnessTier::Flushed,
             DeduplicationStorageEngine::VIPER,
             8,
         ),
     ] {
         results.push(TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vecB".to_string()),
+                id: "vecB".to_string(),
                 vector: vec![0.0, 1.0, 0.0],
                 metadata: vec![MetadataItem {
                     key: "version".to_string(),
@@ -514,11 +503,10 @@ fn test_complex_deduplication_scenario() {
                 updated_at: Some(Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(version),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: None,
+                source: None,
             },
-            score: 0.90,
+            similarity: 0.90,
             tier,
             engine,
             timestamp: Utc::now() - Duration::hours(hours_ago),
@@ -530,19 +518,18 @@ fn test_complex_deduplication_scenario() {
     // Vector C: no ID (immutable)
     results.push(TieredSearchCandidate {
         vector_record: VectorRecord {
-            id: None,
+            id: String::new(),
             vector: vec![0.0, 0.0, 1.0],
             metadata: vec![],
             timestamp: Utc::now().timestamp() as u32,
             updated_at: Some(Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: None,
+                source: None,
         },
-        score: 0.85,
-        tier: StorageTier::Flushed,
+        similarity: 0.85,
+        tier: DataFreshnessTier::Flushed,
         engine: DeduplicationStorageEngine::VIPER,
         timestamp: Utc::now() - Duration::hours(4),
         sequence: 1000,
@@ -561,21 +548,21 @@ fn test_complex_deduplication_scenario() {
     // Verify vecA is version 3
     let vec_a = merged
         .iter()
-        .find(|r| r.vector_record.id == Some("vecA".to_string()))
+        .find(|r| r.vector_record.id == "vecA".to_string())
         .unwrap();
     assert_eq!(vec_a.vector_record.version, Some(3));
 
     // Verify vecB is version 2
     let vec_b = merged
         .iter()
-        .find(|r| r.vector_record.id == Some("vecB".to_string()))
+        .find(|r| r.vector_record.id == "vecB".to_string())
         .unwrap();
     assert_eq!(vec_b.vector_record.version, Some(2));
 
     // Verify vecC is included
     let vec_c = merged
         .iter()
-        .find(|r| r.vector_record.id.is_none())
+        .find(|r| r.vector_record.id.is_empty())
         .unwrap();
-    assert_eq!(vec_c.score, 0.85);
+    assert_eq!(vec_c.similarity, 0.85);
 }

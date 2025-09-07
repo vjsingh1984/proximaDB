@@ -1,7 +1,6 @@
 // Zero-Copy Intelligent Filesystem with Integrated Metadata Caching
 // Integrates directly with filesystem API to provide transparent cache-first, fallback-to-cloud pattern
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -9,7 +8,7 @@ use tracing::{debug, trace, warn};
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::{
-    FileAccessRequest, IOStrategy, OptimizedIOResult, QueryContext, RequestPriority,
+    FileAccessRequest, IOStrategy, QueryContext, RequestPriority,
     ZeroCopyIOSystem,
 };
 use crate::storage::persistence::filesystem::{

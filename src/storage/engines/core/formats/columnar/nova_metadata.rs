@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // Bytemuck imports removed - using manual serialization for flexibility
-use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::core::error::ProximaDBError;

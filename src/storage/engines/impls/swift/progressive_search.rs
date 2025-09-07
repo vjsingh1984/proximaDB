@@ -9,15 +9,12 @@ use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
 use super::{MetadataFilter, SwiftFile};
-use crate::compute::distance_computation::{
-    DistanceMetric, SimilarityResult, UnifiedDistanceCompute,
-};
 use crate::compute::quantization::storage_engine::{
-    StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
+    StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::VectorRecord;
-use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
+use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Helper function to compute L2 distance squared for INT8 vectors
 fn compute_l2_distance_squared_i8(a: &[i8], b: &[i8]) -> Result<f32> {
@@ -95,9 +92,6 @@ impl BinarySketch {
     }
 }
 // Quantization types from unified compute module
-use crate::compute::quantization::unified::{
-    BinaryQuantization, ProductQuantization, ScalarQuantization,
-};
 
 // Distance table type for PQ search
 type DistanceTable = Vec<Vec<f32>>;
@@ -539,7 +533,7 @@ async fn phase4_full_precision(
 
             // In real implementation, would load block from disk
             // For now, we'll simulate with the in-memory block
-            let mut results = Vec::new();
+            let results = Vec::new();
 
             // This would actually load the block
             // let block = sst.load_block(sb_idx, b_idx).await?;

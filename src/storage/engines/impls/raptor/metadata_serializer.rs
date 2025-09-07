@@ -11,7 +11,6 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::core::error::{ProximaDBError, StorageError};
@@ -20,7 +19,7 @@ use crate::storage::engines::core::io::zero_copy::traits::{
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
-use super::common::{CentroidStats, RaptorFileMetadata, VectorCentroidCompressionMetadata};
+use super::common::{CentroidStats, VectorCentroidCompressionMetadata};
 
 /// Cached RAPTOR metadata structure
 #[derive(Debug, Clone, Serialize, Deserialize)]

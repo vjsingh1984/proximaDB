@@ -2,6 +2,7 @@
 // Creates the appropriate storage engine based on configuration
 
 use crate::storage::engines::impls::{prism, raptor};
+use crate::storage::engines::impls::sst::error::SstError;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -90,7 +91,8 @@ impl StorageEngineFactory {
                 crate::storage::persistence::filesystem::FilesystemConfig::default();
             let filesystem = Arc::new(
                 crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                    .await?,
+                    .await
+                    .map_err(|e| SstError::Internal(format!("Failed to create filesystem: {}", e)))?,
             );
             let viper_config = crate::core::config::ViperConfig::default();
             let distance_compute = Arc::new(
@@ -118,7 +120,8 @@ impl StorageEngineFactory {
                 crate::storage::persistence::filesystem::FilesystemConfig::default();
             let filesystem = Arc::new(
                 crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                    .await?,
+                    .await
+                    .map_err(|e| SstError::Internal(format!("Failed to create filesystem: {}", e)))?,
             );
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),

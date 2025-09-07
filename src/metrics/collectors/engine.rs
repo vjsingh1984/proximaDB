@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Engine metrics collector that integrates with existing unified metrics framework
 pub struct EngineMetricsCollector {

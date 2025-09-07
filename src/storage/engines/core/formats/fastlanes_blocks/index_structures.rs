@@ -4,11 +4,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use uuid::Uuid;
 
-use super::block_structures::{BlockLocation, FastLanesDataBlock};
+use super::block_structures::BlockLocation;
 use crate::core::bloom::{
     BloomFilterBuilder, BloomFilterConfig as SstBloomConfig, SstableBloomFilter,
 };

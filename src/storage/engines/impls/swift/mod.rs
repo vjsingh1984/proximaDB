@@ -297,7 +297,7 @@ impl SwiftFile {
             let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
 
             // Use row-based DataBlock constructor
-            let mut block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
+            let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
 
             // Build quantized representations for the block
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
@@ -442,7 +442,7 @@ impl SwiftFile {
             let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
 
             // Use row-based DataBlock constructor
-            let mut block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
+            let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
 
             // Build quantized representations for the block
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();

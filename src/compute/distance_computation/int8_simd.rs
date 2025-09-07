@@ -8,7 +8,7 @@ use tracing::trace;
 /// AVX2-optimized INT8 dot product using VPMADDWD instruction
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-pub unsafe fn int8_dot_product_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
+pub unsafe fn int8_dot_product_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe {
     use std::arch::x86_64::*;
 
     debug_assert_eq!(vec_a.len(), vec_b.len());
@@ -64,12 +64,12 @@ pub unsafe fn int8_dot_product_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 
     trace!("AVX2 INT8 dot product computed for {} elements", len);
     result
-}
+}}
 
 /// AVX2-optimized INT8 squared difference computation
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
+pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe {
     use std::arch::x86_64::*;
 
     debug_assert_eq!(vec_a.len(), vec_b.len());
@@ -127,7 +127,7 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 
     trace!("AVX2 INT8 squared difference computed for {} elements", len);
     result
-}
+}}
 
 /// NEON-optimized INT8 dot product for ARM64
 #[cfg(target_arch = "aarch64")]

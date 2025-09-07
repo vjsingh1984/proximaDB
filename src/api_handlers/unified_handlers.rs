@@ -54,18 +54,15 @@
 //! - **Concurrency**: Lock-free operation with Arc-based sharing
 
 use anyhow::{Context, Result, anyhow};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
 // Import metrics service
 use crate::metrics::query_service::{MetricsQueryService, MetricsQueryOptions};
-use crate::metrics::MetricsPersistenceLayer;
-use crate::metrics::MetricsConfig;
 
 use crate::proto::proximadb::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorBatchRequest,
-    VectorOperation, VectorOperationResponse, VectorSearchRequest,
+    VectorOperation, VectorOperationResponse, VectorSearchRequest, VectorRecord,
 };
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;
@@ -746,6 +743,18 @@ impl UnifiedHandlers {
                 })
             }
         }
+    }
+
+    /// List unflushed vectors for a collection
+    /// This queries the global partitioned memtable to get vectors that haven't been flushed yet
+    pub async fn list_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+        // TODO: Implement proper access to global partitioned memtable
+        // For now, return an empty vec as a placeholder
+        // The actual implementation should:
+        // 1. Access the global partitioned memtable through vector_operations_service
+        // 2. Get unflushed batches for the specific collection
+        // 3. Convert batches to individual VectorRecords
+        Ok(Vec::new())
     }
 
     /// Force flush all collections

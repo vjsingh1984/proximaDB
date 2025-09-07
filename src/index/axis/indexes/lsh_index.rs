@@ -401,7 +401,7 @@ impl AxisLshIndex {
             .vectors
             .get(&collection_id.unwrap_or("default").to_string())
         {
-            let mut coll = collection.write().unwrap();
+            let coll = collection.write().unwrap();
 
             // Get the vector data before removing it (needed to update hash tables)
             let vector_data = if let Some(view) = coll.get(id) {

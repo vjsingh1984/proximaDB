@@ -16,13 +16,13 @@ mod tests {
     use tracing::{debug, info};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{FilterExpression, SearchParams, SearchResult};
+    use crate::core::search::{FilterExpression, SearchParams, results::InternalSearchResult};
     use crate::proto::proximadb::{
         Collection, CollectionConfig, IndexingAlgorithm, StorageEngine, VectorRecord,
     };
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::memtable::GlobalMemtable;
+    // GlobalMemtable import removed - not found in storage::memtable
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
     /// Mock collection service that returns collections with/without indexes

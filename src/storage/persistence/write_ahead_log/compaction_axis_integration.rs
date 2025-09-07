@@ -10,7 +10,7 @@
 //! This module handles index updates during compaction operations,
 //! ensuring that AXIS indexes remain consistent with the compacted data.
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

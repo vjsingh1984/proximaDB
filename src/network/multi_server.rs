@@ -18,7 +18,6 @@ use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
 use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::MetadataBackendFactory;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 #[derive(Debug, Clone)]
@@ -690,7 +689,7 @@ impl MultiServer {
 
             // Create thin gRPC handler with shared services
             let grpc_handler =
-                crate::network::grpc::service::ProximaDbGrpcService::new_with_services(
+                crate::network::grpc::v1::service::ProximaDbGrpcService::new_with_services(
                     services.clone(),
                 )
                 .await;

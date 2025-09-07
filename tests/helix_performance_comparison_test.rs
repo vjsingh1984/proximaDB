@@ -6,16 +6,17 @@
 #[cfg(test)]
 mod performance_comparison_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
-    use proximadb::core::VectorRecord;
+    use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
     use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
-    use proximadb::storage::engines::impls::helix::{HelixEngine, HelixConfig};
-    use proximadb::storage::engines::impls::sst::SstEngine;
-    use proximadb::storage::engines::impls::viper::ViperEngine;
+    use proximadb::storage::engines::impls::helix::engine::{HelixEngine, HelixConfig};
+    use proximadb::storage::engines::impls::sst::SstStorage;
+    use proximadb::storage::engines::impls::viper::engine::ViperEngine;
     use proximadb::storage::traits::{
         FlushParameters, CompactionParameters, StorageQueryContext, UnifiedStorageEngine,
     };
     use rand::{Rng, SeedableRng};
     use std::collections::HashMap;
+use proximadb::storage::traits::StorageQueryMetadata;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tempfile::TempDir;
@@ -44,11 +45,14 @@ mod performance_comparison_tests {
                         vector: (0..dims)
                             .map(|_| rng.gen_range(-1.0..1.0))
                             .collect(),
-                        metadata: Some(HashMap::from([
-                            ("distribution".to_string(), "uniform".to_string()),
-                        ])),
-                        timestamp: i as i64,
-                        expires_at: None,
+                        metadata: vec![
+                            MetadataItem {
+                                key: "distribution".to_string(),
+                                value: Some(metadata_item::Value::String("uniform".to_string())),
+                            },
+                        ],
+                        quantized_vector: vec![],
+                        source: None,
                     })
                     .collect()
             }
@@ -74,12 +78,18 @@ mod performance_comparison_tests {
                         vectors.push(VectorRecord {
                             id: format!("cluster_{}_vec_{}", cluster_id, i),
                             vector,
-                            metadata: Some(HashMap::from([
-                                ("distribution".to_string(), "clustered".to_string()),
-                                ("cluster_id".to_string(), cluster_id.to_string()),
-                            ])),
-                            timestamp: (cluster_id * vectors_per_cluster + i) as i64,
-                            expires_at: None,
+                            metadata: vec![
+                                MetadataItem {
+                                    key: "distribution".to_string(),
+                                    value: Some(metadata_item::Value::StringValue("clustered".to_string())),
+                                },
+                                MetadataItem {
+                                    key: "cluster_id".to_string(),
+                                    value: Some(metadata_item::Value::StringValue(cluster_id.to_string())),
+                                },
+                            ],
+                            quantized_vector: vec![],
+                            source: None,
                         });
                     }
                 }
@@ -95,11 +105,14 @@ mod performance_comparison_tests {
                             vector: (0..dims)
                                 .map(|_| rng.gen_range(-1.0..1.0) * skew)
                                 .collect(),
-                            metadata: Some(HashMap::from([
-                                ("distribution".to_string(), "skewed".to_string()),
-                            ])),
-                            timestamp: i as i64,
-                            expires_at: None,
+                            metadata: vec![
+                                MetadataItem {
+                                    key: "distribution".to_string(),
+                                    value: Some(metadata_item::Value::StringValue("skewed".to_string())),
+                                },
+                            ],
+                            quantized_vector: vec![],
+                            source: None,
                         }
                     })
                     .collect()
@@ -169,9 +182,13 @@ mod performance_comparison_tests {
         let flush_start = Instant::now();
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
-            records: vectors.to_vec(),
+            vector_records: vectors.to_vec(),
+            force: true,
+            synchronous: true,
+            hints: HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
             collection_config: None,
-            level: None,
         };
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         let flush_time = flush_start.elapsed();
@@ -201,14 +218,35 @@ mod performance_comparison_tests {
         let mut query_times = Vec::new();
         for query in query_vectors {
             let query_start = Instant::now();
-            let ctx = StorageQueryContext {
-                collection_id: Arc::new(collection_id.to_string()),
-                vector: Arc::new(query.clone()),
+            let search_params = Arc::new(proximadb::core::search::SearchParams {
+                collection_id: collection_id.to_string(),
+                vector: query.clone(),
                 k: K_NEIGHBORS,
                 distance_metric: DistanceMetric::Euclidean,
                 filter: None,
                 include_vectors: false,
-                query_id: format!("perf_test_{}", query_times.len()),
+                ef: None,
+            });
+            
+            let collection = Arc::new(proximadb::proto::proximadb::Collection {
+                id: collection_id.to_string(),
+                dimension: VECTOR_DIMS as i32,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                index_type: 0,
+                storage_engine: 0,
+                quantization_config: None,
+                index_config: None,
+                storage_assignment: None,
+                created_at: 0,
+                updated_at: 0,
+                version: 0,
+                metadata: vec![],
+            });
+            
+            let ctx = StorageQueryContext {
+                search_params,
+                collection,
+                metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
             };
             
             let _ = engine.search_vectors_unified(&ctx).await.unwrap();
@@ -268,15 +306,29 @@ mod performance_comparison_tests {
             ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
         };
         
-        let sst_engine = Arc::new(SstEngine::new(
-            base_path.join("sst"),
-            None,
+        use proximadb::storage::engines::impls::sst::SstConfig;
+        use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+        
+        let sst_config = SstConfig::default();
+        let fs_config = FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+        
+        let sst_engine = Arc::new(SstStorage::new(
+            sst_config,
+            filesystem.clone(),
+            distance_compute.clone(),
         ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
         
+        use proximadb::core::config::ViperConfig;
+        let viper_config = ViperConfig::default();
+        
         let viper_engine = Arc::new(ViperEngine::new(
-            base_path.join("viper"),
-            100000,
-            None,
+            "test_collection".to_string(),
+            viper_config,
+            filesystem.clone(),
+            distance_compute.clone(),
         ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
         
         // Benchmark each engine
@@ -342,9 +394,19 @@ mod performance_comparison_tests {
             ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
         };
         
-        let sst_engine = Arc::new(SstEngine::new(
-            base_path.join("sst"),
-            None,
+        use proximadb::storage::engines::impls::sst::SstConfig;
+        use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+        
+        let sst_config = SstConfig::default();
+        let fs_config = FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+        
+        let sst_engine = Arc::new(SstStorage::new(
+            sst_config,
+            filesystem.clone(),
+            distance_compute.clone(),
         ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
         
         // Benchmark each engine
@@ -419,9 +481,10 @@ mod performance_comparison_tests {
             // Test SST
             {
                 let temp_dir = TempDir::new().unwrap();
-                let engine = Arc::new(SstEngine::new(
-                    temp_dir.path().to_path_buf(),
-                    None,
+                let engine = Arc::new(SstStorage::new(
+                    sst_config.clone(),
+                    filesystem.clone(),
+                    distance_compute.clone(),
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>;
                 
                 let metrics = benchmark_engine(
@@ -532,10 +595,15 @@ mod performance_comparison_tests {
             // Check that results are from the expected cluster
             let expected_cluster = i.to_string();
             let correct_cluster = results.iter()
-                .filter(|r| r.metadata.as_ref()
-                    .and_then(|m| m.get("cluster_id"))
-                    .map(|c| c == &expected_cluster)
-                    .unwrap_or(false))
+                .filter(|r| {
+                    r.metadata.iter().any(|item| {
+                        item.key == "cluster_id" && 
+                        match &item.value {
+                            Some(metadata_item::Value::String(s)) => s == &expected_cluster,
+                            _ => false,
+                        }
+                    })
+                })
                 .count();
             
             println!("Cluster {} query: {:.2}ms, {}/{} from correct cluster",
@@ -574,17 +642,19 @@ mod performance_comparison_tests {
             }),
             ("SST", {
                 let temp_dir = TempDir::new().unwrap();
-                Arc::new(SstEngine::new(
-                    temp_dir.path().to_path_buf(),
-                    None,
+                Arc::new(SstStorage::new(
+                    sst_config.clone(),
+                    filesystem.clone(),
+                    distance_compute.clone(),
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
             }),
             ("VIPER", {
                 let temp_dir = TempDir::new().unwrap();
                 Arc::new(ViperEngine::new(
-                    temp_dir.path().to_path_buf(),
-                    100000,
-                    None,
+                    "test_collection".to_string(),
+                    viper_config.clone(),
+                    filesystem.clone(),
+                    distance_compute.clone(),
                 ).await.unwrap()) as Arc<dyn UnifiedStorageEngine>
             }),
         ];

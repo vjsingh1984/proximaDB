@@ -5,17 +5,16 @@ use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use lru::LruCache;
-use memmap2::{Mmap, MmapOptions};
+use memmap2::Mmap;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::core::VectorRecord;
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
 
 /// Memory tier configuration for PRISM's hierarchical caching
@@ -393,7 +392,7 @@ impl MemoryOptimizedStorage {
         info!("Memory pressure detected, evicting cold entries");
 
         // Evict from L1 first
-        let mut l1 = self.fp32_cache.write().await;
+        let l1 = self.fp32_cache.write().await;
 
         // Simple eviction: remove least recently used
         // LruCache handles this automatically

@@ -1,20 +1,18 @@
 // Zero-Copy Metadata Cache Implementation
 // Ultra-fast metadata access via memory-mapped files with magic bytes identification
 
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bytemuck::{Pod, Zeroable, bytes_of, cast_slice, from_bytes};
 use dashmap::DashMap;
 use memmap2::{Mmap, MmapOptions};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use super::MAGIC_BYTES;
 use super::traits::{DataRange, EngineMetadata, MetadataSerializer, QueryContext};

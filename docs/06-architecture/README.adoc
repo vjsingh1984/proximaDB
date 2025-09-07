@@ -1,0 +1,161 @@
+= ProximaDB Architecture Documentation
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This section provides detailed technical documentation of ProximaDB's architecture, design patterns, and implementation details.
+
+== Architecture Documents
+
+[cols="1,3", options="header"]
+|===
+| Document | Description
+
+| link:system-design.adoc[System Design]
+| Overall system architecture and design principles
+
+| link:storage-layer.adoc[Storage Layer]
+| Storage engine architecture and implementations
+
+| link:compute-layer.adoc[Compute Layer]
+| Distance computation and hardware acceleration
+
+| link:index-architecture.adoc[Index Architecture]
+| Indexing algorithms and data structures
+
+| link:api-layer.adoc[API Layer]
+| REST and gRPC API architecture
+
+| link:caching.adoc[Caching System]
+| Multi-level caching architecture
+
+| link:quantization.adoc[Quantization System]
+| Vector quantization and compression
+
+| link:distributed.adoc[Distributed Architecture]
+| Clustering, sharding, and replication
+
+| link:data-flow.adoc[Data Flow]
+| Request processing and data pipelines
+
+| link:performance.adoc[Performance Architecture]
+| Optimization strategies and benchmarks
+|===
+
+== Key Architectural Principles
+
+=== Proto-First Design
+* Native protobuf message flow
+* Zero double serialization
+* Direct memory access patterns
+
+=== Hardware Awareness
+* Automatic SIMD detection
+* GPU acceleration support
+* Cache-optimized algorithms
+
+=== Storage Engine Specialization
+* Multiple engines for different workloads
+* Pluggable storage architecture
+* Optimized for specific use cases
+
+=== Zero-Copy Operations
+* Memory-mapped files
+* Direct buffer access
+* Minimal data movement
+
+== System Components
+
+[plantuml, components-overview, svg]
+----
+@startuml
+!theme plain
+
+package "API Layer" {
+  [REST API]
+  [gRPC API]
+}
+
+package "Service Layer" {
+  [Vector Operations]
+  [Collection Manager]
+  [Query Processor]
+}
+
+package "Storage Layer" {
+  [Storage Router]
+  [VIPER Engine]
+  [SST Engine]
+  [RAPTOR Engine]
+}
+
+package "Compute Layer" {
+  [Distance Calculator]
+  [SIMD Operations]
+  [GPU Acceleration]
+}
+
+package "Index Layer" {
+  [HNSW Index]
+  [IVF Index]
+  [LSH Index]
+}
+
+[REST API] --> [Vector Operations]
+[gRPC API] --> [Vector Operations]
+[Vector Operations] --> [Storage Router]
+[Vector Operations] --> [Query Processor]
+[Query Processor] --> [Distance Calculator]
+[Storage Router] --> [VIPER Engine]
+[Storage Router] --> [SST Engine]
+[Storage Router] --> [RAPTOR Engine]
+
+@enduml
+----
+
+== Performance Characteristics
+
+[cols="2,1,1,1", options="header"]
+|===
+| Component | Throughput | Latency | Scalability
+
+| Distance Computation
+| 20.8M ops/sec
+| 48ns (128D)
+| Linear
+
+| Vector Operations
+| 11.8K vectors/sec
+| 84μs
+| Horizontal
+
+| HNSW Index
+| 4.1K vectors/sec
+| 241μs
+| Logarithmic
+
+| Storage Engines
+| Varies by engine
+| <1ms
+| Vertical/Horizontal
+|===
+
+== Design Patterns
+
+=== Factory Pattern
+Used for storage engine selection and instantiation
+
+=== Strategy Pattern
+Different distance computation strategies based on hardware
+
+=== Observer Pattern
+Event-driven architecture for async operations
+
+=== Builder Pattern
+Complex object construction (queries, configurations)
+
+---
+_For implementation details, see link:../07-development/README.adoc[Development Guide]_ +
+_For operational aspects, see link:../05-operations/README.adoc[Operations Guide]_

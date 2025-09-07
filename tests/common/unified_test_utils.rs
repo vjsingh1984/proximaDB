@@ -22,14 +22,14 @@ use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
 use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
 use proximadb::core::hardware_capabilities::HardwareBackend;
-use proximadb::core::{BloomFilterConfig, SstConfig, VectorRecord};
+use proximadb::core::{BloomFilterConfig, SstConfig};
 use proximadb::proto::proximadb::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, MetadataItem, StorageAssignment,
-    StorageEngine,
+    StorageEngine, VectorRecord, metadata_item,
 };
 use proximadb::services::vector_operations_service::VectorOperationsService;
-use proximadb::storage::engines::sst::SstStorage;
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::viper::engine::ViperEngine;
 use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType;
@@ -73,6 +73,7 @@ pub struct UnifiedTestEnvironment {
     pub sst_config: SstConfig,
     pub viper_config: ViperConfig,
     pub storage_locations: Vec<StorageLocation>,
+    pub distance_compute: Arc<UnifiedDistanceCompute>,
 }
 
 impl UnifiedTestEnvironment {
@@ -118,6 +119,7 @@ impl UnifiedTestEnvironment {
             sst_config,
             viper_config,
             storage_locations,
+            distance_compute: Arc::new(UnifiedDistanceCompute::default()),
         })
     }
 
@@ -241,7 +243,7 @@ impl UnifiedTestEnvironment {
         let collection_config = self.create_test_collection_for_engine(StorageEngine::Sst);
 
         let flush_params = FlushParameters {
-            collection_id: Some(self.collection_id.clone()),
+            collection_id: self.collection_id.clone(),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -263,7 +265,7 @@ impl UnifiedTestEnvironment {
         let collection_config = self.create_test_collection_for_engine(StorageEngine::Viper);
 
         let flush_params = FlushParameters {
-            collection_id: Some(self.collection_id.clone()),
+            collection_id: self.collection_id.clone(),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -386,14 +388,13 @@ impl UnifiedTestEnvironment {
 
         (0..count)
             .map(|i| VectorRecord {
-                id: Some(format!("{}_{}", self.collection_id, i)),
+                id: format!("{}_{}", self.collection_id, i),
                 timestamp: (1000 + i) as u32,
                 updated_at: None,
                 expires_at: None,
-                distance: None,
-                rank: None,
-                score: None,
                 version: None,
+                quantized_vector: None,
+                source: None,
                 vector: (0..dimension).map(|j| (i + j) as f32).collect(),
                 metadata: vec![
                     MetadataItem {
@@ -436,16 +437,15 @@ impl UnifiedTestEnvironment {
         metadata_items: Vec<MetadataItem>,
     ) -> VectorRecord {
         VectorRecord {
-            id: Some(id),
+            id: id,
             vector,
             metadata: metadata_items,
             timestamp,
             updated_at: None,
             expires_at,
-            distance: None,
-            rank: None,
-            score: None,
             version: None,
+                quantized_vector: None,
+                source: None,
             ..Default::default()
         }
     }
@@ -654,7 +654,7 @@ pub mod operations {
 
         let collection_config = environment.create_test_collection_for_engine(engine);
         Ok(FlushParameters {
-            collection_id: Some(environment.collection_id().to_string()),
+            collection_id: environment.collection_id().to_string(),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -672,7 +672,7 @@ pub mod operations {
         environment.ensure_all_directories().await?;
 
         Ok(FlushParameters {
-            collection_id: Some(environment.collection_id().to_string()),
+            collection_id: environment.collection_id().to_string(),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -719,7 +719,7 @@ pub mod operations {
             };
 
             config
-                .storage_config
+                
                 .as_ref()
                 .and_then(|s| s.compression.as_ref()) =
                 Some(proximadb::proto::proximadb::CompressionConfig {
@@ -730,7 +730,7 @@ pub mod operations {
         }
 
         Ok(FlushParameters {
-            collection_id: Some(environment.collection_id().to_string()),
+            collection_id: environment.collection_id().to_string(),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -763,7 +763,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<proximadb::core::search::SearchResult>> {
+    ) -> Result<Vec<proximadb::core::search::results::InternalSearchResult>> {
         let storage_url = build_sst_storage_url(environment);
 
         // Direct production call
@@ -787,7 +787,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<proximadb::core::search::SearchResult>> {
+    ) -> Result<Vec<proximadb::core::search::results::InternalSearchResult>> {
         let storage_url = build_viper_storage_url(environment);
 
         // Direct production call to VIPER's search_vectors_unified
@@ -813,7 +813,7 @@ pub mod operations {
     ) -> CompactionParameters {
         let collection_config = environment.create_test_collection_for_engine(engine);
         CompactionParameters {
-            collection_id: Some(environment.collection_id().to_string()),
+            collection_id: environment.collection_id().to_string(),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config),
@@ -827,7 +827,7 @@ pub mod operations {
         collection: Collection,
     ) -> CompactionParameters {
         CompactionParameters {
-            collection_id: Some(environment.collection_id().to_string()),
+            collection_id: environment.collection_id().to_string(),
             force: true,
             synchronous: true,
             collection_config: Some(collection),
@@ -846,7 +846,7 @@ pub mod operations {
 pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| VectorRecord {
-            id: Some(format!("{}_{}", prefix, i)),
+            id: format!("{}_{}", prefix, i),
             vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
             timestamp: (1000 + i) as u32,
             metadata: vec![MetadataItem {
@@ -956,23 +956,30 @@ pub async fn flush_sst_with_block_stats(
     block_size_kb: usize,
 ) -> Result<FlushBlockStatsResult> {
     use proximadb::proto::proximadb::{Collection, CollectionConfig, CompressionConfig};
-    use proximadb::storage::engines::sst::SstStorage;
+    use proximadb::storage::engines::impls::sst::SstStorage;
     use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
     // Create SST config with specified block size
     let mut sst_config = environment.sst_config.clone();
     sst_config.block_size_kb = block_size_kb as u32;
     sst_config
-        .storage_config
+        
         .as_ref()
         .and_then(|s| s.compression.as_ref()) = compression_algo.to_string();
     sst_config.compression_level = compression_level;
 
     // Create SST storage
+    use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+    use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+    
+    let fs_config = FilesystemConfig::default();
+    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new()?);
+    
     let sst_storage = SstStorage::new(
-        sst_config,
-        environment.filesystem.clone(),
-        environment.distance_compute.clone(),
+        sst_config.clone(),
+        filesystem,
+        distance_compute,
     )
     .await?;
 
@@ -1011,7 +1018,7 @@ pub async fn flush_sst_with_block_stats(
 
     // Create flush parameters - production SST will handle quantization internally
     let flush_params = FlushParameters {
-        collection_id: Some("test_collection".to_string()),
+        collection_id: "test_collection".to_string(),
         vector_records: vectors.clone(),
         collection_config: Some(collection_config),
         force: true,

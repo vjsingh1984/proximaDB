@@ -23,8 +23,6 @@
 
 use crate::core::hardware_capabilities::try_get_hardware_capabilities;
 use anyhow::{Result, anyhow};
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
 use tracing::info;
 
 /// SIMD capabilities detected at runtime
@@ -297,7 +295,7 @@ impl SimdVectorParser {
     /// Parse vector using AVX2 SIMD instructions
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> {
+    unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> { unsafe {
         #[cfg(target_arch = "x86_64")]
         use std::arch::x86_64::{_mm256_loadu_ps, _mm256_storeu_ps};
         let mut result = Vec::with_capacity(parts.len());
@@ -333,7 +331,7 @@ impl SimdVectorParser {
         }
 
         Ok(result)
-    }
+    }}
 
     #[cfg(not(target_arch = "x86_64"))]
     unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> {
@@ -344,7 +342,7 @@ impl SimdVectorParser {
     /// Parse vector using SSE4.1 SIMD instructions
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.1")]
-    unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> {
+    unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> { unsafe {
         #[cfg(target_arch = "x86_64")]
         use std::arch::x86_64::{_mm_loadu_ps, _mm_storeu_ps};
         let mut result = Vec::with_capacity(parts.len());
@@ -380,7 +378,7 @@ impl SimdVectorParser {
         }
 
         Ok(result)
-    }
+    }}
 
     #[cfg(not(target_arch = "x86_64"))]
     unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> {

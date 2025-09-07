@@ -1,12 +1,10 @@
 // Streaming row group processor for memory-efficient NOVA operations
 // Implements async streaming with bounded memory and backpressure control
 
-use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use crate::core::VectorRecord;
 use anyhow::{Result, anyhow};
-use arrow_array::RecordBatch;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
-use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::time::{Duration, timeout};

@@ -24,24 +24,22 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 // Import UnifiedQuantizationLevel
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 
 // Universal performance optimization imports
 use crate::storage::engines::core::ops::performance_optimization::{
-    UniversalIOConfig, UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
+    UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
     UniversallyOptimized,
 };
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
-use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::search::UnifiedSearchEngine;
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::FileStorageTier;
-use crate::storage::traits::{InternalCollectionProvider, FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
 // Schema now uses shared ColumnarSchema from columnar module
 use super::compaction::Compaction;
 use super::flush::Flush;
@@ -49,9 +47,7 @@ use super::flush::Flush;
 use super::utilities::ViperUtilities;
 // Unified search engine removed - using IntegratedSearchOptimizer
 use super::types::CollectionMetadata;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use anyhow::Context;
-use std::collections::HashMap as StdHashMap;
 // VIPER-specific optimization structures removed - now using universal module
 
 // Using unified quantization engine directly from compute module
@@ -315,7 +311,7 @@ impl ViperEngine {
             .await?;
 
         // Convert batches to vectors - placeholder implementation
-        let mut vectors: Vec<VectorRecord> = Vec::new();
+        let vectors: Vec<VectorRecord> = Vec::new();
         for batch in batches {
             // Extract records from batch - would need proper implementation
             // For now, create empty placeholder
@@ -336,7 +332,7 @@ impl ViperEngine {
         } else {
             // Metadata column - extract specific metadata field
             // This is a simplified implementation
-            let mut data = Vec::new();
+            let data = Vec::new();
             // TODO: Implement actual metadata serialization
             // This should serialize the actual metadata from records
             return Err(anyhow::anyhow!(
@@ -435,7 +431,7 @@ impl ViperEngine {
         let end_idx = ((row_group_idx + 1) * rows_per_group).min(10000); // Placeholder, since all_vectors no longer exists
 
         // Extract data from the record batches
-        let mut row_group_data = Vec::new();
+        let row_group_data = Vec::new();
 
         for batch in record_batches {
             // TODO: Properly extract vector data from the record batch columns

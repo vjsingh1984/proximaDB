@@ -1,5 +1,5 @@
 // =============================================================================
-use arrow_array::{ArrayRef, Float32Array, RecordBatch, StringArray}; // HIGH-LEVEL PARQUET BUSINESS LOGIC READER (parquet_reader.rs)
+use arrow_array::{Float32Array, RecordBatch, StringArray}; // HIGH-LEVEL PARQUET BUSINESS LOGIC READER (parquet_reader.rs)
 // =============================================================================
 //
 // PURPOSE: High-level business logic and query operations for Parquet files
@@ -26,8 +26,7 @@ use arrow_array::{ArrayRef, Float32Array, RecordBatch, StringArray}; // HIGH-LEV
 
 use anyhow::{Result, anyhow};
 // Arrow types handled through parquet crate
-use parquet::arrow::arrow_reader::ArrowReaderBuilder;
-use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 // Bloom filter handled internally
 use crate::core::hardware_capabilities::HardwareCapabilities;
@@ -524,7 +523,7 @@ impl UnifiedParquetReader {
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
         // Build reader with column projection and row group selection
         let mut reader = {
-            let schema = reader_builder.parquet_schema().clone();
+            let schema = reader_builder.parquet_schema();
 
             // Determine if we need column projection
             let needs_projection = if let Some(columns) = column_projection {
@@ -592,7 +591,7 @@ impl UnifiedParquetReader {
         // Build reader with column projection and row group selection
         let mut reader = {
             let schema = reader_builder.schema();
-            let parquet_schema = reader_builder.parquet_schema().clone();
+            let parquet_schema = reader_builder.parquet_schema();
 
             // Determine if we need column projection
             let needs_projection = if let Some(columns) = columns {

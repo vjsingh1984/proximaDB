@@ -5,7 +5,7 @@
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
-use crate::storage::engines::impls::sst::SstRecord;
+use crate::core::VectorRecord;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use serde_json::json;

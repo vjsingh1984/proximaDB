@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
-use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 
 use super::common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,

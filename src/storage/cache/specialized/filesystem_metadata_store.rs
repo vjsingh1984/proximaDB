@@ -14,12 +14,11 @@
 // - Different eviction strategies
 
 use anyhow::Result;
-use async_trait::async_trait;
 use dashmap::DashMap;
 use std::sync::Arc;
 
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
+use crate::storage::cache::traits::{BaseCache, CacheValue};
 
 // Temporary placeholder for MmappedMetadata
 // TODO: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved

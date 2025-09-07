@@ -11,13 +11,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 // Reuse existing FastLanes structures
-use crate::storage::engines::core::formats::fastlanes_blocks::{
-    block_structures::{
+use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
         FastLanesDataBlock, FastLanesBlockMetadata, 
-        BlockCompressionConfig, ColumnStatistics, QuantizationStatistics,
-    },
-};
-use crate::storage::engines::core::ops::fastlanes_encoding::markers;
+        BlockCompressionConfig, QuantizationStatistics,
+    };
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::persistence::filesystem::FileSystem;

@@ -3,15 +3,14 @@
 //! This module implements the progressive refinement pipeline that enables
 //! Binary → INT8 → PQ → FP32 distance computation for optimal performance and accuracy.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 use uuid::Uuid;
 
 use crate::compute::distance_computation::{
-    DistanceMetric, QuantizedDistanceResult, SelectedFormat, SimilarityResult,
+    DistanceMetric, SelectedFormat, SimilarityResult,
     UnifiedDistanceCompute,
 };
 

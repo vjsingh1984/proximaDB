@@ -1,0 +1,66 @@
+= ProximaDB User Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides comprehensive documentation for ProximaDB users, covering everything from basic operations to advanced features.
+
+== Guide Contents
+
+[cols="1,3", options="header"]
+|===
+| Document | Description
+
+| link:collections.adoc[Collections Management]
+| Creating, configuring, and managing vector collections
+
+| link:vector-operations.adoc[Vector Operations]
+| Inserting, updating, searching, and deleting vectors
+
+| link:search-queries.adoc[Search and Queries]
+| Advanced search techniques, filters, and query optimization
+
+| link:indexing.adoc[Indexing Strategies]
+| Choosing and configuring the right index for your use case
+
+| link:quantization.adoc[Quantization]
+| Reducing memory usage with quantization techniques
+
+| link:metadata.adoc[Metadata Management]
+| Working with vector metadata and filtering
+
+| link:batch-operations.adoc[Batch Operations]
+| Efficient bulk inserts, updates, and deletes
+
+| link:performance-tuning.adoc[Performance Tuning]
+| Optimizing ProximaDB for your workload
+
+| link:monitoring.adoc[Monitoring]
+| Metrics, health checks, and observability
+
+| link:troubleshooting.adoc[Troubleshooting]
+| Common issues and their solutions
+|===
+
+== Quick Navigation
+
+=== For New Users
+. Start with link:collections.adoc[Collections Management]
+. Learn basic link:vector-operations.adoc[Vector Operations]
+. Explore link:search-queries.adoc[Search and Queries]
+
+=== For Advanced Users
+. link:indexing.adoc[Indexing Strategies] for optimization
+. link:quantization.adoc[Quantization] for memory efficiency
+. link:performance-tuning.adoc[Performance Tuning] for production
+
+=== For Operators
+. link:monitoring.adoc[Monitoring] setup
+. link:troubleshooting.adoc[Troubleshooting] guide
+. link:batch-operations.adoc[Batch Operations] for data migration
+
+---
+_For quick start, see link:../QUICKSTART.adoc[Quick Start Guide]_ +
+_For API details, see link:../API.adoc[API Reference]_

@@ -1,20 +1,18 @@
 //! Unified Columnar Schema Generation
-use arrow_array::{RecordBatch, StringArray};
 use arrow_schema::DataType;
 // This module provides automatic quantization-aware schema generation for VIPER and NOVA engines.
 // When QuantizationConfig is detected, schemas automatically include quantized columns with
 // optimized mixed compression strategies per column type.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use arrow_schema::{Field, Schema, TimeUnit};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
-use super::{ColumnarFileMetadata, QuantizationConfig};
-use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
+use super::QuantizationConfig;
 use crate::core::compression::CompressionAlgorithm;
 
 /// Schema configuration with quantization awareness

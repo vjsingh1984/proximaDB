@@ -8,12 +8,11 @@
 //! Integration between storage engines and EventLog service
 //! Provides fire-and-forget notifications that never block storage operations
 
-use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, trace};
 
 use crate::index::axis::eventlog::{
-    EventLogService, IndexEvent, IndexEventBuilder, StorageEngineType,
+    EventLogService, IndexEventBuilder, StorageEngineType,
 };
 use crate::storage::engines::{CompactionParameters, FlushParameters};
 

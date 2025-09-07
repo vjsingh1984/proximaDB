@@ -2,7 +2,8 @@
 
 use crate::core::config::SstConfig;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
-use crate::storage::engines::impls::sst::{SstRecord, SstableWriter};
+use crate::storage::engines::impls::sst::SstableWriter;
+use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::BTreeMap;
 use std::sync::Arc;

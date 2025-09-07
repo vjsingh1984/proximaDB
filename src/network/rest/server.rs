@@ -25,7 +25,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::decompression::DecompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use super::handlers::{AppState, create_router};
+use super::v1::handlers::{AppState, create_router};
 use crate::api_handlers::UnifiedHandlers;
 
 /// REST server for ProximaDB

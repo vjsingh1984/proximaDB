@@ -23,7 +23,7 @@ use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
 use crate::core::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::core::search::mvcc_resolution::MvccResolver;
-use crate::core::{SstConfig, String, VectorId}; // OPTIMIZED: VectorRecord imported above
+use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
 use crate::storage::Result;
 use crate::storage::engines::core::io::zero_copy::{ZeroCopyIOConfig, ZeroCopyIOSystem};
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;

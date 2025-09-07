@@ -1385,7 +1385,7 @@ impl StorageQueryContext {
         quant_config: &crate::proto::proximadb::QuantizationConfig,
         dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
-        use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
+        
 
         if !quant_config.enabled {
             return None;

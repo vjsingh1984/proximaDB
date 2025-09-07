@@ -16,8 +16,6 @@ use tracing::{debug, info};
 use super::flush_handler_trait::{FlushHandler, FlushHandlerFactory};
 use crate::core::config::CompactionConfig;
 use crate::storage::common::compaction_orchestrator::{GenericFileMetadata, TieredFileRegistry};
-use crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler;
-use crate::storage::engines::impls::viper::eventlog_flush::ViperFlushHandler;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Storage engine type for EventLog filtering

@@ -10,25 +10,21 @@ use crate::storage::engines::core::ops::{
 use crate::storage::engines::impls::nova::NovaFile;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult, OperationPriority, StorageEngineStrategy, UnifiedStorageEngine,
+    FlushResult, OperationPriority, UnifiedStorageEngine,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 // Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
-use crate::proto::proximadb::SearchResult;
 // Use core compression directly instead of adapter
-use super::{
-    ColumnarSearchMode as SearchMode, MetadataFilter, optimized_operations::OptimizedNovaOperations,
-};
-use crate::core::compression::{CompressionAlgorithm, CompressionContext};
+use super::optimized_operations::OptimizedNovaOperations;
+use crate::core::compression::CompressionAlgorithm;
 // Arrow schema handled by parquet reader
-use crate::storage::engines::core::formats::columnar::ColumnarConfig;
 
 // Performance optimization handled internally
 // NOVA-specific optimization structures removed - now using universal module

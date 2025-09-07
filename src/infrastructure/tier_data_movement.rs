@@ -342,7 +342,7 @@ impl TierDataMovement {
         );
         // TODO: Re-enable when UnifiedParquetReader is available
         // let reader = UnifiedParquetReader::new(filesystem);
-        let mut vectors = Vec::new();
+        let vectors = Vec::new();
 
         // TODO: Implement VIPER reading when UnifiedParquetReader is restored
         // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata_info"]).await?;

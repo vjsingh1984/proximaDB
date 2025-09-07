@@ -9,7 +9,7 @@ use tracing::{debug, trace};
 
 use crate::compute::distance_computation::{
     ComputationMethod, DistanceMetric, DistanceMetrics, QuantizedDistanceResult,
-    QuantizedVectorData, SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
+    QuantizedVectorData, SelectedFormat, UnifiedDistanceCompute,
 };
 use crate::core::hardware_capabilities::HardwareCapabilities;
 

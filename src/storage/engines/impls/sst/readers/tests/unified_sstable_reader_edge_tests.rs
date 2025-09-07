@@ -11,7 +11,8 @@ mod edge_tests {
     use crate::storage::engines::impls::sst::readers::sst_query_engine::{
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
-    use crate::storage::engines::impls::sst::{SstRecord, SstableWriter};
+    use crate::storage::engines::impls::sst::SstableWriter;
+    use crate::core::VectorRecord;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use chrono::Utc;
     use serde_json::json;

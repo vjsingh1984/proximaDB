@@ -673,7 +673,7 @@ impl SearchCostEstimator {
             available_memory_gb: 16.0,
             cpu_cores: num_cpus::get(),
         };
-        let mut estimator = Self {
+        let estimator = Self {
             index_search_times: HashMap::new(),
             progressive_search_times: HashMap::new(),
             direct_search_times: HashMap::new(),

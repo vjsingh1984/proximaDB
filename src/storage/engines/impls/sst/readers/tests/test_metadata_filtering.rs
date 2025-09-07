@@ -4,7 +4,8 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::storage::engines::impls::sst::{SstRecord, SstableWriter};
+use crate::storage::engines::impls::sst::SstableWriter;
+use crate::core::VectorRecord;
 // use crate::core::config::{BloomFilterConfig, SstConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;

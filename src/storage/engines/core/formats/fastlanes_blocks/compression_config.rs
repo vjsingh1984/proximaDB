@@ -1,13 +1,11 @@
 // Shared Compression Configuration for SST and SWIFT engines
 // Unified compression strategies and configuration management
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::serialization::{VectorAnalysis, VectorSerializationConfig};
 use crate::proto::proximadb::CompressionConfig as ProtoCompressionConfig;
 
 /// Row-based compression configuration

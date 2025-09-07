@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::core::VectorRecord;
 use super::clustering::{HilbertKey, QueryPatternTracker, LiquidClusteringConfig};
@@ -58,7 +58,7 @@ impl LiquidClusteringCoordinator {
     /// Apply liquid clustering to reorganize data based on access patterns
     pub async fn apply_liquid_clustering(
         &self,
-        mut records: Vec<VectorRecord>,
+        records: Vec<VectorRecord>,
         hilbert_keys: &[HilbertKey],
     ) -> Result<(Vec<VectorRecord>, Vec<HilbertKey>)> {
         if !self.config.enabled || records.is_empty() {
@@ -175,7 +175,7 @@ impl LiquidClusteringCoordinator {
     /// Reorganize records based on cluster assignments
     fn reorganize_by_clusters(
         &self,
-        mut records: Vec<VectorRecord>,
+        records: Vec<VectorRecord>,
         hilbert_keys: &[HilbertKey],
         mut assignments: Vec<ClusterAssignment>,
     ) -> (Vec<VectorRecord>, Vec<HilbertKey>) {

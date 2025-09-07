@@ -1,0 +1,116 @@
+= Contributing to ProximaDB
+:toc:
+:toclevels: 2
+:icons: font
+
+Thank you for your interest in contributing to ProximaDB! We welcome contributions of all kinds.
+
+== Getting Started
+
+. Fork the repository
+. Clone your fork: `git clone https://github.com/yourusername/proximadb.git`
+. Create a branch: `git checkout -b feature/your-feature`
+. Make your changes
+. Run tests: `cargo test --all`
+. Submit a pull request
+
+== Development Setup
+
+[source,bash]
+----
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Clone and build
+git clone https://github.com/yourorg/proximadb.git
+cd proximadb
+cargo build --release
+
+# Run tests
+cargo test --all --release
+
+# Run benchmarks
+cargo bench
+----
+
+== Code Style
+
+* Follow Rust standard conventions
+* Use `cargo fmt` before committing
+* Run `cargo clippy` and fix warnings
+* Add tests for new features
+* Document public APIs
+
+== Testing
+
+[source,bash]
+----
+# Run all tests
+cargo test --all
+
+# Run specific test
+cargo test test_name
+
+# Run with logging
+RUST_LOG=debug cargo test
+
+# Run benchmarks
+cargo bench
+----
+
+== Pull Request Process
+
+. *Update documentation* for any API changes
+. *Add tests* for new functionality
+. *Run the test suite* locally
+. *Update CHANGELOG.adoc* with your changes
+. *Ensure CI passes* on your PR
+
+== Architecture Guidelines
+
+See link:CLAUDE.md[CLAUDE.md] for detailed development guidelines including:
+
+* Hardware acceleration best practices
+* Storage engine implementation
+* Performance optimization techniques
+* Proto-first design principles
+
+== Commit Messages
+
+Follow conventional commits:
+
+* `feat:` New feature
+* `fix:` Bug fix
+* `perf:` Performance improvement
+* `docs:` Documentation changes
+* `test:` Test additions/changes
+* `refactor:` Code refactoring
+
+.Example
+[source]
+----
+feat: add SIMD support for Manhattan distance
+
+- Implement AVX2 optimized path
+- Add NEON implementation for ARM
+- Benchmark shows 3x speedup
+----
+
+== Performance Contributions
+
+When contributing performance improvements:
+
+. Run benchmarks before and after
+. Document the improvement in the PR
+. Include benchmark results
+. Consider multiple architectures (x86, ARM)
+
+== Questions?
+
+* Open an issue for bugs or features
+* Start a discussion for questions
+* Join our Discord for real-time chat
+
+== License
+
+By contributing, you agree that your contributions will be licensed under the Apache 2.0 License.

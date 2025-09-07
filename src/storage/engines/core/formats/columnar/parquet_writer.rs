@@ -12,11 +12,9 @@ use arrow_array::{
     StringArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
-use parquet::arrow::{ArrowWriter, ProjectionMask};
-use parquet::basic::{Compression, Encoding};
-use parquet::bloom_filter::Sbbf as ParquetBloomFilter;
-use parquet::file::properties::{WriterProperties, WriterPropertiesBuilder};
-use parquet::schema::types::Type;
+use parquet::arrow::ArrowWriter;
+use parquet::basic::Compression;
+use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
@@ -26,10 +24,8 @@ use tracing::{debug, info, trace};
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb::metadata_item;
-use crate::storage::engines::core::formats::columnar::native_metadata::{
-    NativeMetadataHandler, NativeMetadataQueryOptimizer, NativeMetadataStats,
-};
-use crate::storage::engines::core::formats::columnar::{ColumnarConfig, QuantizationConfig};
+use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
+use crate::storage::engines::core::formats::columnar::QuantizationConfig;
 
 /// Configuration for Parquet writing
 #[derive(Debug, Clone)]

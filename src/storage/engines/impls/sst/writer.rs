@@ -66,10 +66,6 @@ use crate::core::bloom::factory::BloomFilterFactory;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 // Using unified quantization engine directly from compute module
-use crate::metrics::compression::CompressionData;
-use crate::storage::engines::core::ops::compression_common::{
-    AdaptiveCompressionSettings, AdaptiveStrategy, ContextAwareCompressionConfig,
-};
 // use crate::core::bloom::{
 //     BloomFilterConfig, BloomStrategy, BloomFilterStrategy, HashAlgorithm,
 //     factory::BloomFilterFactory,
@@ -474,11 +470,11 @@ impl SstableWriter {
 
         // Use shared SST metadata serializer from fastlanes_blocks module
         use crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::{
-            SstBlockHeader, SstGlobalHeader, SstMetadata,
+            SstBlockHeader, SstGlobalHeader,
         };
 
         // Calculate offsets manually since atomic writer doesn't track position
-        let mut current_offset = 0u64;
+        let current_offset = 0u64;
 
         // Create global header
         let global_header = SstGlobalHeader {
@@ -926,7 +922,7 @@ impl SstableWriter {
     }
 
     /// Set compression configuration (SDK-driven)
-    pub fn with_compression_config(mut self, config: Option<CompressionConfig>) -> Self {
+    pub fn with_compression_config(self, config: Option<CompressionConfig>) -> Self {
         // Update compression configuration (stored in compression_config field)
         self
     }
@@ -1187,7 +1183,7 @@ impl SstableWriter {
         let encoder = FastLanesEncoder::new(scheme);
 
         // Clone the block and encode vector data using FastLanes
-        let mut encoded_block = data_block.clone();
+        let encoded_block = data_block.clone();
 
         // SST can handle multiple quantization levels in the same block
         // The quantization engine determines the appropriate level based on config

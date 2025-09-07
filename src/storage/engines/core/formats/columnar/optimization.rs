@@ -8,23 +8,18 @@
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::VectorRecord;
-use crate::core::search::FilterExpression;
 use crate::storage::engines::core::formats::columnar::{
-    ColumnarConfig, MetadataFilter, ParquetLocation, RowGroupStats, SearchCandidate,
-};
-use crate::storage::persistence::filesystem::zero_copy_filesystem::{
-    ZeroCopyFilesystem, ZeroCopyFilesystemBuilder,
+    ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use anyhow::{Context, Result, anyhow};
-use arrow_array::{Array, ArrayRef, RecordBatch};
-use arrow_schema::Schema;
-use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
+use anyhow::Result;
+use arrow_array::{Array, RecordBatch};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info};
 /// Unified columnar optimization engine
 pub struct ColumnarOptimizer {
     /// Distance computation engine
@@ -645,7 +640,7 @@ impl StreamingRowGroupIterator {
         // Build reader with column projection and row group selection
         let mut reader = {
             let schema = reader_builder.schema();
-            let parquet_schema = reader_builder.parquet_schema().clone();
+            let parquet_schema = reader_builder.parquet_schema();
 
             // Determine if we need column projection
             let needs_projection = if let Some(ref columns) = self.column_projection {

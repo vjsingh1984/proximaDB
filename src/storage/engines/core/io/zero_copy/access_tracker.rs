@@ -2,7 +2,7 @@
 // Tracks file access patterns to improve future optimization decisions
 
 use std::collections::{HashMap, VecDeque};
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};

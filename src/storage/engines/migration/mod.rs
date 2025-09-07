@@ -17,7 +17,6 @@ pub use migrator::{EngineMigrator, MigrationPlan, MigrationProgress, MigrationRe
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
 use crate::storage::traits::UnifiedStorageEngine;

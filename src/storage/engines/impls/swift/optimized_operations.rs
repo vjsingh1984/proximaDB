@@ -1,7 +1,7 @@
 // Optimized operations for SST dual-mode using existing infrastructure
 // Leverages existing memory pools, SIMD acceleration, and hardware capabilities
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -9,7 +9,7 @@ use crate::compute::distance_computation::{DistanceMetric, DistanceMode, Unified
 use crate::core::{
     VectorRecord,
     hardware_capabilities::{HardwareBackend, HardwareCapabilities},
-    memory::pool::{Pool, PoolConfig, VectorMemoryPool},
+    memory::pool::VectorMemoryPool,
 };
 use crate::storage::engines::core::search::search_modes::{
     CandidateRecord, CandidateState, SearchCandidate,

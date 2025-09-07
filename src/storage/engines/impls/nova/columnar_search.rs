@@ -4,25 +4,21 @@
 
 use anyhow::{Result, anyhow};
 use arrow_array::{ArrayRef, Float32Array, RecordBatch, StringArray};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
-use tokio::sync::{RwLock, Semaphore, mpsc};
-use tracing::{debug, info, warn};
+use tokio::sync::{Semaphore, mpsc};
+use tracing::{debug, info};
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::VectorRecord;
-use crate::proto::proximadb::{SearchResult, SearchVectorRecord};
 use crate::storage::engines::core::formats::columnar::{
-    ColumnarConfig, FilterCondition, MetadataFilter, UnifiedParquetReader,
+    FilterCondition, MetadataFilter, UnifiedParquetReader,
 };
 
 use super::{
     NovaFile,
-    hierarchical_stats::{EnhancedRowGroupStats, SuperBlock},
     progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig},
     streaming_processor::{StreamingConfig, StreamingRowGroupProcessor},
-    zone_maps::AdvancedZoneMap,
 };
 
 /// Configuration for columnar search in NOVA

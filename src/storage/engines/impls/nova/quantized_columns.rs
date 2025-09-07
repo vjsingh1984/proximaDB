@@ -5,22 +5,15 @@
 
 use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
-use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, Int8Array, UInt8Array};
+use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, Int8Array};
 use arrow_schema::{DataType, Field};
-use parquet::arrow::ArrowWriter;
-use parquet::file::properties::{WriterProperties, WriterVersion};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
 // Use unified quantization from compute module
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::types::{
-    BinaryQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
-    UnifiedQuantizationLevel,
-};
 use crate::compute::quantization::unified::{
-    Codebook, CodebookData, TrainingConfig, UnifiedQuantizationEngine,
+    Codebook, UnifiedQuantizationEngine,
 };
 
 /// Metadata for quantized columns in Parquet

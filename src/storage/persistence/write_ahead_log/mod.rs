@@ -1321,7 +1321,7 @@ impl WriteAheadLogManager {
     pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
         // Deletion is implemented via expires_at field
         // Create a vector record with expires_at set to current time
-        let mut record = crate::proto::proximadb::VectorRecord {
+        let record = crate::proto::proximadb::VectorRecord {
             id: vector_id.clone(),
             vector: Vec::new(),
             metadata: Vec::new(),
@@ -1731,7 +1731,7 @@ impl WriteAheadLogManager {
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-        use crate::core::search::InternalSearchResult;
+        
 
         tracing::debug!(
             "🔍 WAL: Enhanced search for collection {} with top_k={}, metric={:?}, filters={}",

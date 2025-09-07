@@ -29,7 +29,8 @@ mod tests {
     use crate::core::hardware_capabilities::HardwareBackend;
     use crate::core::search::{
         CollectionConfig, ColumnData, ComparisonOperator, FilterExpression, FilterableColumn,
-        SearchParams, SearchPlan, SearchResult, SearchResultSet, StorageInfo, UnifiedSearchEngine,
+        SearchParams, SearchPlan, SearchResultSet, StorageInfo, UnifiedSearchEngine,
+        results::InternalSearchResult,
     };
     use crate::proto::proximadb::{MetadataItem, VectorRecord};
     use crate::services::operations::vectors::VectorOperationsService;

@@ -6,13 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, error, info, warn};
+use tracing::info;
 
 use super::{
     MigrationConfig, MigrationEvent, MigrationEventType, MigrationStatus, MigrationStrategy,
-    PerformanceConfig, ValidationConfig,
 };
-use crate::core::VectorRecord;
 use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
 use crate::storage::engines::factory::StorageEngineFactory;
 use crate::storage::traits::UnifiedStorageEngine;
@@ -319,7 +317,7 @@ impl EngineMigrator {
         let mut migrated_collections = Vec::new();
         let mut total_records = 0u64;
         let mut errors = Vec::new();
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
 
         for collection_plan in collections {
             self.log_event(

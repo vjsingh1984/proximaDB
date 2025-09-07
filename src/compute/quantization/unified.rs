@@ -19,7 +19,7 @@ use tracing::debug;
 use super::hardware_accelerated::AcceleratedQuantization;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::{
-    DistanceMetricExt, SimilarityResult, UnifiedDistanceCompute,
+    SimilarityResult, UnifiedDistanceCompute,
 };
 
 // Use internal types (Release 1 - no legacy proto compatibility)

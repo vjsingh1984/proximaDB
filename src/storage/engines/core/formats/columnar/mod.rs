@@ -171,7 +171,6 @@ pub use common::{
 };
 
 use anyhow::Result;
-use arrow_array::{ArrayRef, RecordBatch};
 use arrow_schema::Schema;
 use parquet::file::metadata::RowGroupMetaData;
 use serde::{Deserialize, Serialize};
@@ -592,8 +591,9 @@ pub enum StorageBudget {
     Minimal,     // Minimize storage cost
 }
 
+// Tests moved to separate tests module file
 #[cfg(test)]
-mod tests {
+mod inline_tests {
     use super::*;
 
     #[test]

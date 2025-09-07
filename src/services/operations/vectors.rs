@@ -33,7 +33,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::storage::traits::{InternalCollectionProvider, UnifiedStorageEngine};
+use crate::storage::traits::UnifiedStorageEngine;
 
 use crate::compute::quantization::types::{
     BinaryQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
@@ -1312,8 +1312,8 @@ impl VectorOperationsService {
     }
 
     pub async fn health_check(&self) -> Result<serde_json::Value> {
-        let mut status = "healthy";
-        let mut issues: Vec<String> = Vec::new();
+        let status = "healthy";
+        let issues: Vec<String> = Vec::new();
 
         // Check WAL health - method not implemented yet
         // TODO: Implement health_check in WAL manager

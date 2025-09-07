@@ -10,7 +10,6 @@
 
 use anyhow::{Context, Result};
 use dashmap::DashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -22,7 +21,6 @@ use crate::index::axis::eventlog::{
     EventLogService, EventType, ExtractionMode, IndexEvent, StorageEngineType,
 };
 use crate::proto::proximadb::Collection;
-use crate::storage::engines::impls::raptor::consolidated_reader::RaptorReader;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// AXIS EventLog consumer configuration
@@ -119,7 +117,7 @@ impl AxisEventLogConsumer {
     }
 
     /// Start consuming events
-    pub async fn run(mut self) {
+    pub async fn run(self) {
         info!("Starting AXIS EventLog consumer");
 
         loop {
@@ -832,7 +830,7 @@ impl AxisEventLogConsumer {
                             storage_engine
                         );
 
-                        use arrow_array::{Array, Float32Array, Int64Array, StringArray};
+                        use arrow_array::{Array, Int64Array, StringArray};
                         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
                         let mut all_records = Vec::new();
@@ -1145,9 +1143,7 @@ impl AxisEventLogConsumer {
 
                         // PRISM stores data in memory with multiple resolution levels
                         // For AXIS indexing, we need to read the full-precision vectors
-                        use crate::storage::engines::impls::prism::fastlanes_serializer::{
-                            PrismFastLanesSerializer, ResolutionLevel,
-                        };
+                        use crate::storage::engines::impls::prism::fastlanes_serializer::PrismFastLanesSerializer;
 
                         let mut all_records = Vec::new();
 
@@ -1309,7 +1305,7 @@ impl AxisEventLogConsumer {
                     // let builder = arrow::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder::new(parquet_bytes)?;
                     // let mut reader = builder.build()?;
 
-                    let mut file_vector_count = 0;
+                    let file_vector_count = 0;
 
                     // TODO: Re-enable when arrow crates are restored
                     // Process each record batch

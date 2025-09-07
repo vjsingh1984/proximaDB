@@ -192,7 +192,8 @@ impl StorageEngine {
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 ),
             )
-            .await?,
+            .await
+            .map_err(|e| crate::core::error::StorageError::SstStorage(format!("Failed to create SST storage: {}", e)))?,
         );
 
         Ok(Self {
@@ -996,7 +997,7 @@ impl StorageEngine {
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Vec<VectorRecord>> {
-        let mut vectors = Vec::new();
+        let vectors = Vec::new();
 
         // LSM is now pure SSTable storage - no vectors to get from memtable
         // All LSM data is in SSTables which should be accessed via the search API

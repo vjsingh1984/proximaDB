@@ -3,7 +3,7 @@
 //! This module implements the core compaction logic that clusters similar
 //! vectors together using PCA + Hilbert curves during compaction.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -7,8 +7,7 @@ use crate::core::bloom::factory::BloomFilterFactory;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 
 /// Artus-style column statistics for intelligent bloom filter sizing
 #[derive(Debug, Clone, Serialize, Deserialize)]

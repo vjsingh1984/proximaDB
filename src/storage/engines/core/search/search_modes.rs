@@ -1,7 +1,6 @@
 // Universal Search Modes and Capabilities
 // Shared search abstractions across all storage engines
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

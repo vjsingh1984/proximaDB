@@ -50,13 +50,11 @@
 //    - Better cache utilization with compressed SuperBlocks
 
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
@@ -66,8 +64,7 @@ use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
 };
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
-use super::{MetadataFilter, SwiftFile, hierarchical_blocks::BitSet, id_index::RecordLocation};
-use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
+use super::MetadataFilter;
 
 /// Reading strategy for SWIFT files
 #[derive(Debug, Clone)]

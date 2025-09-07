@@ -13,9 +13,9 @@ use std::sync::Arc;
 use tracing::{debug, info, trace};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::{FilterExpression, SearchParams};
+use crate::core::search::SearchParams;
 use crate::index::axis::AxisManager;
-use crate::proto::proximadb::{Collection, QuantizationConfig};
+use crate::proto::proximadb::QuantizationConfig;
 
 /// Smart execution strategy selector
 pub struct SmartExecutionStrategy {

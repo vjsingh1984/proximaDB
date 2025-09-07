@@ -1,6 +1,5 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 
@@ -8,7 +7,7 @@ use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
 use crate::compute::quantization::unified::{
-    QuantizationLevel, QuantizationMetadata, QuantizedVector, UnifiedQuantizationLevel,
+    QuantizationMetadata, QuantizedVector, UnifiedQuantizationLevel,
 };
 use crate::core::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::{

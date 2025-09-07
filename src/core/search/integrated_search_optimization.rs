@@ -8,13 +8,13 @@
 
 use anyhow::{Context, Result};
 use bytes::{Bytes, BytesMut};
-use memmap2::{Mmap, MmapOptions};
+use memmap2::Mmap;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
@@ -24,21 +24,20 @@ pub use crate::compute::quantization::unified::UnifiedQuantizationLevel as Unifi
 use crate::core::search::{
     FilterExpression, InternalSearchResult, SearchParams,
     metadata_filter_pushdown::MetadataFilterPushdown,
-    progressive_quantization::{ProgressiveSearchConfig, SearchScenario, StageSizes},
+    progressive_quantization::ProgressiveSearchConfig,
     query_preprocessing::QueryPreprocessor,
     smart_execution_strategy::SmartExecutionStrategy,
     unified_progressive_pipeline::UnifiedProgressiveSearchPipeline,
 };
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;
-use crate::proto::proximadb::{Collection, QuantizationConfig, VectorRecord};
-use crate::services::collection::manager::CollectionService;
+use crate::proto::proximadb::VectorRecord;
 use crate::storage::cache::{
     MetadataStore, QueryCache, VectorStore,
     orchestrator::{CacheType, CrossCacheOrchestrator},
     specialized::query_cache::{CachedQueryResult, QueryKey},
 };
-use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+use crate::storage::traits::StorageQueryContext;
 
 /// Integrated search optimizer with zero-copy and caching
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer

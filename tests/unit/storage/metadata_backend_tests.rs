@@ -24,11 +24,11 @@ use proximadb::proto::proximadb::{
 };
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::StorageEngine;
-use proximadb::storage::metadata::backends::filestore_backend::{
-    FilestoreMetadataBackend, FilestoreMetadataConfig,
+use proximadb::storage::metadata::backends::universal_backend::{
+    UniversalMetadataBackend, UniversalMetadataConfig,
 };
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb::storage::traits::CollectionMetadataProvider;
+// CollectionMetadataProvider import removed - trait not found
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::sync::RwLock;
@@ -145,7 +145,7 @@ async fn test_collection_service_dependency_injection() {
     let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
     // Create metadata backend with minimal configuration to prevent stack overflow
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
         enable_compression: false, // Disable compression to reduce complexity
         enable_snapshots: false,   // Disable snapshots to prevent recursion
@@ -156,7 +156,7 @@ async fn test_collection_service_dependency_injection() {
     };
 
     let metadata_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory)
             .await
             .unwrap(),
     );
@@ -246,7 +246,7 @@ async fn test_metadata_backend_persistence() {
         let fs_config = FilesystemConfig::default();
         let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-        let filestore_config = FilestoreMetadataConfig {
+        let filestore_config = UniversalMetadataConfig {
             storage_url: format!("file://{}", metadata_path.to_string_lossy()),
             enable_compression: false, // Disable compression to prevent complexity
             enable_snapshots: false,   // Disable snapshots to prevent hanging
@@ -259,7 +259,7 @@ async fn test_metadata_backend_persistence() {
     // First session - create proto collections with ProtoWalBatchStrategy
     {
         let metadata_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config.clone(), filesystem_factory.clone())
+            UniversalMetadataBackend::new(filestore_config.clone(), filesystem_factory.clone())
                 .await
                 .unwrap()
         );
@@ -295,41 +295,26 @@ async fn test_metadata_backend_persistence() {
                     index_configs: vec![],
                     quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                         enabled: true,
-                        storage_quantization: Some(proximadb::proto::proximadb::StorageQuantizationConfig {
-                            enabled: true,
-                            level: Some(proximadb::proto::proximadb::QuantizationLevel {
-                                level_type: Some(proximadb::proto::proximadb::quantization_level::LevelType::Pq(
-                                    proximadb::proto::proximadb::ProductQuantization {
-                                        bits_per_code: 8,
-                                        num_subvectors: 8,
-                                        codebook_id: None,
-                                        adaptive_subvectors: false,
-                                    }
-                                )),
-                            }),
-                            codebook_id: None,
-                            progressive_quantization: false,
-                            storage_compatibility: proximadb::proto::proximadb::StorageEngineCompatibility::ViperOnly as i32,
-                        }),
-                        index_quantization: None,
-                        search_quantization: Some(proximadb::proto::proximadb::SearchQuantizationConfig {
-                            enabled: true,
-                            default_level: Some(proximadb::proto::proximadb::QuantizationLevel {
-                                level_type: Some(proximadb::proto::proximadb::quantization_level::LevelType::Pq(
-                                    proximadb::proto::proximadb::ProductQuantization {
-                                        bits_per_code: 8,
-                                        num_subvectors: 8,
-                                        codebook_id: None,
-                                        adaptive_subvectors: false,
-                                    }
-                                )),
-                            }),
-                            adaptive_precision: true,
-                            accuracy_threshold: 0.9,
-                            candidate_multiplier: 3,
-                        }),
-                        compression_ratio_target: 4.0,
-                        validation: None,
+                        strategy: 0, // SMART_DEFAULTS
+                        custom_levels: vec![
+                            proximadb::proto::proximadb::QuantizationLevel {
+                                level_id: "pq8".to_string(),
+                                r#type: 2, // PRODUCT  
+                                bits: 8,
+                                num_subvectors: Some(8),
+                                adaptive_subvectors: Some(false),
+                                storage_engine_compatibility: 0,
+                                selectivity_threshold: 0.1,
+                                enabled: true,
+                            },
+                        ],
+                        enable_progressive_search: true,
+                        binary_filter_selectivity: 0.3,
+                        int8_ranking_selectivity: 0.1,
+                        pq_ranking_selectivity: 0.05,
+                        training_sample_size: 10000,
+                        quality_threshold: 0.9,
+                        auto_tuning: false,
                     }),
                     compression: None,
                     optimization_hints: None,
@@ -374,7 +359,7 @@ async fn test_metadata_backend_persistence() {
     // Second session - verify proto-first persistence and recovery
     {
         let metadata_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
                 .unwrap()
         );
@@ -433,7 +418,7 @@ async fn test_metadata_backend_deletion() {
     let fs_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
         enable_compression: false,
         enable_snapshots: true,
@@ -444,7 +429,7 @@ async fn test_metadata_backend_deletion() {
     };
 
     let metadata_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory)
             .await
             .unwrap(),
     );
@@ -537,7 +522,7 @@ async fn test_concurrent_metadata_operations() {
     let fs_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
         enable_compression: true,
         enable_snapshots: false,
@@ -548,7 +533,7 @@ async fn test_concurrent_metadata_operations() {
     };
 
     let metadata_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory)
             .await
             .unwrap(),
     );
@@ -639,7 +624,7 @@ async fn test_metadata_backend_updates() {
     let fs_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
         enable_compression: false,
         enable_snapshots: true,
@@ -650,7 +635,7 @@ async fn test_metadata_backend_updates() {
     };
 
     let metadata_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory)
             .await
             .unwrap(),
     );
@@ -768,7 +753,7 @@ async fn test_collection_metadata_provider_trait() {
     let fs_config = FilesystemConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
         enable_compression: false, // Disable compression to prevent complexity
         enable_snapshots: false,   // Disable snapshots to prevent stack overflow
@@ -779,7 +764,7 @@ async fn test_collection_metadata_provider_trait() {
     };
 
     let metadata_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory)
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory)
             .await
             .unwrap(),
     );
@@ -822,49 +807,26 @@ async fn test_collection_metadata_provider_trait() {
             index_configs: vec![],
             quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
                 enabled: true,
-                storage_quantization: Some(
-                    proximadb::proto::proximadb::StorageQuantizationConfig {
+                strategy: 0, // SMART_DEFAULTS
+                custom_levels: vec![
+                    proximadb::proto::proximadb::QuantizationLevel {
+                        level_id: "pq8".to_string(),
+                        r#type: 2, // PRODUCT  
+                        bits: 8,
+                        num_subvectors: Some(8),
+                        adaptive_subvectors: Some(false),
+                        storage_engine_compatibility: 0,
+                        selectivity_threshold: 0.1,
                         enabled: true,
-                        level: Some(proximadb::proto::proximadb::QuantizationLevel {
-                            level_type: Some(
-                                proximadb::proto::proximadb::quantization_level::LevelType::Pq(
-                                    proximadb::proto::proximadb::ProductQuantization {
-                                        bits_per_code: 8,
-                                        num_subvectors: 8,
-                                        codebook_id: None,
-                                        adaptive_subvectors: false,
-                                    },
-                                ),
-                            ),
-                        }),
-                        codebook_id: None,
-                        progressive_quantization: false,
-                        storage_compatibility:
-                            proximadb::proto::proximadb::StorageEngineCompatibility::ViperOnly
-                                as i32,
                     },
-                ),
-                index_quantization: None,
-                search_quantization: Some(proximadb::proto::proximadb::SearchQuantizationConfig {
-                    enabled: true,
-                    default_level: Some(proximadb::proto::proximadb::QuantizationLevel {
-                        level_type: Some(
-                            proximadb::proto::proximadb::quantization_level::LevelType::Pq(
-                                proximadb::proto::proximadb::ProductQuantization {
-                                    bits_per_code: 8,
-                                    num_subvectors: 8,
-                                    codebook_id: None,
-                                    adaptive_subvectors: false,
-                                },
-                            ),
-                        ),
-                    }),
-                    adaptive_precision: true,
-                    accuracy_threshold: 0.9,
-                    candidate_multiplier: 3,
-                }),
-                compression_ratio_target: 4.0,
-                validation: None,
+                ],
+                enable_progressive_search: true,
+                binary_filter_selectivity: 0.3,
+                int8_ranking_selectivity: 0.1,
+                pq_ranking_selectivity: 0.05,
+                training_sample_size: 10000,
+                quality_threshold: 0.9,
+                auto_tuning: false,
             }),
             compression: None,
             optimization_hints: None,

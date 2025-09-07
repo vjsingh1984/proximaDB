@@ -2,11 +2,9 @@
 // Implements SuperBlock and enhanced row group statistics for efficient pruning
 
 use anyhow::Result;
-use parquet::file::metadata::{ColumnChunkMetaData, RowGroupMetaData};
+use parquet::file::metadata::RowGroupMetaData;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::ops::Range;
-use std::time::Duration;
 
 use crate::compute::distance_computation::DistanceMetric;
 

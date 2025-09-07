@@ -352,7 +352,7 @@ async fn demonstrate_combined_synergy() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("🚀 ProximaDB Universal Common Module Synergy Demonstration");
-    println!("=".repeat(70));
+    println!("{}", "=".repeat(70));
 
     // Detect hardware capabilities
     let hardware = HardwareCapabilities::detect()?;

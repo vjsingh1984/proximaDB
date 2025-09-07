@@ -3,19 +3,15 @@
 
 use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::compression_common::{
     AdaptiveCompressionSettings,
-    CompressionPerformanceConfig,
-    // CompressionData, // Use from metrics module
-    CompressionQualitySettings,
     ContextAwareCompressionConfig,
     UniversalCompressionConfig,
 };
 use crate::core::compression::{
-    self as unified_compression, CompressionAlgorithm, CompressionContext, CompressionProvider,
+    CompressionAlgorithm, CompressionContext, CompressionProvider,
     StandardCompression,
 };
 use crate::core::hardware_capabilities::HardwareCapabilities;

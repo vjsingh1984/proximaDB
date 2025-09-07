@@ -29,7 +29,6 @@ use super::{
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Import CollectionMetadata from fastlanes
-use crate::storage::engines::core::formats::fastlanes_blocks::header_metadata::CollectionMetadata;
 
 /// Transaction identifier
 pub type TransactionId = Uuid;

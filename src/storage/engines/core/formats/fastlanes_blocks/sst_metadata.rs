@@ -5,8 +5,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable, cast_slice, try_cast_slice};
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::error::ProximaDBError;

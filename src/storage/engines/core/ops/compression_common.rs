@@ -1,7 +1,6 @@
 // Universal Compression Infrastructure
 // Shared compression capabilities across all storage engines
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

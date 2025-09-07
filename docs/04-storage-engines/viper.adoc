@@ -6,7 +6,7 @@
 [abstract]
 **Vectorized Intelligence Parquet Engine for Retrieval** - A production-ready columnar storage engine with 13,604 lines of implementation. Features predicate pushdown, progressive search pipeline, and unified infrastructure integration for 2.5-3x search performance improvement.
 
-include::../assets/logos/viper-engine-logo.svg[]
+image::../assets/logos/viper-engine-logo.svg[VIPER Engine Logo, 200, align="center"]
 
 == Overview
 

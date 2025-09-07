@@ -2,16 +2,15 @@
 // Leverages columnar format, memory pools, and hardware acceleration
 
 use anyhow::{Result, anyhow};
-use arrow_array::{ArrayRef, BinaryArray, Float32Array, RecordBatch};
+use arrow_array::RecordBatch;
 // Arrow compute not available, would need full arrow crate
 // use arrow::compute::kernels::aggregate;
 use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 use crate::core::{
     VectorRecord,
-    hardware_capabilities::{HardwareBackend, HardwareCapabilities},
-    memory::pool::{Pool, PoolConfig, VectorMemoryPool},
+    hardware_capabilities::HardwareCapabilities,
+    memory::pool::VectorMemoryPool,
 };
-use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use std::sync::Arc;
 use tracing::{debug, info};
 // Memory-mapped Parquet operations would be imported here

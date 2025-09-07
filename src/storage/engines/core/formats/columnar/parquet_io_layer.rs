@@ -45,7 +45,6 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
 use crate::core::error::{ProximaDBError, StorageError};
-use crate::proto::proximadb::VectorRecord;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024; // 8MB max footer size

@@ -3,20 +3,14 @@
 //! This module implements multi-stage search refinement using the unified
 //! quantization engine for optimal performance.
 
-use anyhow::{Context, Result};
-use std::collections::BinaryHeap;
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::compute::quantization::storage_engine::{
-    StorageQuantizationEngine, StorageQuantizationConfig,
-};
-use crate::compute::quantization::unified::{
-    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
-};
+use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::InternalSearchResult;
-use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::{SStableMetadata, HelixConfig};

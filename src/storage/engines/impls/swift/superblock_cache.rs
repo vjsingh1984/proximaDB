@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::info;
 
 // Zero-copy filesystem handled by storage layer
 // Block structures handled internally

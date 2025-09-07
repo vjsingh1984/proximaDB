@@ -21,7 +21,7 @@
 //!
 //! The unified query optimizer and search hints determine which path to use.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
 

@@ -1,23 +1,19 @@
 // Progressive columnar search implementation for optimized NOVA engine
 // Multi-stage search pipeline: Binary → INT8 → PQ → FP32 with streaming support
 
-use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use super::streaming_processor::{
-    ProcessingStage, RowGroupCandidate, RowGroupProcessingResult, StreamingConfig,
+    ProcessingStage, RowGroupProcessingResult, StreamingConfig,
     StreamingContext, StreamingRowGroupProcessor,
 };
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::VectorRecord;
-use anyhow::{Result, anyhow};
-use arrow_array::RecordBatch;
-use std::collections::{BinaryHeap, HashMap};
+use anyhow::Result;
+use std::collections::BinaryHeap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 // Import types from refactored quantized_columns module
-use super::quantized_columns::{Int8QuantizedData, PQQuantizedData};
 
 // Create compatibility types for progressive search
 #[derive(Debug, Clone)]
@@ -290,7 +286,7 @@ impl ProgressiveColumnarSearch {
             .process_row_groups_streaming(streaming_context, parquet_metadata)
             .await?;
         // Phase 3: Progressive refinement stages
-        let mut candidates = self.collect_initial_candidates(&row_group_results).await?;
+        let candidates = self.collect_initial_candidates(&row_group_results).await?;
         // Binary stage
         let (candidates, binary_metrics) = self
             .execute_binary_stage(

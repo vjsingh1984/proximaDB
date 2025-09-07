@@ -54,7 +54,7 @@ use crate::index::axis::storage::serialization::IndexSerializer;
 use crate::infrastructure::adaptive_structures::{AdaptiveStore, IndexBackend};
 use crate::infrastructure::tier_policy_engine::{
     AccessPatternMetrics, GlobalTier, SmartTierPolicy, InfrastructureTier, WorkloadMetrics,
-    WorkloadPattern, WorkloadType,
+    WorkloadPattern,
 };
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
 use dashmap::DashMap;

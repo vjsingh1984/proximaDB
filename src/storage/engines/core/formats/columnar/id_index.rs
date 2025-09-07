@@ -1,10 +1,10 @@
 // Unified ID Index for Columnar Storage (NOVA and VIPER)
 // Provides efficient ID lookups with row group and page-level indexing
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use parquet::file::metadata::{ColumnChunkMetaData, RowGroupMetaData};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -393,7 +393,7 @@ impl ColumnarIdIndex {
         }
 
         // Merge row group indexes
-        let mut offset = self.row_group_index.len();
+        let offset = self.row_group_index.len();
         for mut rg_index in other.row_group_index {
             rg_index.row_group_id += offset;
             self.row_group_index.push(rg_index);

@@ -101,6 +101,7 @@ fn benchmark_distance_metrics(dimensions: &[usize], iterations: usize) -> Result
     println!("All engines created successfully");
 
     for &dim in dimensions {
+        println!("Testing dimension: {}", dim);
         info!("\nTesting dimension: {}", dim);
         
         // Pre-allocate vectors outside the metric loop
@@ -108,21 +109,31 @@ fn benchmark_distance_metrics(dimensions: &[usize], iterations: usize) -> Result
         let vec2: Vec<f32> = (0..dim).map(|i| (i as f32) * 0.2 + 1.0).collect();
         
         for metric in &metrics {
+            println!("  Testing metric: {:?}", metric);
             let engine = &engines[metric];
             
             // Warm-up run to initialize any lazy structures
+            println!("  Running warm-up...");
             let _ = engine.distance(&vec1, &vec2);
+            println!("  Warm-up complete");
             
             let start = Instant::now();
             
             // Use the engine API for all iterations
+            let mut sum = 0.0;
             for _ in 0..iterations {
-                let _ = engine.distance(&vec1, &vec2);
+                let dist = engine.distance(&vec1, &vec2);
+                sum += dist; // Prevent optimization
             }
             
             let elapsed = start.elapsed().as_secs_f64();
+            // Prevent dead code elimination
+            if sum < 0.0 {
+                println!("Unexpected negative sum: {}", sum);
+            }
             let ops_per_sec = iterations as f64 / elapsed;
             
+            println!("  {:?} @ {}D: {:.0} ops/sec ({}ms total)", metric, dim, ops_per_sec, (elapsed * 1000.0) as u64);
             info!("  {:?} @ {}D: {:.0} ops/sec", metric, dim, ops_per_sec);
             results.insert((dim, *metric), ops_per_sec);
         }

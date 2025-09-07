@@ -99,20 +99,16 @@ pub use unified_columnar_integration::{
 pub use zone_maps::{AdvancedZoneMap, CostBasedOptimizer, ZoneMapConfig};
 
 use anyhow::Result;
-use arrow_array::{ArrayRef, BinaryArray, Float32Array, UInt64Array};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::file::metadata::RowGroupMetaData;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::columnar::FilterCondition;
 
 // Import shared columnar infrastructure
 use crate::storage::engines::core::formats::columnar::{
-    ColumnStatistics, ColumnarFileMetadata, ColumnarSearchMode, MetadataFilter, ParquetLocation,
+    ColumnarFileMetadata, ColumnarSearchMode, MetadataFilter,
     QuantizationConfig,
 };
 

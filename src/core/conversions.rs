@@ -24,13 +24,12 @@
 //! Eliminates duplication across REST, gRPC, and internal handlers.
 
 use anyhow::Result;
-use serde_json::json;
 
 use crate::core::search::results::InternalSearchResult;
 use crate::proto::proximadb::{
-    Collection, CollectionConfig, CollectionOperation, CollectionRequest, DistanceMetric,
+    CollectionConfig, CollectionOperation, DistanceMetric,
     IndexingAlgorithm, MetadataItem, SearchParams, SearchQuery, SearchResult as ProtoSearchResult,
-    SearchVectorRecord, StorageEngine, VectorBatchRequest, VectorOperation, VectorRecord,
+    SearchVectorRecord, StorageEngine, VectorOperation,
     VectorSearchRequest,
 };
 

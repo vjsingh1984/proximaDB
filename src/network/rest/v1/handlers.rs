@@ -36,13 +36,11 @@ use crate::core::conversions;
 use crate::proto::proximadb::SearchVectorRecord;
 
 use crate::proto::proximadb::{
-    AccessPattern, AnnoyConfig, Collection as ProtoCollection, CollectionConfig,
-    CollectionOperation, CollectionRequest, CompressionConfig, DataDensity, DistanceMetric,
-    FilterableColumnSpec, FilterableDataType, FlatConfig, FooterCacheSettings, HnswConfig,
-    HybridWriterSettings, IndexConfig, IndexUpdateMode, IndexingAlgorithm, IvfConfig, LshConfig,
-    NovaEngineSettings, OperationMetrics, ParquetWriterSettings, PqConfig, QuantizationConfig,
-    RandomProjectionType, SstEngineSettings, StorageConfig, StorageEngine, VectorBatchRequest,
-    VectorRecord, ViperEngineSettings,
+    AnnoyConfig, Collection as ProtoCollection, CollectionConfig,
+    CollectionOperation, CollectionRequest, DistanceMetric,
+    FilterableColumnSpec, FlatConfig, HnswConfig, IndexConfig, IndexUpdateMode, IndexingAlgorithm, IvfConfig, LshConfig, OperationMetrics, PqConfig, QuantizationConfig,
+    RandomProjectionType, StorageConfig, VectorBatchRequest,
+    VectorRecord,
 };
 
 /// Shared application state for REST handlers
@@ -113,7 +111,7 @@ pub struct CollectionConfigJson {
 impl CollectionConfigJson {
     /// Convert JSON config to proto CollectionConfig
     pub fn to_proto(&self) -> CollectionConfig {
-        let mut config = CollectionConfig {
+        let config = CollectionConfig {
             name: self.name.clone(),
             dimension: self.dimension as u32,
             distance_metric: self
@@ -2024,54 +2022,20 @@ pub async fn delete_vectors(
     Ok(JsonResponse(response))
 }
 
-/// 🛠️ TEMPORARY DEBUG: List all unflushed vectors for a collection
+/// Debug endpoint to list unflushed vectors
 pub async fn debug_list_unflushed_vectors(
     State(state): State<AppState>,
     Path(collection_id): Path<String>,
-) -> Result<JsonResponse<serde_json::Value>, ErrorResponse> {
-    tracing::info!(
-        "🔍 DEBUG REST: Listing unflushed vectors for collection: {}",
-        collection_id
-    );
-
+) -> Result<JsonResponse<ApiResponse<Vec<VectorRecord>>>, StatusCode> {
     match state
         .unified_handlers
-        .vector_operations_service
-        .debug_list_all_unflushed_vectors(&collection_id)
+        .list_unflushed_vectors(&collection_id)
         .await
     {
-        Ok(vectors) => {
-            let debug_info = serde_json::json!({
-                "collection_id": collection_id,
-                "unflushed_vector_count": vectors.len(),
-                "vectors": vectors.iter().map(|v| serde_json::json!({
-                    "id": v.id,
-                    "vector_length": v.vector.len(),
-                    "metadata_count": v.metadata.len(),
-                    "vector_preview": v.vector.iter().take(4).cloned().collect::<Vec<f32>>(),
-                    "metadata_info": v.metadata.iter().map(|m| serde_json::json!({
-                        "key": m.key,
-                        "value": m.value
-                    })).collect::<Vec<_>>()
-                })).collect::<Vec<_>>()
-            });
-
-            Ok(JsonResponse(debug_info))
-        }
+        Ok(vectors) => Ok(JsonResponse(ApiResponse::success(vectors))),
         Err(e) => {
-            tracing::error!("🔍 DEBUG REST: Failed to list unflushed vectors: {:?}", e);
-            Err(ErrorResponse {
-                status: 500,
-                message: format!("Failed to list unflushed vectors: {}", e),
-                error_code: "INTERNAL_ERROR".to_string(),
-            })
+            tracing::error!("Failed to list unflushed vectors: {:?}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
-
-#[cfg(test)]
-mod handlers_metadata_test;
-
-#[cfg(test)]
-mod handlers_simple_test;
-// Note: Tests now use real UnifiedHandlers instance for integration testing

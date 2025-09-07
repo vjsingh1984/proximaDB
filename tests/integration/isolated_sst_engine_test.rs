@@ -62,15 +62,15 @@ async fn test_isolated_sst_vector_insert_flush_search() -> Result<()> {
     // Verify results
     debug!("🔍 Search returned {} results", results.len());
     for (i, result) in results.iter().enumerate() {
-        debug!("  Result {}: id={}, score={}", i, result.id, result.score);
+        debug!("  Result {}: id={}, similarity={}", i, result.id, result.similarity);
     }
     assert!(!results.is_empty(), "Should find search results");
     assert!(results.len() <= 5, "Should not return more than requested");
 
-    // Verify first result is closest (distance should be smallest)
+    // Verify first result is closest (similarity should be highest)
     assert!(
-        results[0].distance.unwrap() < 1.0,
-        "Closest result should have small distance"
+        results[0].similarity > 0.0,
+        "Closest result should have high similarity"
     );
 
     // Verify all results belong to this collection
@@ -407,42 +407,34 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
         let handle = tokio::spawn(async move {
             // Create unique vectors for this batch
             let vectors = (0..3)
-                .map(|i| proximadb::core::VectorRecord {
-                    id: Some(format!(
+                .map(|i| VectorRecord {
+                    id: format!(
                         "{}_concurrent_{}_{}",
                         env_collection_id, batch_id, i
-                    )),
+                    ),
                     vector: vec![
                         (batch_id * 10 + i) as f32,
                         (batch_id * 10 + i + 1) as f32,
                         (batch_id * 10 + i + 2) as f32,
                     ],
-                    metadata: vec![proximadb::proto::proximadb::MetadataItem {
+                    metadata: vec![MetadataItem {
                         key: "batch_id".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            metadata_item::Value::StringValue(
                                 batch_id.to_string(),
                             ),
                         ),
                     }],
-                    timestamp: chrono::Utc::now().timestamp() as u32,
-                    updated_at: None,
-                    expires_at: None,
-                    distance: None,
-                    rank: None,
-                    score: None,
-                    version: None,
-                    ..Default::default()
+                    quantized_vector: vec![],
+                    source: None,
                 })
                 .collect();
 
             let flush_params = FlushParameters {
                 collection_id: Some(env_collection_id),
-                vector_records: vectors,
-                force: true,
-                synchronous: true,
+                records: vectors,
                 collection_config: Some(collection_config),
-                ..Default::default()
+                level: None,
             };
 
             engine_clone.do_flush(&flush_params).await
@@ -532,11 +524,9 @@ async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
         let collection_config = env.create_test_collection();
         let flush_params = FlushParameters {
             collection_id: Some(env.collection_id().to_string()),
-            vector_records: original_vectors.clone(),
-            force: true,
-            synchronous: true,
+            records: original_vectors.clone(),
             collection_config: Some(collection_config),
-            ..Default::default()
+            level: None,
         };
         let result = engine.do_flush(&flush_params).await?;
         assert!(result.success, "Flush should succeed");
@@ -574,7 +564,7 @@ async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
         // Verify vector IDs match original data
         let original_ids: HashSet<_> = original_vectors
             .iter()
-            .map(|v| v.id.as_ref().unwrap().as_str())
+            .map(|v| v.id.as_str())
             .collect();
 
         let found_ids: HashSet<_> = results.iter().map(|r| r.id.as_str()).collect();

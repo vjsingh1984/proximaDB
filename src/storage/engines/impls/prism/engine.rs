@@ -69,7 +69,6 @@
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::core::search::multi_tier_deduplication::DataFreshnessTier;
-use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
@@ -79,7 +78,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 // Duration for cache TTL
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -87,9 +85,7 @@ use uuid::Uuid;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::services::collection::manager::CollectionService;
 use crate::storage::engines::CandidateVector;
-use crate::storage::engines::core::search::progressive_search::SearchStage;
 use crate::storage::engines::universal::{
     DistanceComputationRequest, EngineType, StorageFormat, UniversalDistanceAdapter,
 };
@@ -360,7 +356,7 @@ impl PrismEngine {
         if let Some(optimizer) = bandwidth_optimizer {
             // Create query context for bandwidth decisions
             use crate::storage::engines::core::io::zero_copy::traits::{
-                QueryContext, QueryType, RequestPriority,
+                QueryType, RequestPriority,
             };
 
             let query_context = crate::storage::engines::core::io::zero_copy::QueryContext {
@@ -925,8 +921,8 @@ impl PrismEngine {
         candidates: &[String],
         top_k: usize,
     ) -> Result<Vec<(String, f32)>> {
-        use super::fastlanes_serializer::{PrismFastLanesSerializer, ResolutionLevel};
-        use crate::compute::distance_computation::DistanceMetric;
+        use super::fastlanes_serializer::PrismFastLanesSerializer;
+        
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
         // Create default quantization config for PRISM

@@ -2,7 +2,6 @@ use anyhow::Result;
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
-use memmap2::MmapOptions;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,15 +13,13 @@ use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::RaptorRe
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
-use crate::core::search::{FilterExpression, InternalSearchResult};
-use crate::proto::proximadb::Collection;
-use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::core::search::InternalSearchResult;
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult,
     StorageQueryContext, UnifiedStorageEngine,
 };
 // IvfManager removed - Matrix Trinity handles clustering
-use super::smart_rowgroup_sizing::{CommonConfigurations, SmartRowGroupSizer};
+use super::smart_rowgroup_sizing::SmartRowGroupSizer;
 
 // Deep integration with AXIS clustering
 use crate::index::axis::clustering::{
@@ -35,10 +32,9 @@ use crate::storage::persistence::filesystem::TierConfig;
 use crate::storage::persistence::filesystem::{FileOptions, FileSystem, FileStorageTier};
 
 // Universal performance optimization imports
-use crate::core::compression::{CompressionAlgorithm, CompressionContext, StandardCompression};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::performance_optimization::{
-    UniversalIOConfig, UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
+    UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
     UniversallyOptimized,
 };
 // VectorMemoryPool now managed by universal optimizer
@@ -314,7 +310,7 @@ impl RaptorEngine {
         );
 
         // Cache is now passed in as a shared resource across all engines
-        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+        
 
         // ============================================================================
         // RAPTOR READER SETUP
@@ -602,7 +598,7 @@ impl RaptorEngine {
 
             // Update rowgroup centroid for fast pruning
             drop(rowgroup_manager);
-            let mut rowgroup_manager = self.rowgroup_manager.write().await;
+            let rowgroup_manager = self.rowgroup_manager.write().await;
             // Note: We'd need to add a method to update centroid in RowGroups
             // For now, just skip this as it's an optimization
         }
@@ -974,7 +970,7 @@ impl RaptorEngine {
     fn deserialize_sparse_tensor_batch(&self, data: &[u8]) -> Result<RecordBatch> {
         // SPARSE TENSOR DESERIALIZATION (COO/CSR format)
         // Marker 0xA2 indicates sparse tensor encoding
-        use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
+        
         use std::io::Read;
 
         let mut cursor = std::io::Cursor::new(data);
@@ -1102,7 +1098,7 @@ impl RaptorEngine {
     fn deserialize_quantized_tensor_batch(&self, data: &[u8]) -> Result<RecordBatch> {
         // QUANTIZED TENSOR DESERIALIZATION (INT8/PQ formats)
         // Marker 0xA3 indicates quantized tensor encoding
-        use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
+        
         use std::io::Read;
 
         let mut cursor = std::io::Cursor::new(data);

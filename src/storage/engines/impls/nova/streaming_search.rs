@@ -1,23 +1,23 @@
 // Streaming search implementation for optimized NOVA engine
 // Combines all optimization techniques into a unified streaming search engine
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc};
-use tokio::time::{Duration, Instant, timeout};
-use tracing::{debug, info, instrument, warn};
+use tokio::sync::RwLock;
+use tokio::time::Instant;
+use tracing::{debug, info, instrument};
 
-use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock, ZoneMap};
+use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use super::progressive_search::{
-    ProgressiveCandidate, ProgressiveColumnarSearch, ProgressiveSearchConfig,
-    ProgressiveSearchResult, StageMetrics,
+    ProgressiveColumnarSearch, ProgressiveSearchConfig,
+    ProgressiveSearchResult,
 };
 use super::streaming_processor::{
-    RowGroupProcessingResult, StreamingConfig, StreamingRowGroupProcessor,
+    StreamingConfig, StreamingRowGroupProcessor,
 };
 use super::zone_maps::{
-    AdvancedIntersectionResult, AdvancedZoneMap, CostBasedOptimizer, OptimizationStrategy,
+    AdvancedZoneMap, CostBasedOptimizer, OptimizationStrategy,
     PerformanceHistory, WorkloadStats, ZoneMapConfig,
 };
 use crate::compute::distance_computation::DistanceMetric;
@@ -722,9 +722,9 @@ impl PerformanceTracker {
         self.workload_stats.avg_query_selectivity = alpha * characteristics.estimated_selectivity
             + (1.0 - alpha) * self.workload_stats.avg_query_selectivity;
 
-        self.workload_stats.avg_top_k = ((alpha * characteristics.top_k as f32
+        self.workload_stats.avg_top_k = (alpha * characteristics.top_k as f32
             + (1.0 - alpha) * self.workload_stats.avg_top_k as f32)
-            as u32);
+            as u32;
     }
 
     fn update_adaptive_thresholds(&mut self, performance: &ActualPerformance) {

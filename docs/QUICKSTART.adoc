@@ -1,0 +1,332 @@
+= ProximaDB Quick Start Guide
+:toc:
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+Get up and running with ProximaDB in 5 minutes.
+
+== Prerequisites
+
+* Rust 1.75+ (for building from source)
+* 8GB RAM minimum
+* x86_64 or ARM64 processor
+
+== Installation
+
+=== From Source
+
+[source,bash]
+----
+# Clone the repository
+git clone https://github.com/yourorg/proximadb.git
+cd proximadb
+
+# Build in release mode
+cargo build --release
+
+# Verify installation
+./target/release/proximadb-server --version
+----
+
+=== Using Docker
+
+[source,bash]
+----
+docker pull proximadb/proximadb:latest
+docker run -p 5678:5678 -p 5679:5679 proximadb/proximadb
+----
+
+== Start the Server
+
+[source,bash]
+----
+# With default configuration
+./target/release/proximadb-server
+
+# With custom config
+./target/release/proximadb-server --config config/server.toml
+
+# Server will start on:
+# - REST API: http://localhost:5678
+# - gRPC API: localhost:5679
+----
+
+== Python Client Example
+
+=== Install Client
+
+[source,bash]
+----
+pip install proximadb
+----
+
+=== Basic Usage
+
+[source,python]
+----
+from proximadb import Client
+
+# Connect to server
+client = Client("localhost:5678")  # REST
+# or
+client = Client("localhost:5679", protocol="grpc")  # gRPC (faster)
+
+# Create a collection
+collection = client.create_collection(
+    name="my_vectors",
+    dimension=128,
+    metric="cosine"
+)
+
+# Insert vectors
+import numpy as np
+
+# Generate some random vectors for demo
+vectors = np.random.rand(100, 128).astype('float32')
+ids = [f"vec_{i}" for i in range(100)]
+
+collection.insert(
+    ids=ids,
+    vectors=vectors,
+    metadata=[{"category": "demo"} for _ in range(100)]
+)
+
+# Search for similar vectors
+query_vector = np.random.rand(128).astype('float32')
+results = collection.search(
+    vector=query_vector,
+    k=10  # Return top 10 results
+)
+
+for result in results:
+    print(f"ID: {result.id}, Score: {result.score}")
+
+# Clean up
+client.delete_collection("my_vectors")
+----
+
+== REST API Example
+
+[source,bash]
+----
+# Create a collection
+curl -X POST http://localhost:5678/api/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "products",
+    "dimension": 512,
+    "distance_metric": "euclidean"
+  }'
+
+# Insert a vector
+curl -X POST http://localhost:5678/api/v1/collections/products/vectors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": [{
+      "id": "product_001",
+      "vector": [0.1, 0.2, ...],
+      "metadata": {
+        "name": "Red Shirt",
+        "price": 29.99
+      }
+    }]
+  }'
+
+# Search
+curl -X POST http://localhost:5678/api/v1/collections/products/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.15, 0.25, ...],
+    "k": 5
+  }'
+----
+
+== Common Use Cases
+
+=== 1. Semantic Search
+
+[source,python]
+----
+# Store document embeddings
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+documents = ["Document 1 text...", "Document 2 text..."]
+embeddings = model.encode(documents)
+
+collection = client.create_collection(
+    name="documents",
+    dimension=384,  # Model output dimension
+    metric="cosine"
+)
+
+collection.insert(
+    ids=["doc_1", "doc_2"],
+    vectors=embeddings,
+    metadata=[{"text": doc} for doc in documents]
+)
+
+# Search
+query = "What is machine learning?"
+query_embedding = model.encode([query])[0]
+results = collection.search(query_embedding, k=5)
+----
+
+=== 2. Image Similarity
+
+[source,python]
+----
+# Using OpenAI CLIP embeddings
+import torch
+from PIL import Image
+from transformers import CLIPProcessor, CLIPModel
+
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+# Process images
+images = [Image.open(f"image_{i}.jpg") for i in range(10)]
+inputs = processor(images=images, return_tensors="pt")
+embeddings = model.get_image_features(**inputs).detach().numpy()
+
+collection = client.create_collection(
+    name="images",
+    dimension=512,
+    metric="cosine",
+    engine="VIPER"  # Optimized for large-scale search
+)
+
+collection.insert(
+    ids=[f"img_{i}" for i in range(10)],
+    vectors=embeddings
+)
+----
+
+=== 3. Recommendation System
+
+[source,python]
+----
+# User-item embeddings
+user_embeddings = load_user_embeddings()  # Your embeddings
+item_embeddings = load_item_embeddings()
+
+# Create collection with fast indexing
+collection = client.create_collection(
+    name="recommendations",
+    dimension=256,
+    metric="dot_product",
+    engine="RAPTOR",  # Graph-based for recommendations
+    index_params={
+        "type": "HNSW",
+        "M": 32,
+        "ef_construction": 400
+    }
+)
+
+# Insert items
+collection.insert(
+    ids=item_ids,
+    vectors=item_embeddings,
+    metadata=item_metadata
+)
+
+# Get recommendations for a user
+user_vector = user_embeddings[user_id]
+recommendations = collection.search(
+    vector=user_vector,
+    k=20,
+    filter={"category": "electronics"}  # Optional filtering
+)
+----
+
+== Performance Tuning
+
+=== For Speed
+
+[source,python]
+----
+# Use RAPTOR engine with HNSW index
+collection = client.create_collection(
+    name="fast_search",
+    dimension=128,
+    engine="RAPTOR",
+    index_params={"type": "HNSW", "M": 16}
+)
+----
+
+=== For Memory Efficiency
+
+[source,python]
+----
+# Use quantization
+collection = client.create_collection(
+    name="compressed",
+    dimension=1536,
+    engine="VIPER",
+    quantization={
+        "enabled": True,
+        "type": "PQ",
+        "bits": 8
+    }
+)
+----
+
+=== For High Throughput Writes
+
+[source,python]
+----
+# Use SST engine
+collection = client.create_collection(
+    name="streaming",
+    dimension=512,
+    engine="SST"
+)
+
+# Batch inserts
+collection.insert_batch(vectors, batch_size=1000)
+----
+
+== Monitoring
+
+[source,bash]
+----
+# Check server health
+curl http://localhost:5678/health
+
+# Get metrics
+curl http://localhost:5678/metrics
+
+# View logs
+tail -f /var/log/proximadb/server.log
+----
+
+== Next Steps
+
+* link:API.adoc[API Reference] - Complete API documentation
+* link:ARCHITECTURE.adoc[Architecture] - System design details
+* link:CONFIGURATION.adoc[Configuration] - Advanced configuration
+* link:BENCHMARKS.adoc[Benchmarks] - Performance metrics
+
+== Troubleshooting
+
+[cols="1,2", options="header"]
+|===
+| Issue | Solution
+
+| Connection refused
+| Check if server is running on correct ports
+
+| Out of memory
+| Increase heap size or enable quantization
+
+| Slow searches
+| Use HNSW index, adjust ef_search parameter
+
+| High latency
+| Use gRPC instead of REST, enable SIMD
+|===
+
+---
+
+_Need help? Open an issue on https://github.com/yourorg/proximadb/issues[GitHub]_

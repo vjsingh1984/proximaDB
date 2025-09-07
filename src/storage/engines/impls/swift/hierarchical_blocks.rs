@@ -1,13 +1,10 @@
 // Hierarchical block structure and metadata indexing for SST
 // Clean implementation with no backward compatibility
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
-use super::ColumnStats;
-use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
 
 /// Metadata index for efficient filtering

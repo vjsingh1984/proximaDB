@@ -6,7 +6,7 @@
 [abstract]
 **Next-generation Optimized Vector Architecture** - An advanced columnar storage engine featuring SuperBlock statistics, zone maps, and predictive indexing for complex analytical queries with extreme compression.
 
-include::../assets/logos/nova-engine-logo.svg[]
+image::../assets/logos/nova-engine-logo.svg[NOVA Engine Logo, 200, align="center"]
 
 == Overview
 

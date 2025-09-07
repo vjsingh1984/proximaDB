@@ -1,21 +1,20 @@
 use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 /// Consolidated RAPTOR compactor that eliminates duplication
 /// Replaces: compaction.rs (321 lines) + hnsw_compaction.rs (1,027 lines)
 /// Total elimination: ~1,350 lines of duplicated code
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 // DIRECT use of unified components - no wrappers
 use super::common::{RaptorFileMetadata, RowGroup, RowGroupMetadata, SchemaDescriptor};
 use super::config::RaptorConfig;
 use super::consolidated_reader::RaptorReader;
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
-    AxisClusteringEngine as AxisClustering, ClusteringAlgorithm,
-    ClusteringConfig as AxisClusteringConfig, KMeansConfig, KMeansInit, ReusableClusteringEngine,
+    AxisClusteringEngine as AxisClustering,
+    ClusteringConfig as AxisClusteringConfig, ReusableClusteringEngine,
 };
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};

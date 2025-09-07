@@ -1,7 +1,7 @@
 // ID Index for O(log n) lookups in SST
 // Clean B+ tree implementation with no legacy code
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;

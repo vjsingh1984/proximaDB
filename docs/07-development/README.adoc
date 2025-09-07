@@ -1,0 +1,132 @@
+= ProximaDB Development Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide is for developers who want to contribute to ProximaDB or build custom extensions.
+
+== Development Documents
+
+[cols="1,3", options="header"]
+|===
+| Document | Description
+
+| link:setup.adoc[Development Setup]
+| Setting up your development environment
+
+| link:building.adoc[Building from Source]
+| Compilation, dependencies, and build options
+
+| link:testing.adoc[Testing]
+| Unit tests, integration tests, and benchmarks
+
+| link:coding-standards.adoc[Coding Standards]
+| Code style, best practices, and conventions
+
+| link:storage-engine-development.adoc[Storage Engine Development]
+| Creating custom storage engines
+
+| link:index-development.adoc[Index Development]
+| Implementing new index algorithms
+
+| link:debugging.adoc[Debugging]
+| Debugging techniques and tools
+
+| link:profiling.adoc[Profiling]
+| Performance profiling and optimization
+
+| link:contributing.adoc[Contributing]
+| How to contribute code, documentation, and tests
+
+| link:release-process.adoc[Release Process]
+| Versioning, releases, and deployment
+|===
+
+== Quick Start for Developers
+
+=== Essential Steps
+
+. link:setup.adoc[Set up development environment]
+. link:building.adoc[Build from source]
+. link:testing.adoc[Run tests]
+. link:coding-standards.adoc[Review coding standards]
+. link:contributing.adoc[Submit your first PR]
+
+=== Key Development Areas
+
+==== Core Systems
+* Storage engines (VIPER, SST, RAPTOR)
+* Distance computation (SIMD, GPU)
+* Indexing algorithms (HNSW, IVF, LSH)
+* Query processing and optimization
+
+==== Extensions
+* Custom storage engines
+* New distance metrics
+* Index algorithms
+* Client libraries
+
+==== Tools & Infrastructure
+* Testing frameworks
+* Benchmarking tools
+* Monitoring integrations
+* Deployment automation
+
+== Development Workflow
+
+[plantuml, dev-workflow, svg]
+----
+@startuml
+start
+:Fork Repository;
+:Clone Locally;
+:Create Feature Branch;
+:Write Code;
+:Add Tests;
+:Run Tests Locally;
+if (Tests Pass?) then (yes)
+  :Commit Changes;
+  :Push to Fork;
+  :Create Pull Request;
+  if (CI Passes?) then (yes)
+    :Code Review;
+    if (Approved?) then (yes)
+      :Merge to Main;
+      stop
+    else (no)
+      :Address Feedback;
+    endif
+  else (no)
+    :Fix CI Issues;
+  endif
+else (no)
+  :Fix Tests;
+endif
+@enduml
+----
+
+== Project Structure
+
+[source]
+----
+proximadb/
+├── src/
+│   ├── api/               # API handlers
+│   ├── compute/           # Distance computation
+│   ├── core/              # Core types and utilities
+│   ├── index/             # Indexing algorithms
+│   ├── proto/             # Protocol buffers
+│   ├── services/          # Business logic
+│   └── storage/           # Storage engines
+├── benches/               # Benchmarks
+├── tests/                 # Integration tests
+├── docs/                  # Documentation
+├── examples/              # Example code
+└── clients/               # Client libraries
+----
+
+---
+_For architecture details, see link:../06-architecture/README.adoc[Architecture Documentation]_ +
+_For contribution guidelines, see link:../../CONTRIBUTING.adoc[Contributing Guide]_

@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;
 
 /// Trait for storage engines to implement progressive search capabilities
