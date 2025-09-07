@@ -1,138 +1,70 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
-  <!-- RAPTOR Engine Logo: Row-Aligned Performance Tensor Optimized Repository -->
-  <!-- Design: Radiant performance core with intelligent row processing -->
-  
+<svg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- Radiant performance gradient -->
-    <radialGradient id="performanceGradient" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" />
-      <stop offset="30%" style="stop-color:#FF8C00;stop-opacity:0.9" />
-      <stop offset="60%" style="stop-color:#4A90E2;stop-opacity:0.7" />
-      <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:0.5" />
-    </radialGradient>
-    
-    <!-- Row data gradient -->
-    <linearGradient id="rowDataGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:0.8" />
-      <stop offset="50%" style="stop-color:#FFD700;stop-opacity:0.9" />
-      <stop offset="100%" style="stop-color:#7B68EE;stop-opacity:0.8" />
+    <linearGradient id="raptorGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ef4444;" />
+      <stop offset="50%" style="stop-color:#dc2626;" />
+      <stop offset="100%" style="stop-color:#b91c1c;" />
     </linearGradient>
-    
-    <!-- Processing flow gradient -->
-    <linearGradient id="flowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:0.9" />
-      <stop offset="50%" style="stop-color:#FF8C00;stop-opacity:0.8" />
-      <stop offset="100%" style="stop-color:#4A90E2;stop-opacity:0.7" />
+    <linearGradient id="raptorWing" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f87171;" />
+      <stop offset="100%" style="stop-color:#ef4444;" />
     </linearGradient>
-    
-    <!-- Radiant glow filter -->
-    <filter id="radiantGlow">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <filter id="raptorShadow">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.3"/>
     </filter>
-    
-    <!-- Performance pattern -->
-    <pattern id="performancePattern" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse">
-      <rect width="10" height="10" fill="none"/>
-      <circle cx="5" cy="5" r="2" fill="#FFD700" opacity="0.5"/>
-      <circle cx="5" cy="5" r="1" fill="#FFF" opacity="0.8"/>
-    </pattern>
+    <filter id="raptorSharp">
+      <feMorphology operator="dilate" radius="0.5"/>
+    </filter>
   </defs>
   
-  <!-- Background -->
-  <rect width="400" height="200" fill="#0A0A0A"/>
+  <!-- Background circle -->
+  <circle cx="30" cy="30" r="28" fill="#fef2f2" stroke="url(#raptorGradient)" stroke-width="1" opacity="0.9"/>
   
-  <!-- Row data visualization (representing row-aligned storage) -->
-  <g opacity="0.7">
-    <!-- Row 1 -->
-    <rect x="20" y="40" width="350" height="6" rx="3" fill="url(#rowDataGradient)"/>
-    <!-- Row 2 -->
-    <rect x="20" y="52" width="340" height="6" rx="3" fill="url(#rowDataGradient)"/>
-    <!-- Row 3 -->
-    <rect x="20" y="64" width="360" height="6" rx="3" fill="url(#rowDataGradient)"/>
-    <!-- Row 4 -->
-    <rect x="20" y="76" width="330" height="6" rx="3" fill="url(#rowDataGradient)"/>
-    <!-- Row 5 -->
-    <rect x="20" y="88" width="355" height="6" rx="3" fill="url(#rowDataGradient)"/>
-    <!-- Row 6 -->
-    <rect x="20" y="100" width="345" height="6" rx="3" fill="url(#rowDataGradient)"/>
-  </g>
-  
-  <!-- Central performance processing core -->
-  <g transform="translate(120, 70)" filter="url(#radiantGlow)">
-    <!-- Main processing core -->
-    <circle cx="0" cy="0" r="35" fill="url(#performanceGradient)" opacity="0.9"/>
-    <circle cx="0" cy="0" r="30" fill="url(#performancePattern)"/>
-    <circle cx="0" cy="0" r="25" fill="none" stroke="#FFD700" stroke-width="2" opacity="0.8"/>
-    <circle cx="0" cy="0" r="20" fill="none" stroke="#FF8C00" stroke-width="1.5" opacity="0.7"/>
-    <circle cx="0" cy="0" r="15" fill="none" stroke="#4A90E2" stroke-width="1" opacity="0.6"/>
-    
-    <!-- Row alignment indicators -->
-    <rect x="-25" y="-2" width="50" height="4" fill="#FFD700" opacity="0.8"/>
-    <rect x="-2" y="-25" width="4" height="50" fill="#4A90E2" opacity="0.6"/>
-    
-    <!-- Performance optimization nodes -->
-    <circle cx="-15" cy="-15" r="4" fill="#FFD700"/>
-    <circle cx="15" cy="-15" r="4" fill="#FF8C00"/>
-    <circle cx="15" cy="15" r="4" fill="#4A90E2"/>
-    <circle cx="-15" cy="15" r="4" fill="#7B68EE"/>
-  </g>
-  
-  <!-- Performance flow streams -->
-  <g opacity="0.8">
-    <!-- Input performance stream -->
-    <path d="M 30 70 Q 60 65, 85 70" 
-          stroke="url(#flowGradient)" stroke-width="6" fill="none" 
-          stroke-linecap="round"/>
-    <circle cx="25" cy="70" r="5" fill="#FFD700"/>
-    
-    <!-- Output optimization stream -->
-    <path d="M 155 70 Q 190 65, 220 70 Q 250 72, 280 70" 
-          stroke="url(#flowGradient)" stroke-width="7" fill="none" 
-          stroke-linecap="round"/>
-    
-    <!-- Performance indicators -->
-    <g transform="translate(210, 60)">
-      <path d="M 0 0 L 12 6 L 0 12 Z" fill="#FFD700"/>
-      <path d="M 8 0 L 20 6 L 8 12 Z" fill="#FF8C00" opacity="0.7"/>
+  <!-- RAPTOR eagle/hawk visualization -->
+  <g transform="translate(30, 30)">
+    <!-- Matrix/HNSW graph visualization background -->
+    <g opacity="0.3">
+      <line x1="-12" y1="-12" x2="12" y2="-12" stroke="#dc2626" stroke-width="0.5"/>
+      <line x1="-12" y1="0" x2="12" y2="0" stroke="#dc2626" stroke-width="0.5"/>
+      <line x1="-12" y1="12" x2="12" y2="12" stroke="#dc2626" stroke-width="0.5"/>
+      <line x1="-12" y1="-12" x2="-12" y2="12" stroke="#dc2626" stroke-width="0.5"/>
+      <line x1="0" y1="-12" x2="0" y2="12" stroke="#dc2626" stroke-width="0.5"/>
+      <line x1="12" y1="-12" x2="12" y2="12" stroke="#dc2626" stroke-width="0.5"/>
     </g>
-  </g>
-  
-  <!-- Intelligent network connections -->
-  <g opacity="0.6">
-    <!-- Smart connections -->
-    <path d="M 300 50 Q 320 45, 340 50" stroke="#FFD700" stroke-width="2" fill="none"/>
-    <path d="M 340 50 Q 350 60, 350 70" stroke="#4A90E2" stroke-width="2" fill="none"/>
-    <path d="M 300 80 Q 320 85, 340 80" stroke="#FF8C00" stroke-width="2" fill="none"/>
     
-    <!-- Intelligence nodes -->
-    <circle cx="300" cy="50" r="4" fill="#FFD700" opacity="0.9"/>
-    <circle cx="320" cy="45" r="3" fill="#4A90E2" opacity="0.8"/>
-    <circle cx="340" cy="50" r="4" fill="#FF8C00" opacity="0.9"/>
-    <circle cx="350" cy="70" r="3" fill="#7B68EE" opacity="0.8"/>
-    <circle cx="300" cy="80" r="3" fill="#FFD700" opacity="0.8"/>
-    <circle cx="340" cy="80" r="4" fill="#4A90E2" opacity="0.9"/>
+    <!-- Raptor bird silhouette -->
+    <g filter="url(#raptorShadow)">
+      <!-- Head and beak -->
+      <path d="M 0 -12 L 3 -10 L 6 -8 L 4 -6 L 0 -8 Z" 
+            fill="url(#raptorGradient)" filter="url(#raptorSharp)"/>
+      
+      <!-- Body -->
+      <ellipse cx="0" cy="-3" rx="5" ry="8" fill="url(#raptorGradient)"/>
+      
+      <!-- Wings spread -->
+      <path d="M -5 -5 Q -12 -8, -16 -2 L -12 0 L -8 -2 Z" 
+            fill="url(#raptorWing)" opacity="0.9"/>
+      <path d="M 5 -5 Q 12 -8, 16 -2 L 12 0 L 8 -2 Z" 
+            fill="url(#raptorWing)" opacity="0.9"/>
+      
+      <!-- Tail feathers -->
+      <path d="M -3 5 L -2 10 L 0 12 L 2 10 L 3 5 Z" 
+            fill="url(#raptorGradient)" opacity="0.8"/>
+    </g>
+    
+    <!-- HNSW connection nodes -->
+    <circle cx="-8" cy="-8" r="1.5" fill="#ffffff" stroke="#dc2626" stroke-width="1"/>
+    <circle cx="8" cy="-8" r="1.5" fill="#ffffff" stroke="#dc2626" stroke-width="1"/>
+    <circle cx="0" cy="8" r="1.5" fill="#ffffff" stroke="#dc2626" stroke-width="1"/>
+    
+    <!-- Connection lines -->
+    <line x1="-8" y1="-8" x2="0" y2="-3" stroke="#dc2626" stroke-width="0.5" opacity="0.5" stroke-dasharray="1,1"/>
+    <line x1="8" y1="-8" x2="0" y2="-3" stroke="#dc2626" stroke-width="0.5" opacity="0.5" stroke-dasharray="1,1"/>
+    <line x1="0" y1="5" x2="0" y2="8" stroke="#dc2626" stroke-width="0.5" opacity="0.5" stroke-dasharray="1,1"/>
   </g>
   
-  <!-- Text -->
-  <text x="200" y="155" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
-        font-weight="bold" fill="#FFFFFF" text-anchor="middle" filter="url(#radiantGlow)">RAPTOR</text>
-  
-  <text x="200" y="175" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
-        fill="#FFD700" text-anchor="middle" letter-spacing="2">INTELLIGENT ROW-ALIGNED ENGINE</text>
-  
-  <!-- Positive performance badges -->
-  <g transform="translate(20, 155)">
-    <rect x="0" y="0" width="65" height="16" rx="8" fill="none" stroke="#FFD700" stroke-width="1"/>
-    <text x="32" y="11" font-family="monospace" font-size="8" fill="#FFD700" text-anchor="middle">⚡ OPTIMIZED</text>
-  </g>
-  
-  <g transform="translate(315, 155)">
-    <rect x="0" y="0" width="65" height="16" rx="8" fill="none" stroke="#4A90E2" stroke-width="1"/>
-    <text x="32" y="11" font-family="monospace" font-size="8" fill="#4A90E2" text-anchor="middle">🚀 TENSOR AI</text>
-  </g>
+  <!-- RAPTOR label -->
+  <text x="30" y="52" font-family="'Inter', 'Segoe UI', sans-serif" font-size="7" font-weight="700" fill="#b91c1c" text-anchor="middle">
+    RAPTOR
+  </text>
 </svg>

@@ -1,125 +1,71 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
-  <!-- PRISM Engine Logo: Progressive Retrieval through Indexed Storage Management -->
-  <!-- Design: Light refraction through prism showing progressive quantization spectrum -->
-  
+<svg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- Gradient for white light -->
-    <linearGradient id="whiteLight" x1="0%" y1="50%" x2="100%" y2="50%">
-      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:0" />
-      <stop offset="50%" style="stop-color:#FFFFFF;stop-opacity:0.8" />
-      <stop offset="100%" style="stop-color:#FFFFFF;stop-opacity:1" />
+    <linearGradient id="prismGradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#a855f7;" />
+      <stop offset="100%" style="stop-color:#9333ea;" />
     </linearGradient>
-    
-    <!-- Rainbow gradient for refracted light -->
-    <linearGradient id="spectrum" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#FF0000;stop-opacity:0.9" />
-      <stop offset="16%" style="stop-color:#FF7F00;stop-opacity:0.9" />
-      <stop offset="33%" style="stop-color:#FFFF00;stop-opacity:0.9" />
-      <stop offset="50%" style="stop-color:#00FF00;stop-opacity:0.9" />
-      <stop offset="66%" style="stop-color:#0000FF;stop-opacity:0.9" />
-      <stop offset="83%" style="stop-color:#4B0082;stop-opacity:0.9" />
-      <stop offset="100%" style="stop-color:#9400D3;stop-opacity:0.9" />
+    <linearGradient id="prismGradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ec4899;" />
+      <stop offset="100%" style="stop-color:#db2777;" />
     </linearGradient>
-    
-    <!-- Glass effect for prism -->
-    <linearGradient id="glassGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#E0F7FA;stop-opacity:0.3" />
-      <stop offset="50%" style="stop-color:#B2EBF2;stop-opacity:0.2" />
-      <stop offset="100%" style="stop-color:#00BCD4;stop-opacity:0.4" />
+    <linearGradient id="prismGradient3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;" />
+      <stop offset="100%" style="stop-color:#2563eb;" />
     </linearGradient>
-    
-    <!-- Glow effect -->
-    <filter id="prismGlow">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <filter id="prismRefraction">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.5"/>
+      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"/>
     </filter>
-    
-    <!-- Blur for light beams -->
-    <filter id="lightBlur">
-      <feGaussianBlur stdDeviation="1.5"/>
+    <filter id="prismShadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.25"/>
     </filter>
   </defs>
   
-  <!-- Background -->
-  <rect width="400" height="200" fill="#0A0A1E"/>
+  <!-- Background circle -->
+  <circle cx="30" cy="30" r="28" fill="#fdf4ff" stroke="url(#prismGradient1)" stroke-width="1" opacity="0.9"/>
   
-  <!-- Grid pattern for technical feel -->
-  <g opacity="0.1">
-    <pattern id="grid" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
-      <rect width="20" height="20" fill="none" stroke="#00BCD4" stroke-width="0.5"/>
-    </pattern>
-    <rect width="400" height="200" fill="url(#grid)"/>
+  <!-- PRISM triangular prism visualization -->
+  <g transform="translate(30, 30)">
+    <!-- Light beam entering -->
+    <line x1="-20" y1="-5" x2="-8" y2="-5" stroke="#ffffff" stroke-width="3" opacity="0.8"/>
+    <line x1="-20" y1="-5" x2="-8" y2="-5" stroke="#f0f0f0" stroke-width="5" opacity="0.3"/>
+    
+    <!-- Main prism -->
+    <g filter="url(#prismShadow)">
+      <!-- Front face -->
+      <path d="M -8 -12 L 8 0 L -8 12 Z" fill="url(#prismGradient1)" opacity="0.9"/>
+      
+      <!-- Top face -->
+      <path d="M -8 -12 L 8 0 L 12 -3 L -4 -15 Z" fill="url(#prismGradient2)" opacity="0.8"/>
+      
+      <!-- Bottom face -->
+      <path d="M -8 12 L 8 0 L 12 3 L -4 15 Z" fill="url(#prismGradient3)" opacity="0.7"/>
+    </g>
+    
+    <!-- Refracted light spectrum -->
+    <g opacity="0.8">
+      <!-- Red -->
+      <line x1="8" y1="0" x2="20" y2="-8" stroke="#ef4444" stroke-width="2" filter="url(#prismRefraction)"/>
+      <!-- Orange -->
+      <line x1="8" y1="0" x2="20" y2="-4" stroke="#f97316" stroke-width="2" filter="url(#prismRefraction)"/>
+      <!-- Yellow -->
+      <line x1="8" y1="0" x2="20" y2="0" stroke="#fbbf24" stroke-width="2" filter="url(#prismRefraction)"/>
+      <!-- Green -->
+      <line x1="8" y1="0" x2="20" y2="4" stroke="#10b981" stroke-width="2" filter="url(#prismRefraction)"/>
+      <!-- Blue -->
+      <line x1="8" y1="0" x2="20" y2="8" stroke="#3b82f6" stroke-width="2" filter="url(#prismRefraction)"/>
+    </g>
+    
+    <!-- Metadata layers visualization -->
+    <g opacity="0.4">
+      <rect x="-3" y="-8" width="1" height="16" fill="#9333ea"/>
+      <rect x="0" y="-8" width="1" height="16" fill="#9333ea"/>
+      <rect x="3" y="-8" width="1" height="16" fill="#9333ea"/>
+    </g>
   </g>
   
-  <!-- White light beam entering prism -->
-  <g filter="url(#lightBlur)">
-    <polygon points="0,75 120,75 120,85 0,85" fill="url(#whiteLight)" opacity="0.8"/>
-  </g>
-  
-  <!-- Prism -->
-  <g transform="translate(120, 60)" filter="url(#prismGlow)">
-    <!-- Main prism shape -->
-    <path d="M 0 30 L 50 0 L 50 60 Z" fill="url(#glassGradient)" stroke="#00BCD4" stroke-width="2"/>
-    
-    <!-- Internal refraction lines -->
-    <line x1="0" y1="30" x2="50" y2="20" stroke="#FFFFFF" stroke-width="0.5" opacity="0.4"/>
-    <line x1="0" y1="30" x2="50" y2="30" stroke="#FFFFFF" stroke-width="0.5" opacity="0.4"/>
-    <line x1="0" y1="30" x2="50" y2="40" stroke="#FFFFFF" stroke-width="0.5" opacity="0.4"/>
-  </g>
-  
-  <!-- Refracted spectrum beams (Progressive quantization levels) -->
-  <g filter="url(#lightBlur)">
-    <!-- Binary (1-bit) - Red -->
-    <polygon points="170,60 270,40 270,45 170,65" fill="#FF0000" opacity="0.7"/>
-    <text x="275" y="45" font-family="monospace" font-size="9" fill="#FF0000">BINARY</text>
-    
-    <!-- INT8 (8-bit) - Orange/Yellow -->
-    <polygon points="170,70 270,60 270,65 170,75" fill="#FFA500" opacity="0.7"/>
-    <text x="275" y="65" font-family="monospace" font-size="9" fill="#FFA500">INT8</text>
-    
-    <!-- PQ (4-8 bit) - Green -->
-    <polygon points="170,80 270,80 270,85 170,85" fill="#00FF00" opacity="0.7"/>
-    <text x="275" y="85" font-family="monospace" font-size="9" fill="#00FF00">PQ</text>
-    
-    <!-- FP32 (32-bit) - Blue/Violet -->
-    <polygon points="170,90 270,100 270,105 170,95" fill="#4169E1" opacity="0.7"/>
-    <text x="275" y="105" font-family="monospace" font-size="9" fill="#4169E1">FP32</text>
-  </g>
-  
-  <!-- Memory hierarchy indicators -->
-  <g transform="translate(320, 35)" opacity="0.8">
-    <rect x="0" y="0" width="60" height="12" fill="#FF0000" opacity="0.3" rx="2"/>
-    <text x="30" y="9" font-family="monospace" font-size="8" fill="#FFF" text-anchor="middle">L2 CACHE</text>
-    
-    <rect x="0" y="20" width="60" height="12" fill="#FFA500" opacity="0.3" rx="2"/>
-    <text x="30" y="29" font-family="monospace" font-size="8" fill="#FFF" text-anchor="middle">MEMORY</text>
-    
-    <rect x="0" y="40" width="60" height="12" fill="#00FF00" opacity="0.3" rx="2"/>
-    <text x="30" y="49" font-family="monospace" font-size="8" fill="#FFF" text-anchor="middle">MEMORY</text>
-    
-    <rect x="0" y="60" width="60" height="12" fill="#4169E1" opacity="0.3" rx="2"/>
-    <text x="30" y="69" font-family="monospace" font-size="8" fill="#FFF" text-anchor="middle">CLOUD</text>
-  </g>
-  
-  <!-- Text -->
-  <text x="200" y="145" font-family="'Segoe UI', Arial, sans-serif" font-size="36" 
-        font-weight="bold" fill="#FFFFFF" text-anchor="middle">PRISM</text>
-  
-  <text x="200" y="167" font-family="'Segoe UI', Arial, sans-serif" font-size="11" 
-        fill="#00BCD4" text-anchor="middle" letter-spacing="2">PROGRESSIVE RETRIEVAL ENGINE</text>
-  
-  <!-- Performance badges -->
-  <g transform="translate(20, 170)">
-    <rect x="0" y="0" width="65" height="18" rx="3" fill="none" stroke="#00BCD4" stroke-width="1"/>
-    <text x="32" y="12" font-family="monospace" font-size="9" fill="#00BCD4" text-anchor="middle">MEM-FIRST</text>
-  </g>
-  
-  <g transform="translate(315, 170)">
-    <rect x="0" y="0" width="65" height="18" rx="3" fill="none" stroke="#00BCD4" stroke-width="1"/>
-    <text x="32" y="12" font-family="monospace" font-size="9" fill="#00BCD4" text-anchor="middle">97% COST↓</text>
-  </g>
+  <!-- PRISM label -->
+  <text x="30" y="52" font-family="'Inter', 'Segoe UI', sans-serif" font-size="7" font-weight="700" fill="#7c3aed" text-anchor="middle">
+    PRISM
+  </text>
 </svg>
