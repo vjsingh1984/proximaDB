@@ -334,11 +334,37 @@ mod sst_filename_tests {
 // This eliminates double serialization and improves performance
 
 /// SST-specific metadata that accompanies VectorRecord in storage
+///
+/// ## Purpose:
+///
+/// SstMetadata tracks SST-specific state without polluting the VectorRecord.
+/// This separation allows the proto definition to remain clean while SST
+/// maintains its LSM-tree specific tracking.
+///
+/// ## Tombstone Handling:
+///
+/// When is_tombstone=true, the record represents a deletion. During compaction,
+/// tombstones cascade down levels until they reach the bottom level where
+/// they can be safely removed (no older versions exist).
+///
+/// ## Sequence Numbers:
+///
+/// Used for MVCC (Multi-Version Concurrency Control). Higher sequence numbers
+/// represent newer versions. During reads, we return the latest version that's
+/// visible to the transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstMetadata {
-    pub is_tombstone: bool,   // True if this is a deletion marker
-    pub sequence_number: u64, // SST sequence for ordering
-    pub level: u8,            // SSTable level this record belongs to
+    /// True if this is a deletion marker - tombstones cascade through LSM levels
+    /// until they reach the bottom where they're garbage collected
+    pub is_tombstone: bool,
+    
+    /// SST sequence for ordering - higher numbers are newer versions,
+    /// used for MVCC resolution during reads
+    pub sequence_number: u64,
+    
+    /// SSTable level this record belongs to - L0 is memtable flush,
+    /// L1+ are compaction outputs with exponentially larger sizes
+    pub level: u8,
 }
 
 /// Combined storage format for SST files
