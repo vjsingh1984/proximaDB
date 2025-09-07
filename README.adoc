@@ -4,7 +4,10 @@
 :imagesdir: docs/assets
 
 [.text-center]
-image::logos/proximadb-logo.svg[ProximaDB Logo, 600, align="center"]
+image::../proximadb_cover.svg[ProximaDB Platform, width=100%, align="center"]
+
+[.text-center]
+image::logos/proximadb-logo.svg[ProximaDB Logo, 400, align="center"]
 
 [.lead.text-center.slogan]
 **"Bringing Vectors Closer to Your Business"** +
