@@ -6,6 +6,17 @@
 [.text-center]
 image::logos/proximadb-logo.svg[ProximaDB Logo, 600, align="center"]
 
+[.lead.text-center.slogan]
+**"Bringing Vectors Closer to Your Business"** +
+_The Future of AI Search, Delivered Today_
+
+[.mission-statement]
+****
+**Our Mission:** To democratize high-performance vector search by providing enterprise-grade capabilities in a simple, efficient, and cost-effective platform that any organization can deploy and manage with confidence.
+
+**Our Vision:** A world where every business, regardless of size or technical expertise, can harness the power of semantic search and AI-driven insights without complexity or prohibitive costs.
+****
+
 [.lead.text-center]
 **Transform Your AI Applications with Production-Ready Vector Search** +
 _Deploy in minutes. Scale on demand. Own your infrastructure._
