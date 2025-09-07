@@ -1,72 +1,157 @@
-<svg width="240" height="80" viewBox="0 0 240 80" xmlns="http://www.w3.org/2000/svg">
+<svg width="320" height="80" viewBox="0 0 320 80" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- Main gradient with professional blue tones -->
+    <!-- Vibrant gradient with bright colors -->
     <linearGradient id="proximaGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#2563eb;" />
-      <stop offset="50%" style="stop-color:#1e40af;" />
-      <stop offset="100%" style="stop-color:#1e3a8a;" />
+      <stop offset="0%" style="stop-color:#3b82f6;" />
+      <stop offset="25%" style="stop-color:#6366f1;" />
+      <stop offset="50%" style="stop-color:#8b5cf6;" />
+      <stop offset="75%" style="stop-color:#a855f7;" />
+      <stop offset="100%" style="stop-color:#c084fc;" />
     </linearGradient>
     
-    <!-- Accent gradient for highlights -->
+    <!-- Accent gradient for distributed nodes -->
     <linearGradient id="accentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#06b6d4;" />
-      <stop offset="100%" style="stop-color:#0891b2;" />
+      <stop offset="50%" style="stop-color:#14b8a6;" />
+      <stop offset="100%" style="stop-color:#10b981;" />
     </linearGradient>
     
-    <!-- Professional shadow filter -->
+    <!-- Bright highlight gradient -->
+    <linearGradient id="brightGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24;" />
+      <stop offset="50%" style="stop-color:#f59e0b;" />
+      <stop offset="100%" style="stop-color:#ea580c;" />
+    </linearGradient>
+    
+    <!-- Professional shadow -->
     <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
     </filter>
     
-    <!-- Glow effect for nodes -->
-    <filter id="nodeGlow">
+    <!-- Glow effect -->
+    <filter id="glow">
       <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
       <feMerge>
         <feMergeNode in="coloredBlur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
+    
+    <!-- Bright glow -->
+    <filter id="brightGlow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feOffset in="coloredBlur" dx="0" dy="0" result="offsetBlur"/>
+      <feFlood flood-color="#ffffff" flood-opacity="0.5"/>
+      <feComposite in2="offsetBlur" operator="in"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
 
-  <!-- Logo Icon: Vector space visualization -->
+  <!-- Background highlight -->
+  <rect x="0" y="0" width="320" height="80" fill="url(#proximaGradient)" opacity="0.03"/>
+
+  <!-- Logo Icon: Distributed Multi-Engine Database Visualization -->
   <g transform="translate(20, 15)">
-    <!-- Background hexagon shape -->
-    <path d="M 15 5 L 35 5 L 45 20 L 35 35 L 15 35 L 5 20 Z" 
-          fill="url(#proximaGradient)" opacity="0.1"/>
+    <!-- Central hexagon representing core platform -->
+    <path d="M 20 10 L 35 10 L 43 20 L 35 30 L 20 30 L 12 20 Z" 
+          fill="url(#proximaGradient)" opacity="0.15" stroke="url(#proximaGradient)" stroke-width="2"/>
     
-    <!-- Main 'P' curve with vector connections -->
-    <path d="M 10 10 L 10 40 M 10 10 Q 30 10, 30 20 T 10 30" 
-          fill="none" stroke="url(#proximaGradient)" stroke-width="3" stroke-linecap="round"/>
+    <!-- Multi-engine nodes distributed around core -->
+    <!-- SST Engine (top-left) -->
+    <g transform="translate(10, 5)">
+      <circle cx="0" cy="0" r="5" fill="#10b981" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#10b981" text-anchor="middle" font-weight="bold">S</text>
+    </g>
     
-    <!-- Vector space nodes -->
-    <circle cx="10" cy="10" r="4" fill="#ffffff" stroke="url(#proximaGradient)" stroke-width="2" filter="url(#nodeGlow)"/>
-    <circle cx="30" cy="20" r="4" fill="#ffffff" stroke="url(#proximaGradient)" stroke-width="2" filter="url(#nodeGlow)"/>
-    <circle cx="10" cy="30" r="4" fill="#ffffff" stroke="url(#proximaGradient)" stroke-width="2" filter="url(#nodeGlow)"/>
-    <circle cx="10" cy="40" r="3" fill="url(#proximaGradient)" opacity="0.7"/>
+    <!-- VIPER Engine (top) -->
+    <g transform="translate(28, 0)">
+      <circle cx="0" cy="0" r="5" fill="#8b5cf6" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#8b5cf6" text-anchor="middle" font-weight="bold">V</text>
+    </g>
     
-    <!-- Connecting vectors -->
-    <line x1="14" y1="12" x2="26" y2="18" stroke="url(#accentGradient)" stroke-width="1.5" opacity="0.6" stroke-dasharray="2,2"/>
-    <line x1="14" y1="28" x2="26" y2="22" stroke="url(#accentGradient)" stroke-width="1.5" opacity="0.6" stroke-dasharray="2,2"/>
+    <!-- NOVA Engine (top-right) -->
+    <g transform="translate(45, 5)">
+      <circle cx="0" cy="0" r="5" fill="#f59e0b" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#f59e0b" text-anchor="middle" font-weight="bold">N</text>
+    </g>
     
-    <!-- Dynamic data flow visualization -->
-    <circle cx="20" cy="15" r="1.5" fill="url(#accentGradient)" opacity="0.8">
-      <animate attributeName="opacity" values="0.8;0.3;0.8" dur="2s" repeatCount="indefinite"/>
+    <!-- SWIFT Engine (bottom-right) -->
+    <g transform="translate(45, 35)">
+      <circle cx="0" cy="0" r="5" fill="#06b6d4" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#06b6d4" text-anchor="middle" font-weight="bold">S</text>
+    </g>
+    
+    <!-- RAPTOR Engine (bottom) -->
+    <g transform="translate(28, 40)">
+      <circle cx="0" cy="0" r="5" fill="#ef4444" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#ef4444" text-anchor="middle" font-weight="bold">R</text>
+    </g>
+    
+    <!-- PRISM Engine (bottom-left) -->
+    <g transform="translate(10, 35)">
+      <circle cx="0" cy="0" r="5" fill="#a855f7" opacity="0.9" filter="url(#glow)"/>
+      <circle cx="0" cy="0" r="3" fill="#ffffff"/>
+      <text x="0" y="1" font-size="4" fill="#a855f7" text-anchor="middle" font-weight="bold">P</text>
+    </g>
+    
+    <!-- Distributed connections -->
+    <g opacity="0.4">
+      <line x1="10" y1="5" x2="20" y2="15" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="28" y1="0" x2="28" y2="10" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="45" y1="5" x2="35" y2="15" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="45" y1="35" x2="35" y2="25" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="28" y1="40" x2="28" y2="30" stroke="url(#accentGradient)" stroke-width="1.5"/>
+      <line x1="10" y1="35" x2="20" y2="25" stroke="url(#accentGradient)" stroke-width="1.5"/>
+    </g>
+    
+    <!-- Central core with "P" for ProximaDB -->
+    <g filter="url(#brightGlow)">
+      <circle cx="28" cy="20" r="8" fill="url(#proximaGradient)" opacity="0.9"/>
+      <circle cx="28" cy="20" r="6" fill="#ffffff"/>
+      <text x="28" y="24" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+            font-size="10" font-weight="800" fill="url(#proximaGradient)" text-anchor="middle">P</text>
+    </g>
+    
+    <!-- Animated data flow -->
+    <circle cx="20" cy="15" r="1" fill="url(#brightGradient)" opacity="0.8">
+      <animate attributeName="cx" values="20;28;36;28;20" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="15;10;15;30;15" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.8;0.4;0.8;0.4;0.8" dur="3s" repeatCount="indefinite"/>
     </circle>
-    <circle cx="20" cy="25" r="1.5" fill="url(#accentGradient)" opacity="0.8">
-      <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite"/>
+    <circle cx="36" cy="25" r="1" fill="url(#brightGradient)" opacity="0.8">
+      <animate attributeName="cx" values="36;28;20;28;36" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="cy" values="25;30;25;10;25" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.4;0.8;0.4;0.8;0.4" dur="3s" repeatCount="indefinite"/>
     </circle>
   </g>
 
-  <!-- ProximaDB Text -->
-  <text x="75" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" font-size="28" font-weight="600" fill="#1e3a8a" filter="url(#shadow)">
+  <!-- ProximaDB Text with bright colors -->
+  <text x="85" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+        font-size="32" font-weight="600" fill="#1e3a8a" filter="url(#shadow)">
     Proxima
   </text>
-  <text x="168" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" font-size="28" font-weight="800" fill="url(#proximaGradient)">
+  <text x="188" y="42" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+        font-size="32" font-weight="800" fill="url(#proximaGradient)">
     DB
   </text>
   
-  <!-- Tagline -->
-  <text x="75" y="58" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" font-size="10" fill="#64748b" letter-spacing="1.5" font-weight="500">
-    VECTOR DATABASE PLATFORM
+  <!-- Full tagline with emphasis on key features -->
+  <text x="85" y="58" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+        font-size="9" fill="#64748b" font-weight="500">
+    DISTRIBUTED VECTOR DATABASE PLATFORM
+  </text>
+  
+  <!-- Sub-tagline highlighting unique features -->
+  <text x="85" y="70" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
+        font-size="7" fill="#94a3b8" font-weight="400">
+    Multi-Engine • Storage Optimized • Built from Ground Up
   </text>
 </svg>
