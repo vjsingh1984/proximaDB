@@ -8,6 +8,15 @@
 
 This document specifies the requirements, design, and implementation plan for evolving ProximaDB from a high-performance vector database into a comprehensive Semantic Knowledge Store (SKS). The SKS represents a new category of data system that unifies embeddings, metadata, relationships, provenance, and temporal reasoning into a single coherent platform.
 
+=== Non-Goals (Initial Phases)
+
+- Full-fledged property graph query language (e.g., full Cypher/Gremlin parity)
+- End-to-end ETL pipelines and document extraction frameworks
+- LLM generation/inference services; SKS focuses on storage and retrieval
+- Ontology editor UI; start with file-based versioned ontologies
+- Cross-collection transactional joins; keep operations within a collection
+- Global ACID across collections/tenants; use best-effort multi-store consistency
+
 == Current State Analysis
 
 === ProximaDB Existing Capabilities
@@ -126,6 +135,13 @@ message Provenance {
 - Maintain full audit trail of data lineage
 - Enable filtering by source or extraction method
 
+*Integration Notes*:
+- Protos: add `proximadb.v1.entity` in `proto/proximadb/v1/entity.proto` and import from existing `collection.proto` and `search.proto`.
+- Storage: persist `Entity` as the logical record; store vectors in existing engines keyed by `(collection_id, entity_id, model_id, modality)`; keep a thin row-store for the `Entity` header (typed/flexible metadata, temporal, provenance) in SST.
+- Indexing: extend `IndexConfig` to allow `name` and `selector` (e.g., `model_id`, `modality`) to map embeddings to indices; maintain one primary index per modality with optional auxiliaries.
+- Keys: canonical primary key `entity_id` (string), with partitioning by `source_id` and/or time where configured.
+- MVCC: reuse existing MVCC; add `tombstone` at `EmbeddingVersion` granularity for soft-deletes and re-embeds.
+
 ==== 1.2 Enhanced Metadata System
 
 *Requirement*: Support both typed (optimized) and flexible (ad-hoc) metadata.
@@ -156,6 +172,19 @@ message TypedField {
 - Typed fields use columnar storage (Parquet) for performance
 - Flexible fields stored as JSON with automatic indexing for frequently queried paths
 - Hybrid query optimizer chooses between index scan and full scan
+
+*DDL and Config*:
+- Collection creation: extend `CollectionConfig` with `typed_metadata_schema` describing field names, types, and `indexed/filterable` flags; example:
+[source,yaml]
+----
+typed_metadata_schema:
+  fields:
+    author: { type: string, indexed: true, filterable: true }
+    year:   { type: int64, indexed: true, filterable: true }
+    tags:   { type: string_array, indexed: true }
+----
+- Auto-indexing for flexible fields: track query frequency per JSONPath; promote to secondary index when threshold crossed (e.g., 100+ queries/day, 95% cache miss).
+- Enforcement: typed schema is optional; if present, validate on write and coerce types when safe.
 
 ==== 1.3 Declarative Query Language Extensions
 
@@ -191,6 +220,11 @@ WHERE SIMILAR(embedding, "climate change")
 - Automatic fallback to latest if not specified
 - Migration utilities for re-embedding with new models
 
+*Indexing Strategy*:
+- Maintain per-(model_id, modality) posting lists to avoid fan-out scans.
+- Default search resolves to `latest(model_id)` per modality unless caller pins a version.
+- Background compactor prunes superseded embeddings when policy configured (retain N versions or by TTL).
+
 === Tier 2: Differentiating Features (v0.2)
 
 ==== 2.1 Graph Relationships
@@ -225,6 +259,11 @@ WHERE RELATION(e1, e2, type="contradicts")
   AND e1.metadata.author != e2.metadata.author;
 ----
 
+*APIs and Storage*:
+- Protos: `Relation` lives in `entity.proto`; add gRPC `RelationsService` with `CreateRelation`, `DeleteRelation`, `ListRelations`, `Traverse`.
+- Storage: adjacency list per `entity_id` persisted in SST keyed by `(collection_id, entity_id, relation_type)`; maintain reverse edges for fast inbound traversal.
+- Consistency: relation writes can be co-authored with entity upserts (same WAL entry) or independent with cross-reference validation.
+
 ==== 2.2 Context Assembly
 
 *Requirement*: Reconstruct full documents from chunks.
@@ -247,6 +286,12 @@ pub struct ContextAssembler {
     }
 }
 ----
+
+*Design Details*:
+- Source linkage: reuse structures from `docs/09-roadmap/planned/source_content_storage_design.adoc`; reference chunks via `(source_id, chunk_id, position)`.
+- Overlap handling: prefer longest non-overlapping spans; merge when `gap <= overlap_threshold` (configurable, default 20 tokens).
+- Deduplication: compute MinHash signatures for contiguous paragraphs to avoid repeated context in assemblies.
+- Output: return `Context` with ordered `segments` carrying `text`, `provenance`, and `score` fields.
 
 *Query Support*:
 [source,sql]
@@ -288,9 +333,23 @@ message ModalEmbedding {
 }
 ----
 
+*Operational Notes*:
+- Indexing: maintain separate indices per modality; name convention `${modality}-${model_id}`; cross-modal queries dispatch to an alignment model or mapping function configured per collection.
+- Raw data: store large `raw_data` in external object storage (S3/GCS/Azure); persist only content-addressable URI and hash in the `MultimodalEntity`.
+- Scoring: for fusion, compute `score = Σ w_i * normalize(sim_i)` with `w_i` from `FUSE` clause; normalization defaults to z-score per index.
+
+*Execution Model*:
+- Store ontologies as versioned documents in a dedicated `ontology` namespace; compile to lookup tries and relation expansion rules at load.
+- Query planner uses ontology to expand concepts (e.g., `disease` → subconcepts) with controllable expansion depth and weights.
+
 *Cross-Modal Queries*:
 [source,sql]
 ----
+
+*Signals and Actions*:
+- Signals: track per-query template latency, selectivity, cache hit/miss, result churn; bucket templates by normalized AST.
+- Actions: propose creation of secondary indices (typed fields bloom/bitmap), HNSW ef tuning, IVF centroids adjustments, or HOT partitions.
+- Safety: changes land behind feature flags; measure before/after with automatic rollback on regression.
 -- Text to image search
 FIND images
 WHERE SIMILAR_CROSS(text_embedding, "sunset over mountains", target_modality=IMAGE);
@@ -342,6 +401,11 @@ TRACK EVOLUTION OF concept
 WHERE name = 'machine learning'
 FROM '2015-01-01' TO NOW;
 ----
+
+*Indexing and Semantics*:
+- Clock source: use server-side monotonic clock for `created_at` and rely on client-provided validity windows; reject inverted ranges.
+- Index: maintain time-ordered segment tree or per-day partitions; planner prunes partitions prior to vector search.
+- Compaction: when `valid_to` is set, mark non-current; background tasks merge historical snapshots according to retention policy.
 
 === Tier 3: Advanced Features (v0.3+)
 
@@ -400,6 +464,134 @@ pub struct AdaptiveIndexManager {
 - Incremental index updates without full rebuild
 - Backpressure handling for rate limiting
 - Exactly-once semantics with checkpointing
+
+*Connectors and Semantics*:
+- Sources: Kafka, Kinesis, Pub/Sub, NATS (pluggable); each source defines an `idempotency_key` per record.
+- Checkpoints: maintain per-partition offsets in a durable state store; commit after WAL append and index acknowledgment.
+- Retries: exponential backoff with DLQ routing for permanent failures; provide `replay` admin API by time or offset.
+
+== Public API Surface
+
+=== Protos (gRPC)
+
+[source,protobuf]
+----
+service EntityService {
+  rpc UpsertEntity(UpsertEntityRequest) returns (UpsertEntityResponse);
+  rpc GetEntity(GetEntityRequest) returns (GetEntityResponse);
+  rpc DeleteEntity(DeleteEntityRequest) returns (DeleteEntityResponse);
+  rpc SearchEntities(SearchEntitiesRequest) returns (SearchEntitiesResponse); // wraps SIMILAR and metadata filters
+}
+
+service RelationsService {
+  rpc CreateRelation(CreateRelationRequest) returns (Relation);
+  rpc DeleteRelation(DeleteRelationRequest) returns (google.protobuf.Empty);
+  rpc ListRelations(ListRelationsRequest) returns (ListRelationsResponse);
+  rpc Traverse(TraverseRequest) returns (TraverseResponse);
+}
+
+service ContextService {
+  rpc AssembleDocument(AssembleDocumentRequest) returns (AssembleDocumentResponse);
+  rpc AssembleContext(AssembleContextRequest) returns (AssembleContextResponse);
+}
+----
+
+- Requests embed `QueryAST` messages mirroring new operators: `SimilarOp`, `FollowOp`, `AssembleOp`, `TemporalClause`.
+- Progressive search: reuse existing `ProgressiveSearchConfig` in `SearchEntitiesRequest` for staged execution.
+
+=== REST Endpoints
+
+- `POST /api/v1/entities/{collection_id}`: upsert entity (idempotent via `entity_id`).
+- `GET /api/v1/entities/{collection_id}/{entity_id}`: fetch entity with embeddings metadata.
+- `DELETE /api/v1/entities/{collection_id}/{entity_id}`: soft-delete or hard-delete with `?hard=true`.
+- `POST /api/v1/search/{collection_id}`: semantic search with SIMILAR and filters; `?progressive=true` enables staged results.
+- `POST /api/v1/relations/{collection_id}`: create relation; `DELETE`/`GET` similarly.
+- `POST /api/v1/context/{collection_id}/assemble`: assemble context/document.
+
+== Validation and Limits
+
+- Max entity size: 1 MB for header (typed+flexible metadata, provenance); embeddings unbounded but recommend <8 models x 4096 dims.
+- Max relations per entity: default 10k; hard cap 1M with paging and degree limiting in traversals.
+- Max modalities: 4 (TEXT, IMAGE, AUDIO, VIDEO); extensible via enum but indices required per modality.
+- Query limits: `top_k` default 10, max 1000; traversal depth default 2, max 5.
+- Write batch: up to 10k entities per request; WAL entry size capped at 16 MB.
+
+== Error Model
+
+- Error envelope contains `code`, `message`, `details`, and `retryable` boolean.
+- Common codes: `INVALID_ARGUMENT`, `FAILED_PRECONDITION` (schema/ACL), `NOT_FOUND`, `ALREADY_EXISTS`, `RESOURCE_EXHAUSTED`, `UNAVAILABLE` (retryable), `INTERNAL`.
+- Partial success semantics for batch upserts with per-item status; include `failed_indices` for index-level failures.
+
+== Default Configuration
+
+- Progressive search stages: `[candidate_k=200, rerank_k=50]` then `[candidate_k=1000, rerank_k=100]`.
+- Typed metadata: no fields by default; recommended to declare high-selectivity fields (author, year).
+- Retention: keep last 2 embedding versions per (model, modality); relations TTL none (infinite) unless configured.
+- Quantization: enabled by default for embeddings dimension > 2048 with PQ m=64.
+
+== Example Payloads
+
+=== gRPC UpsertEntity (JSON for clarity)
+[source,json]
+----
+{
+  "collection_id": "papers",
+  "entity": {
+    "id": "doc_123",
+    "embeddings": [{
+      "model_id": "text-emb-3-large",
+      "model_version": "2025-01-01",
+      "dimension": 3072,
+      "vector": "<base64 or omitted>",
+      "created_at": 1735689600
+    }],
+    "typed_metadata": {"fields": {"year": {"int_value": 2024}, "author": {"string_value": "Smith"}}},
+    "provenance": {"source_id": "arxiv:2401.12345", "chunk_id": "0", "chunk_position": 0}
+  }
+}
+----
+
+=== REST Search
+[source,json]
+----
+POST /api/v1/search/papers?progressive=true
+{
+  "similar": {"query": "quantum error correction", "model_id": "text-emb-3-large", "top_k": 25},
+  "filters": {"year": {"gt": 2020}},
+  "temporal": {"at_time": "2024-06-01T00:00:00Z"}
+}
+----
+
+== Rollout Plan
+
+- Phase-gate features behind `sks.*` config flags; enable per-collection.
+- Ship protos and server stubs first; SDKs follow with feature flags.
+- Provide migration CLI for wrapping vectors into entities and generating provenance.
+- Maintain canary collections to validate latency and correctness before general enablement.
+
+== Compliance and Privacy
+
+- Support PII tagging in metadata; row-level filters can enforce redaction at query time.
+- Provide right-to-erasure hooks: hard-delete entity and purge from indices and backups.
+- Maintain provenance with minimum necessary data; avoid storing raw content unless opted-in.
+
+== Threat Model (Abbrev.)
+
+- Tampering: WAL signing and checksum validation across stores.
+- DoS: degree and depth limits for traversal, per-tenant QPS and memory quotas.
+- Leakage: ACL-enforced predicate filters; hash entity ids in traces and logs.
+
+== Compatibility Matrix (Initial)
+
+- Engines: VIPER, SST supported for embeddings; DSST/DVIPER evaluated post-MVP.
+- Indexing: HNSW, IVF, PQ supported; ANNOY/LSH later.
+- SDKs: Python gRPC first; REST parity in next minor.
+
+== Open Questions
+
+- Should relations support edge weights learned online from clicks/feedback?
+- Do we allow per-relation temporal validity windows?
+- What is the minimal ontology kernel to ship with v0.3?
 
 == Implementation Roadmap
 
@@ -514,6 +706,12 @@ graph TD
     E --> M[Lineage Graph]
 ----
 
+*Data Layout*:
+- Entity header table (SST): key `(collection_id, entity_id)` → value `{typed_metadata, flexible_metadata, temporal, provenance_summary}`.
+- Embeddings table (vector engines): key `(collection_id, entity_id, model_id, modality, version)` → vector payload + small header.
+- Relations table (SST): key `(collection_id, entity_id, relation_type, target_id)` → `{weight, created_at, properties}` and reverse index.
+- Provenance registry (SST): `source_id` → source attributes; chunk index keyed by `(source_id, chunk_id)`.
+
 === Query Processing Pipeline
 
 [source,mermaid]
@@ -536,6 +734,37 @@ sequenceDiagram
     Storage-->>Executor: Results
     Executor-->>Client: Assembled response
 ----
+
+*Planner Steps*:
+- Parse SQL-like query → AST; normalize to a canonical template for caching.
+- Apply temporal pruning and metadata predicate pushdown using typed/flexible indexes.
+- Choose index set by modality/model; if progressive, define stages with `candidate_k` and `rerank_k` per stage.
+- Execute vector search → candidate set; expand via `FOLLOW` when present with bounded depth; deduplicate by `entity_id`.
+- Assemble context when requested; compute final scores and envelope response.
+
+== Consistency and Transactions
+
+- Write path: append to WAL with a composite record `{entity, embeddings[], relations[]}`; perform storage updates; mark commit when all sub-stores ack or schedule repair.
+- Idempotency: deduplicate by `(collection_id, entity_id, client_op_id)` when provided.
+- Repairer: background task reconciles mismatches across stores using WAL.
+
+== Security and Access Control
+
+- Multi-tenant isolation via `tenant_id` carried in collection and all keys.
+- ACLs: collection-level roles (admin, writer, reader) and optional row-level filters expressed as metadata predicates.
+- Audit: provenance changes and relation mutations are audited with actor and timestamp.
+
+== Observability
+
+- Metrics: `sks_search_latency_ms`, `sks_traversal_nodes_visited`, `sks_context_segments`, `sks_index_hit_ratio`, `sks_compactions_total`.
+- Tracing: spans for `parse`, `plan`, `vector_search`, `graph_traverse`, `assemble`, `commit` with entity_id tags (hashed).
+- Logs: structured JSON with op ids; sampling for high-volume search paths.
+
+== Data Lifecycle
+
+- Retention: per-collection policies for embeddings history, relations TTL, provenance retention.
+- Compaction windows: daily for metadata/relations, weekly for embeddings if cold.
+- Export: snapshot APIs to materialize entities and relations for offline analysis.
 
 == Migration Strategy
 
@@ -626,6 +855,15 @@ migration:
 * Use case coverage
 * Performance vs competitors
 * Customer satisfaction score
+
+=== Acceptance Criteria (MVP)
+
+- Create/read/delete entities with typed+flexible metadata and provenance.
+- Search with SIMILAR + metadata filters returns entity envelope with consistent scores and IDs.
+- Progressive search returns stable incremental envelopes; final equals non-progressive results within ±1% ordering churn.
+- Relations: create/list/delete between entities; traversal up to depth=2 with degree limits.
+- Temporal query: `AT TIME` and `VALID BETWEEN` prune partitions and return correct snapshots on a synthetic dataset.
+- Migration CLI wraps legacy vectors into entities and generates provenance using existing metadata.
 
 == Risks and Mitigations
 
