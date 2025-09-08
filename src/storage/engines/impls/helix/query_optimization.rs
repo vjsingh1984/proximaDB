@@ -443,7 +443,7 @@ mod tests {
         // Cache a result
         let results = vec![OptimizedSearchRecord::new("test".to_string(), 0.9)
             .with_similarity(0.1)
-            .with_vector(vec![1.0, 2.0, 3.0])
+            .add_vector(vec![1.0, 2.0, 3.0])
             .with_metadata(TypedMetadata::new())
             .with_version_info(0, 0)];
         

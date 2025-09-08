@@ -477,7 +477,7 @@ impl RaptorReader {
             results.push(
                 OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
-                    .with_vector(vector)
+                    .add_vector(vector)
                     .with_metadata(TypedMetadata::new())
             );
         }

@@ -547,6 +547,12 @@ impl OptimizedSearchRecord {
         }
     }
     
+    /// Builder method to add vector
+    pub fn add_vector(mut self, vector: Vec<f32>) -> Self {
+        self.vector = Some(Arc::new(vector));
+        self
+    }
+    
     /// Builder method to add metadata
     pub fn with_metadata(mut self, metadata: TypedMetadata) -> Self {
         self.metadata = metadata;

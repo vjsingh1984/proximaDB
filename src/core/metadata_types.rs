@@ -201,6 +201,11 @@ impl TypedMetadata {
     pub fn remove(&mut self, key: &str) -> Option<MetadataValue> {
         Arc::make_mut(&mut self.inner).remove(key)
     }
+    
+    /// Iterator over key-value pairs
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &MetadataValue)> {
+        self.inner.iter()
+    }
 }
 
 /// Convert from protobuf MetadataItem

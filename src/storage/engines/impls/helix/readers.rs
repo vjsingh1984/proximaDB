@@ -171,7 +171,7 @@ pub async fn search_sstable(
             
             results.push(OptimizedSearchRecord::new(record.id.clone(), 1.0 / (1.0 + distance))
                 .with_similarity(distance)
-                .with_vector(record.vector)
+                .add_vector(record.vector)
                 .with_metadata(TypedMetadata::new()) // TODO: Convert record.metadata properly
                 .with_version_info(record.version.unwrap_or(0), record.timestamp as u32));
         }

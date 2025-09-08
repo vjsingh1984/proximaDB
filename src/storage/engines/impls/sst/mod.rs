@@ -439,7 +439,7 @@ impl SstEntry {
 
         let mut search_record = OptimizedSearchRecord::new(self.record.id.clone(), score)
             .with_similarity(score)
-            .with_vector(self.record.vector.clone())
+            .add_vector(self.record.vector.clone())
             .with_metadata(TypedMetadata::from_json_map(metadata_map));
 
         if let Some(version) = self.record.version {

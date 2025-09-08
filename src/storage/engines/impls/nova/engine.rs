@@ -852,7 +852,7 @@ impl UnifiedStorageEngine for NovaEngine {
 
                 let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
                     .with_similarity(similarity_result.normalized_score)
-                    .with_vector(record.vector.clone())
+                    .add_vector(record.vector.clone())
                     .with_metadata(TypedMetadata::from_json_map(metadata_map));
 
                 if let Some(version) = record.version {
@@ -1112,7 +1112,7 @@ impl NovaEngine {
 
                 let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
                     .with_similarity(similarity_result.normalized_score)
-                    .with_vector(record.vector.clone())
+                    .add_vector(record.vector.clone())
                     .with_metadata(TypedMetadata::from_json_map(metadata_map));
 
                 if let Some(version) = record.version {

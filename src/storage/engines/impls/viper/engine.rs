@@ -1844,7 +1844,7 @@ impl UnifiedStorageEngine for ViperEngine {
                 }).collect();
 
                 let mut record = OptimizedSearchRecord::new(r.id, r.score)
-                    .with_vector(r.vector)
+                    .add_vector(r.vector)
                     .with_metadata(TypedMetadata::from_json_map(metadata_map));
                 
                 if let Some(sim) = r.similarity {
@@ -1918,8 +1918,8 @@ impl UnifiedStorageEngine for ViperEngine {
             total_search_time.as_secs_f32() * 1000.0
         );
         debug!(
-            "  🗃️  Parquet files processed: {}",
-            result_set.results.len()
+            "  🗃️  Results found: {}",
+            results.len()
         );
         debug!(
             "  📥 Vector inclusion: {}, Metadata inclusion: {}",
@@ -1941,11 +1941,10 @@ impl UnifiedStorageEngine for ViperEngine {
                 );
 
                 // Log metadata details for first result (columnar-specific)
-                if i == 0 && !result.metadata.is_empty() {
+                if i == 0 && result.metadata.len() > 0 {
                     debug!(
                         "    📋 VIPER Metadata sample: {:?}",
-                        result
-                            .metadata
+                        result.metadata
                             .iter()
                             .take(3)
                             .map(|(k, v)| format!("{}={:?}", k, v))
