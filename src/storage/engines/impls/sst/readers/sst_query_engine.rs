@@ -28,8 +28,9 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use crate::core::search::OptimizedSearchRecord;
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use std::io::Read;
-use std::io::prelude::*;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -56,10 +57,10 @@ use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
 };
 use crate::storage::engines::impls::sst::{IndexEntry, SstableHeader}; // OPTIMIZED: Removed SstRecord import
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 // ZERO-COPY CACHE INTEGRATION
-use crate::storage::cache::specialized::vector_store::SstBlockKey;
+// use crate::storage::cache::specialized::vector_store::SstBlockKey;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 
 // Type alias for bloom filter
@@ -443,7 +444,7 @@ impl ModularBlockReader {
         k: usize,
         filter: Option<&FilterExpression>,
         distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // Always use traditional search (quantization handled at a higher level)
         self.traditional_search(query_vector, k, filter, distance_metric)
             .await
@@ -458,7 +459,7 @@ impl ModularBlockReader {
         _filter: Option<&FilterExpression>,
         distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
         _adapter: &crate::compute::quantization::storage_engine::StorageQuantizationEngine,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::compute::quantization::storage_engine::StorageQuantizedData;
 
         info!(
@@ -553,27 +554,15 @@ impl ModularBlockReader {
                     let distance = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
                         .calculate_distance(query_vector, &full_vector, distance_metric);
 
-                    results.push(crate::core::search::InternalSearchResult {
-                        id: format!("block_{}_record_{}", block_idx, record_idx),
-                        vector_id: None,
-                        score: distance.rank_value, // Use rank_value for consistent ordering (lower = better)
-                        similarity: Some(distance.normalized_score), // Use normalized_score [0,1] where 1 = most similar
-                        // rank removed -  None,
-                        vector: Some(full_vector),
-                        metadata: HashMap::new(),
-                        debug_info: None,
-                        version: None,
-                        timestamp: None,
-                        updated_at: None,
-                        expires_at: None,
-                        source: None,
-                        expanded_context: vec![],
-                        semantic_similarity: Some(distance),
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                        // timestamp duplicate removed
-                    });
+                    results.push(
+                        OptimizedSearchRecord::new(
+                            format!("block_{}_record_{}", block_idx, record_idx),
+                            distance.rank_value
+                        )
+                        .with_similarity(distance.normalized_score)
+                        .add_vector(full_vector)
+                        .with_metadata(TypedMetadata::default())
+                    );
                 }
             }
         }
@@ -624,7 +613,7 @@ impl ModularBlockReader {
         k: usize,
         _filter: Option<&FilterExpression>,
         distance_metric: &crate::compute::distance_computation::engine::DistanceMetric,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         info!("📝 Fallback: Using traditional search (no quantization)");
 
         let mut reader_clone = self.clone();
@@ -644,27 +633,15 @@ impl ModularBlockReader {
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
                         .calculate_distance(query_vector, &record.vector, distance_metric);
 
-                all_results.push(crate::core::search::InternalSearchResult {
-                    id: record.id.clone().clone(),
-                    vector_id: None,
-                    score: distance.rank_value, // Use rank_value for consistent ordering
-                    similarity: Some(distance.normalized_score), // Use normalized_score [0,1]
-                    // rank removed -  None,
-                    // TODO: Optimize - use Arc<Vec<f32>> to avoid cloning
-                    vector: Some(record.vector.clone()),
-                    metadata: HashMap::new(), // TODO: Convert metadata
-                    debug_info: None,
-                    version: None,
-                    timestamp: None,
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
-                    expanded_context: vec![],
-                    semantic_similarity: Some(distance),
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
-                });
+                all_results.push(
+                    OptimizedSearchRecord::new(
+                        record.id.clone(),
+                        distance.rank_value,
+                    )
+                    .with_similarity(distance.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(TypedMetadata::default())
+                );
             }
         }
 
@@ -1730,7 +1707,7 @@ impl UnifiedSstableReader {
         bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
         >,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!(
             "🔍 SST SELECTIVE CACHE: Starting selective read strategy for {} files",
             collection_context.sstable_files.len()
@@ -1877,7 +1854,7 @@ impl UnifiedSstableReader {
         &self,
         blocks: &[FastLanesDataBlock],
         params: &SearchParams,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // Create distance compute locally per query to avoid cross-query contamination
         let distance_compute = UnifiedDistanceCompute::default();
 
@@ -1891,7 +1868,7 @@ impl UnifiedSstableReader {
         &self,
         params: &SearchParams,
         collection_context: &CollectionContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!(
             "🔍 SSTABLE READER: Starting cache-first search with {} files, k={}",
             collection_context.sstable_files.len(),
@@ -2300,7 +2277,7 @@ impl UnifiedSstableReader {
         params: &SearchParams,
         blocks: &[FastLanesDataBlock],
         distance_compute: &UnifiedDistanceCompute,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let query_vector = params
             .first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
@@ -2368,27 +2345,30 @@ impl UnifiedSstableReader {
                     distance_compute.calculate_distance(query_vector, &record.vector, &metric);
 
                 // Efficient SearchResult creation (minimize allocations)
-                scored_results.push(crate::core::search::InternalSearchResult {
-                    id: record.id.clone(),
-                    score: similarity.rank_value, // Use rank_value for consistent ordering
-                    similarity: Some(similarity.normalized_score), // normalized_score [0,1]
-                    // rank removed -  None,
-                    // TODO: Optimize - use Arc<Vec<f32>> to avoid cloning
-                    vector: Some(record.vector.clone()),
-                    vector_id: Some(record.id.clone()),
-                    metadata: self.metadata_items_to_json(&record.metadata),
-                    debug_info: None,
-                    semantic_similarity: Some(similarity), // Use unified distance result
-                    timestamp: record.updated_at,
-                    updated_at: record.updated_at,
-                    engine_stats: None,
-                    quantization_info: None,
-                    expanded_context: Vec::new(),
-                    expires_at: None,
-                    source: None,
-                    index_path: None,
-                    version: record.version,
-                });
+                // Convert metadata to TypedMetadata
+                let mut metadata_map = std::collections::HashMap::new();
+                for item in &record.metadata {
+                    if let Some(value) = &item.value {
+                        use crate::proto::proximadb::metadata_item;
+                        let typed_value = match value {
+                            metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                            metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
+                            metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                        };
+                        metadata_map.insert(item.key.clone(), typed_value);
+                    }
+                }
+                
+                scored_results.push(
+                    OptimizedSearchRecord::new(
+                        record.id.clone(),
+                        similarity.rank_value,
+                    )
+                    .with_similarity(similarity.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(TypedMetadata::from_map(metadata_map))
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp)
+                );
             }
         }
 
@@ -2855,12 +2835,12 @@ impl UnifiedSstableReader {
             block_index: block_idx,
         };
 
-        // Use central VectorStore for caching
-        let sst_cache_key = SstBlockKey::new(
-            context.file_path.clone(),
-            block_idx as u64 * 4096, // Assuming 4KB blocks
-            4096,
-        );
+        // TODO: Re-implement caching with new cache system
+        // let sst_cache_key = SstBlockKey::new(
+        //     context.file_path.clone(),
+        //     block_idx as u64 * 4096, // Assuming 4KB blocks
+        //     4096,
+        // );
 
         // Check if we have cached vectors for this block
         // TODO: Fix DataBlock construction - fields don't match actual structure

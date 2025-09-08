@@ -13,10 +13,9 @@ use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
 use crate::core::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::mvcc_resolution::MvccResolver;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 use anyhow::Result;
-use futures::stream::StreamExt;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;

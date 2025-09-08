@@ -1051,7 +1051,7 @@ impl Flush {
             // Use BIT_PACKED encoding for maximum compression
             props_builder = props_builder.set_column_encoding(
                 parquet::schema::types::ColumnPath::from("vector"),
-                parquet::basic::Encoding::BIT_PACKED,
+                parquet::basic::Encoding::RLE,
             );
             debug!("🔧 VIPER: Using BIT_PACKED encoding for quantized vectors");
         } else {
@@ -1559,7 +1559,7 @@ impl Flush {
             let encoding = match data_type {
                     crate::core::compression::ColumnData::BinaryQuantized => {
                         // Binary data - use bit packing for maximum density
-                        parquet::basic::Encoding::BIT_PACKED
+                        parquet::basic::Encoding::RLE
                     }
                     crate::core::compression::ColumnData::Int8Quantized => {
                         // Integer quantized - use delta encoding

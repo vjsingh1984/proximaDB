@@ -29,7 +29,7 @@ use tokio::sync::{Mutex, mpsc};
 use crate::metrics::collectors::AccessPatternMetricsCollector;
 use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::{
-    BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorStore,
+    BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache,
 };
 
 /// Event for async cache access tracking
@@ -606,7 +606,7 @@ impl CascadeInvalidator {
         }
 
         // Process transitive dependencies
-        while let Some(current) = queue.pop_front() {
+        while let Some(_current) = queue.pop_front() {
             if let Some(entry) = self.reverse_index.get(key) {
                 for dependent in entry.value() {
                     if visited.insert(dependent.clone()) {
@@ -654,8 +654,7 @@ impl CascadeInvalidator {
 
 /// Orchestrates multiple specialized caches for cross-cache operations
 pub struct CrossCacheOrchestrator {
-    /// Vector data cache
-    vector_cache: Option<Arc<VectorStore>>,
+    
     /// Query result cache
     query_cache: Option<Arc<QueryCache>>,
     /// Filter bitmap cache
@@ -688,7 +687,6 @@ impl CrossCacheOrchestrator {
         let metrics = Arc::new(CacheMetrics::new());
 
         Self {
-            vector_cache: None,
             query_cache: None,
             filter_cache: None,
             index_cache: None,
@@ -701,11 +699,7 @@ impl CrossCacheOrchestrator {
         }
     }
 
-    /// Register vector data cache
-    pub fn with_vector_cache(mut self, cache: Arc<VectorStore>) -> Self {
-        self.vector_cache = Some(cache);
-        self
-    }
+    
 
     /// Register query result cache
     pub fn with_query_cache(mut self, cache: Arc<QueryCache>) -> Self {
@@ -783,13 +777,7 @@ impl CrossCacheOrchestrator {
         // Invalidate from all caches that might have this key
         let mut tasks = vec![];
 
-        if let Some(ref cache) = self.vector_cache {
-            let cache = cache.clone();
-            let key = key.to_string();
-            tasks.push(tokio::spawn(async move {
-                cache.invalidate(&key).await;
-            }));
-        }
+        
 
         if let Some(ref cache) = self.query_cache {
             let cache = cache.clone();
@@ -837,20 +825,9 @@ impl CrossCacheOrchestrator {
     /// Reallocate memory tiers based on usage patterns
     pub async fn reallocate_memory_tiers(&self) -> Result<()> {
         // Collect current usage stats
-        let mut stats_updates = Vec::new();
+        let stats_updates: Vec<(CacheType, UsageStats)> = Vec::new();
 
-        if let Some(vector_cache) = &self.vector_cache {
-            let metrics = vector_cache.metrics();
-            stats_updates.push((
-                CacheType::VectorData,
-                UsageStats {
-                    hit_rate: metrics.hit_rate(),
-                    avg_entry_size: 1024, // Would calculate actual size
-                    access_frequency: metrics.total_gets() as f64 / 3600.0,
-                    last_rebalance: SystemTime::now(),
-                },
-            ));
-        }
+        
 
         // Update stats in memory manager
         for (cache_type, stats) in stats_updates {
@@ -863,11 +840,7 @@ impl CrossCacheOrchestrator {
         // Apply new allocations to caches
         for (cache_type, allocation) in new_allocations {
             match cache_type {
-                CacheType::VectorData => {
-                    if let Some(cache) = &self.vector_cache {
-                        cache.resize(allocation).await?;
-                    }
-                }
+                
                 CacheType::QueryResult => {
                     if let Some(cache) = &self.query_cache {
                         cache.resize(allocation).await?;
@@ -890,7 +863,6 @@ impl CrossCacheOrchestrator {
     /// Start background prefetch worker
     pub async fn start_prefetch_worker(&self) {
         let prefetch_engine = self.prefetch_engine.clone();
-        let vector_cache = self.vector_cache.clone();
         let metadata_cache = self.metadata_cache.clone();
 
         tokio::spawn(async move {
@@ -899,12 +871,7 @@ impl CrossCacheOrchestrator {
 
                 if let Some(request) = prefetch_engine.dequeue_fetch_request().await {
                     match request.cache_type {
-                        CacheType::VectorData => {
-                            if let Some(_cache) = &vector_cache {
-                                // Would actually fetch and cache data
-                                // cache.prefetch(&request.key).await;
-                            }
-                        }
+                        
                         CacheType::Metadata => {
                             if let Some(_cache) = &metadata_cache {
                                 // Would actually fetch and cache metadata

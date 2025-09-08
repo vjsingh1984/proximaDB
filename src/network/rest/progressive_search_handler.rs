@@ -1,309 +1,193 @@
-//! REST API Handler for Progressive Quantization-Aware Search
+//! REST API Handler for Progressive Search - Aligned with Protobuf-First Design
+//! 
+//! This handler now uses protobuf types directly, eliminating custom DTOs
+//! and ensuring consistency with the gRPC API.
 
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    extract::{Path, State},
     response::Json,
 };
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{error, info};
 
-use crate::core::search::{
-    FilterExpression, SearchParams,
-    integrated_search_optimization::IntegratedSearchOptimizer,
-    progressive_quantization::{ProgressiveSearchConfig, SearchScenario},
-};
+use crate::errors::{ApiError, ApiResult};
+use crate::network::rest::v1::handlers::AppState;
+use crate::proto::proximadb::{VectorSearchRequest, VectorOperationResponse, VectorOperation, OperationMetrics, SearchResult, SearchVectorRecord};
 
-/// Request for progressive search
-#[derive(Debug, Deserialize)]
-pub struct ProgressiveSearchRequest {
-    /// Query vector
-    pub vector: Vec<f32>,
-
-    /// Number of results to return
-    pub k: usize,
-
-    /// Optional filter expression
-    pub filter: Option<FilterExpression>,
-
-    /// Distance metric override
-    pub distance_metric: Option<String>,
-
-    /// Search scenario (high_recall, balanced, high_speed, low_memory)
-    pub scenario: Option<String>,
-
-    /// Enable adaptive recall tuning
-    pub adaptive_recall: Option<bool>,
-
-    /// Custom recall rates
-    pub custom_recalls: Option<CustomRecalls>,
-
-    /// Include vectors in response
-    pub include_vectors: Option<bool>,
-
-    /// Include metadata in response
-    pub include_metadata: Option<bool>,
-
-    /// Return stage metrics
-    pub include_metrics: Option<bool>,
-}
-
-/// Custom recall rates for fine control
-#[derive(Debug, Deserialize)]
-pub struct CustomRecalls {
-    pub binary_recall: Option<f32>,
-    pub int8_recall: Option<f32>,
-    pub pq_recall: Option<f32>,
-}
-
-/// Response for progressive search
-#[derive(Debug, Serialize)]
-pub struct ProgressiveSearchResponse {
-    /// Search results
-    pub results: Vec<SearchResultDto>,
-
-    /// Total search time in milliseconds
-    pub search_time_ms: f64,
-
-    /// Stage metrics if requested
-    pub metrics: Option<StageMetrics>,
-
-    /// Effective configuration used
-    pub config_used: Option<ConfigUsed>,
-}
-
-/// Search result DTO
-#[derive(Debug, Serialize)]
-pub struct SearchResultDto {
-    pub id: String,
-    pub score: f32,
-    pub similarity: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vector: Option<Vec<f32>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-}
-
-/// Stage metrics for analysis
-#[derive(Debug, Serialize)]
-pub struct StageMetrics {
-    pub binary_stage: StageInfo,
-    pub int8_stage: StageInfo,
-    pub pq_stage: StageInfo,
-    pub fp32_stage: StageInfo,
-    pub total_candidates_evaluated: usize,
-    pub speedup_vs_brute_force: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StageInfo {
-    pub candidates: usize,
-    pub time_ms: f64,
-    pub recall_rate: Option<f32>,
-}
-
-/// Configuration actually used
-#[derive(Debug, Serialize)]
-pub struct ConfigUsed {
-    pub scenario: String,
-    pub binary_recall: f32,
-    pub int8_recall: f32,
-    pub pq_recall: f32,
-    pub max_expansion_factor: f32,
-}
-
-/// Handler for progressive search endpoint
+/// Progressive search handler - now uses protobuf types directly
+/// 
+/// This handler is a thin wrapper that:
+/// 1. Accepts protobuf VectorSearchRequest as JSON
+/// 2. Passes it directly to UnifiedHandlers
+/// 3. Returns protobuf VectorOperationResponse as JSON
 pub async fn progressive_search_handler(
     Path(collection_id): Path<String>,
-    Query(params): Query<ProgressiveSearchRequest>,
-    State(orchestrator): State<Arc<IntegratedSearchOptimizer>>,
-) -> Result<Json<ProgressiveSearchResponse>, StatusCode> {
+    State(state): State<AppState>,
+    Json(mut request): Json<VectorSearchRequest>,
+) -> ApiResult<Json<VectorOperationResponse>> {
     let start_time = std::time::Instant::now();
-
+    
+    // Set the collection_id from the path
+    request.collection_id = collection_id.clone();
+    
     info!(
-        "Progressive search request for collection {} with k={}",
-        collection_id, params.k
+        "Progressive search request for collection {} with {} queries",
+        collection_id,
+        request.queries.len()
     );
-
-    // Configure progressive search
-    let mut config = if let Some(scenario_str) = params.scenario.as_ref() {
-        match scenario_str.as_str() {
-            "high_recall" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall),
-            "high_speed" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed),
-            "low_memory" => ProgressiveSearchConfig::for_scenario(SearchScenario::LowMemory),
-            _ => ProgressiveSearchConfig::default(),
+    
+    // Validate request
+    if request.queries.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "At least one query must be provided".to_string()
+        ));
+    }
+    
+    // Get top_k with default (top_k is u32, not Option)
+    let top_k = if request.top_k > 0 { request.top_k as usize } else { 10 };
+    
+    // Extract vector from first query
+    let vector = request.queries[0].vector.clone();
+    
+    if vector.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Query vector cannot be empty".to_string()
+        ));
+    }
+    
+    // Build search configuration from protobuf search_params
+    let mut progressive_config = crate::services::operations::vectors::UnifiedSearchConfig {
+        optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+        progressive_search: true,
+        progressive_recalls: None,
+        include_vectors: request.include_fields.as_ref()
+            .map(|f| f.vector)
+            .unwrap_or(false),
+        include_metadata: request.include_fields.as_ref()
+            .map(|f| f.metadata)
+            .unwrap_or(true),
+        scenario: None,
+    };
+    
+    // Extract progressive search settings from search_params if present
+    if let Some(_params) = &request.search_params {
+        // TODO: Extract settings from SearchParameters proto message
+        // For now, use defaults
+    }
+    
+    // Build filter expression from the first query's metadata filter
+    // Use the existing conversion from core::search module
+    let filter = if !request.queries.is_empty() && request.queries[0].metadata_filter.is_some() {
+        match crate::core::search::protocol_conversions::from_proto_metadata_filter(
+            request.queries[0].metadata_filter.as_ref().unwrap()
+        ) {
+            Ok(f) => Some(f),
+            Err(e) => {
+                return Err(ApiError::InvalidArgument(format!("Invalid filter: {}", e)));
+            }
         }
     } else {
-        ProgressiveSearchConfig::default()
+        None
     };
-
-    // Apply custom recall rates if provided
-    if let Some(custom) = params.custom_recalls {
-        if let Some(binary) = custom.binary_recall {
-            config.binary_recall = binary.clamp(0.5, 1.0);
-        }
-        if let Some(int8) = custom.int8_recall {
-            config.int8_recall = int8.clamp(0.5, 1.0);
-        }
-        if let Some(pq) = custom.pq_recall {
-            config.pq_recall = pq.clamp(0.5, 1.0);
-        }
-    }
-
-    // Enable adaptive recall if requested
-    if let Some(adaptive) = params.adaptive_recall {
-        config.adaptive_recall = adaptive;
-    }
-
-    // Create search parameters
-    let search_params = SearchParams {
-        query_vectors: None, // Will be set from params.vector
-        vector: Some(params.vector.clone()),
-        top_k: Some(params.k),
-        distance_metric: None,   // Use collection default
-        filter_expression: None, // TODO: Convert params.filter to FilterExpression
-        filters: Default::default(),
-        accuracy_threshold: None,
-        include_expired: Some(false),
-        timeout_ms: Some(30000), // 30 second timeout
-        enable_two_stage: Some(true),
-        enable_clustering_hint: Some(true),
-        enable_metadata_filtering_hint: params.filter.is_some().into(),
-        enable_progressive_search: Some(true),
-        requires_ordering: Some(true), // Progressive search needs ordering
-        runtime_hints: None,           // Use default hints
-        progressive_scenario: params.scenario.clone(),
-        progressive_recalls: None,
-        optimization_hint: params.scenario.clone(),
-        custom_hints: Default::default(),
-        quantization_hint: None,
-    };
-
-    // Execute progressive search
-    match orchestrator
-        .search(
+    
+    // Execute the search through UnifiedHandlers
+    match state
+        .unified_handlers
+        .vector_operations_service
+        .unified_search(
             &collection_id,
-            &params.vector,
-            params.k,
-            &search_params,
-            params.filter.as_ref(),
+            vector,
+            top_k,
+            filter,
+            Some(progressive_config),
         )
         .await
     {
         Ok(results) => {
-            let search_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-
-            // Convert results to DTOs
-            let result_dtos: Vec<SearchResultDto> = results
-                .into_iter()
-                .map(|r| SearchResultDto {
-                    id: r.id,
-                    score: r.score,
-                    similarity: r.similarity.unwrap_or(r.score),
-                    vector: if params.include_vectors.unwrap_or(false) {
-                        r.vector
-                    } else {
-                        None
-                    },
-                    metadata: if params.include_metadata.unwrap_or(false) {
-                        Some(
-                            r.metadata
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    },
-                })
-                .collect();
-
-            // Prepare metrics if requested
-            let metrics = if params.include_metrics.unwrap_or(false) {
-                Some(StageMetrics {
-                    binary_stage: StageInfo {
-                        candidates: config.compute_stage_sizes(params.k).binary_candidates,
-                        time_ms: 0.0, // Would be tracked by orchestrator
-                        recall_rate: Some(config.binary_recall),
-                    },
-                    int8_stage: StageInfo {
-                        candidates: config.compute_stage_sizes(params.k).int8_candidates,
-                        time_ms: 0.0,
-                        recall_rate: Some(config.int8_recall),
-                    },
-                    pq_stage: StageInfo {
-                        candidates: config.compute_stage_sizes(params.k).pq_candidates,
-                        time_ms: 0.0,
-                        recall_rate: Some(config.pq_recall),
-                    },
-                    fp32_stage: StageInfo {
-                        candidates: params.k,
-                        time_ms: 0.0,
-                        recall_rate: Some(1.0),
-                    },
-                    total_candidates_evaluated: config
-                        .compute_stage_sizes(params.k)
-                        .total_computations,
-                    speedup_vs_brute_force: 0.0, // Would be calculated based on collection size
-                })
-            } else {
-                None
-            };
-
-            // Prepare config used
-            let config_used = Some(ConfigUsed {
-                scenario: params.scenario.unwrap_or_else(|| "balanced".to_string()),
-                binary_recall: config.binary_recall,
-                int8_recall: config.int8_recall,
-                pq_recall: config.pq_recall,
-                max_expansion_factor: config.max_expansion_factor,
-            });
-
+            let elapsed = start_time.elapsed();
+            
+            // Convert results to protobuf response
+            let response = build_proto_response(results, elapsed, &collection_id);
+            
             info!(
-                "Progressive search completed in {:.2}ms with {} results",
-                search_time_ms,
-                result_dtos.len()
+                "Progressive search completed for collection {} in {:?}",
+                collection_id, elapsed
             );
-
-            Ok(Json(ProgressiveSearchResponse {
-                results: result_dtos,
-                search_time_ms,
-                metrics,
-                config_used,
-            }))
+            
+            Ok(Json(response))
         }
         Err(e) => {
-            error!("Progressive search failed: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            error!("Progressive search failed for collection {}: {}", collection_id, e);
+            Err(ApiError::Internal(e.to_string()))
         }
     }
 }
 
+// Filter conversion removed - using existing crate::core::search::protocol_conversions::from_proto_metadata_filter
+
+/// Build protobuf response from search results
+fn build_proto_response(
+    results: Vec<SearchResult>,
+    elapsed: std::time::Duration,
+    _collection_id: &str,
+) -> VectorOperationResponse {
+    // Flatten all results into a single list
+    let mut all_records = Vec::new();
+    let mut total_processed = 0;
+    
+    for result in results {
+        total_processed += result.results.len();
+        for record in result.results {
+            all_records.push(record);
+        }
+    }
+    
+    VectorOperationResponse {
+        success: true,
+        operation: VectorOperation::VectorSearch as i32,
+        metrics: Some(crate::proto::proximadb::OperationMetrics {
+            total_processed: total_processed as i64,
+            successful_count: total_processed as i64,
+            failed_count: 0,
+            updated_count: 0,
+            processing_time_us: (elapsed.as_secs_f64() * 1_000_000.0) as i64,
+            wal_write_time_us: 0,
+            index_update_time_us: 0,
+        }),
+        results: Some(SearchResult {
+            results: all_records,
+            total_found: total_processed as i64,
+            collection_id: Some(_collection_id.to_string()),
+        }),
+        vector_ids: vec![],
+        error_message: None,
+        error_code: None,
+        result_info: None, // ResultInfo not yet in proto
+    }
+}
+
 /// Handler for explaining progressive search plan
+/// This endpoint provides insights into how progressive search works
 pub async fn explain_progressive_search_handler(
     Path(collection_id): Path<String>,
-    Query(params): Query<ExplainRequest>,
-    State(orchestrator): State<Arc<IntegratedSearchOptimizer>>,
-) -> Result<Json<ExplainResponse>, StatusCode> {
-    let config = if let Some(scenario_str) = params.scenario.as_ref() {
-        match scenario_str.as_str() {
-            "high_recall" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall),
-            "high_speed" => ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed),
-            "low_memory" => ProgressiveSearchConfig::for_scenario(SearchScenario::LowMemory),
-            _ => ProgressiveSearchConfig::default(),
-        }
-    } else {
-        ProgressiveSearchConfig::default()
+    State(_state): State<AppState>,
+    Json(request): Json<ExplainRequest>,
+) -> ApiResult<Json<ExplainResponse>> {
+    use crate::core::search::progressive_quantization::{ProgressiveSearchConfig, SearchScenario};
+    
+    let config = match request.scenario.as_deref() {
+        Some("high_recall") => ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall),
+        Some("high_speed") => ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed),
+        Some("low_memory") => ProgressiveSearchConfig::for_scenario(SearchScenario::LowMemory),
+        _ => ProgressiveSearchConfig::default(),
     };
-
-    let k = params.k.unwrap_or(10);
+    
+    let k = request.k.unwrap_or(10);
     let stage_sizes = config.compute_stage_sizes(k);
-
+    
     Ok(Json(ExplainResponse {
         collection_id,
         k,
-        scenario: params.scenario.unwrap_or_else(|| "balanced".to_string()),
+        scenario: request.scenario.unwrap_or_else(|| "balanced".to_string()),
         stages: vec![
             ExplainStage {
                 name: "Binary".to_string(),
@@ -340,13 +224,14 @@ pub async fn explain_progressive_search_handler(
     }))
 }
 
-#[derive(Debug, Deserialize)]
+// Keep these minimal DTOs only for the explain endpoint
+#[derive(Debug, serde::Deserialize)]
 pub struct ExplainRequest {
     pub k: Option<usize>,
     pub scenario: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct ExplainResponse {
     pub collection_id: String,
     pub k: usize,
@@ -357,7 +242,7 @@ pub struct ExplainResponse {
     pub estimated_speedup: f32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct ExplainStage {
     pub name: String,
     pub candidates: usize,

@@ -552,7 +552,7 @@ pub mod engine_specific {
 
     /// SST-specific optimizations and benchmarks
     pub async fn benchmark_sst_specific(
-        engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -568,7 +568,7 @@ pub mod engine_specific {
 
     /// VIPER-specific optimizations and benchmarks
     pub async fn benchmark_viper_specific(
-        engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -583,7 +583,7 @@ pub mod engine_specific {
 
     /// NOVA-specific optimizations and benchmarks
     pub async fn benchmark_nova_specific(
-        engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -598,7 +598,7 @@ pub mod engine_specific {
 
     /// SWIFT-specific optimizations and benchmarks
     pub async fn benchmark_swift_specific(
-        engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -613,7 +613,7 @@ pub mod engine_specific {
 
     /// RAPTOR-specific optimizations and benchmarks
     pub async fn benchmark_raptor_specific(
-        engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -628,7 +628,7 @@ pub mod engine_specific {
 
     /// PRISM-specific optimizations and benchmarks
     pub async fn benchmark_prism_specific(
-        engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -646,13 +646,13 @@ pub mod engine_specific {
 impl SearchCostEstimator {
     pub fn update_from_benchmarks(&mut self, results: &EngineBenchmarkResults) {
         // Update direct search times
-        for (category, stats) in &results.direct_search_stats {
+        for (category, _stats) in &results.direct_search_stats {
             // TODO: Need to add insert_direct_stats method to SearchCostEstimator
             // self.insert_direct_stats(category.clone(), stats.clone());
         }
 
         // Update progressive search times
-        for (level, stats) in &results.progressive_search_stats {
+        for (_level, _stats) in &results.progressive_search_stats {
             // TODO: Need to add insert_progressive_stats method to SearchCostEstimator
             // self.insert_progressive_stats(level.clone(), stats.clone());
         }

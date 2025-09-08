@@ -1,11 +1,11 @@
-//! Tests for Universal Distance Adapter
-//!
-//! This module contains comprehensive tests for the universal adapter system.
-
 #[cfg(test)]
 mod tests {
-    use crate::storage::engines::universal::*;
-    use crate::storage::engines::universal::adapter::*;
+    use crate::storage::engines::universal::adapter::{AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest, UniversalDistanceAdapter};
+    use crate::storage::engines::universal::config::StorageEngineConfig;
+    use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
+    use crate::storage::engines::universal::hardware_manager::{HardwareAccelerationManager, OptimizationStrategy};
+    use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
+    use crate::storage::engines::universal::storage_integration::{EngineType, NOVAAdapter, PRISMAdapter};
     use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
     use crate::utils::uuid::Uuid;
@@ -56,9 +56,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_engine_adapters() {
-        use crate::storage::engines::universal::config::StorageEngineConfig;
-        use crate::storage::engines::universal::storage_integration::*;
-
         // Test PRISM adapter
         let prism_config = StorageEngineConfig::prism_default();
         let prism_adapter = PRISMAdapter::new(&prism_config).await;
@@ -80,8 +77,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_conversion() {
-        use crate::storage::engines::universal::conversion::*;
-
         let converter = FormatConverter::new().await.unwrap();
 
         // Test FP32 to INT8 conversion
@@ -101,9 +96,6 @@ mod tests {
     #[tokio::test]
     async fn test_quantized_calculator() {
         use crate::storage::engines::universal::config::UniversalAdapterConfig;
-        use crate::storage::engines::universal::quantized_calculator::*;
-        use crate::core::hardware_capabilities::HardwareCapabilities;
-
         let config = UniversalAdapterConfig::default();
         let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
 
@@ -118,9 +110,6 @@ mod tests {
     #[tokio::test]
     async fn test_hardware_acceleration_manager() {
         use crate::storage::engines::universal::config::HardwareAccelerationConfig;
-        use crate::storage::engines::universal::hardware_manager::*;
-        use crate::core::hardware_capabilities::HardwareCapabilities;
-
         let config = HardwareAccelerationConfig::default();
         let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
 
@@ -141,8 +130,6 @@ mod tests {
 
     #[test]
     fn test_storage_format_properties() {
-        use crate::storage::engines::universal::conversion::StorageFormat;
-
         let fp32_format = StorageFormat::FP32;
         assert_eq!(fp32_format.data_size_per_vector(128), 512);
         assert!(fp32_format.supports_hardware_acceleration());
@@ -164,8 +151,6 @@ mod tests {
 
     #[test]
     fn test_engine_type_serialization() {
-        use crate::storage::engines::universal::storage_integration::EngineType;
-
         let engine_types = vec![
             EngineType::PRISM,
             EngineType::NOVA,
@@ -199,9 +184,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_adapter_vector_conversion() {
-        use crate::storage::engines::universal::config::StorageEngineConfig;
-        use crate::storage::engines::universal::storage_integration::*;
-
         let config = StorageEngineConfig::prism_default();
         let adapter = PRISMAdapter::new(&config).await.unwrap();
 
@@ -228,9 +210,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_usage_estimation() {
-        use crate::storage::engines::universal::config::StorageEngineConfig;
-        use crate::storage::engines::universal::storage_integration::*;
-
         let config = StorageEngineConfig::nova_default();
         let adapter = NOVAAdapter::new(&config).await.unwrap();
 
@@ -258,15 +237,21 @@ mod tests {
 }
 
 // Re-export commonly used types for tests
-pub use super::{
-    adapter::*, config::*, conversion::*, hardware_manager::*, progressive_refinement::*,
-    quantized_calculator::*, storage_integration::*,
-};
+pub use crate::storage::engines::universal::adapter::{AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest, UniversalDistanceAdapter};
+pub use crate::storage::engines::universal::config::StorageEngineConfig;
+pub use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
+pub use crate::storage::engines::universal::hardware_manager::{HardwareAccelerationManager, OptimizationStrategy};
+pub use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
+pub use crate::storage::engines::universal::storage_integration::{EngineType, NOVAAdapter, PRISMAdapter};
+
 
 // Test utilities
 #[cfg(test)]
 pub mod test_utils {
-    use super::*;
+    use crate::storage::engines::universal::adapter::{CandidateVector, DistanceComputationRequest};
+    use crate::storage::engines::universal::conversion::StorageFormat;
+    use crate::storage::engines::universal::storage_integration::EngineType;
+    use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
 
     pub fn create_test_candidate_vector(id: uuid::Uuid, dimension: usize) -> CandidateVector {

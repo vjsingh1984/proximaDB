@@ -356,7 +356,7 @@ impl StorageSystemBuilder {
     }
 
     /// Configure WAL compression
-    pub fn with_wal_compression(self, algorithm: CompressionAlgorithm) -> Self {
+    pub fn with_wal_compression(self, _algorithm: CompressionAlgorithm) -> Self {
         // TODO: Update WAL compression configuration when storage field is available
         // self.config.wal_system.compression = Some(algorithm);
         self

@@ -25,11 +25,12 @@ use arrow_array::RecordBatch;
 use arrow_ipc::{reader::FileReader as IpcFileReader, writer::FileWriter as IpcFileWriter};
 use arrow_ipc::{reader::StreamReader as IpcStreamReader, writer::StreamWriter as IpcStreamWriter};
 use arrow_schema::{DataType, Field, Schema};
-use parquet::arrow::{ArrowWriter, arrow_reader::ArrowReaderBuilder};
+use parquet::arrow::{arrow_reader::ArrowReaderBuilder, ArrowWriter};
 use parquet::basic::{Compression, Encoding, ZstdLevel};
 use parquet::file::properties::WriterProperties;
+use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -364,7 +365,8 @@ impl UnifiedColumnarReader {
 
         // Load and cache
         let file = File::open(file_path)?;
-        let metadata = parquet::file::footer::parse_metadata(&file)?;
+        let reader = SerializedFileReader::new(file)?;
+        let metadata = reader.metadata().clone();
         let metadata = Arc::new(metadata);
 
         {

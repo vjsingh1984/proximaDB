@@ -119,7 +119,7 @@ impl SimpleFlushNotifier {
 
     // Helper methods
 
-    fn detect_representations(params: &FlushParameters) -> (bool, bool) {
+    fn detect_representations(_params: &FlushParameters) -> (bool, bool) {
         // Check collection config for quantization
         // Check collection config for quantization - field might not exist
         let has_quantization = false;

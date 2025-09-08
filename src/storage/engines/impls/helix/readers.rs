@@ -17,11 +17,7 @@ use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
 // Filter evaluator now uses unified module from core
-use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{
-    factory::BloomFilterFactory,
-    BloomFilterStrategy, 
-    SerializedBloomFilter
-};
+use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{factory::BloomFilterFactory, SerializedBloomFilter};
 
 /// Check if SSTable might contain specific vector IDs using bloom filter
 pub async fn check_bloom_filter(

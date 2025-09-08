@@ -22,7 +22,6 @@
 use crate::index::axis::{AxisHnswConfig, AxisHnswIndex, UnifiedIvfConfig, UnifiedIvfIndex};
 use bincode;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 
@@ -488,7 +487,7 @@ impl SerializableIndex for AxisHnswIndex {
 
 /// Extension trait for HNSW deserialization
 impl AxisHnswIndex {
-    fn deserialize_internal(data: &[u8], config: &AxisHnswConfig) -> Result<Self> {
+    fn deserialize_internal(_data: &[u8], config: &AxisHnswConfig) -> Result<Self> {
         // Deserialize HNSW-specific data structures
         // This would reconstruct:
         // - Graph layers
@@ -544,7 +543,7 @@ impl SerializableIndex for UnifiedIvfIndex {
 
 /// Extension trait for IVF deserialization
 impl UnifiedIvfIndex {
-    fn deserialize_internal(data: &[u8], config: &UnifiedIvfConfig) -> Result<Self> {
+    fn deserialize_internal(_data: &[u8], config: &UnifiedIvfConfig) -> Result<Self> {
         // Deserialize IVF-specific data structures
         // This would reconstruct:
         // - Centroids

@@ -101,44 +101,44 @@ pub fn parse_indexing_algorithm(algo: &str) -> Result<IndexingAlgorithm> {
 
 /// Convert proto distance metric to string
 pub fn distance_metric_to_string(metric: i32) -> &'static str {
-    match DistanceMetric::from_i32(metric) {
-        Some(DistanceMetric::Cosine) => "cosine",
-        Some(DistanceMetric::Euclidean) => "euclidean",
-        Some(DistanceMetric::Manhattan) => "manhattan",
-        Some(DistanceMetric::DotProduct) => "dot_product",
+    match DistanceMetric::try_from(metric) {
+        Ok(DistanceMetric::Cosine) => "cosine",
+        Ok(DistanceMetric::Euclidean) => "euclidean",
+        Ok(DistanceMetric::Manhattan) => "manhattan",
+        Ok(DistanceMetric::DotProduct) => "dot_product",
         _ => "unknown",
     }
 }
 
 /// Convert proto storage engine to string
 pub fn storage_engine_to_string(engine: i32) -> &'static str {
-    match StorageEngine::from_i32(engine) {
-        Some(StorageEngine::Sst) => "sst",
-        Some(StorageEngine::Viper) => "viper",
-        Some(StorageEngine::Nova) => "nova",
-        Some(StorageEngine::Swift) => "swift",
+    match StorageEngine::try_from(engine) {
+        Ok(StorageEngine::Sst) => "sst",
+        Ok(StorageEngine::Viper) => "viper",
+        Ok(StorageEngine::Nova) => "nova",
+        Ok(StorageEngine::Swift) => "swift",
         _ => "unknown",
     }
 }
 
 /// Convert proto collection operation to string
 pub fn collection_operation_to_string(op: i32) -> &'static str {
-    match CollectionOperation::from_i32(op) {
-        Some(CollectionOperation::CollectionCreate) => "create",
-        Some(CollectionOperation::CollectionGet) => "get",
-        Some(CollectionOperation::CollectionList) => "list",
-        Some(CollectionOperation::CollectionUpdate) => "update",
-        Some(CollectionOperation::CollectionDelete) => "delete",
+    match CollectionOperation::try_from(op) {
+        Ok(CollectionOperation::CollectionCreate) => "create",
+        Ok(CollectionOperation::CollectionGet) => "get",
+        Ok(CollectionOperation::CollectionList) => "list",
+        Ok(CollectionOperation::CollectionUpdate) => "update",
+        Ok(CollectionOperation::CollectionDelete) => "delete",
         _ => "unknown",
     }
 }
 
 /// Convert proto vector operation to string
 pub fn vector_operation_to_string(op: i32) -> &'static str {
-    match VectorOperation::from_i32(op) {
-        Some(VectorOperation::VectorBatch) => "batch",
-        Some(VectorOperation::VectorSearch) => "search",
-        Some(VectorOperation::VectorGet) => "get",
+    match VectorOperation::try_from(op) {
+        Ok(VectorOperation::VectorBatch) => "batch",
+        Ok(VectorOperation::VectorSearch) => "search",
+        Ok(VectorOperation::VectorGet) => "get",
         _ => "unknown",
     }
 }
@@ -295,7 +295,7 @@ pub fn build_collection_config(
     distance_metric: Option<String>,
     storage_engine: Option<String>,
     indexing_algorithm: Option<String>,
-    metadata: Option<serde_json::Map<String, serde_json::Value>>,
+    _metadata: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<CollectionConfig> {
     let config = CollectionConfig {
         name: name.clone(),

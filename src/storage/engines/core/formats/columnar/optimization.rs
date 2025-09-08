@@ -11,9 +11,9 @@ use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use anyhow::Result;
-use arrow_array::{Array, RecordBatch};
+use arrow_array::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};

@@ -1116,7 +1116,7 @@ impl UnifiedDistanceCompute {
         
         // Each codebook[i] contains all centroids for subvector i
         // Assuming 256 centroids per subvector (8-bit codes)
-        let centroids_per_subvector = 256;
+        let _centroids_per_subvector = 256;
         
         let mut total_distance = 0.0;
         

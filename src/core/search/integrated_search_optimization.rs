@@ -22,18 +22,20 @@ use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 // Re-export for public use
 pub use crate::compute::quantization::unified::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
 use crate::core::search::{
-    FilterExpression, InternalSearchResult, SearchParams,
+    FilterExpression, SearchParams,
     metadata_filter_pushdown::MetadataFilterPushdown,
     progressive_quantization::ProgressiveSearchConfig,
     query_preprocessing::QueryPreprocessor,
+    results::OptimizedSearchRecord,
     smart_execution_strategy::SmartExecutionStrategy,
     unified_progressive_pipeline::UnifiedProgressiveSearchPipeline,
 };
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::cache::{
-    MetadataStore, QueryCache, VectorStore,
+    MetadataStore, QueryCache,
     orchestrator::{CacheType, CrossCacheOrchestrator},
     specialized::query_cache::{CachedQueryResult, QueryKey},
 };
@@ -41,7 +43,7 @@ use crate::storage::traits::StorageQueryContext;
 
 /// Integrated search optimizer with zero-copy and caching
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer
-pub struct IntegratedSearchOptimizer {
+pub struct AdvancedSearchOptimizer {
     /// Query preprocessor (Phase 1)
     query_preprocessor: Arc<QueryPreprocessor>,
 
@@ -57,8 +59,7 @@ pub struct IntegratedSearchOptimizer {
     /// Query result cache (Phase 7)
     query_cache: Arc<QueryCache>,
 
-    /// Vector data cache
-    vector_store: Arc<VectorStore>,
+    
 
     /// Metadata cache
     metadata_store: Arc<MetadataStore>,
@@ -157,7 +158,7 @@ enum VectorData {
 /// Streaming search results for memory efficiency
 pub struct StreamingSearchResults {
     /// Result stream
-    stream: Pin<Box<dyn futures::Stream<Item = Result<InternalSearchResult>> + Send>>,
+    stream: Pin<Box<dyn futures::Stream<Item = Result<OptimizedSearchRecord>> + Send>>,
 
     /// Total expected results
     total_results: Option<usize>,
@@ -210,11 +211,10 @@ pub struct HardwareProfile {
     pub available_memory_gb: f32,
 }
 
-impl IntegratedSearchOptimizer {
+impl AdvancedSearchOptimizer {
     /// Create a new integrated search optimizer
     pub fn new(
         query_cache: Arc<QueryCache>,
-        vector_store: Arc<VectorStore>,
         metadata_store: Arc<MetadataStore>,
         cache_orchestrator: Arc<CrossCacheOrchestrator>,
         config: OptimizationConfig,
@@ -240,7 +240,6 @@ impl IntegratedSearchOptimizer {
             )),
             execution_strategy: Arc::new(SmartExecutionStrategy::new(Default::default())),
             query_cache,
-            vector_store,
             metadata_store,
             cache_orchestrator,
             buffer_pool: Arc::new(BufferPool::new(
@@ -331,11 +330,11 @@ impl IntegratedSearchOptimizer {
     pub async fn search(
         &self,
         collection_id: &str,
-        query_vector: &[f32],
-        k: usize,
+        _query_vector: &[f32],
+        _k: usize,
         search_params: &SearchParams,
-        filter: Option<&FilterExpression>,
-    ) -> Result<Vec<InternalSearchResult>> {
+        _filter: Option<&FilterExpression>,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // Create a StorageQueryContext from the parameters
         let collection = Arc::new(crate::proto::proximadb::Collection {
             id: collection_id.to_string(),
@@ -358,7 +357,7 @@ impl IntegratedSearchOptimizer {
     pub async fn execute_unified_search(
         &self,
         ctx: &StorageQueryContext,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let start = Instant::now();
 
         // 1. Check cache first
@@ -435,8 +434,8 @@ impl IntegratedSearchOptimizer {
     async fn execute_progressive_search(
         &self,
         ctx: &StorageQueryContext,
-    ) -> Result<Vec<InternalSearchResult>> {
-        let query_vector = ctx
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        let _query_vector = ctx
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
         let k = ctx.top_k();
@@ -461,7 +460,7 @@ impl IntegratedSearchOptimizer {
         collection_id: &str,
         search_params: &SearchParams,
         records: Vec<VectorRecord>,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let start = std::time::Instant::now();
 
         // Extract query vector
@@ -559,7 +558,7 @@ impl IntegratedSearchOptimizer {
         collection_id: &str,
         query_vector: &[f32],
         params: &SearchParams,
-    ) -> Result<Option<Vec<InternalSearchResult>>> {
+    ) -> Result<Option<Vec<OptimizedSearchRecord>>> {
         let key = QueryKey::new(
             collection_id.to_string(),
             query_vector,
@@ -579,34 +578,35 @@ impl IntegratedSearchOptimizer {
         {
             debug!("Found fresh cached results for query");
 
-            // Convert proto SearchResult (Vec) to our InternalSearchResult type
+            // Convert proto SearchResult (Vec) to our OptimizedSearchRecord type
             // Each element in cached_results is a proto SearchResult which contains Vec<SearchVectorRecord>
             let mut converted_results = Vec::new();
             for search_result in cached_results {
                 for record in search_result.results {
-                    converted_results.push(InternalSearchResult {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id),
-                        score: record.score,
-                        similarity: Some(record.score),
-                        vector: if record.vector.is_empty() {
-                            None
-                        } else {
-                            Some(record.vector)
-                        },
-                        metadata: Default::default(), // Would convert metadata
-                        debug_info: None,
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                        timestamp: record.timestamp,
-                        version: record.version,
-                        updated_at: None,
-                        expires_at: None,
-                        source: record.source,
-                        expanded_context: record.expanded_context,
-                    });
+                    // Convert proto metadata to TypedMetadata
+                    let mut metadata_map = std::collections::HashMap::new();
+                    for item in &record.metadata {
+                        if let Some(value) = &item.value {
+                            use crate::proto::proximadb::metadata_item;
+                            let typed_value = match value {
+                                metadata_item::Value::StringValue(s) =>
+                                    MetadataValue::String(Arc::from(s.as_str())),
+                                metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
+                                metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                            };
+                            metadata_map.insert(item.key.clone(), typed_value);
+                        }
+                    }
+                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::from_map(metadata_map));
+                    if let Some(sim) = record.similarity {
+                        rec = rec.with_similarity(sim);
+                    }
+                    if let (Some(v), Some(ts)) = (record.version, record.timestamp) {
+                        rec = rec.with_version_info(v, ts);
+                    }
+                    converted_results.push(rec);
                 }
             }
 
@@ -622,7 +622,7 @@ impl IntegratedSearchOptimizer {
         collection_id: &str,
         query_vector: &[f32],
         params: &SearchParams,
-        results: &[InternalSearchResult],
+        results: &[OptimizedSearchRecord],
     ) -> Result<()> {
         let key = QueryKey::new(
             collection_id.to_string(),
@@ -643,7 +643,7 @@ impl IntegratedSearchOptimizer {
                     id: r.id.clone(),
                     score: r.score,
                     similarity: r.similarity,
-                    vector: r.vector.clone().unwrap_or_default(),
+                    vector: r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default(),
                     metadata: vec![], // Would convert metadata
                     version: r.version,
                     timestamp: r.timestamp,
@@ -674,8 +674,8 @@ impl IntegratedSearchOptimizer {
         top_k: usize,
         distance_metric: &DistanceMetric,
         filter_expr: Option<&FilterExpression>,
-        strategy: &ExecutionStrategy,
-    ) -> Result<Vec<InternalSearchResult>> {
+        _strategy: &ExecutionStrategy,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("Using zero-copy data path for {} records", records.len());
 
         // Create zero-copy views of the data
@@ -755,9 +755,9 @@ impl IntegratedSearchOptimizer {
         batch: &[ZeroCopyVectorView],
         query_vector: &[f32],
         distance_metric: &DistanceMetric,
-        filter_expr: Option<&FilterExpression>,
-        buffer: &mut BytesMut,
-    ) -> Result<Vec<InternalSearchResult>> {
+        _filter_expr: Option<&FilterExpression>,
+        _buffer: &mut BytesMut,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
         let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
@@ -785,25 +785,14 @@ impl IntegratedSearchOptimizer {
             let dist_result =
                 distance_compute.calculate_distance(query_vector, vector, distance_metric);
 
-            results.push(InternalSearchResult {
-                id: format!("vec_{}", idx),
-                vector_id: Some(format!("vec_{}", idx)),
-                score: dist_result.normalized_score,
-                similarity: Some(dist_result.normalized_score),
-                vector: None, // Don't include vectors in results for efficiency
-                metadata: Default::default(),
-                debug_info: None, // Could add SearchDebugInfo here
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
-                timestamp: None,
-                version: None,
-                updated_at: None,
-                expires_at: None,
-                source: None,
-                expanded_context: vec![],
-            });
+            results.push(
+                OptimizedSearchRecord::new(
+                    format!("vec_{}", idx),
+                    dist_result.normalized_score
+                )
+                .with_similarity(dist_result.normalized_score)
+                .with_metadata(TypedMetadata::default())
+            );
         }
 
         Ok(results)
@@ -818,7 +807,7 @@ impl IntegratedSearchOptimizer {
         distance_metric: &DistanceMetric,
         params: &SearchParams,
         strategy: &ExecutionStrategy,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         match strategy {
             ExecutionStrategy::Progressive { .. } => {
                 // Use progressive search pipeline (Phase 4)
@@ -835,7 +824,7 @@ impl IntegratedSearchOptimizer {
                     )
                     .await?;
 
-                // proto_results is already Vec<InternalSearchResult>
+                // proto_results is already Vec<OptimizedSearchRecord>
                 let internal_results = proto_results;
                 Ok(internal_results)
             }
@@ -865,7 +854,7 @@ impl IntegratedSearchOptimizer {
                     )
                     .await?;
 
-                // proto_results is already Vec<InternalSearchResult>
+                // proto_results is already Vec<OptimizedSearchRecord>
                 let internal_results = proto_results;
                 Ok(internal_results)
             }
@@ -875,8 +864,8 @@ impl IntegratedSearchOptimizer {
     /// Check cache from search context
     async fn check_cache_from_context(
         &self,
-        ctx: &StorageQueryContext,
-    ) -> Result<Option<Vec<InternalSearchResult>>> {
+        _ctx: &StorageQueryContext,
+    ) -> Result<Option<Vec<OptimizedSearchRecord>>> {
         // TODO: Implement cache lookup based on context
         Ok(None)
     }
@@ -884,8 +873,8 @@ impl IntegratedSearchOptimizer {
     /// Execute index-first search strategy
     async fn execute_index_first_search(
         &self,
-        ctx: &StorageQueryContext,
-    ) -> Result<Vec<InternalSearchResult>> {
+        _ctx: &StorageQueryContext,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // TODO: Implement index-first search using AXIS
         Err(anyhow::anyhow!("Index-first search not yet implemented"))
     }
@@ -906,8 +895,8 @@ impl IntegratedSearchOptimizer {
     /// Cache search results
     async fn cache_search_results(
         &self,
-        ctx: &StorageQueryContext,
-        results: &[InternalSearchResult],
+        _ctx: &StorageQueryContext,
+        _results: &[OptimizedSearchRecord],
     ) -> Result<()> {
         // TODO: Implement result caching
         Ok(())
@@ -921,7 +910,7 @@ impl IntegratedSearchOptimizer {
         top_k: usize,
         distance_metric: &DistanceMetric,
         filter_expr: Option<&FilterExpression>,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
         // Apply metadata filter first if present (Phase 3)
@@ -943,25 +932,30 @@ impl IntegratedSearchOptimizer {
             let dist_result =
                 distance_compute.calculate_distance(query_vector, &record.vector, distance_metric);
 
-            results.push(InternalSearchResult {
-                id: record.id.clone(),
-                vector_id: Some(record.id.clone()),
-                score: dist_result.normalized_score,
-                similarity: Some(dist_result.normalized_score),
-                vector: Some(record.vector),
-                metadata: Default::default(),
-                debug_info: None,
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
-                timestamp: Some(record.timestamp),
-                version: record.version,
-                updated_at: record.updated_at,
-                expires_at: record.expires_at,
-                source: record.source,
-                expanded_context: vec![],
-            });
+            // Convert record metadata to TypedMetadata
+            let mut metadata_map = std::collections::HashMap::new();
+            for item in &record.metadata {
+                if let Some(value) = &item.value {
+                    use crate::proto::proximadb::metadata_item;
+                    let typed_value = match value {
+                        metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
+                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                    };
+                    metadata_map.insert(item.key.clone(), typed_value);
+                }
+            }
+            
+            results.push(
+                OptimizedSearchRecord::new(
+                    record.id.clone(),
+                    dist_result.normalized_score
+                )
+                .with_similarity(dist_result.normalized_score)
+                .add_vector(record.vector.clone())
+                .with_metadata(TypedMetadata::from_map(metadata_map))
+                .with_version_info(record.version.unwrap_or(0), record.timestamp)
+            );
         }
 
         results.sort_by(|a, b| {
@@ -991,7 +985,7 @@ impl IntegratedSearchOptimizer {
     /// Get streaming results for very large result sets
     pub async fn search_streaming(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         search_params: &SearchParams,
         records: Vec<VectorRecord>,
     ) -> Result<StreamingSearchResults> {
@@ -1013,11 +1007,11 @@ impl IntegratedSearchOptimizer {
 
         let params_clone = search_params.clone();
         let stream = stream::iter(chunks)
-            .then(move |batch| {
-                let params = params_clone.clone();
+            .then(move |_batch| {
+                let _params = params_clone.clone();
                 async move {
                     // Process batch (simplified)
-                    Ok::<InternalSearchResult, anyhow::Error>(InternalSearchResult::default())
+                    Ok::<OptimizedSearchRecord, anyhow::Error>(OptimizedSearchRecord::default())
                 }
             })
             .take(total_results)
@@ -1027,6 +1021,37 @@ impl IntegratedSearchOptimizer {
             stream: Box::pin(stream),
             total_results: Some(total_results),
         })
+    }
+}
+
+/// Stable facade for search implementations
+#[async_trait::async_trait]
+pub trait SearchOptimizer: Send + Sync {
+    async fn search_simple(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        params: &SearchParams,
+        filter: Option<&FilterExpression>,
+    ) -> Result<Vec<OptimizedSearchRecord>>;
+
+    fn set_axis_manager(&self, _axis: Arc<AxisManager>) {
+        // Default no-op
+    }
+}
+
+#[async_trait::async_trait]
+impl SearchOptimizer for AdvancedSearchOptimizer {
+    async fn search_simple(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        k: usize,
+        params: &SearchParams,
+        filter: Option<&FilterExpression>,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        self.search(collection_id, query_vector, k, params, filter).await
     }
 }
 

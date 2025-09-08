@@ -317,7 +317,7 @@ impl SmartExecutionStrategy {
     }
 
     /// Analyze query characteristics
-    fn analyze_query(&self, params: &SearchParams, metadata: &CollectionMetadata) -> QueryAnalysis {
+    fn analyze_query(&self, params: &SearchParams, _metadata: &CollectionMetadata) -> QueryAnalysis {
         QueryAnalysis {
             has_filters: params.filter_expression.is_some() || params.filters.is_some(),
             filter_selectivity: self.estimate_filter_selectivity(params),

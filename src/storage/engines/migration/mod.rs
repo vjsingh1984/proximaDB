@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
-use crate::storage::traits::UnifiedStorageEngine;
 
 /// Migration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

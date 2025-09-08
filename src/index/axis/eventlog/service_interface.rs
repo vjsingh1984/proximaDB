@@ -329,7 +329,7 @@ pub enum ClientMode {
     Rest { base_url: String },
 
     /// gRPC client for distributed service
-    Grpc { endpoint: String },
+    Grpc { _endpoint: String },
 }
 
 impl EventLogClient {
@@ -350,7 +350,7 @@ impl EventLogClient {
     /// Create gRPC client
     pub fn grpc(endpoint: String) -> Self {
         Self {
-            mode: ClientMode::Grpc { endpoint },
+            mode: ClientMode::Grpc { _endpoint: endpoint },
         }
     }
 }
@@ -367,7 +367,7 @@ impl EventLogQuery for EventLogClient {
                 let events = response.json().await?;
                 Ok(events)
             }
-            ClientMode::Grpc { endpoint } => {
+            ClientMode::Grpc { _endpoint } => {
                 // gRPC client implementation would go here
                 unimplemented!("gRPC client not yet implemented")
             }

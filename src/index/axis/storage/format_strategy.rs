@@ -25,7 +25,6 @@
 
 use bincode;
 use serde::{Deserialize, Serialize};
-use std::io::Write as IoWrite;
 use tracing::{debug, info, warn};
 
 /// Serialization format for AXIS indexes

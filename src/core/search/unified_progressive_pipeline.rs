@@ -14,6 +14,8 @@ use tracing::{debug, info};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 use crate::proto::proximadb::QuantizationConfig;
 use crate::proto::proximadb::VectorRecord;
 
@@ -181,7 +183,7 @@ impl UnifiedProgressiveSearchPipeline {
         distance_metric: DistanceMetric,
         quantization_config: &QuantizationConfig,
         metadata_filter: Option<&FilterExpression>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let start = std::time::Instant::now();
         let query_id = self.generate_query_id();
 
@@ -533,7 +535,7 @@ impl UnifiedProgressiveSearchPipeline {
         for record in records {
             if let Some(quantized) = &record.quantized_vector {
                 // Compute PQ distance
-                let score = self.compute_pq_distance(&query, quantized, pq_bits);
+                let score = self.compute_pq_distance(query, quantized, pq_bits);
                 candidates.push(StageCandidate {
                     record: record.clone(),
                     score,
@@ -641,7 +643,7 @@ impl UnifiedProgressiveSearchPipeline {
     }
 
     /// Compute PQ distance (simplified)
-    fn compute_pq_distance(&self, a: &[u8], b: &[u8], pq_bits: usize) -> f32 {
+    fn compute_pq_distance(&self, a: &[u8], b: &[u8], _pq_bits: usize) -> f32 {
         // Simplified PQ distance - should use lookup tables in production
         let distance: u32 = a
             .iter()
@@ -739,39 +741,29 @@ impl UnifiedProgressiveSearchPipeline {
         &self,
         candidates: Vec<StageCandidate>,
         top_k: usize,
-    ) -> Vec<crate::core::search::InternalSearchResult> {
+    ) -> Vec<OptimizedSearchRecord> {
         candidates
             .into_iter()
             .take(top_k)
             .enumerate()
             .map(
-                |(rank, candidate)| crate::core::search::InternalSearchResult {
-                    id: candidate.record.id.clone(),
-                    vector_id: if candidate.record.id.is_empty() {
-                        None
-                    } else {
-                        Some(candidate.record.id.clone())
-                    },
-                    score: candidate.score,
-                    similarity: Some(candidate.score),
-                    vector: Some(candidate.record.vector.clone()),
-                    metadata: self.convert_metadata(&candidate.record),
-                    debug_info: Some(crate::core::search::SearchDebugInfo {
-                        algorithm: "progressive".to_string(),
-                        candidates_evaluated: candidate.refined_count as u32,
-                        processing_time_us: 0,
-                    }),
-                    semantic_similarity: None,
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
-                    timestamp: Some(candidate.record.timestamp),
-                    version: candidate.record.version,
-                    expanded_context: vec![],
-                    expires_at: None,
-                    source: None,
-                    updated_at: None,
-                },
+                |(rank, candidate)| {
+                    let json_metadata = self.convert_metadata(&candidate.record);
+                    let typed_metadata: std::collections::HashMap<String, crate::core::metadata_types::MetadataValue> = 
+                        json_metadata.into_iter()
+                            .map(|(k, v)| (k, crate::core::metadata_types::MetadataValue::from_json(v)))
+                            .collect();
+                    let metadata = TypedMetadata::from_map(typed_metadata);
+                    
+                    OptimizedSearchRecord::new(
+                        candidate.record.id.clone(),
+                        candidate.score,
+                    )
+                    .with_similarity(candidate.score)
+                    .add_vector(candidate.record.vector.clone())
+                    .with_metadata(metadata)
+                    .with_version_info(candidate.record.version.unwrap_or(0), candidate.record.timestamp)
+                }
             )
             .collect()
     }
@@ -849,7 +841,7 @@ impl ThresholdAdjuster {
     fn adjust_thresholds(
         &self,
         stages: &[SearchStage],
-        results: &[crate::core::search::InternalSearchResult],
+        results: &[OptimizedSearchRecord],
     ) {
         // Simple adjustment logic - can be made more sophisticated
         let mut thresholds = self.current_thresholds.write();

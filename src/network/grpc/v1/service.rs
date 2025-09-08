@@ -1131,7 +1131,7 @@ impl ProximaDb for ProximaDbGrpcService {
 
                 // Use VectorOperationsService unified search with full capabilities
                 // Create search params with metadata filters if present
-                let search_params = if let Some(filters) = metadata_filters {
+                let _search_params = if let Some(filters) = metadata_filters {
                     Some(crate::core::search::SearchParams::default().with_simple_filters(filters))
                 } else {
                     None

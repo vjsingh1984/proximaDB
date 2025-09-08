@@ -7,10 +7,8 @@
 //! - Quantization-aware schema generation
 
 use anyhow::{Context, Result, anyhow};
-use arrow_array::{
-    Array, ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int64Array, RecordBatch,
-    StringArray, UInt32Array,
-};
+use arrow_array::{ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int64Array, RecordBatch,
+    StringArray, UInt32Array,};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;

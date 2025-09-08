@@ -49,7 +49,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Create minimal quantization for small dimensions (preserve quality)
-    fn create_minimal_config(dimension: usize) -> QuantizationConfig {
+    fn create_minimal_config(_dimension: usize) -> QuantizationConfig {
         QuantizationConfig {
             enabled: true,
             strategy: Strategy::Minimal as i32,
@@ -97,7 +97,7 @@ impl QuantizationSmartDefaults {
     }
 
     /// Create balanced config for medium dimensions
-    fn create_balanced_config(dimension: usize) -> QuantizationConfig {
+    fn create_balanced_config(_dimension: usize) -> QuantizationConfig {
         QuantizationConfig {
             enabled: true,
             strategy: Strategy::SmartDefaults as i32,

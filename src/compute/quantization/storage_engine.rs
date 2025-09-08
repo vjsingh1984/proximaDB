@@ -249,7 +249,7 @@ impl StorageQuantizationEngine {
                 // Cache the trained codebook centroids for fast access
                 // The centroids are stored as flattened arrays for efficient distance computation
                 let centroids_cache: Vec<Vec<f32>> = (0..pq.num_subvectors)
-                    .map(|subspace| {
+                    .map(|_subspace| {
                         // For now, create placeholder centroids - in production these would be loaded
                         // from the codebook store after training
                         let num_centroids = 1 << pq.bits_per_code;
@@ -853,7 +853,7 @@ impl StorageQuantizationEngine {
     }
     
     /// Get or create PQ codebook for vector
-    fn get_or_create_codebook(&self, quantized_vector: &QuantizedVector) -> Result<Vec<Vec<f32>>> {
+    fn get_or_create_codebook(&self, _quantized_vector: &QuantizedVector) -> Result<Vec<Vec<f32>>> {
         // For now, return a dummy codebook
         // In practice, this would be stored during training
         let subvectors = 8; // Example: 8 subvectors
@@ -1133,7 +1133,7 @@ impl StorageQuantizationEngine {
     
     /// List all cached codebook IDs
     pub fn list_cached_codebooks(&self) -> Vec<String> {
-        self.codebooks.iter().map(|entry| entry.key().clone()).collect()
+        self.codebooks.iter().map(|_entry| _entry.key().clone()).collect()
     }
 }
 

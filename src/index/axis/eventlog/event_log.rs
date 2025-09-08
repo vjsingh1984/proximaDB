@@ -255,7 +255,7 @@ impl EventLogQueue {
     }
 
     /// Check if file can be compacted
-    pub fn can_compact(&self, file_path: &str) -> bool {
+    pub fn can_compact(&self, _file_path: &str) -> bool {
         self.file_status
             .get(&self.collection_id)
             .map(|s| s.ready_for_compaction)

@@ -333,7 +333,7 @@ impl AtomicMetadataStore {
 
                 MetadataOperation::UpdateCollection {
                     collection_id,
-                    metadata,
+                    metadata: _,
                 } => {
                     // Fetch existing metadata and update it
                     let existing = self

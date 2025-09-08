@@ -7,7 +7,6 @@ use crate::storage::engines::core::formats::columnar::ParquetLocation;
 use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_array::array::{BinaryArray, StringArray};
-use parquet::file::reader::FileReader;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};

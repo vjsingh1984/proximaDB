@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use super::flush_handler_trait::{FlushHandler, FlushHandlerFactory};
+use super::flush_handler_trait::FlushHandlerFactory;
 use crate::core::config::CompactionConfig;
 use crate::storage::common::compaction_orchestrator::{GenericFileMetadata, TieredFileRegistry};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -46,11 +46,11 @@ impl StorageEngineType {
     /// Convert from proto StorageEngine enum
     pub fn from_proto(engine: i32) -> Self {
         use crate::proto::proximadb::StorageEngine;
-        match StorageEngine::from_i32(engine) {
-            Some(StorageEngine::Sst) => StorageEngineType::SST,
-            Some(StorageEngine::Viper) => StorageEngineType::VIPER,
-            Some(StorageEngine::Nova) => StorageEngineType::NOVA,
-            Some(StorageEngine::Swift) => StorageEngineType::SWIFT,
+        match StorageEngine::try_from(engine) {
+            Ok(StorageEngine::Sst) => StorageEngineType::SST,
+            Ok(StorageEngine::Viper) => StorageEngineType::VIPER,
+            Ok(StorageEngine::Nova) => StorageEngineType::NOVA,
+            Ok(StorageEngine::Swift) => StorageEngineType::SWIFT,
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }

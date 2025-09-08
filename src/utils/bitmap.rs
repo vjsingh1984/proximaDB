@@ -32,7 +32,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::Write;
 
 /// Error types for bitmap operations
 #[derive(Debug, Clone, PartialEq, Eq)]

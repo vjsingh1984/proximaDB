@@ -226,7 +226,7 @@ pub trait MetadataProvider: Send + Sync {
     async fn delete_collection(&self, collection_id: &str) -> Result<()>;
     
     /// Find collection by name or ID (sync convenience method)
-    fn find_collection(&self, collection_id: &str) -> Option<Collection> {
+    fn find_collection(&self, _collection_id: &str) -> Option<Collection> {
         // Default sync implementation - backends can override
         None
     }
@@ -566,8 +566,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Default implementation returns an error - engines should override
     async fn create_scan(
         &self,
-        collection_id: &str,
-        strategy: crate::storage::unified_scan_strategy::ScanStrategy,
+        _collection_id: &str,
+        _strategy: crate::storage::unified_scan_strategy::ScanStrategy,
         collection_config: Option<&Collection>,
     ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
         // Default implementation - engines should override with their specific implementation

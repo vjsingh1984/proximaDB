@@ -256,7 +256,7 @@ impl EngineMetricsCollector {
 impl MetricsCollector for EngineMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
         let mut values = HashMap::new();
-        let acc = self.accumulated_metrics.read().await;
+        let _acc = self.accumulated_metrics.read().await;
 
         // Collect engine names first, then release the lock
         let engine_names: Vec<String> = {

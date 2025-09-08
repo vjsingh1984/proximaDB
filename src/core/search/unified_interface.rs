@@ -11,10 +11,10 @@ use std::sync::Arc;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use crate::core::search::{InternalSearchResult, SearchParams, SearchResultSet};
+use crate::core::search::{OptimizedSearchRecord, SearchParams, SearchResultSet};
 use crate::services::collection::manager::CollectionService;
 
-/// SearchPlan - High-level search execution plan with optimization metadata.
+/// SearchPlan - High-level search execution plan with optimization metadata
 ///
 /// This structure represents the planning and optimization layer for searches,
 /// containing all metadata needed to make intelligent routing and optimization decisions.
@@ -180,7 +180,7 @@ impl IntegratedSearchOptimizer {
         let selected_engines = self.select_engines(&context, &params).await?;
 
         // 3. Execute search across engines with unified distance computation
-        let mut all_results = Vec::new();
+        let mut all_results: Vec<OptimizedSearchRecord> = Vec::new();
         let mut total_processing_time = 0u64;
 
         for engine in selected_engines {
@@ -193,6 +193,7 @@ impl IntegratedSearchOptimizer {
                 )
                 .await?;
 
+            // Engine results already contain OptimizedSearchRecord
             all_results.extend(engine_results.results.iter().cloned());
             total_processing_time += engine_results.processing_time_us;
         }
@@ -318,7 +319,7 @@ impl IntegratedSearchOptimizer {
     /// Apply unified ranking using semantic distance information
     async fn apply_unified_ranking(
         &self,
-        results: &mut Vec<InternalSearchResult>,
+        results: &mut Vec<OptimizedSearchRecord>,
         params: &SearchParams,
     ) -> Result<()> {
         // Sort by score (higher = better, so reverse order)

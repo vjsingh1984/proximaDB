@@ -15,7 +15,7 @@ pub unsafe fn int8_dot_product_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe 
 
     let len = vec_a.len();
     let chunks = len / 32; // 32 INT8 values per AVX2 register
-    let remainder = len % 32;
+    let _remainder = len % 32;
 
     let mut sum_vec = _mm256_setzero_si256();
 
@@ -29,7 +29,7 @@ pub unsafe fn int8_dot_product_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe 
 
         // VPMADDWD: multiply adjacent pairs and add them
         // This effectively computes: a[0]*b[0] + a[1]*b[1], a[2]*b[2] + a[3]*b[3], etc.
-        let prod_lo = _mm256_maddubs_epi16(a_vec, b_vec); // Actually need different approach for signed
+        let _prod_lo = _mm256_maddubs_epi16(a_vec, b_vec); // Actually need different approach for signed
 
         // For signed INT8, we need to use _mm256_madd_epi16 with proper sign extension
         let a_lo = _mm256_unpacklo_epi8(a_vec, _mm256_cmpgt_epi8(_mm256_setzero_si256(), a_vec));
@@ -76,7 +76,7 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe
 
     let len = vec_a.len();
     let chunks = len / 32;
-    let remainder = len % 32;
+    let _remainder = len % 32;
 
     let mut sum_vec = _mm256_setzero_si256();
 
@@ -114,7 +114,7 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe
     let sum_128_hi = _mm256_extracti128_si256(sum_vec, 1);
     let sum_128 = _mm_add_epi32(sum_128_lo, sum_128_hi);
 
-    let sum_64 = _mm_add_epi32(sum_128, _mm_srli_si128(sum_128, 8));
+    let sum_64 = _mm_add_epi32(sum_128, _mm_srli_si128(sum_128, 8));;
     let sum_32 = _mm_add_epi32(sum_64, _mm_srli_si128(sum_64, 4));
     let mut result = _mm_cvtsi128_si32(sum_32);
 

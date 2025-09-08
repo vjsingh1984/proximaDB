@@ -10,6 +10,7 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
+use parquet::file::reader::{FileReader, SerializedFileReader};
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
     ParquetWriterConfig, QuantizationConfig as ColumnarQuantizationConfig, StreamingParquetWriter,
@@ -408,8 +409,8 @@ impl Compaction {
             let file_data = fs.read(file_path).await?;
             let parquet_bytes = bytes::Bytes::from(file_data);
 
-            let metadata = match parquet::file::footer::parse_metadata(&parquet_bytes) {
-                Ok(metadata) => metadata,
+            let metadata = match SerializedFileReader::new(parquet_bytes) {
+                Ok(reader) => reader.metadata().clone(),
                 Err(e) => {
                     warn!("Failed to parse Parquet metadata for {}: {}", file_path, e);
                     continue;

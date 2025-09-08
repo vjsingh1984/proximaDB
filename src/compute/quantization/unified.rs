@@ -228,7 +228,7 @@ pub enum CodebookData {
         
         /// Dimension of each subvector
         /// Usually original_dim / num_subquantizers
-        subvector_dim: usize,
+        _subvector_dim: usize,
     },
 
     /// Scalar quantization parameters
@@ -322,7 +322,6 @@ impl UnifiedQuantizationEngine {
                 scale: None,
                 offset: None,
             })),
-            QuantizationType::None => None,
         };
 
         Ok(UnifiedQuantizationLevel { level_type })
@@ -618,7 +617,7 @@ impl UnifiedQuantizationEngine {
             },
             data: CodebookData::ProductQuantization {
                 centroids,
-                subvector_dim,
+                _subvector_dim: subvector_dim,
             },
         };
 
@@ -897,7 +896,7 @@ impl UnifiedQuantizationEngine {
     fn quantize_pq(&self, vector: &[f32], codebook: &Codebook) -> Result<QuantizedVector> {
         let CodebookData::ProductQuantization {
             centroids,
-            subvector_dim,
+            _subvector_dim: subvector_dim,
         } = &codebook.data
         else {
             anyhow::bail!("Invalid codebook type for PQ");
@@ -1253,7 +1252,7 @@ impl UnifiedQuantizationEngine {
     fn dequantize_pq(&self, codes: &[u8], codebook: &Codebook, dimension: usize) -> Result<Vec<f32>> {
         let CodebookData::ProductQuantization {
             centroids,
-            subvector_dim,
+            _subvector_dim: subvector_dim,
         } = &codebook.data
         else {
             anyhow::bail!("Invalid codebook type for PQ dequantization");
@@ -1440,7 +1439,7 @@ impl UnifiedQuantizationEngine {
     ) -> Result<SimilarityResult> {
         let CodebookData::ProductQuantization {
             centroids,
-            subvector_dim,
+            _subvector_dim: subvector_dim,
         } = &codebook.data
         else {
             anyhow::bail!("Invalid codebook type for PQ");
@@ -1474,7 +1473,7 @@ impl UnifiedQuantizationEngine {
     ) -> Result<Vec<Vec<f32>>> {
         let CodebookData::ProductQuantization {
             centroids,
-            subvector_dim,
+            _subvector_dim: subvector_dim,
         } = &codebook.data
         else {
             anyhow::bail!("Invalid codebook type for PQ");
@@ -1703,7 +1702,7 @@ impl UnifiedQuantizationEngine {
                 u.scale.unwrap_or(1.0),
                 u.offset.unwrap_or(0.0),
             ),
-            Some(QuantizationLevel::Binary(binary)) => {
+            Some(QuantizationLevel::Binary(_binary)) => {
                 // Binary vectors have dimension encoded in the quantization level
                 // For now, use a reasonable default dimension
                 let dimension = 128; // This should be stored in metadata or config

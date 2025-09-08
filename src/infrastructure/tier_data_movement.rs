@@ -335,7 +335,7 @@ impl TierDataMovement {
         // Use Parquet reader to load vectors
         let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         config.default_fs = Some(path.clone());
-        let filesystem = Arc::new(
+        let _filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::new(config)
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,

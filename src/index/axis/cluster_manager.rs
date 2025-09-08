@@ -38,7 +38,7 @@ impl ClusterManager {
             return Ok(Vec::new());
         }
 
-        let dimension = vectors[0].len();
+        let _dimension = vectors[0].len();
 
         // Determine optimal cluster count
         let k = if self.config.adaptive_cluster_count {
@@ -125,7 +125,7 @@ impl ClusterManager {
             return Ok(());
         }
 
-        let dimension = vectors[0].len();
+        let _dimension = vectors[0].len();
         self.centroids.clear();
         self.cluster_sizes = vec![0; k];
 

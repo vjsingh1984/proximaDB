@@ -631,7 +631,7 @@ impl SstableBloomFilter {
     }
 
     /// Check if key might exist
-    pub fn might_contain_key(&self, key: &str) -> Result<bool> {
+    pub fn might_contain_key(&self, _key: &str) -> Result<bool> {
         // For now, return true conservatively
         // TODO: Implement proper deserialization once strategies are fixed
         Ok(true)

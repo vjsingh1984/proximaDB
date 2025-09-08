@@ -3,7 +3,7 @@
 //! Provides xxHash and FNV-1a implementations for fast hashing of vector IDs.
 //! These are much faster than cryptographic hashes and suitable for ID generation.
 
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 
 /// xxHash64 - extremely fast non-cryptographic hash
 pub struct XxHash64 {

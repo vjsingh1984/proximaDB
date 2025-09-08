@@ -212,7 +212,7 @@ impl AxisHnswIndex {
     /// Get collection configuration based on extraction mode and collection ID
     /// This would normally come from a shared collection cache in production
     fn get_collection_config(
-        collection_id: &Option<String>,
+        _collection_id: &Option<String>,
         dimension: usize,
         extraction_mode: &ExtractionMode,
     ) -> CollectionConfig {
@@ -476,7 +476,7 @@ impl AxisVectorIndex for AxisHnswIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&HashMap<String, String>>, // Metadata filter, not VectorRecord
+        _filter: Option<&HashMap<String, String>>, // Metadata filter, not VectorRecord
     ) -> Result<Vec<(String, f32)>> {
         self.search_with_filter(query, top_k, None).await
     }
@@ -839,7 +839,7 @@ pub fn create_hnsw_index_for_collection(
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
-    // VectorRecord eliminated - using ZeroOverheadVector for 75-96% memory savings
+    use crate::compute::distance_computation::DistanceMetric;
 
     #[tokio::test]
     async fn test_hnsw_basic_operations() {
@@ -850,51 +850,9 @@ mod tests {
         let index = AxisHnswIndex::new(config, 3).unwrap();
 
         // Add test vectors
-        let record1 = VectorRecord {
-            id: "vec1".to_string(),
-            collection_id: "test_collection".to_string(),
-            vector: vec![1.0, 0.0, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-        };
-
-        let record2 = VectorRecord {
-            id: "vec2".to_string(),
-            collection_id: "test_collection".to_string(),
-            vector: vec![0.0, 1.0, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-        };
-
-        let record3 = VectorRecord {
-            id: "vec3".to_string(),
-            collection_id: "test_collection".to_string(),
-            vector: vec![1.0, 1.0, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-        };
-
-        index
-            .add("vec1".to_string(), Arc::new(record1))
-            .await
-            .unwrap();
-        index
-            .add("vec2".to_string(), Arc::new(record2))
-            .await
-            .unwrap();
-        index
-            .add("vec3".to_string(), Arc::new(record3))
-            .await
-            .unwrap();
+        index.add("vec1".to_string(), vec![1.0, 0.0, 0.0]).await.unwrap();
+        index.add("vec2".to_string(), vec![0.0, 1.0, 0.0]).await.unwrap();
+        index.add("vec3".to_string(), vec![1.0, 1.0, 0.0]).await.unwrap();
 
         assert_eq!(index.stats().vector_count, 3);
 
@@ -930,17 +888,7 @@ mod tests {
         ];
 
         for (id, vector) in test_vectors.iter() {
-            let record = VectorRecord {
-                id: id.to_string(),
-                collection_id: "test_collection".to_string(),
-                vector: vector.clone(),
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: None,
-                expires_at: None,
-                version: None,
-            };
-            index.add(id.to_string(), Arc::new(record)).await.unwrap();
+            index.add(id.to_string(), vector.clone()).await.unwrap();
         }
 
         // Search for nearest neighbors to v1
@@ -968,18 +916,8 @@ mod tests {
         // Add enough vectors to create multiple layers
         for i in 0..50 {
             let vector = vec![(i as f32).sin(), (i as f32).cos(), (i as f32 * 0.5).sin()];
-            let record = VectorRecord {
-                id: format!("vec_{}", i),
-                collection_id: "test_collection".to_string(),
-                vector,
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: None,
-                expires_at: None,
-                version: None,
-            };
             index
-                .add(format!("vec_{}", i), Arc::new(record))
+                .add(format!("vec_{}", i), vector)
                 .await
                 .unwrap();
         }
@@ -1004,18 +942,8 @@ mod tests {
 
         // Add vectors in a line to test pruning
         for i in 0..20 {
-            let record = VectorRecord {
-                id: format!("v{}", i),
-                collection_id: "test_collection".to_string(),
-                vector: vec![i as f32, 0.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: None,
-                expires_at: None,
-                version: None,
-            };
             index
-                .add(format!("v{}", i), Arc::new(record))
+                .add(format!("v{}", i), vec![i as f32, 0.0])
                 .await
                 .unwrap();
         }
@@ -1069,27 +997,16 @@ mod tests {
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 2).unwrap();
 
-        let record = VectorRecord {
-            id: "duplicate".to_string(),
-            collection_id: "test_collection".to_string(),
-            vector: vec![1.0, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-        };
-
         // Add the same ID twice
         index
-            .add("duplicate".to_string(), Arc::new(record.clone()))
+            .add("duplicate".to_string(), vec![1.0, 0.0])
             .await
             .unwrap();
         assert_eq!(index.stats().vector_count, 1);
 
         // Adding again should replace
         index
-            .add("duplicate".to_string(), Arc::new(record))
+            .add("duplicate".to_string(), vec![1.0, 0.0])
             .await
             .unwrap();
         assert_eq!(index.stats().vector_count, 1);
