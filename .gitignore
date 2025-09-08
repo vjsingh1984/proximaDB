@@ -79,7 +79,7 @@ yarn-error.log*
 .yarn
 package-lock.json
 yarn.lock
-*.tsbuildinfo
+
 
 # IDE and editor files
 .idea/
@@ -333,3 +333,4 @@ tools/fake-gcs-server
 newcategory.txt
 ml_prompt.txt
 GEMINI.md
+AGENTS.md
