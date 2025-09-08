@@ -512,7 +512,8 @@ mod tests {
                 expires_at: None,
                 version: None,
             }],
-            quantized_block: super::super::quantization_blocks::QuantizedBlock::new(3),
+            // TODO: Fix after quantization_blocks module is available
+            // quantized_block: super::super::quantization_blocks::QuantizedBlock::new(3),
             id_range: ("1".to_string(), "1".to_string()),
             // min_timestamp removed -  0,
             // max_timestamp removed -  0,

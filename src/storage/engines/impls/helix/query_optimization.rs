@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::core::search::InternalSearchResult;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 
 /// Query pattern for tracking and prediction
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +162,7 @@ pub struct SmartResultCache {
 #[derive(Debug, Clone)]
 struct CachedResult {
     /// Search results
-    results: Vec<InternalSearchResult>,
+    results: Vec<OptimizedSearchRecord>,
     /// Cache timestamp
     cached_at: Instant,
     /// Files accessed for this query
@@ -173,7 +174,7 @@ impl SmartResultCache {
     pub fn new(capacity: usize, default_ttl_secs: u64) -> Self {
         Self {
             cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
-                std::num::NonZeroUsize::new(capacity).unwrap()
+                if capacity == 0 { 100 } else { capacity }
             ))),
             invalidation_tracker: Arc::new(RwLock::new(HashMap::new())),
             default_ttl: Duration::from_secs(default_ttl_secs),
@@ -181,7 +182,7 @@ impl SmartResultCache {
     }
 
     /// Get cached result if available and valid
-    pub async fn get(&self, query_hash: u64) -> Option<Vec<InternalSearchResult>> {
+    pub async fn get(&self, query_hash: u64) -> Option<Vec<OptimizedSearchRecord>> {
         let mut cache = self.cache.write().await;
         
         if let Some(cached) = cache.get(&query_hash) {
@@ -203,7 +204,7 @@ impl SmartResultCache {
     pub async fn put(
         &self,
         query_hash: u64,
-        results: Vec<InternalSearchResult>,
+        results: Vec<OptimizedSearchRecord>,
         accessed_files: Vec<String>,
     ) {
         let cached_result = CachedResult {
@@ -348,7 +349,7 @@ impl QueryOptimizer {
         &self,
         query_hash: u64,
         query_hilbert: Option<u64>,
-        results: Vec<InternalSearchResult>,
+        results: Vec<OptimizedSearchRecord>,
         accessed_files: Vec<String>,
         latency_ms: u64,
     ) {
@@ -398,7 +399,7 @@ impl QueryOptimizer {
 /// Query optimization hints
 pub struct QueryOptimizationHints {
     /// Cached result if available
-    pub cached_result: Option<Vec<InternalSearchResult>>,
+    pub cached_result: Option<Vec<OptimizedSearchRecord>>,
     /// Files to prefetch
     pub prefetch_files: Vec<String>,
     /// Whether to use progressive search
@@ -440,25 +441,11 @@ mod tests {
         let cache = SmartResultCache::new(100, 60);
         
         // Cache a result
-        let results = vec![InternalSearchResult {
-            id: "test".to_string(),
-            vector_id: Some("test".to_string()),
-            score: 0.9,
-            similarity: Some(0.1),
-            vector: Some(vec![1.0, 2.0, 3.0]),
-            metadata: HashMap::new(),
-            debug_info: None,
-            version: None,
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            source: None,
-            expanded_context: Vec::new(),
-            semantic_similarity: None,
-            quantization_info: None,
-            engine_stats: None,
-            index_path: None,
-        }];
+        let results = vec![OptimizedSearchRecord::new("test".to_string(), 0.9)
+            .with_similarity(0.1)
+            .with_vector(vec![1.0, 2.0, 3.0])
+            .with_metadata(TypedMetadata::new())
+            .with_version_info(0, 0)];
         
         cache.put(123, results.clone(), vec!["file1.helix".to_string()]).await;
         

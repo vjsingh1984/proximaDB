@@ -651,12 +651,12 @@ mod tests {
         assert_eq!(storage.len(), 1);
 
         // Test get with metrics
-        assert_eq!(storage.get(&key), Some("value1"));
+        assert_eq!(storage.get(&"key1"), Some("value1"));
         let metrics = storage.metrics();
         assert_eq!(metrics.hits, 1);
 
         // Test miss
-        assert_eq!(storage.get(&key), None);
+        assert_eq!(storage.get(&"key2"), None);
         let metrics = storage.metrics();
         assert_eq!(metrics.misses, 1);
 

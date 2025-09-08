@@ -1,0 +1,35 @@
+graph LR
+    subgraph "Zero-Copy Quantization Pipeline"
+        Input[Input Vectors&lt;br/&gt;&amp;[&amp;[f32]]]
+        
+        Input --> Q1[Primary Quantization&lt;br/&gt;No Copy]
+        Input --> Q2[Filter Quantization&lt;br/&gt;No Copy]
+        Input --> Q3[Fast Quantization&lt;br/&gt;No Copy]
+        
+        Q1 --> PQ[PQ Codes]
+        Q2 --> Binary[Binary Sketch]
+        Q3 --> INT8[INT8 Values]
+        
+        PQ --> SQD[StorageQuantizedData]
+        Binary --> SQD
+        INT8 --> SQD
+    end
+    
+    subgraph "Old Approach - With Copies"
+        OldInput[Input Vectors] --> Copy1[to_vec() Copy]
+        Copy1 --> OldQ[Quantization]
+        OldQ --> Result1[Result]
+    end
+    
+    subgraph "New Approach - Zero Copy"
+        NewInput[Input Slices] --> Direct[Direct Slice Usage]
+        Direct --> NewQ[Quantization]
+        NewQ --> Result2[Result]
+    end
+    
+    style Input fill:#90EE90
+    style Q1 fill:#90EE90
+    style Q2 fill:#90EE90
+    style Q3 fill:#90EE90
+    style Direct fill:#90EE90
+    style Copy1 fill:#FFB6C1

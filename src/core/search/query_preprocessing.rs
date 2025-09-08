@@ -95,7 +95,7 @@ impl QueryPreprocessor {
         )));
 
         Self {
-            cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
+            cache: Arc::new(RwLock::new(LruCache::new(cache_size.get()))),
             quantization_engine,
             hardware: get_hardware_capabilities(),
             stats: Arc::new(RwLock::new(CacheStats::default())),

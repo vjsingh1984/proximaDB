@@ -27,7 +27,7 @@
 
 use crate::core::error::{ProximaDBError, StorageError};
 use anyhow::{Result, anyhow};
-use crate::utils::encoding::{base64_encode, base64_decode};
+use crate::utils::encoding::base64_encode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

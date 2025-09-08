@@ -15,6 +15,8 @@ use tracing::debug;
 
 // Use unified components instead of custom implementations
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use crate::core::search::results::{OptimizedSearchRecord, InternalSearchResult};
+use crate::core::metadata_types::TypedMetadata;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::io::zero_copy::{BandwidthOptimizer, ZeroCopyIOSystem};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
@@ -435,7 +437,7 @@ impl RaptorReader {
         top_k: usize,
         collection_id: &str,
         distance_metric: Option<DistanceMetric>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let metric = distance_metric.unwrap_or(DistanceMetric::Cosine);
 
         // Step 1: Matrix Trinity navigation (K×K → P×K → P² matrix pipeline)
@@ -471,14 +473,12 @@ impl RaptorReader {
                 .calculate_distance(query, &vector, &metric);
 
             // DIRECT use of standardized similarity scoring
+            let similarity_score = InternalSearchResult::standardized_distance_to_similarity(similarity_result.raw_value, &metric);
             results.push(
-                crate::core::search::InternalSearchResult::from_distance_standard(
-                    id,
-                    similarity_result.raw_value,
-                    &metric,
-                    Some(vector),
-                    HashMap::new(),
-                ),
+                OptimizedSearchRecord::new(id, similarity_score)
+                    .with_similarity(similarity_score)
+                    .with_vector(vector)
+                    .with_metadata(TypedMetadata::new())
             );
         }
 

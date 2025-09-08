@@ -96,9 +96,9 @@ pub struct UnifiedQuantizationEngine {
     /// Uses SIMD for batch quantization operations
     accelerated: AcceleratedQuantization,
     
-    /// Codebook cache for fast access during sync operations
-    /// LRU cache with configurable size (default: 100 codebooks)
-    codebook_cache: Arc<std::sync::RwLock<std::collections::HashMap<String, Codebook>>>,
+    /// Codebook cache for fast lock-free access in async contexts
+    /// Uses DashMap to prevent runtime blocking (critical for async safety)
+    codebook_cache: Arc<dashmap::DashMap<String, Codebook>>,
 }
 
 /// Trait for codebook storage (can be backed by LSM, VIPER, or external store)
@@ -269,7 +269,7 @@ impl UnifiedQuantizationEngine {
             distance_compute,
             codebook_store,
             accelerated: AcceleratedQuantization::new(),
-            codebook_cache: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            codebook_cache: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -1330,12 +1330,10 @@ impl UnifiedQuantizationEngine {
     }
 
     fn get_cached_codebook(&self, codebook_id: &str) -> Option<Codebook> {
-        // Check codebook cache
+        // Check codebook cache (lock-free, safe for async)
         self.codebook_cache
-            .read()
-            .unwrap()
             .get(codebook_id)
-            .cloned()
+            .map(|entry| entry.clone())
     }
 
     /// Dequantize 4-bit packed values back to f32

@@ -162,8 +162,8 @@ unsafe impl<K: Send, V: Send> Sync for LruCache<K, V> {}
 
 impl<K, V> LruCache<K, V>
 where
-    K: Hash + Eq + Clone,
-    V: Clone,
+    K: Hash + Eq + Clone + 'static,
+    V: Clone + 'static,
 {
     /// Create a new LRU cache with specified capacity
     pub fn new(capacity: usize) -> Self {
@@ -281,7 +281,7 @@ where
 
     /// Remove a key from the cache
     pub fn remove(&mut self, key: &K) -> Option<V> {
-        if let Some(&node_ptr) = self.map.remove(key) {
+        if let Some(node_ptr) = self.map.remove(key) {
             unsafe {
                 let node = Box::from_raw(node_ptr);
                 self.remove_from_list(node_ptr);
@@ -401,15 +401,87 @@ where
 
         keys
     }
+    
+    /// Pop the least recently used item from the cache
+    pub fn pop_lru(&mut self) -> Option<(K, V)> {
+        if let Some(tail_ptr) = self.tail {
+            unsafe {
+                let node = &*tail_ptr;
+                let key = node.key.clone();
+                let value = node.value.clone();
+                self.remove(&key);
+                Some((key, value))
+            }
+        } else {
+            None
+        }
+    }
+    
+    /// Pop a specific key-value pair from the cache
+    pub fn pop(&mut self, key: &K) -> Option<V> {
+        if let Some(&node_ptr) = self.map.get(key) {
+            unsafe {
+                let node = &*node_ptr;
+                let value = node.value.clone();
+                self.remove(key);
+                Some(value)
+            }
+        } else {
+            None
+        }
+    }
+    
+    /// Get mutable reference to a value
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.stats.gets += 1;
+        
+        if let Some(&node_ptr) = self.map.get(key) {
+            unsafe {
+                let node = &mut *node_ptr;
+                
+                // Check if expired
+                if node.is_expired() {
+                    self.remove_node(node_ptr);
+                    self.stats.expirations += 1;
+                    self.stats.misses += 1;
+                    return None;
+                }
+                
+                // Move to front (mark as most recently used)
+                self.move_to_front(node_ptr);
+                self.stats.hits += 1;
+                Some(&mut node.value)
+            }
+        } else {
+            self.stats.misses += 1;
+            None
+        }
+    }
+    
+    /// Create an iterator over cache entries
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
+        self.map.iter().filter_map(move |(k, &node_ptr)| {
+            unsafe {
+                let node = &*node_ptr;
+                if !node.is_expired() {
+                    Some((k, &node.value))
+                } else {
+                    None
+                }
+            }
+        })
+    }
 
     // Internal helper methods
 
     /// Move a node to the front of the list (most recently used)
     unsafe fn move_to_front(&mut self, node_ptr: *mut Node<K, V>) {
-        // Remove from current position
-        self.remove_from_list(node_ptr);
-        // Add to front
-        self.add_to_front(node_ptr);
+        unsafe {
+            // Remove from current position
+            self.remove_from_list(node_ptr);
+            // Add to front
+            self.add_to_front(node_ptr);
+        }
     }
 
     /// Add a node to the front of the list
@@ -495,7 +567,14 @@ where
 
 impl<K, V> Drop for LruCache<K, V> {
     fn drop(&mut self) {
-        self.clear();
+        // Clean up all nodes
+        while let Some(&node_ptr) = self.map.values().next() {
+            unsafe {
+                let node = Box::from_raw(node_ptr);
+                drop(node);
+            }
+        }
+        self.map.clear();
     }
 }
 
@@ -520,8 +599,8 @@ pub struct ThreadSafeLruCache<K, V> {
 
 impl<K, V> ThreadSafeLruCache<K, V>
 where
-    K: Hash + Eq + Clone,
-    V: Clone,
+    K: Hash + Eq + Clone + 'static,
+    V: Clone + 'static,
 {
     /// Create a new thread-safe LRU cache
     pub fn new(capacity: usize) -> Self {

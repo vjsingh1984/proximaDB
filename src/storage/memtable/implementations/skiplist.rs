@@ -102,7 +102,7 @@ where
 
     async fn get(&self, key: &K) -> Result<Option<V>> {
         // Lock-free read operation
-        let result = self.data.get(key).map(|entry| entry.value().clone());
+        let result = self.data.get(key);
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -121,7 +121,7 @@ where
                     break;
                 }
             }
-            results.push((entry.key().clone(), entry.value().clone()));
+            results.push(entry);
         }
 
         // Update metrics
@@ -147,13 +147,13 @@ where
         let keys_to_remove: Vec<K> = self
             .data
             .range(..=threshold)
-            .map(|entry| entry.key().clone())
+            .map(|(key, _)| key)
             .collect();
 
         // Remove entries (each remove is lock-free)
         for key in keys_to_remove {
-            if let Some(entry) = self.data.remove(&key) {
-                let entry_size = Self::estimate_entry_size(entry.key(), entry.value());
+            if let Some(value) = self.data.remove(&key) {
+                let entry_size = Self::estimate_entry_size(&key, &value);
                 removed_size += entry_size;
                 removed_count += 1;
             }
@@ -182,7 +182,7 @@ where
         let results = self
             .data
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .map(|entry| entry)
             .collect();
 
         Ok(results)
@@ -210,7 +210,7 @@ where
         let mut results = Vec::with_capacity(keys.len());
 
         for key in keys {
-            let value = self.data.get(key).map(|entry| entry.value().clone());
+            let value = self.data.get(key);
             results.push((key.clone(), value));
         }
 
@@ -233,13 +233,13 @@ where
                 Box::new(self.data.range(from..))
             };
 
-        for entry in iter {
+        for (key, value) in iter {
             if let Some(limit) = limit {
                 if results.len() >= limit {
                     break;
                 }
             }
-            results.push((entry.key().clone(), entry.value().clone()));
+            results.push((key, value));
         }
 
         Ok(results)

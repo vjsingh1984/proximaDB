@@ -77,8 +77,8 @@ impl FilterOptimizer {
                 result = bitmap;
             } else {
                 match op {
-                    FilterOperator::And => result &= bitmap,
-                    FilterOperator::Or => result |= bitmap,
+                    FilterOperator::And => result &= &bitmap,
+                    FilterOperator::Or => result |= &bitmap,
                     FilterOperator::Not => result -= &bitmap,
                     _ => {}
                 }

@@ -41,7 +41,6 @@ mod tests;
 #[path = "tests/integration_tests.rs"]
 mod integration_tests;
 
-use crate::core::search::InternalSearchResult;
 use crate::core::VectorRecord;
 use crate::services::EventLog;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
@@ -603,7 +602,7 @@ impl UnifiedStorageEngine for HelixEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &StorageQueryContext,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let k = ctx.top_k();
         let distance_metric = ctx.distance_metric();
         debug!("HELIX search started with k={}", k);

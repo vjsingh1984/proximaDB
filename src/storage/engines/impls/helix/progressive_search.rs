@@ -10,7 +10,7 @@ use tracing::{debug, info};
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::search::InternalSearchResult;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::{SStableMetadata, HelixConfig};
@@ -46,7 +46,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<dyn FileSystem>,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         info!(
             "Starting progressive search for k={} across {} SSTables",
             k,
@@ -134,7 +134,7 @@ impl ProgressiveSearchCoordinator {
         distance_metric: DistanceMetric,
         filesystem: &Arc<dyn FileSystem>,
         quant_engine: &Arc<StorageQuantizationEngine>,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut candidates = Vec::new();
         
         // Stage 2: Binary quantization for ultra-fast filtering
@@ -196,7 +196,7 @@ impl ProgressiveSearchCoordinator {
         distance_metric: DistanceMetric,
         filesystem: &Arc<dyn FileSystem>,
         quantization_level: UnifiedQuantizationLevel,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut all_results = Vec::new();
         
         for sstable in sstables {
@@ -223,11 +223,11 @@ impl ProgressiveSearchCoordinator {
     async fn refine_with_quantization(
         &self,
         query_vector: &[f32],
-        candidates: Vec<InternalSearchResult>,
+        candidates: Vec<OptimizedSearchRecord>,
         k: usize,
         distance_metric: DistanceMetric,
         quantization_level: UnifiedQuantizationLevel,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut refined = Vec::new();
         
         for mut candidate in candidates {
@@ -254,10 +254,10 @@ impl ProgressiveSearchCoordinator {
     async fn final_fp32_rerank(
         &self,
         query_vector: &[f32],
-        candidates: Vec<InternalSearchResult>,
+        candidates: Vec<OptimizedSearchRecord>,
         k: usize,
         distance_metric: DistanceMetric,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut final_results = Vec::new();
         
         for mut candidate in candidates {
@@ -295,7 +295,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<dyn FileSystem>,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut all_results = Vec::new();
         
         for sstable in sstables {
@@ -327,7 +327,7 @@ impl ProgressiveSearchCoordinator {
         distance_metric: DistanceMetric,
         filesystem: &Arc<dyn FileSystem>,
         quantization_level: &UnifiedQuantizationLevel,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // This is a simplified version - in production, would read
         // quantized vectors from SSTable blocks
         super::readers::search_sstable(

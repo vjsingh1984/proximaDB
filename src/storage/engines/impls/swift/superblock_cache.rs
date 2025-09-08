@@ -277,7 +277,7 @@ impl SwiftSuperBlockCache {
             superblock_cache: Arc::new(DashMap::new()),
             tree_navigation_cache: Arc::new(DashMap::new()),
             datablock_cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
-                std::num::NonZeroUsize::new(datablock_cache_size).unwrap_or(std::num::NonZeroUsize::new(100).unwrap())
+                if datablock_cache_size == 0 { 100 } else { datablock_cache_size }
             ))),
             datablock_ttl_sec,
             bloom_filter_cache: Arc::new(DashMap::new()),

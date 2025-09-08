@@ -111,11 +111,6 @@ impl UnifiedStorageEngine for MockStorageEngine {
         panic!("Mock engine doesn't have filesystem factory")
     }
 
-    fn get_collection_service(
-        &self,
-    ) -> Option<&crate::services::collection::manager::CollectionService> {
-        None
-    }
 }
 
 /// Create test vector

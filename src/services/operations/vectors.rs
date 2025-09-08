@@ -693,10 +693,16 @@ impl VectorOperationsService {
         );
 
         // Call the trait method through the Arc
-        let storage_results = self
+        let optimized_results = self
             .storage_engine
             .search_vectors_unified(&search_context)
             .await?;
+        
+        // Convert OptimizedSearchRecord back to InternalSearchResult for compatibility
+        let storage_results: Vec<crate::core::search::InternalSearchResult> = optimized_results
+            .into_iter()
+            .map(|r| r.to_internal())
+            .collect();
         info!(
             "✅ Stage 2 complete: Found {} vectors from storage",
             storage_results.len()
@@ -872,10 +878,16 @@ impl VectorOperationsService {
         );
 
         // Call the storage engine to perform filtering
-        let results = self
+        let optimized_results = self
             .storage_engine
             .search_vectors_unified(&search_context)
             .await?;
+
+        // Convert OptimizedSearchRecord back to InternalSearchResult for compatibility
+        let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
+            .into_iter()
+            .map(|r| r.to_internal())
+            .collect();
 
         debug!("✅ Metadata filter returned {} results", results.len());
         Ok(results)
@@ -926,10 +938,16 @@ impl VectorOperationsService {
         );
 
         // Call the storage engine to perform search
-        let results = self
+        let optimized_results = self
             .storage_engine
             .search_vectors_unified(&search_context)
             .await?;
+
+        // Convert OptimizedSearchRecord back to InternalSearchResult for compatibility
+        let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
+            .into_iter()
+            .map(|r| r.to_internal())
+            .collect();
 
         debug!("✅ Vector search returned {} results", results.len());
         Ok(results)
@@ -1376,6 +1394,94 @@ impl VectorOperationsService {
 }
 
 // ================================================================================
+// CONVERSION HELPERS: OptimizedSearchRecord to Proto
+// ================================================================================
+
+impl VectorOperationsService {
+    /// Convert OptimizedSearchRecord to proto SearchVectorRecord
+    fn optimized_to_proto(
+        &self,
+        result: &crate::core::search::results::OptimizedSearchRecord,
+        include_vector: bool,
+        include_source: bool,
+    ) -> crate::proto::proximadb::SearchVectorRecord {
+        use crate::proto::proximadb::{SearchVectorRecord, MetadataItem};
+        
+        // Convert TypedMetadata to proto MetadataItems
+        let metadata_items: Vec<MetadataItem> = result.metadata.as_map()
+            .iter()
+            .map(|(key, value)| {
+                use crate::core::metadata_types::MetadataValue;
+                use crate::proto::proximadb::metadata_item::Value;
+                
+                let proto_value = match value {
+                    MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
+                    MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
+                    MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
+                    MetadataValue::Null => None,
+                };
+                
+                MetadataItem {
+                    key: key.clone(),
+                    value: proto_value,
+                }
+            })
+            .collect();
+        
+        SearchVectorRecord {
+            id: result.id.clone(),
+            vector: if include_vector {
+                result.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default()
+            } else {
+                vec![]
+            },
+            metadata: metadata_items,
+            score: result.score,
+            similarity: result.similarity,
+            version: result.version,
+            timestamp: result.timestamp,
+            source: if include_source {
+                result.source.clone()
+            } else {
+                None
+            },
+            expanded_context: if include_source {
+                result.expanded_context.clone()
+            } else {
+                vec![]
+            },
+        }
+    }
+    
+    /// Convert a vector of OptimizedSearchRecords to proto SearchResult
+    pub fn optimized_results_to_proto(
+        &self,
+        results: Vec<crate::core::search::results::OptimizedSearchRecord>,
+        collection_id: &str,
+        include_vector: bool,
+        include_source: bool,
+    ) -> crate::proto::proximadb::SearchResult {
+        let search_vector_records: Vec<_> = results
+            .iter()
+            .enumerate()
+            .map(|(_, result)| {
+                self.optimized_to_proto(
+                    result,
+                    include_vector,
+                    include_source,
+                )
+            })
+            .collect();
+        
+        crate::proto::proximadb::SearchResult {
+            results: search_vector_records,
+            total_found: results.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }
+    }
+}
+
+// ================================================================================
 // MIGRATION EXAMPLE: Before vs After
 // ================================================================================
 
@@ -1385,9 +1491,8 @@ mod migration_example {
 
     /// OLD WAY - Using separate optimizers
     struct OldVectorOperationsService {
-        search_optimizer: crate::query::unified_search_optimizer::UnifiedSearchOptimizer,
-        filter_optimizer:
-            crate::storage::engines::core::ops::metadata_filters::UniversalFilterOptimizer,
+        search_optimizer: crate::query::unified_query_optimizer::UnifiedQueryOptimizer,
+        filter_optimizer: String, // Placeholder for migration example
     }
 
     impl OldVectorOperationsService {

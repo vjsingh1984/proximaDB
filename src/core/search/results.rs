@@ -2,6 +2,7 @@
 
 use crate::compute::distance_computation::engine::SimilarityResult;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::core::metadata_types::TypedMetadata;
 use crate::proto::proximadb::SourceContent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -449,6 +450,171 @@ impl InternalSearchResult {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
+        }
+    }
+}
+
+/// Optimized search record structure with performance improvements
+/// This variant uses Arc for vectors and TypedMetadata for better performance
+#[derive(Debug, Clone, Default)]
+pub struct OptimizedSearchRecord {
+    /// Vector/document identifier
+    pub id: String,
+    /// Alternative identifier field for compatibility
+    pub vector_id: Option<String>,
+    /// Similarity score (higher = more similar)
+    pub score: f32,
+    /// Distance value (lower = more similar, if different from score)  
+    pub similarity: Option<f32>,
+    /// Original vector data (using Arc to avoid cloning)
+    pub vector: Option<Arc<Vec<f32>>>,
+    /// Associated metadata (using TypedMetadata for performance)
+    pub metadata: TypedMetadata,
+    /// Debug information for result
+    pub debug_info: Option<SearchDebugInfo>,
+    /// Version for MVCC
+    pub version: Option<u32>,
+    /// Record timestamp
+    pub timestamp: Option<u32>,
+    /// Update timestamp
+    pub updated_at: Option<u32>,
+    /// TTL expiration timestamp
+    pub expires_at: Option<u32>,
+    /// Original source content
+    pub source: Option<SourceContent>,
+    /// Expanded context for RAG applications
+    pub expanded_context: Vec<SourceContent>,
+    /// Semantic distance information
+    pub semantic_similarity: Option<SimilarityResult>,
+    /// Quantization information
+    pub quantization_info: Option<QuantizationInfo>,
+    /// Engine-specific optimization stats
+    pub engine_stats: Option<EngineStats>,
+    /// Index path for result tracking
+    pub index_path: Option<String>,
+}
+
+// Custom Serialize for OptimizedSearchRecord
+impl Serialize for OptimizedSearchRecord {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Convert to InternalSearchResult for serialization
+        self.clone().to_internal().serialize(serializer)
+    }
+}
+
+// Custom Deserialize for OptimizedSearchRecord
+impl<'de> Deserialize<'de> for OptimizedSearchRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize as InternalSearchResult then convert
+        let internal = InternalSearchResult::deserialize(deserializer)?;
+        Ok(OptimizedSearchRecord::from_internal(internal))
+    }
+}
+
+impl OptimizedSearchRecord {
+    /// Create a new OptimizedSearchRecord with just ID and score
+    pub fn new(id: String, score: f32) -> Self {
+        Self {
+            id,
+            score,
+            ..Default::default()
+        }
+    }
+    
+    /// Create with ID, score and vector
+    pub fn with_vector(id: String, score: f32, vector: Vec<f32>) -> Self {
+        Self {
+            id,
+            score,
+            vector: Some(Arc::new(vector)),
+            ..Default::default()
+        }
+    }
+    
+    /// Create with ID, score and shared vector (Arc)
+    pub fn with_arc_vector(id: String, score: f32, vector: Arc<Vec<f32>>) -> Self {
+        Self {
+            id,
+            score,
+            vector: Some(vector),
+            ..Default::default()
+        }
+    }
+    
+    /// Builder method to add metadata
+    pub fn with_metadata(mut self, metadata: TypedMetadata) -> Self {
+        self.metadata = metadata;
+        self
+    }
+    
+    /// Builder method to add similarity
+    pub fn with_similarity(mut self, similarity: f32) -> Self {
+        self.similarity = Some(similarity);
+        self
+    }
+    
+    /// Builder method to add version info
+    pub fn with_version_info(mut self, version: u32, timestamp: u32) -> Self {
+        self.version = Some(version);
+        self.timestamp = Some(timestamp);
+        self
+    }
+    
+    /// Builder method to add source content
+    pub fn with_source(mut self, source: SourceContent) -> Self {
+        self.source = Some(source);
+        self
+    }
+    
+    /// Convert from InternalSearchResult for migration
+    pub fn from_internal(result: InternalSearchResult) -> Self {
+        Self {
+            id: result.id,
+            vector_id: result.vector_id,
+            score: result.score,
+            similarity: result.similarity,
+            vector: result.vector.map(|v| Arc::new(v)),
+            metadata: TypedMetadata::from_json_map(result.metadata),
+            debug_info: result.debug_info,
+            version: result.version,
+            timestamp: result.timestamp,
+            updated_at: result.updated_at,
+            expires_at: result.expires_at,
+            source: result.source,
+            expanded_context: result.expanded_context,
+            semantic_similarity: result.semantic_similarity,
+            quantization_info: result.quantization_info,
+            engine_stats: result.engine_stats,
+            index_path: result.index_path,
+        }
+    }
+    
+    /// Convert to InternalSearchResult for compatibility
+    pub fn to_internal(self) -> InternalSearchResult {
+        InternalSearchResult {
+            id: self.id,
+            vector_id: self.vector_id,
+            score: self.score,
+            similarity: self.similarity,
+            vector: self.vector.map(|arc| (*arc).clone()),
+            metadata: self.metadata.to_json_map(),
+            debug_info: self.debug_info,
+            version: self.version,
+            timestamp: self.timestamp,
+            updated_at: self.updated_at,
+            expires_at: self.expires_at,
+            source: self.source,
+            expanded_context: self.expanded_context,
+            semantic_similarity: self.semantic_similarity,
+            quantization_info: self.quantization_info,
+            engine_stats: self.engine_stats,
+            index_path: self.index_path,
         }
     }
 }

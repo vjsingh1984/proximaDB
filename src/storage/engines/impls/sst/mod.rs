@@ -164,6 +164,8 @@ pub use writer::SstableWriter;
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
 use crate::core::{SstConfig, VectorRecord};
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
 // use crate::core::serialization::VectorSerializationConfig;  // Not needed
@@ -409,7 +411,49 @@ impl SstEntry {
         }
     }
 
-    /// Convert to SearchResult for search results
+    /// Convert to OptimizedSearchRecord directly for search results
+    pub fn to_optimized_search_result(&self, score: f32) -> OptimizedSearchRecord {
+        let metadata_map: HashMap<String, serde_json::Value> = self
+            .record
+            .metadata
+            .iter()
+            .map(|item| {
+                let value = match &item.value {
+                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        serde_json::Value::Number(
+                            serde_json::Number::from_f64(*n)
+                                .unwrap_or_else(|| serde_json::Number::from(0)),
+                        )
+                    }
+                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    None => serde_json::Value::Null,
+                };
+                (item.key.clone(), value)
+            })
+            .collect();
+
+        let mut search_record = OptimizedSearchRecord::new(self.record.id.clone(), score)
+            .with_similarity(score)
+            .with_vector(self.record.vector.clone())
+            .with_metadata(TypedMetadata::from_json_map(metadata_map));
+
+        if let Some(version) = self.record.version {
+            search_record = search_record.with_version_info(version, self.record.timestamp);
+        }
+
+        if let Some(source) = &self.record.source {
+            search_record = search_record.with_source(source.clone());
+        }
+
+        search_record
+    }
+
+    /// Legacy method for compatibility - converts to InternalSearchResult (deprecated)
     pub fn to_search_result(&self, score: f32) -> crate::core::search::InternalSearchResult {
         crate::core::search::InternalSearchResult {
             id: self.record.id.clone().clone(),
@@ -1422,7 +1466,8 @@ mod block_operations {
         codebook: Option<&crate::compute::quantization::Codebook>,
         enable_int8: bool,
     ) -> Result<()> {
-        // Extract vectors from records
+        // Extract vectors from records 
+        // Note: quantization currently requires owned vectors
         let vectors: Vec<Vec<f32>> = block.records.iter().map(|r| r.vector.clone()).collect();
 
         if vectors.is_empty() {
@@ -2864,7 +2909,7 @@ impl UnifiedStorageEngine for SstStorage {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
-    ) -> anyhow::Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let search_start = std::time::Instant::now();
 
         // Extract parameters from context
@@ -2910,7 +2955,7 @@ impl UnifiedStorageEngine for SstStorage {
                         "⚠️ Failed to get AXIS manager: {}, falling back to direct search",
                         e
                     );
-                    return self
+                    let fallback_results = self
                         .fallback_to_direct_search(
                             ctx,
                             collection_id,
@@ -2923,7 +2968,14 @@ impl UnifiedStorageEngine for SstStorage {
                             include_metadata,
                         )
                         .await
-                        .map_err(|e| anyhow::anyhow!("Fallback search failed: {}", e));
+                        .map_err(|e| anyhow::anyhow!("Fallback search failed: {}", e))?;
+                    
+                    // Return the fallback results directly (assuming they already return OptimizedSearchRecord)
+                    // If the fallback method still returns InternalSearchResult, we need to update it too
+                    return Ok(fallback_results
+                        .into_iter()
+                        .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
+                        .collect());
                 }
             };
 
@@ -3138,17 +3190,23 @@ impl UnifiedStorageEngine for SstStorage {
         // );
         // let result_set = search_engine.search_unified(...).await?;
 
+        // Convert InternalSearchResult to OptimizedSearchRecord
+        // Note: This still needs to convert from InternalSearchResult because the search engine returns that type
+        // TODO: Update the search engine to return OptimizedSearchRecord directly
+        let mut optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+            result_set.results.iter()
+                .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r.clone()))
+                .collect();
+        
         // Filter results based on include_vectors and include_metadata
-        let mut results: Vec<crate::core::search::InternalSearchResult> =
-            result_set.results.iter().cloned().collect();
         if !include_vectors {
-            for result in &mut results {
+            for result in &mut optimized_results {
                 result.vector = None;
             }
         }
         if !include_metadata {
-            for result in &mut results {
-                result.metadata.clear();
+            for result in &mut optimized_results {
+                result.metadata = crate::core::metadata_types::TypedMetadata::new();
             }
         }
 
@@ -3161,19 +3219,19 @@ impl UnifiedStorageEngine for SstStorage {
         info!(
             "🏁 SST Unified Search Completed - Collection: {}, Results: {}/{}, Time: {:.2}ms",
             collection_id,
-            results.len(),
+            optimized_results.len(),
             k,
             total_search_time.as_secs_f32() * 1000.0
         );
 
         // Enhanced result analysis
         debug!("📈 Search Results Analysis:");
-        debug!("  📊 Total results found: {}", results.len());
+        debug!("  📊 Total results found: {}", optimized_results.len());
         debug!("  🎯 Requested top-k: {}", k);
         debug!(
             "  ✅ Results coverage: {:.1}%",
             if k > 0 {
-                (results.len() as f32 / k as f32 * 100.0).min(100.0)
+                (optimized_results.len() as f32 / k as f32 * 100.0).min(100.0)
             } else {
                 0.0
             }
@@ -3184,9 +3242,9 @@ impl UnifiedStorageEngine for SstStorage {
         );
 
         // Log sample results with enhanced details
-        if !results.is_empty() {
+        if !optimized_results.is_empty() {
             debug!("🔍 Sample Results (top 3):");
-            for (i, result) in results.iter().take(3).enumerate() {
+            for (i, result) in optimized_results.iter().take(3).enumerate() {
                 debug!(
                     "  Result {}: id={}, score={:.4}, similarity={:?}, has_vector={}, metadata_fields={}",
                     i + 1,
@@ -3198,11 +3256,11 @@ impl UnifiedStorageEngine for SstStorage {
                 );
 
                 // Log metadata details for first result
-                if i == 0 && !result.metadata.is_empty() {
+                if i == 0 && result.metadata.len() > 0 {
+                    let metadata_map = result.metadata.to_json_map();
                     debug!(
                         "    📋 Metadata sample: {:?}",
-                        result
-                            .metadata
+                        metadata_map
                             .iter()
                             .take(3)
                             .map(|(k, v)| format!("{}={:?}", k, v))
@@ -3221,18 +3279,18 @@ impl UnifiedStorageEngine for SstStorage {
                 "⚠️ Slow search detected: {:.2}ms for collection {} with {} results",
                 total_search_time.as_secs_f32() * 1000.0,
                 collection_id,
-                results.len()
+                optimized_results.len()
             );
         } else if total_search_time.as_millis() < 10 {
             debug!(
                 "🚀 Fast search: {:.2}ms for collection {} with {} results",
                 total_search_time.as_secs_f32() * 1000.0,
                 collection_id,
-                results.len()
+                optimized_results.len()
             );
         }
 
-        Ok(results)
+        Ok(optimized_results)
     }
 
     /// SST-specific engine metrics
@@ -4518,9 +4576,16 @@ impl SstStorage {
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         warn!("🔄 SST: Falling back to direct search implementation");
 
-        // Use the unified search implementation with context
-        self.search_vectors_unified(ctx).await
-            .map_err(|e| SstError::Search(format!("Search failed: {}", e)))
+        // Use the unified search implementation with context and convert back to InternalSearchResult
+        let optimized_results = self.search_vectors_unified(ctx).await
+            .map_err(|e| SstError::Search(format!("Search failed: {}", e)))?;
+        
+        let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
+            .into_iter()
+            .map(|r| r.to_internal())
+            .collect();
+            
+        Ok(results)
     }
 }
 

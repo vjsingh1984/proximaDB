@@ -361,6 +361,99 @@ impl StorageQuantizationEngine {
         Ok(results)
     }
 
+    /// Quantize a batch of vector slices (zero-copy version)
+    /// This avoids cloning vectors and works directly with references
+    pub async fn quantize_batch_slices(
+        &self,
+        vectors: &[&[f32]],
+        ids: Option<&[String]>,
+    ) -> Result<Vec<StorageQuantizedData>> {
+        let mut results = Vec::with_capacity(vectors.len());
+
+        for (i, vector) in vectors.iter().enumerate() {
+            let id = ids
+                .map(|ids| ids[i].clone())
+                .unwrap_or_else(|| format!("vec_{}", i));
+
+            let mut data = StorageQuantizedData {
+                id,
+                primary: None,
+                filter: None,
+                fast: None,
+                dimension: vector.len(),
+                metadata: QuantizationMetadata {
+                    codebook_id: None,
+                    scale: None,
+                    offset: None,
+                    norm: None,
+                },
+            };
+
+            // Generate primary quantization with selected level
+            if let Some(ref level) = self.config.primary_level {
+                // Check if it's a PQ level by examining the internal structure
+                let level_with_codebook = if let Some(QuantizationLevel::Pq(_)) = &level.level_type {
+                    // For PQ levels, use the configured level directly
+                    level.clone()
+                } else {
+                    level.clone()
+                };
+                // Pass slice directly - no conversion needed
+                data.primary = Some(
+                    self.unified_engine
+                        .quantize(vector, &level_with_codebook)
+                        .await?,
+                );
+            }
+
+            // Generate filter quantization
+            if let Some(ref level) = self.config.filter_level {
+                // Pass slice directly - no conversion needed
+                data.filter = Some(self.unified_engine.quantize(vector, level).await?);
+            }
+
+            // Generate fast quantization
+            if let Some(ref level) = self.config.fast_level {
+                // Pass slice directly - no conversion needed
+                data.fast = Some(self.unified_engine.quantize(vector, level).await?);
+            }
+
+            results.push(data);
+        }
+
+        Ok(results)
+    }
+
+    /// Quantize a batch of vector slices with a specific level (zero-copy version)
+    pub async fn quantize_batch_slices_with_level(
+        &self,
+        vectors: &[&[f32]],
+        level: UnifiedQuantizationLevel,
+    ) -> Result<Vec<StorageQuantizedData>> {
+        let mut results = Vec::with_capacity(vectors.len());
+
+        for (i, vector) in vectors.iter().enumerate() {
+            // Pass slice directly - no conversion needed
+            let quantized = self.unified_engine.quantize(vector, &level).await?;
+
+            results.push(StorageQuantizedData {
+                id: format!("vec_{}", i),
+                primary: Some(quantized),
+                filter: None,
+                fast: None,
+                dimension: vector.len(),
+                metadata: QuantizationMetadata {
+                    codebook_id: None,
+                    scale: None,
+                    offset: None,
+                    norm: None,
+                },
+            });
+        }
+
+        Ok(results)
+    }
+
     /// Progressive search through stages
     pub async fn progressive_search(
         &self,

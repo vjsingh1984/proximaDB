@@ -1,0 +1,50 @@
+graph TB
+    subgraph "Search Request Flow"
+        Client[Client Request] --> API[REST/gRPC API]
+        API --> VOS[VectorOperationsService]
+    end
+    
+    subgraph "Storage Engines - Direct OptimizedSearchRecord Creation"
+        VOS --> SST[SST Engine]
+        VOS --> Helix[Helix Engine]
+        VOS --> Viper[Viper Engine]
+        VOS --> Raptor[Raptor Engine]
+        VOS --> Swift[Swift Engine]
+        VOS --> Nova[Nova Engine]
+        VOS --> Prism[Prism Engine]
+        
+        SST --> OSR1[OptimizedSearchRecord]
+        Helix --> OSR2[OptimizedSearchRecord]
+        Viper --> OSR3[OptimizedSearchRecord]
+        Raptor --> OSR4[OptimizedSearchRecord]
+        Swift --> OSR5[OptimizedSearchRecord]
+        Nova --> OSR6[OptimizedSearchRecord]
+        Prism --> OSR7[OptimizedSearchRecord]
+    end
+    
+    subgraph "OptimizedSearchRecord Structure"
+        OSR1 --> ArcVec[Arc&lt;Vec&lt;f32&gt;&gt; Vectors]
+        OSR1 --> TypedMeta[TypedMetadata]
+        OSR1 --> Score[Similarity Score]
+        
+        TypedMeta --> MetaValue[MetadataValue Enum]
+        MetaValue --> String[Arc&lt;str&gt;]
+        MetaValue --> Number[f64]
+        MetaValue --> Bool[bool]
+    end
+    
+    subgraph "Service Boundary Conversion"
+        OSR1 --> ProtoConv[Proto Converter]
+        ProtoConv --> SearchVectorRecord[SearchVectorRecord Proto]
+        SearchVectorRecord --> Response[Client Response]
+    end
+    
+    style OSR1 fill:#90EE90
+    style OSR2 fill:#90EE90
+    style OSR3 fill:#90EE90
+    style OSR4 fill:#90EE90
+    style OSR5 fill:#90EE90
+    style OSR6 fill:#90EE90
+    style OSR7 fill:#90EE90
+    style ArcVec fill:#FFE4B5
+    style TypedMeta fill:#FFE4B5

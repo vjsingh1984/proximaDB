@@ -37,6 +37,8 @@ use crate::storage::engines::core::ops::performance_optimization::{
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
 use crate::core::{String, VectorRecord};
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
@@ -1108,19 +1110,25 @@ impl ViperEngine {
 
         let internal_results = self.search_vectors_unified(&ctx).await?;
 
-        // Convert InternalSearchResult to SearchVectorRecord and wrap in SearchResult
+        // Convert OptimizedSearchRecord to SearchVectorRecord and wrap in SearchResult
         let search_records: Vec<crate::proto::proximadb::SearchVectorRecord> = internal_results
             .into_iter()
-            .map(|r| crate::proto::proximadb::SearchVectorRecord {
-                id: r.id,
-                vector: r.vector.clone().unwrap_or_default(),
-                metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&r.metadata),
-                score: r.score,
-                similarity: r.similarity,
-                version: None,
-                timestamp: None,
-                source: r.source,
-                expanded_context: r.expanded_context,
+            .map(|r| {
+                // Convert OptimizedSearchRecord vector (Arc<Vec<f32>>) to Vec<f32>
+                let vector = r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
+                // Convert TypedMetadata to JSON map for proto conversion
+                let metadata_json = r.metadata.to_json_map();
+                crate::proto::proximadb::SearchVectorRecord {
+                    id: r.id,
+                    vector,
+                    metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata_json),
+                    score: r.score,
+                    similarity: r.similarity,
+                    version: None,
+                    timestamp: None,
+                    source: r.source,
+                    expanded_context: r.expanded_context,
+                }
             })
             .collect();
 
@@ -1528,7 +1536,7 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let search_start = std::time::Instant::now();
 
         // Extract parameters from context
@@ -1821,16 +1829,11 @@ impl UnifiedStorageEngine for ViperEngine {
             .search_vectors(&search_params, &collection_context)
             .await?;
 
-        // Convert SearchVectorRecord to the expected result type
-        let all_results: Vec<crate::core::search::InternalSearchResult> = search_results
+        // Convert SearchVectorRecord to OptimizedSearchRecord directly
+        let all_results: Vec<OptimizedSearchRecord> = search_results
             .into_iter()
-            .map(|r| crate::core::search::InternalSearchResult {
-                id: r.id,
-                vector_id: None,
-                score: r.score,
-                similarity: r.similarity,
-                vector: Some(r.vector),
-                metadata: r.metadata.into_iter().map(|item| {
+            .map(|r| {
+                let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|item| {
                     let value = match item.value {
                         Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
                         Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
@@ -1838,41 +1841,40 @@ impl UnifiedStorageEngine for ViperEngine {
                         None => serde_json::Value::Null,
                     };
                     (item.key, value)
-                }).collect(),
-                debug_info: None,
-                version: r.version,
-                timestamp: r.timestamp,
-                updated_at: None,
-                expires_at: None,
-                source: r.source,
-                expanded_context: r.expanded_context,
-                engine_stats: None,
-                semantic_similarity: None,
-                quantization_info: None,
-                index_path: None,
+                }).collect();
+
+                let mut record = OptimizedSearchRecord::new(r.id, r.score)
+                    .with_vector(r.vector)
+                    .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                
+                if let Some(sim) = r.similarity {
+                    record = record.with_similarity(sim);
+                }
+                
+                if let (Some(version), Some(timestamp)) = (r.version, r.timestamp) {
+                    record = record.with_version_info(version, timestamp);
+                }
+                
+                if let Some(source) = r.source {
+                    record = record.with_source(source);
+                }
+                
+                record
             })
             .collect();
 
-        let result_set = crate::core::search::SearchResultSet {
-            results: Arc::from(all_results.clone()),
-            total_count: all_results.len() as u64,
-            query_id: None,
-            processing_time_us: search_start.elapsed().as_micros() as u64,
-            algorithm: "viper".to_string(),
-            metadata: HashMap::new(),
-        };
         debug!(
             "Search engine returned {} results",
-            result_set.results.len()
+            all_results.len()
         );
-        if !result_set.results.is_empty() {
+        if !all_results.is_empty() {
             trace!(
                 "First result metadata: {:?}",
-                result_set.results[0].metadata
+                all_results[0].metadata
             );
         }
-        // Return the internal search results - conversion to proto happens at service boundary
-        let mut results = result_set.results.to_vec();
+        // Return the optimized search results directly
+        let mut results = all_results;
 
         // Apply include flags at the internal level if needed
         if !include_vectors {
@@ -1882,7 +1884,7 @@ impl UnifiedStorageEngine for ViperEngine {
         }
         if !include_metadata {
             for result in &mut results {
-                result.metadata.clear();
+                result.metadata = TypedMetadata::new();
             }
         }
         // ========================================================================
@@ -1975,7 +1977,7 @@ impl UnifiedStorageEngine for ViperEngine {
 
         // Log columnar-specific insights
         debug!("🗃️  VIPER Columnar Performance Insights:");
-        debug!("  📁 Parquet files accessed: {}", result_set.results.len());
+        debug!("  📁 Parquet files accessed: {}", results.len());
         if total_search_time.as_millis() > 0 {
             let throughput = results.len() as f32 / total_search_time.as_secs_f32();
             debug!("  🚀 Search throughput: {:.1} results/second", throughput);

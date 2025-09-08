@@ -158,11 +158,6 @@ mod tests {
             unimplemented!("Mock filesystem factory not needed for integration tests")
         }
 
-        fn get_collection_service(
-            &self,
-        ) -> Option<&crate::services::collection::manager::CollectionService> {
-            None
-        }
     }
 
     async fn create_test_metrics_components()

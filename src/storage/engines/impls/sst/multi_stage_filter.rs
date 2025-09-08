@@ -642,7 +642,7 @@ mod tests {
             compression_algorithm: crate::core::serialization::CompressionAlgorithm::None,
             // REMOVED: compression_ratio
             metadata_stats:
-                crate::storage::engines::impls::sst::FastLanesDataBlockMetadata::default(),
+                crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata::default(),
             block_bloom_filter: None,
             has_deletes: false,
             quantized_vectors: None,

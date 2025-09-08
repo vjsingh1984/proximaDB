@@ -883,6 +883,7 @@ impl Default for PipelineConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::UnifiedQuantizationLevel;
 
     #[tokio::test]
     async fn test_stage_selection() {

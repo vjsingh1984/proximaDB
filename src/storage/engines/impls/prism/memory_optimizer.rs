@@ -7,7 +7,6 @@ use dashmap::DashMap;
 use crate::utils::cache::LruCache;
 use memmap2::Mmap;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -178,7 +177,7 @@ impl MemoryOptimizedStorage {
             pq_codes: Arc::new(RwLock::new(HashMap::new())),
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
             fp32_cache: Arc::new(RwLock::new(LruCache::new(
-                NonZeroUsize::new(fp32_capacity).unwrap_or(NonZeroUsize::new(100).unwrap()),
+                if fp32_capacity == 0 { 100 } else { fp32_capacity },
             ))),
             filesystem,
             access_stats: Arc::new(AccessStatistics::new()),
@@ -226,14 +225,14 @@ impl MemoryOptimizedStorage {
         // Check FP32 cache first
         {
             let mut cache = self.fp32_cache.write().await;
-            if let Some((vector, timestamp)) = cache.get(id) {
+            if let Some((vector, timestamp)) = cache.get(&id.to_string()) {
                 // Check TTL
                 if timestamp.elapsed().as_secs() < self.config.fp32_cache_ttl_sec {
                     self.access_stats.record_l1_hit();
-                    return Ok(Some(vector.clone()));
+                    return Ok(Some(Arc::clone(vector)));
                 } else {
                     // Expired, remove from cache
-                    cache.pop(id);
+                    cache.pop(&id.to_string());
                 }
             }
         }

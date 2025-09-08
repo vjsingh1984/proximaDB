@@ -66,8 +66,8 @@ impl std::error::Error for SkipListError {}
 
 /// Node in the skip list
 struct Node<K, V> {
-    /// Key for ordering
-    key: K,
+    /// Key for ordering (None for sentinel nodes)
+    key: Option<K>,
     /// Associated value
     value: AtomicPtr<V>,
     /// Array of forward pointers for each level
@@ -89,7 +89,7 @@ impl<K, V> Node<K, V> {
         }
         
         Node {
-            key,
+            key: Some(key),
             value: AtomicPtr::new(value_ptr),
             forward,
             level,
@@ -98,17 +98,14 @@ impl<K, V> Node<K, V> {
     }
 
     /// Create a sentinel head node
-    fn new_head(level: usize) -> Self
-    where
-        K: Default,
-    {
+    fn new_head(level: usize) -> Self {
         let mut forward = Vec::with_capacity(level + 1);
         for _ in 0..=level {
             forward.push(AtomicPtr::new(ptr::null_mut()));
         }
         
         Node {
-            key: K::default(),
+            key: None,
             value: AtomicPtr::new(ptr::null_mut()),
             forward,
             level,
@@ -260,7 +257,7 @@ pub struct SkipListIterator<K, V> {
     /// Skip list reference for validation
     list_ptr: *const SkipList<K, V>,
     /// Phantom data for lifetime management
-    _phantom: PhantomData<&'static (K, V)>,
+    _phantom: PhantomData<(K, V)>,
 }
 
 impl<K, V> SkipListIterator<K, V>
@@ -292,8 +289,10 @@ where
                 
                 // Check if we've reached the end key
                 if let Some(ref end) = self.end_key {
-                    if node.key >= *end {
-                        return None;
+                    if let Some(ref node_key) = node.key {
+                        if node_key >= end {
+                            return None;
+                        }
                     }
                 }
                 
@@ -302,10 +301,12 @@ where
                 
                 // Return current node's data if not marked
                 if !node.is_marked() {
-                    if let Some(value) = node.get_value() {
-                        let key = node.key.clone();
-                        self.current = next;
-                        return Some((key, (*value).clone()));
+                    if let Some(ref key) = node.key {
+                        if let Some(value) = node.get_value() {
+                            let key = key.clone();
+                            self.current = next;
+                            return Some((key, (*value).clone()));
+                        }
                     }
                 }
                 
@@ -335,7 +336,7 @@ pub struct SkipList<K, V> {
 
 impl<K, V> SkipList<K, V>
 where
-    K: Ord + Default + Clone,
+    K: Ord + Clone,
     V: Clone,
 {
     /// Create a new empty skip list
@@ -531,9 +532,34 @@ where
     }
 
     /// Get iterator over elements in a range [start_key, end_key)
-    pub fn range(&self, start_key: &K, end_key: &K) -> SkipListIterator<K, V> {
+    pub fn range_keys(&self, start_key: &K, end_key: &K) -> SkipListIterator<K, V> {
         let start_node = self.find_node(start_key);
         SkipListIterator::new(start_node, Some(end_key.clone()), self)
+    }
+    
+    /// Get iterator over elements using Range syntax (for stdlib compatibility)
+    pub fn range<R>(&self, range: R) -> SkipListIterator<K, V>
+    where
+        R: std::ops::RangeBounds<K>,
+    {
+        use std::ops::Bound;
+        
+        let start_node = match range.start_bound() {
+            Bound::Included(key) | Bound::Excluded(key) => self.find_node(key),
+            Bound::Unbounded => unsafe { (&*self.head).forward_at(0) },
+        };
+        
+        let end_key = match range.end_bound() {
+            Bound::Included(key) => {
+                // For inclusive end, we need to go one past
+                let k = key.clone();
+                Some(k)
+            }
+            Bound::Excluded(key) => Some(key.clone()),
+            Bound::Unbounded => None,
+        };
+        
+        SkipListIterator::new(start_node, end_key, self)
     }
 
     /// Get all keys with a common prefix (for byte keys)
@@ -623,18 +649,18 @@ where
                         continue;
                     }
                     
-                    match curr_node.key.cmp(key) {
-                        Ordering::Less => {
+                    match curr_node.key.as_ref().map(|k| k.cmp(key)) {
+                        Some(Ordering::Less) => {
                             pred = curr;
                             curr = curr_node.forward_at(level);
                         }
-                        Ordering::Equal => {
+                        Some(Ordering::Equal) => {
                             position.found_level = Some(level);
                             position.succs[level] = curr;
                             position.preds[level] = pred;
                             break;
                         }
-                        Ordering::Greater => {
+                        Some(Ordering::Greater) | None => {
                             position.succs[level] = curr;
                             position.preds[level] = pred;
                             break;
@@ -666,10 +692,10 @@ where
                     continue;
                 }
                 
-                match node.key.cmp(key) {
-                    Ordering::Less => current = node.forward_at(0),
-                    Ordering::Equal => return current,
-                    Ordering::Greater => return current,
+                match node.key.as_ref().map(|k| k.cmp(key)) {
+                    Some(Ordering::Less) => current = node.forward_at(0),
+                    Some(Ordering::Equal) => return current,
+                    Some(Ordering::Greater) | None => return current,
                 }
             }
             
@@ -693,7 +719,7 @@ where
 
 impl<K, V> Default for SkipList<K, V>
 where
-    K: Ord + Default + Clone,
+    K: Ord + Clone,
     V: Clone,
 {
     fn default() -> Self {
@@ -703,14 +729,25 @@ where
 
 impl<K, V> Drop for SkipList<K, V> {
     fn drop(&mut self) {
-        self.clear();
-        
-        // Clean up head node
-        if !self.head.is_null() {
-            unsafe {
-                drop(Box::from_raw(self.head));
+        // Clean up all nodes
+        unsafe {
+            let mut current = self.head;
+            while !current.is_null() {
+                let node = &*current;
+                let next = node.forward[0].load(std::sync::atomic::Ordering::Relaxed);
+                drop(Box::from_raw(current));
+                current = next;
             }
         }
+    }
+}
+
+impl<K, V> fmt::Debug for SkipList<K, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SkipList")
+            .field("size", &self.size.load(std::sync::atomic::Ordering::Relaxed))
+            .field("max_level", &self.max_level.load(std::sync::atomic::Ordering::Relaxed))
+            .finish()
     }
 }
 

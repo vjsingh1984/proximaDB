@@ -96,6 +96,9 @@ pub mod enum_packing;
 /// Common utility functions (metadata conversion, vector ops, validation)
 pub mod utils;
 
+/// Strongly-typed metadata structures for performance optimization
+pub mod metadata_types;
+
 #[cfg(test)]
 mod config_tests;
 

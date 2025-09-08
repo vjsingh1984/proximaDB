@@ -56,9 +56,7 @@ struct RowGroupCache {
 impl RowGroupCache {
     fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
-                std::num::NonZeroUsize::new(100).unwrap(),
-            ))),
+            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(100))),
             current_size: Arc::new(RwLock::new(0)),
             max_size,
         }

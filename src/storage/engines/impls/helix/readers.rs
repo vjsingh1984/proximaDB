@@ -10,7 +10,8 @@ use tracing::{debug, info, trace, warn, error};
 use futures::future::join_all;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::InternalSearchResult;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
@@ -67,7 +68,7 @@ pub async fn search_sstable(
     distance_metric: &DistanceMetric,
     filter: Option<Arc<dyn Fn(&HashMap<String, String>) -> bool + Send + Sync>>,
     candidate_ids: Option<&[String]>,  // Optional IDs to check via bloom filter
-) -> Result<Vec<InternalSearchResult>> {
+) -> Result<Vec<OptimizedSearchRecord>> {
     // Check bloom filter if candidate IDs provided
     if let Some(ids) = candidate_ids {
         if !ids.is_empty() && sstable.bloom_filter.is_some() {
@@ -168,25 +169,11 @@ pub async fn search_sstable(
                 .sum::<f32>()
                 .sqrt();
             
-            results.push(InternalSearchResult {
-                id: record.id.clone(),
-                vector_id: Some(record.id),
-                score: 1.0 / (1.0 + distance), // Convert distance to similarity score
-                similarity: Some(distance),
-                vector: Some(record.vector),
-                metadata: HashMap::new(), // TODO: Convert record.metadata properly
-                debug_info: None,
-                version: None,
-                timestamp: Some(record.timestamp as u32),
-                updated_at: None,
-                expires_at: None,
-                source: None,
-                expanded_context: Vec::new(),
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
-            });
+            results.push(OptimizedSearchRecord::new(record.id.clone(), 1.0 / (1.0 + distance))
+                .with_similarity(distance)
+                .with_vector(record.vector)
+                .with_metadata(TypedMetadata::new()) // TODO: Convert record.metadata properly
+                .with_version_info(record.version.unwrap_or(0), record.timestamp as u32));
         }
     }
     
@@ -278,7 +265,7 @@ pub async fn parallel_search(
     k: usize,
     distance_metric: DistanceMetric,
     filter: Option<Arc<dyn Fn(&HashMap<String, String>) -> bool + Send + Sync>>,
-) -> Result<Vec<InternalSearchResult>> {
+) -> Result<Vec<OptimizedSearchRecord>> {
     if sstables.is_empty() {
         return Ok(Vec::new());
     }
@@ -373,7 +360,7 @@ pub async fn search_with_stats(
     query_hilbert_key: Option<u64>,
     k: usize,
     distance_metric: &DistanceMetric,
-) -> Result<(Vec<InternalSearchResult>, QueryStats)> {
+) -> Result<(Vec<OptimizedSearchRecord>, QueryStats)> {
     let mut stats = QueryStats::default();
     let mut results = Vec::new();
     

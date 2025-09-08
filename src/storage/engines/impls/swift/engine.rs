@@ -20,6 +20,8 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
@@ -674,7 +676,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn search_vectors_unified(
         &self,
         _ctx: &crate::storage::traits::StorageQueryContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let search_start = std::time::Instant::now();
 
         // Extract all parameters from context (pre-computed)
@@ -751,9 +753,9 @@ impl UnifiedStorageEngine for SwiftEngine {
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
 
-        // Convert to InternalSearchResult format
+        // Convert to OptimizedSearchRecord format directly
         let results_len = all_results.len();
-        let search_results: Vec<crate::core::search::InternalSearchResult> = all_results
+        let search_results: Vec<OptimizedSearchRecord> = all_results
             .into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
@@ -765,47 +767,42 @@ impl UnifiedStorageEngine for SwiftEngine {
                         crate::proto::proximadb::DistanceMetric::Euclidean,
                     );
 
-                crate::core::search::InternalSearchResult {
-                    id: if record.id.is_empty() {
-                        format!("unknown_{}", idx)
-                    } else {
-                        record.id.clone()
-                    },
-                    vector_id: None,
-                    score: similarity_result.normalized_score,
-                    similarity: Some(similarity_result.normalized_score),
-                    vector: Some(record.vector),
-                    semantic_similarity: Some(similarity_result.clone()),
-                    quantization_info: None,
-                    metadata: record
-                        .metadata
-                        .into_iter()
-                        .map(|item| {
-                            let value = match &item.value {
-                                Some(
-                                    crate::proto::proximadb::metadata_item::Value::StringValue(s),
-                                ) => serde_json::Value::String(s.clone()),
-                                Some(
-                                    crate::proto::proximadb::metadata_item::Value::NumberValue(n),
-                                ) => serde_json::json!(n),
-                                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(
-                                    b,
-                                )) => serde_json::Value::Bool(*b),
-                                None => serde_json::Value::Null,
-                            };
-                            (item.key, value)
-                        })
-                        .collect(),
-                    debug_info: None,
-                    version: record.version,
-                    timestamp: Some(record.timestamp),
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
-                    expanded_context: Vec::new(),
-                    engine_stats: None,
-                    index_path: None,
+                let id = if record.id.is_empty() {
+                    format!("unknown_{}", idx)
+                } else {
+                    record.id.clone()
+                };
+
+                let metadata_map: HashMap<String, serde_json::Value> = record
+                    .metadata
+                    .into_iter()
+                    .map(|item| {
+                        let value = match &item.value {
+                            Some(
+                                crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                            ) => serde_json::Value::String(s.clone()),
+                            Some(
+                                crate::proto::proximadb::metadata_item::Value::NumberValue(n),
+                            ) => serde_json::json!(n),
+                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(
+                                b,
+                            )) => serde_json::Value::Bool(*b),
+                            None => serde_json::Value::Null,
+                        };
+                        (item.key, value)
+                    })
+                    .collect();
+
+                let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                    .with_similarity(similarity_result.normalized_score)
+                    .with_vector(record.vector)
+                    .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                
+                if let Some(version) = record.version {
+                    search_record = search_record.with_version_info(version, record.timestamp);
                 }
+                
+                search_record
             })
             .collect();
 
@@ -815,7 +812,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             timer.set_bytes_processed(bytes_processed as u64);
         }
 
-        // Return InternalSearchResult - proto conversion happens at service boundary
+        // Return OptimizedSearchRecord directly
         Ok(search_results)
     }
 
@@ -962,7 +959,7 @@ impl SwiftEngine {
         top_k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
         _filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         tracing::warn!("🔄 SWIFT: Falling back to direct search implementation");
 
         // Use the existing search implementation
@@ -992,8 +989,8 @@ impl SwiftEngine {
         all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         all_results.truncate(top_k);
 
-        // Convert to InternalSearchResult format natively
-        let search_results: Vec<crate::core::search::InternalSearchResult> = all_results
+        // Convert to OptimizedSearchRecord format directly
+        let search_results: Vec<OptimizedSearchRecord> = all_results
             .into_iter()
             .enumerate()
             .map(|(idx, (record, distance))| {
@@ -1025,29 +1022,22 @@ impl SwiftEngine {
                     })
                     .collect();
 
-                crate::core::search::InternalSearchResult {
-                    id: if record.id.is_empty() {
-                        format!("unknown_{}", idx)
-                    } else {
-                        record.id.clone()
-                    },
-                    vector_id: Some(record.id.clone()),
-                    score: similarity_result.normalized_score,
-                    similarity: Some(similarity_result.normalized_score),
-                    vector: Some(record.vector.clone()),
-                    metadata,
-                    version: record.version,
-                    timestamp: Some(record.timestamp),
-                    updated_at: record.updated_at,
-                    expires_at: record.expires_at,
-                    source: None,
-                    expanded_context: Vec::new(),
-                    semantic_similarity: Some(similarity_result),
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None, // SWIFT doesn't use traditional index paths
-                    debug_info: None,
+                let id = if record.id.is_empty() {
+                    format!("unknown_{}", idx)
+                } else {
+                    record.id.clone()
+                };
+
+                let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                    .with_similarity(similarity_result.normalized_score)
+                    .with_vector(record.vector.clone())
+                    .with_metadata(TypedMetadata::from_json_map(metadata));
+
+                if let Some(version) = record.version {
+                    search_record = search_record.with_version_info(version, record.timestamp);
                 }
+                
+                search_record
             })
             .collect();
 

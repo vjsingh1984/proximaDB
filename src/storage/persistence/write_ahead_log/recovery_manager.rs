@@ -975,9 +975,6 @@ mod tests {
                 &self.filesystem_factory
             }
 
-            fn get_collection_service(&self) -> Option<&CollectionService> {
-                None
-            }
         }
 
         // Create a filesystem factory for the mock

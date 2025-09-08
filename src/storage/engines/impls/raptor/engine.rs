@@ -13,7 +13,8 @@ use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::RaptorRe
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
-use crate::core::search::InternalSearchResult;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::TypedMetadata;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult,
     StorageQueryContext, UnifiedStorageEngine,
@@ -39,8 +40,8 @@ use crate::storage::engines::core::ops::performance_optimization::{
 };
 // VectorMemoryPool now managed by universal optimizer
 
-/// Vector search result for compatibility - using unified InternalSearchResult
-type VectorSearchResult = InternalSearchResult;
+/// Vector search result for compatibility - using OptimizedSearchRecord
+type VectorSearchResult = OptimizedSearchRecord;
 
 /// RAPTOR Engine - Row-Aligned Predicated Tensor Optimized Repository
 ///
@@ -634,12 +635,12 @@ impl RaptorEngine {
         k: usize,
         filter: Option<HashMap<String, String>>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // Use clustering for efficient rowgroup pruning
         let selected_rowgroups = self.select_rowgroups_by_clustering(query).await?;
 
         // Use Matrix Trinity for candidate selection
-        let candidates: Vec<InternalSearchResult> = if self.config.enable_clustering {
+        let candidates: Vec<OptimizedSearchRecord> = if self.config.enable_clustering {
             // Use clustered search with Matrix Trinity
             self.clustered_search(query, k * 2, selected_rowgroups, distance_metric)
                 .await?
@@ -710,7 +711,7 @@ impl RaptorEngine {
         k: usize,
         selected_rowgroups: Vec<u32>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut all_results = Vec::new();
 
         for rg_id in selected_rowgroups {
@@ -739,13 +740,11 @@ impl RaptorEngine {
                 let id = self.get_id_from_batch(&batch, i)?;
 
                 // Use standardized distance-to-similarity conversion for consistent ranking
-                let search_result = InternalSearchResult::from_distance_standard(
-                    id,
-                    *distance,
-                    distance_metric, // Pass the distance metric for proper conversion
-                    None,            // vector
-                    HashMap::new(),  // metadata
-                );
+                use crate::core::search::results::InternalSearchResult; // For the static method
+                let similarity_score = InternalSearchResult::standardized_distance_to_similarity(*distance, distance_metric);
+                let search_result = OptimizedSearchRecord::new(id, similarity_score)
+                    .with_similarity(similarity_score)
+                    .with_metadata(TypedMetadata::new());
 
                 all_results.push(search_result);
             }
@@ -1314,13 +1313,11 @@ impl RaptorEngine {
                 let id = self.get_id_from_batch(&batch, i)?;
 
                 // Use standardized distance-to-similarity conversion for consistent ranking
-                let search_result = InternalSearchResult::from_distance_standard(
-                    id,
-                    *distance,
-                    distance_metric, // Pass the distance metric for proper conversion
-                    None,            // vector
-                    HashMap::new(),  // metadata
-                );
+                use crate::core::search::results::InternalSearchResult; // For the static method
+                let similarity_score = InternalSearchResult::standardized_distance_to_similarity(*distance, distance_metric);
+                let search_result = OptimizedSearchRecord::new(id, similarity_score)
+                    .with_similarity(similarity_score)
+                    .with_metadata(TypedMetadata::new());
 
                 all_results.push(search_result);
             }
@@ -1741,7 +1738,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &StorageQueryContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         // Extract all parameters from enhanced context (pre-computed)
         let collection_id = ctx.collection_id();
         let storage_path = ctx.storage_path();
@@ -1787,7 +1784,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             }
         };
 
-        // Return InternalSearchResult directly
+        // Return OptimizedSearchRecord directly
         Ok(results)
     }
 

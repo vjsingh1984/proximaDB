@@ -325,10 +325,11 @@ impl UniversalDistanceAdapter {
             .await?;
 
         // Execute progressive refinement pipeline
-        let refinement_config = request.refinement_config.unwrap_or_else(|| {
-            // Convert from config module's type to progressive_refinement module's type
+        let refinement_config = if let Some(config) = request.refinement_config {
+            self.convert_refinement_config(&config)
+        } else {
             self.convert_refinement_config(&self.config.progressive_refinement)
-        });
+        };
 
         let refinement_result = self
             .refinement_pipeline

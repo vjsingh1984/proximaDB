@@ -7,7 +7,6 @@
 use anyhow::Result;
 use crate::utils::cache::LruCache;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -98,7 +97,7 @@ impl DecompressionCache {
             .max(config.min_size_mb); // Apply minimum
 
         let max_size_bytes = max_size_mb * 1024 * 1024;
-        let capacity = NonZeroUsize::new(1000).unwrap(); // Start with 1000 entries
+        let capacity = 1000; // Start with 1000 entries
 
         info!(
             "🗂️ SST Decompression Cache initialized: max_size={}MB, prefetch={}, ttl={}s",

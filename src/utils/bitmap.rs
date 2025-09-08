@@ -126,9 +126,9 @@ impl Container {
                 if cardinality < 4096 {
                     // Convert to array container
                     let mut array = ArrayContainer::new();
-                    for i in 0..65536u16 {
-                        if bitmap.contains(i) {
-                            array.insert(i);
+                    for i in 0u32..65536 {
+                        if bitmap.contains(i as u16) {
+                            array.insert(i as u16);
                         }
                     }
                     Container::Array(array)
@@ -160,9 +160,9 @@ impl Container {
             // Simplified handling for run containers
             (a, b) => {
                 let mut result = a.clone();
-                for i in 0..65536u16 {
-                    if b.contains(i) {
-                        result.insert(i);
+                for i in 0u32..65536 {
+                    if b.contains(i as u16) {
+                        result.insert(i as u16);
                     }
                 }
                 result.optimize()
@@ -192,9 +192,9 @@ impl Container {
             // Simplified handling for run containers
             (a, b) => {
                 let mut result = ArrayContainer::new();
-                for i in 0..65536u16 {
-                    if a.contains(i) && b.contains(i) {
-                        result.insert(i);
+                for i in 0u32..65536 {
+                    if a.contains(i as u16) && b.contains(i as u16) {
+                        result.insert(i as u16);
                     }
                 }
                 Container::Array(result)
@@ -251,6 +251,10 @@ impl ArrayContainer {
 
     fn cardinality(&self) -> u32 {
         self.values.len() as u32
+    }
+    
+    fn len(&self) -> usize {
+        self.values.len()
     }
 
     fn union(&self, other: &ArrayContainer) -> ArrayContainer {
@@ -871,11 +875,67 @@ impl RoaringBitmap {
         
         Ok(bitmap)
     }
+    
+    /// Get the serialized size of the bitmap in bytes
+    pub fn serialized_size(&self) -> usize {
+        // Header: 4 bytes for cookie, 4 bytes for container count
+        let mut size = 8;
+        
+        // For each container: 2 bytes for key, 2 bytes for cardinality minus 1, container data
+        for (_, container) in &self.containers {
+            size += 4; // key + cardinality
+            
+            match container {
+                Container::Array(array) => {
+                    // Array container: 2 bytes per value
+                    size += array.len() * 2;
+                }
+                Container::Bitmap(_bitmap) => {
+                    // Bitmap container: always 8KB (65536 bits / 8)
+                    size += 8192;
+                }
+                Container::Run(run) => {
+                    // Run container: 2 bytes per run (start + length)
+                    size += run.runs.len() * 4;
+                }
+            }
+        }
+        
+        size
+    }
+    
+    /// Compute the intersection with another bitmap (alias for intersect)
+    pub fn and(&self, other: &RoaringBitmap) -> RoaringBitmap {
+        self.intersect(other)
+    }
+    
+    /// Compute the union with another bitmap (alias for union)
+    pub fn or(&self, other: &RoaringBitmap) -> RoaringBitmap {
+        self.union(other)
+    }
 }
 
 impl Default for RoaringBitmap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::ops::BitAndAssign<&RoaringBitmap> for RoaringBitmap {
+    fn bitand_assign(&mut self, rhs: &RoaringBitmap) {
+        *self = self.and(rhs);
+    }
+}
+
+impl std::ops::BitOrAssign<&RoaringBitmap> for RoaringBitmap {
+    fn bitor_assign(&mut self, rhs: &RoaringBitmap) {
+        *self = self.or(rhs);
+    }
+}
+
+impl std::ops::SubAssign<&RoaringBitmap> for RoaringBitmap {
+    fn sub_assign(&mut self, rhs: &RoaringBitmap) {
+        *self = self.difference(rhs);
     }
 }
 

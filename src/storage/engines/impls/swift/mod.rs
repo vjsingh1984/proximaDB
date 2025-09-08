@@ -300,6 +300,7 @@ impl SwiftFile {
             let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
 
             // Build quantized representations for the block
+            // Note: quantize_batch requires owned vectors for now
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
 
             // Use quantization engine if provided to quantize vectors
@@ -445,6 +446,7 @@ impl SwiftFile {
             let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
 
             // Build quantized representations for the block
+            // Note: quantize_batch requires owned vectors for now
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
             // TODO: Implement quantization using unified engine
             // block.quantized_section = Some(engine.quantize_batch(&vectors, config)?);

@@ -534,7 +534,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     async fn search_vectors_unified(
         &self,
         ctx: &StorageQueryContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>>;
 
     /// Compact a specific collection's data
     /// Returns standard CompactionResult - engines can add vector tracking in engine_metrics

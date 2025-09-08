@@ -535,11 +535,6 @@ mod integration_tests {
             panic!("Mock engine doesn't have filesystem factory")
         }
 
-        fn get_collection_service(
-            &self,
-        ) -> Option<&crate::services::collection::manager::CollectionService> {
-            None
-        }
     }
 
     #[tokio::test]

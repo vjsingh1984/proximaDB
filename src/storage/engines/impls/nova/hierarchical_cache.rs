@@ -249,9 +249,9 @@ impl NovaHierarchicalCache {
         // Check cache
         {
             let mut cache = self.block_cache.write().await;
-            if let Some(stats) = cache.get(block_id) {
+            if let Some(stats) = cache.get(&block_id.to_string()) {
                 self.cache_stats.block_hits.fetch_add(1, Ordering::Relaxed);
-                return Ok(stats.clone());
+                return Ok(Arc::clone(stats));
             }
         }
 

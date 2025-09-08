@@ -145,11 +145,6 @@ mod tests {
             unimplemented!("Mock filesystem factory not needed for tests")
         }
 
-        fn get_collection_service(
-            &self,
-        ) -> Option<&crate::services::collection::manager::CollectionService> {
-            None
-        }
     }
 
     fn create_test_context(

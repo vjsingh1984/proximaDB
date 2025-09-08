@@ -603,6 +603,7 @@ impl ModularBlockReader {
 
             // Extract the specific record
             if let Some(record) = data_block.records.get(record_idx) {
+                // TODO: Optimize - return reference or Arc
                 Ok(record.vector.clone())
             } else {
                 Err(anyhow::anyhow!(
@@ -649,6 +650,7 @@ impl ModularBlockReader {
                     score: distance.rank_value, // Use rank_value for consistent ordering
                     similarity: Some(distance.normalized_score), // Use normalized_score [0,1]
                     // rank removed -  None,
+                    // TODO: Optimize - use Arc<Vec<f32>> to avoid cloning
                     vector: Some(record.vector.clone()),
                     metadata: HashMap::new(), // TODO: Convert metadata
                     debug_info: None,
@@ -2371,6 +2373,7 @@ impl UnifiedSstableReader {
                     score: similarity.rank_value, // Use rank_value for consistent ordering
                     similarity: Some(similarity.normalized_score), // normalized_score [0,1]
                     // rank removed -  None,
+                    // TODO: Optimize - use Arc<Vec<f32>> to avoid cloning
                     vector: Some(record.vector.clone()),
                     vector_id: Some(record.id.clone()),
                     metadata: self.metadata_items_to_json(&record.metadata),
@@ -3247,6 +3250,7 @@ impl UnifiedSstableReader {
 
                     return Ok(Some(VectorRecord {
                         id: record.id.clone(),
+                        // TODO: Optimize - use Arc to avoid clone
                         vector: record.vector.clone(),
                         metadata: metadata_items,
                         timestamp: record.timestamp,

@@ -265,6 +265,10 @@ path = "benches/flush_optimization_bench.rs"
 [[bench]]
 name = "optimization_benchmarks"
 harness = false
+
+[[bench]]
+name = "vector_optimization_bench"
+harness = false
 path = "benches/optimization_benchmarks.rs"
 
 [[bench]]

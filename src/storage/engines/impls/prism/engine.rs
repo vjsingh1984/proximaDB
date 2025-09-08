@@ -404,7 +404,7 @@ impl PrismEngine {
             .map(|(id_str, score)| {
                 use crate::utils::uuid::Uuid;
                 CandidateVector {
-                    id: Uuid::parse_str(&id_str).unwrap_or(Uuid::nil()),
+                    id: Uuid::parse(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
                     data: Vec::new(),
                     original_vector: None,
                     metadata: None,
@@ -754,15 +754,13 @@ impl PrismEngine {
             .await
             .map_err(|e| anyhow!("Universal adapter search failed: {}", e))?;
 
-        // Convert results to expected format
-        let search_results = result
+        // Return results as (Uuid, f32) tuples
+        Ok(result
             .vector_ids
             .into_iter()
             .zip(result.results.into_iter())
             .map(|(id, sim_result)| (id, sim_result.rank_value))
-            .collect();
-
-        Ok(search_results)
+            .collect())
     }
 
     /// Load candidate vectors from PRISM storage (placeholder implementation)
@@ -1105,7 +1103,7 @@ impl UnifiedStorageEngine for PrismEngine {
     async fn search_vectors_unified(
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         // Extract all parameters from context (pre-computed)
         let collection_id = ctx.collection_id();
         let storage_path = ctx.storage_path();

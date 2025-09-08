@@ -3,7 +3,16 @@
 //! This module provides shared bitmap infrastructure that can be used across
 //! all storage engines, cache layers, and query optimization components.
 
-pub mod roaring_bitmap;
+// Use internal bitmap implementation instead of duplicate
+pub use crate::utils::bitmap::{RoaringBitmap, BitmapError};
 
-// Re-export main types for convenient access
-pub use roaring_bitmap::{BitmapIndexStats, RoaringBitmap, RoaringBitmapIndex};
+// Additional bitmap types if needed
+#[derive(Debug, Clone, Default)]
+pub struct BitmapIndexStats {
+    pub total_bitmaps: usize,
+    pub total_bytes: usize,
+    pub compression_ratio: f64,
+}
+
+// Placeholder for RoaringBitmapIndex if needed
+pub type RoaringBitmapIndex = RoaringBitmap;

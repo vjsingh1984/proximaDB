@@ -443,6 +443,7 @@ impl SstableWriter {
             .flat_map(|block| block.records.clone())
             .collect::<Vec<_>>();
 
+        // Note: Some operations still require owned vectors
         let all_vectors: Vec<Vec<f32>> = vector_records.iter().map(|r| r.vector.clone()).collect();
 
         // TODO: Re-implement quantization using unified engine
