@@ -836,8 +836,7 @@ impl MultiServer {
                 crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
 
             // Apply compression if enabled
-            // Compression disabled by default (field doesn't exist in config)
-            let grpc_service = if false {
+            let grpc_service = if self.config.grpc_config.compression {
                 use tonic::codec::CompressionEncoding;
                 info!("🗜️  gRPC compression enabled (gzip)");
                 grpc_service

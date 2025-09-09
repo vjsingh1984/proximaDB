@@ -20,6 +20,9 @@ service ProximaDB {
   rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);       // Search via gRPC
   rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);             // Get single vector by ID
   
+  // SQL execution - minimal, wire-efficient response
+  rpc ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse);
+  
   // Health and monitoring
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
@@ -103,6 +106,50 @@ message MetadataItem {
     // e.g., repeated string array_value = 5;
     // e.g., google.protobuf.Struct object_value = 6;
   }
+}
+
+// ============================================================================
+// SQL EXECUTION (wire-efficient row encoding)
+// ============================================================================
+
+// Simple typed value for SQL parameters and row fields
+message SqlValue {
+  oneof value {
+    string string_value = 1;
+    double number_value = 2;
+    bool bool_value = 3;
+    // Future: bytes bytes_value = 4;
+  }
+}
+
+// Single SQL row field
+message SqlRowField {
+  string key = 1;
+  SqlValue value = 2;
+}
+
+// SQL row with optional similarity score
+message SqlRow {
+  repeated SqlRowField fields = 1;
+  optional float similarity = 2;
+}
+
+message ExecuteSqlRequest {
+  string query = 1;
+  repeated SqlValue parameters = 2;
+  optional string collection = 3;  // Optional collection context
+  optional uint32 limit = 4;        // Optional limit override
+  optional uint32 offset = 5;       // Optional offset override
+}
+
+message ExecuteSqlResponse {
+  repeated SqlRow rows = 1;
+  uint64 rows_scanned = 2;
+  uint64 rows_returned = 3;
+  uint64 execution_time_ms = 4;
+  // Optional column names and simple types for display/clients
+  repeated string columns = 5;
+  repeated string column_types = 6;
 }
 
 // ============================================================================

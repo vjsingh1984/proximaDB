@@ -622,6 +622,17 @@ impl ProximaDb for ProximaDbGrpcService {
             req.top_k
         );
 
+        // Fast path: use pure-protobuf UnifiedHandlers implementation (no JSON on wire)
+        let unified_handlers = crate::api_handlers::UnifiedHandlers::new(
+            self.collection_service.clone(),
+            self.vector_operations_service.clone(),
+        );
+        let response = unified_handlers
+            .handle_vector_search(req)
+            .await
+            .map_err(|e| Status::internal(format!("Vector search failed: {}", e)))?;
+        return Ok(Response::new(response));
+
         let start_time = std::time::Instant::now();
 
         // Extract include fields
