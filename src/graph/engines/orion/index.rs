@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! # NEO Engine Indexing Support
+//! # ORION Engine Indexing Support
 //!
-//! This module provides indexing capabilities for the NEO engine to accelerate
+//! This module provides indexing capabilities for the ORION engine to accelerate
 //! property-based queries and label-based filtering.
 //!
 //! ## Index Types
@@ -91,7 +91,7 @@ pub struct CompositeIndex {
     pub stats: IndexStats,
 }
 
-/// Index manager for NEO engine
+/// Index manager for ORION engine
 #[derive(Debug)]
 pub struct IndexManager {
     /// Node label indexes

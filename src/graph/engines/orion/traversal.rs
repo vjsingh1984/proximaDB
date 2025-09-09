@@ -16,7 +16,7 @@
 
 //! # High-Performance Graph Traversal Algorithms
 //!
-//! This module implements optimized BFS and DFS algorithms designed for the NEO engine's
+//! This module implements optimized BFS and DFS algorithms designed for the ORION engine's
 //! CSR format. Key optimizations include:
 //!
 //! - **Bit Vector Visited Tracking**: 8x faster than HashSet
@@ -28,7 +28,7 @@
 use crate::core::error::{ProximaDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, NodeId};
-use crate::graph::engines::{GraphEngine, neo::NeoGraphEngine};
+use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use std::collections::{VecDeque, HashSet};
 use std::sync::Arc;
 // Using HashSet instead of BitVec for visited tracking
@@ -102,7 +102,7 @@ impl Default for TraversalConfig {
 
 /// High-performance BFS traversal with bit vector visited tracking
 pub async fn breadth_first_search(
-    engine: &NeoGraphEngine,
+    engine: &OrionGraphEngine,
     start_node_id: &NodeId,
     config: TraversalConfig,
 ) -> Result<TraversalResult> {
@@ -246,7 +246,7 @@ pub async fn breadth_first_search(
 
 /// High-performance DFS traversal with iterative implementation
 pub async fn depth_first_search(
-    engine: &NeoGraphEngine,
+    engine: &OrionGraphEngine,
     start_node_id: &NodeId,
     config: TraversalConfig,
 ) -> Result<TraversalResult> {
@@ -383,7 +383,7 @@ pub async fn depth_first_search(
 
 /// Parallel BFS for large graphs with work-stealing
 pub async fn parallel_breadth_first_search(
-    engine: &NeoGraphEngine,
+    engine: &OrionGraphEngine,
     start_node_id: &NodeId,
     config: TraversalConfig,
 ) -> Result<TraversalResult> {
@@ -405,7 +405,7 @@ fn estimate_memory_usage(nodes: &[Arc<Node>], paths: &[Vec<NodeId>]) -> usize {
 
 /// Utility function to find shortest path between two nodes
 pub async fn shortest_path(
-    engine: &NeoGraphEngine,
+    engine: &OrionGraphEngine,
     start_node_id: &NodeId,
     target_node_id: &NodeId,
     config: TraversalConfig,
@@ -435,13 +435,13 @@ pub async fn shortest_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::engines::neo::NeoGraphEngine;
+    use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::{Node, Edge, PropertyValue};
     use crate::proto::proximadb_v1::property_value::Value;
     
     #[tokio::test]
     async fn test_bfs_basic() {
-        let engine = NeoGraphEngine::new();
+        let engine = OrionGraphEngine::new();
         
         // Create test graph: 0 -> 1 -> 2
         let node0 = Node {
@@ -515,7 +515,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_dfs_basic() {
-        let engine = NeoGraphEngine::new();
+        let engine = OrionGraphEngine::new();
         
         // Create test graph: 0 -> 1 -> 2
         let node0 = Node {
@@ -566,7 +566,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_shortest_path() {
-        let engine = NeoGraphEngine::new();
+        let engine = OrionGraphEngine::new();
         
         // Create nodes
         for i in 0..4 {

@@ -44,7 +44,7 @@
 //! - **Memory Efficient**: 60% reduction vs adjacency matrix
 //! - **Cache Friendly**: Sequential access for traversal operations
 //! - **SIMD Ready**: Can vectorize operations on target arrays
-//! - **Parallel Safe**: Multiple threads can read simultaneously
+//! - **Parallel Safe**: Multiple threads can read simultaorionusly
 
 use crate::core::error::{ProximaDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;

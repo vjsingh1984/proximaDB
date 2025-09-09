@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! # NEO Graph Engine - In-Memory CSR Format
+//! # ORION Graph Engine - In-Memory CSR Format
 //!
-//! NEO (Named Entity Operations) is ProximaDB's high-performance in-memory graph engine
+//! ORION (Named Entity Operations) is ProximaDB's high-performance in-memory graph engine
 //! optimized for real-time traversal operations using Compressed Sparse Row (CSR) format.
 //!
 //! ## Performance Characteristics
@@ -37,7 +37,7 @@
 //!
 //! ```text
 //! ┌──────────────────────────────────────────┐
-//! │              NEO Engine                  │
+//! │              ORION Engine                  │
 //! ├──────────────────────────────────────────┤
 //! │  Nodes: DashMap<NodeId, Arc<Node>>       │
 //! ├──────────────────────────────────────────┤
@@ -68,9 +68,9 @@ use std::collections::HashMap;
 use dashmap::DashMap;
 use tokio::sync::RwLock;
 
-/// NEO Graph Engine with CSR format for high-performance traversal
+/// ORION Graph Engine with CSR format for high-performance traversal
 #[derive(Debug)]
-pub struct NeoGraphEngine {
+pub struct OrionGraphEngine {
     /// Shared memory pool for Arc-based zero-copy architecture
     memory_pool: Arc<GraphMemoryPool>,
     
@@ -104,8 +104,8 @@ pub struct EngineStats {
     pub total_traversal_time_microseconds: u64,
 }
 
-impl NeoGraphEngine {
-    /// Create a new NEO graph engine
+impl OrionGraphEngine {
+    /// Create a new ORION graph engine
     pub fn new() -> Self {
         Self {
             memory_pool: Arc::new(GraphMemoryPool::new()),
@@ -118,7 +118,7 @@ impl NeoGraphEngine {
         }
     }
     
-    /// Create a new NEO graph engine with shared memory pool
+    /// Create a new ORION graph engine with shared memory pool
     pub fn with_memory_pool(memory_pool: Arc<GraphMemoryPool>) -> Self {
         Self {
             memory_pool,
@@ -252,7 +252,7 @@ impl NeoGraphEngine {
     }
 }
 
-impl GraphEngine for NeoGraphEngine {
+impl GraphEngine for OrionGraphEngine {
     fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
         let node_arc = self.memory_pool.insert_node(node);
         
@@ -330,7 +330,7 @@ impl GraphEngine for NeoGraphEngine {
         
         // Add to CSR structures (async task to avoid blocking)
         tokio::spawn({
-            let engine = NeoGraphEngine {
+            let engine = OrionGraphEngine {
                 memory_pool: Arc::clone(&self.memory_pool),
                 csr_outgoing: Arc::clone(&self.csr_outgoing),
                 csr_incoming: Arc::clone(&self.csr_incoming),
@@ -369,7 +369,7 @@ impl GraphEngine for NeoGraphEngine {
         if let Some(old_edge) = self.memory_pool.remove_edge(&edge_id) {
             // Remove from CSR (async)
             tokio::spawn({
-                let engine = NeoGraphEngine {
+                let engine = OrionGraphEngine {
                     memory_pool: Arc::clone(&self.memory_pool),
                     csr_outgoing: Arc::clone(&self.csr_outgoing),
                     csr_incoming: Arc::clone(&self.csr_incoming),
@@ -399,7 +399,7 @@ impl GraphEngine for NeoGraphEngine {
         if let Some(ref edge) = removed {
             // Remove from CSR (async)
             tokio::spawn({
-                let engine = NeoGraphEngine {
+                let engine = OrionGraphEngine {
                     memory_pool: Arc::clone(&self.memory_pool),
                     csr_outgoing: Arc::clone(&self.csr_outgoing),
                     csr_incoming: Arc::clone(&self.csr_incoming),
@@ -511,7 +511,7 @@ impl GraphEngine for NeoGraphEngine {
     }
 }
 
-impl Default for NeoGraphEngine {
+impl Default for OrionGraphEngine {
     fn default() -> Self {
         Self::new()
     }
@@ -524,15 +524,15 @@ mod tests {
     use crate::graph::PropertyValue;
     
     #[tokio::test]
-    async fn test_neo_engine_creation() {
-        let engine = NeoGraphEngine::new();
+    async fn test_orion_engine_creation() {
+        let engine = OrionGraphEngine::new();
         assert_eq!(engine.node_count().unwrap(), 0);
         assert_eq!(engine.edge_count().unwrap(), 0);
     }
     
     #[tokio::test]
     async fn test_node_operations() {
-        let engine = NeoGraphEngine::new();
+        let engine = OrionGraphEngine::new();
         
         let node = Node {
             id: "node1".to_string(),
@@ -563,7 +563,7 @@ mod tests {
     
     #[tokio::test]
     async fn test_edge_operations() {
-        let engine = NeoGraphEngine::new();
+        let engine = OrionGraphEngine::new();
         
         // Create nodes first
         let node1 = Node {

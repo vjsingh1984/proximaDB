@@ -59,7 +59,7 @@ use crate::core::error::ProximaDBError;
 use crate::graph::{
     Node, Edge, NodeId, EdgeId, GraphMemoryPool, OperationMode,
     TraversalRequest, TraversalResponse, NodeQuery, EdgeQuery,
-    engines::{GraphEngine, neo::NeoGraphEngine}
+    engines::{GraphEngine, orion::OrionGraphEngine}
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -72,7 +72,7 @@ pub struct GraphService {
     mode: OperationMode,
     
     /// Primary graph engine (ORION for in-memory operations)
-    engine: Arc<NeoGraphEngine>,
+    engine: Arc<OrionGraphEngine>,
     
     /// Shared memory pool for Arc-based zero-copy operations
     memory_pool: Arc<GraphMemoryPool>,
@@ -85,7 +85,7 @@ impl GraphService {
     /// Create a new GraphService in unified mode
     pub fn new() -> Self {
         let memory_pool = Arc::new(GraphMemoryPool::new());
-        let engine = Arc::new(NeoGraphEngine::new());
+        let engine = Arc::new(OrionGraphEngine::new());
         
         Self {
             mode: OperationMode::Unified,

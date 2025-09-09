@@ -24,7 +24,7 @@
 //! - **Proto-First**: All data structures flow natively as protobuf types
 //! - **Arc-Based Sharing**: Zero-copy memory sharing between vector and graph engines
 //! - **CSR Format**: Compressed Sparse Row format for ultra-efficient edge storage
-//! - **Modular Engines**: NEO (in-memory), TITAN (distributed), MERCURY (hybrid)
+//! - **Modular Engines**: ORION (in-memory), PULSAR (distributed), QUASAR (hybrid)
 //!
 //! ## Performance Characteristics
 //!
@@ -42,7 +42,7 @@
 //! ├─────────────────────────────────────┤
 //! │              Engines                │
 //! │  ┌─────────┬─────────┬───────────┐  │
-//! │  │   NEO   │  TITAN  │  MERCURY  │  │
+//! │  │  ORION  │ PULSAR  │  QUASAR   │  │
 //! │  │(Memory) │(Distrib)│ (Hybrid)  │  │
 //! │  └─────────┴─────────┴───────────┘  │
 //! ├─────────────────────────────────────┤
@@ -62,7 +62,7 @@ pub mod service;
 // pub mod query;
 
 // Re-export public types
-pub use engines::neo::NeoGraphEngine;
+pub use engines::orion::OrionGraphEngine;
 pub use service::GraphService;
 
 // Export proto types for convenience

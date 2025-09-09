@@ -18,15 +18,15 @@
 //!
 //! ProximaDB implements multiple graph storage engines optimized for different workloads:
 //!
-//! - **NEO**: In-memory CSR format for real-time traversal (1M+ edges/sec)
-//! - **TITAN**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
-//! - **MERCURY**: Hybrid hot/cold tiering for cost optimization [Phase 3]
+//! - **ORION**: In-memory CSR format for real-time traversal (1M+ edges/sec)
+//! - **PULSAR**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
+//! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
 
-pub mod neo;
+pub mod orion;
 
 // Future engines (Phase 2 & 3)
-// pub mod titan;   // Distributed graph engine
-// pub mod mercury; // Hybrid hot/cold tiering
+// pub mod pulsar;  // Distributed graph engine
+// pub mod quasar;  // Hybrid hot/cold tiering
 
 use crate::core::error::{ProximaDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
