@@ -19,6 +19,7 @@ try:
     import grpc
     from .. import proximadb_pb2 as pb2
     from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
+    from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -147,6 +148,50 @@ class ProximaDBSyncGrpcClient:
             return {"status": response.status, "message": "Server is healthy"}
         
         return self._execute_with_pool("health_check", _health_operation)
+
+    # SQL (v1)
+    def execute_sql(self, query: str, parameters: Optional[list] = None, collection: Optional[str] = None):
+        """Execute SQL via proximadb.v1.SqlService.ExecuteSql
+
+        Args:
+            query: SQL text
+            parameters: Optional list of simple values (str|float|bool)
+            collection: Optional default collection context
+        Returns:
+            ExecuteSqlResponse as dict-like (via proto object fields)
+        """
+        def _sql_operation(channel):
+            stub = v1_sql_pb2_grpc.SqlServiceStub(channel)
+            # Build ExecuteSqlRequest using proximadb_pb2 messages
+            req = pb2.ExecuteSqlRequest(query=query)
+            if parameters:
+                for p in parameters:
+                    sv = pb2.SqlValue()
+                    if isinstance(p, bool):
+                        sv.bool_value = p
+                    elif isinstance(p, (int, float)):
+                        sv.number_value = float(p)
+                    else:
+                        sv.string_value = str(p)
+                    req.parameters.append(sv)
+            if collection:
+                req.collection = collection
+            resp = stub.ExecuteSql(req, timeout=self.timeout)
+            # Return as a simple dict for convenience
+            return {
+                "rows": [
+                    {f.key: (f.value.string_value or f.value.number_value or f.value.bool_value)
+                     for f in row.fields}
+                    for row in resp.rows
+                ],
+                "rows_scanned": resp.rows_scanned,
+                "rows_returned": resp.rows_returned,
+                "execution_time_ms": resp.execution_time_ms,
+                "columns": list(resp.columns),
+                "column_types": list(resp.column_types),
+            }
+
+        return self._execute_with_pool("execute_sql", _sql_operation)
     
     # Collection Operations - Unified Interface  
     def create_collection(

@@ -62,5 +62,26 @@ Response (fields abridged)
 
 == gRPC (planned)
 
-- `ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse)` defined in protobuf for wire‑efficient execution. Handler wiring follows after codegen.
+- gRPC: `proximadb.v1.SqlService/ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse)`
 
+== Graph Constructs in SQL
+
+SQL can express graph operations using functions/clauses that the SqlService lowers to GraphService calls internally. Examples:
+
+- FOLLOW/TRAVERSE semantics (illustrative):
+----
+SELECT id
+FROM FOLLOW(start => 'user_123', rel => 'FOLLOWS', depth => 2)
+WHERE label = 'User';
+----
+
+- Hybrid vector + graph (illustrative):
+----
+SELECT n.id
+FROM SIMILAR(table => 'docs', vec => $1, top_k => 10) AS s
+JOIN FOLLOW(start => s.id, rel => 'CITES', depth => 1) AS n
+WHERE n.label = 'Paper'
+LIMIT 20;
+----
+
+Note: The above are examples of SQL surface syntax; actual lowering uses the existing planner to call GraphService and VectorService as needed.

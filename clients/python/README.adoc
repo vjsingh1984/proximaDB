@@ -55,6 +55,21 @@ client.create_collection(
 
 # Insert vectors via VectorBatch (build pb2.VectorBatchRequest in higher-level helpers)
 # See unified_client or batching helpers for convenience wrappers.
+
+== SQL over gRPC (v1)
+
+[source,python]
+----
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+
+client = ProximaDBSyncGrpcClient("localhost:5679")
+resp = client.execute_sql(
+    query="SELECT id FROM docs ORDER BY COSINE_DISTANCE(vector, $1) LIMIT 5",
+    parameters=[[0.1,0.2,0.3,0.4,0.5]],
+    collection="docs"
+)
+print(resp["rows"])  # list of dicts
+----
 ----
 
 // REST client references are being refactored; prefer gRPC for v1.
