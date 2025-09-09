@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "proximadb/v1/vector_types.proto"; // reuse enums
+
+message CollectionConfig {
+  string name = 1;
+  uint32 dimension = 2;
+  uint32 distance_metric = 3; // use enum value from vector_types
+  uint32 storage_engine = 4;  // use enum value from vector_types
+  repeated string tags = 5;
+  optional string description = 6;
+}
+
+message CollectionStats {
+  int64 vector_count = 1;
+  int64 index_size_bytes = 2;
+  int64 data_size_bytes = 3;
+}
+
+message Collection {
+  string id = 1;
+  CollectionConfig config = 2;
+  CollectionStats stats = 3;
+  int64 created_at = 4;
+  int64 updated_at = 5;
+}
+
+message GetCollectionRequest {
+  string collection_id = 1; // name or ID
+}
+
+message ListCollectionsRequest {
+  optional uint32 limit = 1;
+  optional uint32 offset = 2;
+  optional bool include_stats = 3;
+}
+
+message ListCollectionsResponse {
+  repeated Collection collections = 1;
+}
+
+message DeleteCollectionRequest {
+  string collection_id = 1;
+}
+
+message DeleteCollectionResponse {
+  bool success = 1;
+}
+

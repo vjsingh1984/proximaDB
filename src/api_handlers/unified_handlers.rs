@@ -444,6 +444,53 @@ impl UnifiedHandlers {
             .await
     }
 
+    /// v1 wrapper: accept v1::VectorSearchRequest, convert to legacy, delegate, and return legacy response
+    pub async fn handle_vector_search_v1(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> Result<VectorOperationResponse> {
+        let legacy = VectorSearchRequest {
+            collection_id: request.collection_id.clone(),
+            queries: request
+                .queries
+                .into_iter()
+                .map(|q| crate::proto::proximadb::SearchQuery { vector: q.vector, metadata_filter: None })
+                .collect(),
+            top_k: request.top_k,
+            include_fields: request.include_fields.map(|f| crate::proto::proximadb::IncludeFields { vector: f.vector, metadata: f.metadata }),
+            search_params: None,
+            distance_metric_override: request.distance_metric_override,
+            search_optimization: None,
+        };
+        self.handle_vector_search(legacy).await
+    }
+
+    /// v1 wrapper: accept v1::VectorBatchRequest, convert to legacy, delegate, and return legacy response
+    pub async fn handle_vector_batch_v1(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+    ) -> Result<VectorOperationResponse> {
+        let legacy = crate::proto::proximadb::VectorBatchRequest {
+            collection_id: request.collection_id.clone(),
+            vectors: request
+                .vectors
+                .into_iter()
+                .map(|v| crate::proto::proximadb::VectorRecord {
+                    id: v.id,
+                    vector: v.vector,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: v.timestamp,
+                    updated_at: v.updated_at,
+                    expires_at: v.expires_at,
+                    version: v.version,
+                    quantized_vector: v.quantized_vector,
+                    source: v.source,
+                })
+                .collect(),
+        };
+        self.handle_vector_batch(legacy).await
+    }
+
     /// Get a single vector by ID
     pub async fn handle_vector(
         &self,

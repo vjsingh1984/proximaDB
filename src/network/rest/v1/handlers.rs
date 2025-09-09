@@ -59,24 +59,10 @@ pub async fn vector_search(
         return Err(ApiError::InvalidArgument("At least one query is required".to_string()));
     }
     
-    // Convert v1 request to legacy for internal handling
-    let legacy_req = crate::proto::proximadb::VectorSearchRequest {
-        collection_id: request.collection_id.clone(),
-        queries: request
-            .queries
-            .into_iter()
-            .map(|q| crate::proto::proximadb::SearchQuery { vector: q.vector, metadata_filter: None })
-            .collect(),
-        top_k: request.top_k,
-        include_fields: request.include_fields.map(|f| crate::proto::proximadb::IncludeFields { vector: f.vector, metadata: f.metadata }),
-        search_params: None,
-        distance_metric_override: request.distance_metric_override,
-        search_optimization: None,
-    };
-
-    let response = state
+    // Delegate to UnifiedHandlers v1 wrapper
+    let response_legacy = state
         .unified_handlers
-        .handle_vector_search(legacy_req)
+        .handle_vector_search_v1(request)
         .await
         .map_err(|e| {
             error!("Vector search failed: {}", e);
@@ -85,9 +71,9 @@ pub async fn vector_search(
 
     // Map legacy response to v1
     let v1_resp = V1VectorOperationResponse {
-        success: response.success,
-        operation: response.operation,
-        metrics: response.metrics.map(|m| v1::OperationMetrics {
+        success: response_legacy.success,
+        operation: response_legacy.operation,
+        metrics: response_legacy.metrics.map(|m| v1::OperationMetrics {
             total_processed: m.total_processed,
             successful_count: m.successful_count,
             failed_count: m.failed_count,
@@ -96,7 +82,7 @@ pub async fn vector_search(
             wal_write_time_us: m.wal_write_time_us,
             index_update_time_us: m.index_update_time_us,
         }),
-        results: response.results.map(|r| v1::SearchResult {
+        results: response_legacy.results.map(|r| v1::SearchResult {
             results: r.results.into_iter().map(|rec| v1::SearchVectorRecord {
                 id: rec.id,
                 score: rec.score,
@@ -107,9 +93,9 @@ pub async fn vector_search(
             total_found: r.total_found,
             collection_id: r.collection_id,
         }),
-        vector_ids: response.vector_ids,
-        error_message: response.error_message,
-        error_code: response.error_code,
+        vector_ids: response_legacy.vector_ids,
+        error_message: response_legacy.error_message,
+        error_code: response_legacy.error_code,
     };
 
     Ok(JsonResponse(v1_resp))
@@ -135,29 +121,9 @@ pub async fn vector_batch(
         return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
     }
     
-    // Convert to legacy for internal handling
-    let legacy = crate::proto::proximadb::VectorBatchRequest {
-        collection_id: request.collection_id.clone(),
-        vectors: request
-            .vectors
-            .into_iter()
-            .map(|v| crate::proto::proximadb::VectorRecord {
-                id: v.id,
-                vector: v.vector,
-                metadata: std::collections::HashMap::new(),
-                timestamp: v.timestamp,
-                updated_at: v.updated_at,
-                expires_at: v.expires_at,
-                version: v.version,
-                quantized_vector: v.quantized_vector,
-                source: v.source,
-            })
-            .collect(),
-    };
-
-    let response = state
+    let response_legacy = state
         .unified_handlers
-        .handle_vector_batch(legacy)
+        .handle_vector_batch_v1(request)
         .await
         .map_err(|e| {
             error!("Vector batch operation failed: {}", e);
@@ -165,9 +131,9 @@ pub async fn vector_batch(
         })?;
 
     let v1_resp = V1VectorOperationResponse {
-        success: response.success,
-        operation: response.operation,
-        metrics: response.metrics.map(|m| v1::OperationMetrics {
+        success: response_legacy.success,
+        operation: response_legacy.operation,
+        metrics: response_legacy.metrics.map(|m| v1::OperationMetrics {
             total_processed: m.total_processed,
             successful_count: m.successful_count,
             failed_count: m.failed_count,
@@ -176,7 +142,7 @@ pub async fn vector_batch(
             wal_write_time_us: m.wal_write_time_us,
             index_update_time_us: m.index_update_time_us,
         }),
-        results: response.results.map(|r| v1::SearchResult {
+        results: response_legacy.results.map(|r| v1::SearchResult {
             results: r.results.into_iter().map(|rec| v1::SearchVectorRecord {
                 id: rec.id,
                 score: rec.score,
@@ -187,9 +153,9 @@ pub async fn vector_batch(
             total_found: r.total_found,
             collection_id: r.collection_id,
         }),
-        vector_ids: response.vector_ids,
-        error_message: response.error_message,
-        error_code: response.error_code,
+        vector_ids: response_legacy.vector_ids,
+        error_message: response_legacy.error_message,
+        error_code: response_legacy.error_code,
     };
 
     Ok(JsonResponse(v1_resp))

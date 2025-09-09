@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "proximadb/v1/collection_types.proto";
+
+service CollectionService {
+  rpc CreateCollection(CollectionConfig) returns (Collection);
+  rpc GetCollection(GetCollectionRequest) returns (Collection);
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc DeleteCollection(DeleteCollectionRequest) returns (DeleteCollectionResponse);
+}
+

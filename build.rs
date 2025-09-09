@@ -43,6 +43,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/vector.proto",
                 "proto/proximadb/v1/types.proto",
                 "proto/proximadb/v1/vector_types.proto",
+                "proto/proximadb/v1/collection_types.proto",
+                "proto/proximadb/v1/collection.proto",
                 "proto/proximadb/v1/sql.proto",
             ],
             &["proto"],
@@ -55,5 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/types.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/sql.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/vector_types.proto");
+    debug!("cargo:rerun-if-changed=proto/proximadb/v1/collection_types.proto");
+    debug!("cargo:rerun-if-changed=proto/proximadb/v1/collection.proto");
     Ok(())
 }

@@ -853,6 +853,19 @@ impl MultiServer {
             }
             server_builder = server_builder.add_service(sql_service);
 
+            // Add versioned CollectionService (v1)
+            let col_service_impl = crate::network::grpc::collection_service::CollectionServiceImpl::new(
+                services.unified_handlers.clone(),
+            );
+            let mut col_service = crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(col_service_impl);
+            if self.config.grpc_config.compression {
+                use tonic::codec::CompressionEncoding;
+                col_service = col_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
+            server_builder = server_builder.add_service(col_service);
+
             // Add GraphService for native graph database operations
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service = crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(graph_service_impl);

@@ -10,6 +10,7 @@ pub mod entity_service;
 pub mod graph_service;
 pub mod vector_service;
 pub mod sql_service;
+pub mod collection_service;
 
 // Re-export the entity service for SKS
 pub use entity_service::EntityServiceImpl;
