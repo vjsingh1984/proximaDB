@@ -44,12 +44,16 @@ Python example:
 [source,python]
 ----
 import grpc
-from proximadb.v1 import collection_pb2_grpc, collection_types_pb2
+from proximadb.v1 import collection_pb2_grpc, collection_types_pb2, vector_types_pb2
 
 channel = grpc.insecure_channel('localhost:5679')
 stub = collection_pb2_grpc.CollectionServiceStub(channel)
-cfg = collection_types_pb2.CollectionConfig(name='docs', dimension=768, distance_metric=1, storage_engine=1)
+cfg = collection_types_pb2.CollectionConfig(
+  name='docs',
+  dimension=768,
+  distance_metric=vector_types_pb2.COSINE,
+  storage_engine=vector_types_pb2.VIPER
+)
 resp = stub.CreateCollection(cfg)
 print(resp.id)
 ----
-

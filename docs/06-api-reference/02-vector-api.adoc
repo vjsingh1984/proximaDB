@@ -64,3 +64,6 @@ for r in resp.results.results:
     print(r.id, r.score)
 ----
 
+Enums:
+- DistanceMetric: COSINE, EUCLIDEAN, DOT_PRODUCT, ...
+- StorageEngine: VIPER, SST, NOVA, HELIX, SWIFT

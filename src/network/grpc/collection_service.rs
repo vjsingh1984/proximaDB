@@ -129,4 +129,3 @@ impl CollectionService for CollectionServiceImpl {
         Ok(Response::new(proximadb_v1::DeleteCollectionResponse { success: true }))
     }
 }
-

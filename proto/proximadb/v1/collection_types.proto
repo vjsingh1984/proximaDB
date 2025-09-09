@@ -7,8 +7,8 @@ import "proximadb/v1/vector_types.proto"; // reuse enums
 message CollectionConfig {
   string name = 1;
   uint32 dimension = 2;
-  uint32 distance_metric = 3; // use enum value from vector_types
-  uint32 storage_engine = 4;  // use enum value from vector_types
+  DistanceMetric distance_metric = 3;
+  StorageEngine storage_engine = 4;
   repeated string tags = 5;
   optional string description = 6;
 }
@@ -48,4 +48,3 @@ message DeleteCollectionRequest {
 message DeleteCollectionResponse {
   bool success = 1;
 }
-

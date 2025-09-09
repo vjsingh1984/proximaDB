@@ -4,6 +4,35 @@ package proximadb.v1;
 
 import "proximadb/v1/types.proto"; // reuse SqlValue for metadata maps
 
+// Strongly-typed enums for metrics and engines
+enum DistanceMetric {
+  DISTANCE_METRIC_UNSPECIFIED = 0;
+  COSINE = 1;
+  EUCLIDEAN = 2;
+  DOT_PRODUCT = 3;
+  HAMMING = 4;
+  MANHATTAN = 5;
+  JACCARD = 6;
+  ANGULAR = 7;
+}
+
+enum StorageEngine {
+  STORAGE_ENGINE_UNSPECIFIED = 0;
+  VIPER = 1;
+  SST = 2;
+  NOVA = 3;
+  HELIX = 4;
+  SWIFT = 5;
+}
+
+enum IndexingAlgorithm {
+  INDEXING_ALGORITHM_UNSPECIFIED = 0;
+  HNSW = 1;
+  IVF = 2;
+  PQ = 3;
+  FLAT = 4;
+}
+
 message IncludeFields {
   bool vector = 1;
   bool metadata = 2;
@@ -110,4 +139,3 @@ message VectorOperationResponse {
   optional string error_message = 6;
   optional string error_code = 7;
 }
-
