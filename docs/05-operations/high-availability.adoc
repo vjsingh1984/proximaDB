@@ -1,0 +1,12 @@
+= ProximaDB High Availability
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to deploy ProximaDB in a high-availability configuration.
+
+=== Failover Procedures
+
+Details on how to handle failover scenarios.

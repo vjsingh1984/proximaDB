@@ -1,0 +1,16 @@
+= Building ProximaDB from Source
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to build ProximaDB from source code.
+
+=== Prerequisites
+
+Details on required tools and dependencies.
+
+=== Build Options
+
+Various build configurations and options.

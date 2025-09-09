@@ -14,7 +14,7 @@ ProximaDB is a high-performance vector database designed for similarity search a
 . *Proto-First*: VectorRecord flows natively as protobuf types
 . *Direct Access*: Zero-copy paths wherever possible
 . *Hardware Aware*: Automatic SIMD/GPU detection and utilization
-. *Engine Specialization*: Six engines optimized for different workloads
+. *Engine Specialization*: Multiple specialized engines optimized for different workloads
 
 == System Architecture
 
@@ -36,7 +36,7 @@ package "ProximaDB Server" {
   
   package "Service Layer" {
     [VectorOperationsService] #LightGreen
-    note right: Direct Memtable Access
+    note right: Optimized for low-latency operations
   }
   
   package "Storage Engine Router" {
@@ -54,7 +54,7 @@ package "ProximaDB Server" {
   
   package "Hardware Layer" {
     [SIMD AVX2] #Pink
-    [GPU CUDA] #Pink
+    [GPU Acceleration] #Pink
     [ARM NEON] #Pink
   }
   
@@ -74,7 +74,7 @@ package "ProximaDB Server" {
 [Engine Selection] --> [SST]
 [Engine Selection] --> [RAPTOR]
 [VIPER] --> [SIMD AVX2]
-[SST] --> [GPU CUDA]
+[SST] --> [GPU Acceleration]
 [RAPTOR] --> [ARM NEON]
 [VIPER] --> [Parquet]
 [SST] --> [SSTable]
@@ -89,70 +89,70 @@ package "ProximaDB Server" {
 
 [cols="1,2,3,3", options="header"]
 |===
-| Engine | Type | Best For | Key Features
+| Engine | Architecture | Optimal Use Case | Status
 
 | *VIPER*
 | Columnar (Parquet)
 | Analytics, batch operations
-| Compression, column pruning
+| Optimized for data compression and efficient column pruning
 
 | *SST*
 | Row-based (SSTable)
 | High-throughput writes
-| Bloom filters, LSM-tree
+| Leverages bloom filters and LSM-tree for rapid data ingestion
 
 | *RAPTOR*
 | Row + HNSW
 | Graph similarity search
-| Bloom filters for ID lookup
+| Integrates HNSW for efficient approximate nearest neighbor search with bloom filters for fast ID lookups
 |===
 
-=== Advanced Engines (Beta)
+==== Advanced Engines
 
 [cols="1,2,3,1", options="header"]
 |===
-| Engine | Type | Best For | Status
+| Engine | Architecture | Optimal Use Case | Status
 
 | *NOVA*
 | Enhanced columnar
 | Zone maps, statistics
-| 85% complete
+| Actively Developed
 
 | *SWIFT*
 | High-perf row-based
 | Adaptive blocks
-| 75% complete
+| Actively Developed
 
 | *PRISM*
 | Metadata-first
 | Progressive quantization
-| 70% complete
+| Actively Developed
 |===
 
 [NOTE]
 ====
 For detailed engine documentation, see:
 
-* link:../docs/04-storage-engines/viper.adoc[VIPER Engine]
-* link:../docs/04-storage-engines/sst.adoc[SST Engine]
-* link:../docs/04-storage-engines/raptor.adoc[RAPTOR Engine]
-* link:../docs/04-storage-engines/nova.adoc[NOVA Engine]
-* link:../docs/04-storage-engines/swift.adoc[SWIFT Engine]
-* link:../docs/04-storage-engines/prism.adoc[PRISM Engine]
+* link:04-storage-engines/viper.adoc[VIPER Engine]
+* link:04-storage-engines/sst.adoc[SST Engine]
+* link:04-storage-engines/raptor.adoc[RAPTOR Engine]
+* link:04-storage-engines/nova.adoc[NOVA Engine]
+* link:04-storage-engines/swift.adoc[SWIFT Engine]
+* link:04-storage-engines/prism.adoc[PRISM Engine]
 ====
 
 == Key Components
 
 === 1. Vector Operations Service
 
-* Direct memtable access for 40-60% latency reduction
+* Direct memtable access for **significantly reduced latency**
 * Bypasses storage layer for hot data
 * Automatic cache management
 
 === 2. EventLog Queue System
 
 * Lightweight async indexing queue
-* Metadata-only (1.05x write amplification)
+* Metadata-only with **minimal write amplification**
 * Queue-aware compaction
 
 === 3. Hardware Acceleration
@@ -170,7 +170,7 @@ HardwareCapabilities {
 === 4. Distance Computation
 
 * *Metrics*: Cosine, Euclidean, DotProduct, Manhattan, Hamming, Jaccard
-* *Performance*: 20.8M ops/sec (128D), 1.2M ops/sec (1536D)
+* *Performance*: **High throughput** for various dimensions
 * *Optimization*: Direct SIMD bypass, zero allocations
 
 === 5. Quantization Pipeline
@@ -243,7 +243,7 @@ stop
 * *Hierarchical*: L1 → L2 → L3 → RAM → Disk
 * *Integrated*: Query, metadata, vector caches
 * *Adaptive*: LRU with frequency tracking
-* *Hit Rate*: 60-90% in production
+* *Hit Rate*: **High hit rates** observed in typical workloads
 
 === SIMD Optimization
 
@@ -265,27 +265,27 @@ NEON: 4-wide float operations
 
 | *HNSW*
 | High recall
-| O(log n) search
+| Efficient for high-dimensional data
 | High
 
 | *IVF*
 | Large scale
-| O(√n) search
+| Scalable for large datasets
 | Medium
 
 | *LSH*
 | Approximate
-| O(1) search
+| Fast approximate search
 | Low
 
 | *PQ*
 | Compression
-| 4-16x reduction
+| Optimized for significant memory reduction
 | Very Low
 
 | *FLAT*
 | Exact search
-| O(n) search
+| Guarantees precise results
 | High
 |===
 
@@ -347,16 +347,18 @@ if dimension > 1024 && has_gpu() {
 
 === Health Checks
 
+=== Health Checks
+
 [source,json]
 ----
 GET /health
 {
   "status": "healthy",
-  "version": "0.1.4",
-  "uptime": "24h",
+  "version": "<version_string>",
+  "uptime": "<uptime_string>",
   "metrics": {
-    "qps": 10000,
-    "latency_p99": 0.8
+    "qps": "<qps_value>",
+    "latency_p99": "<latency_value>"
   }
 }
 ----
@@ -371,4 +373,4 @@ GET /health
 ---
 
 _For implementation details, see link:../CLAUDE.md[CLAUDE.md]_ +
-_For performance metrics, see link:BENCHMARKS.adoc[BENCHMARKS.adoc]_
+_For performance metrics, see link:../05-operations/BENCHMARKS.adoc[BENCHMARKS.adoc]_

@@ -1,0 +1,29 @@
+% ProximaDB Roadmap
+:toc:
+:toclevels: 2
+:icons: font
+
+== Overview
+
+This roadmap highlights near‑term engineering work and longer‑term themes. Items reflect current code reality and known gaps.
+
+== In Progress
+
+* Search orchestration integration (AXIS + storage engines)
+* Progressive search implementation (complete end‑to‑end path)
+* REST/Proto alignment and endpoint consistency
+* Test hygiene (feature‑gated perf/integration tests)
+
+== Planned
+
+* Distributed features (clustering, replication, HA)
+* Security (TLS hardening, authN/authZ, RBAC)
+* Backup/restore tooling
+* Expanded monitoring/metrics (Prometheus, alerts)
+* Cloud backend hardening (S3/Azure/GCS validation + CI tests)
+* Client tooling (SDK packaging + examples)
+
+== Links
+
+* link:in-progress/TECHNICAL_DEBT_AND_REFACTORS.adoc[Technical Debt & Refactors]
+* link:planned/FEATURE_GAPS_AND_FUTURE_ITEMS.adoc[Feature Gaps & Future Items]

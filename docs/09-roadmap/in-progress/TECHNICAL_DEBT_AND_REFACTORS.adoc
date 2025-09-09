@@ -1,0 +1,36 @@
+= Technical Debt and Refactors
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document outlines the technical debt and planned refactoring efforts for ProximaDB.
+
+=== Identified Technical Debt
+
+This section lists known technical debt items that have been identified and are being addressed:
+
+*   *Unused Imports and Variables*: Numerous instances of unused `use` statements and local variables across the codebase. These contribute to code clutter and can sometimes indicate dead code. Examples include:
+    *   `std::sync::Arc`
+    *   `std::io::Write`, `std::io::Read`, `tokio::io::AsyncReadExt`
+    *   `std::hash::Hash`
+    *   `crate::storage::persistence::filesystem::FileSystem`
+    *   `arrow_array::Array`
+    *   `crate::storage::common::compaction_utils::FlushHandler`
+    *   `crate::core::metadata_types::{MetadataValue, TypedMetadata}`
+    *   Various local variables such as `remainder`, `prod_lo`, `category`, `stats`, `level`, `column_name`, `endpoint`, `params`, `acc`, `logic`, `algorithm`, `collection_id`, `strategy`, ``config`, `top_k`, `pq_bits`, `key`, `binary`, `subvector_dim`, `quantized_vector`, `entry`.
+*   *Deprecated Function Usage*: Reliance on deprecated functions from external libraries, such as `parquet::file::footer::parse_metadata`. This can lead to compatibility issues with newer versions of libraries.
+*   *Unreachable Patterns*: Existence of unreachable `match` patterns, indicating redundant or logically flawed code paths (e.g., in `src/compute/quantization/unified.rs`).
+*   *Unnecessary Mutable Variables*: Variables declared as mutable (`mut`) but whose values are never changed after initialization. This can lead to confusion and unnecessary overhead.
+
+=== Refactoring Plans
+
+This section details the ongoing and planned refactoring initiatives to improve code quality, maintainability, and performance:
+
+*   *API Consolidation*: Merging of `UnifiedMetadataFiltering` and `UnifiedSearchOptimizer` into a single `UnifiedQueryOptimizer`. This reduces code duplication and provides a more cohesive query planning and optimization framework.
+*   *Protobuf Enum Migration*: Transitioning from deprecated `from_i32` methods to `try_from` for protobuf enum conversions. This aligns with best practices for type-safe enum handling in Rust.
+*   *Code Hygiene Improvement*: Systematic removal of all identified unused imports and variables. This enhances code readability, reduces compilation warnings, and simplifies future development.
+*   *Standardization of API Handlers and Service Interfaces*: Ensuring consistency in how API requests are handled and how services interact internally. This includes refining data flow and error handling mechanisms.
+*   *Zero-Copy Data Path Enhancements*: Further optimizing data movement within the system to minimize copying and serialization overhead, especially for large vector payloads.
+*   *Unified Caching Strategy*: Implementing a more cohesive caching layer across different components to improve data locality and reduce redundant data fetches.

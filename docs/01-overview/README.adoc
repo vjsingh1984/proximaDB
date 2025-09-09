@@ -16,7 +16,7 @@ High-level documentation covering ProximaDB's capabilities, architecture, and pe
 | link:features.adoc[Features & Capabilities]
 | Complete feature matrix and capability inventory
 
-| link:architecture.adoc[Architecture Overview]
+| link:detailed-architecture.adoc[Detailed Architecture Overview]
 | High-level system architecture and design principles
 
 | link:performance.adoc[Performance & Benchmarks]
@@ -48,5 +48,5 @@ High-level documentation covering ProximaDB's capabilities, architecture, and pe
 
 * **New Users**: Start with link:introduction.adoc[Introduction]
 * **Evaluators**: Review link:features.adoc[Features] and link:performance.adoc[Performance]
-* **Architects**: Deep dive into link:architecture.adoc[Architecture]
+* **Architects**: Deep dive into link:detailed-architecture.adoc[Detailed Architecture Overview]
 * **Getting Started**: Continue to link:../02-getting-started/README.adoc[Getting Started Guide]

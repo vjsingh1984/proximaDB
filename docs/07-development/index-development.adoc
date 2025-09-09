@@ -1,0 +1,20 @@
+= Index Development Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides information on how to develop new index algorithms for ProximaDB.
+
+=== Index Trait
+
+Details on the `Index` trait and its methods.
+
+=== Configuration
+
+How to configure new index algorithms.
+
+=== Testing
+
+How to test new index algorithms.

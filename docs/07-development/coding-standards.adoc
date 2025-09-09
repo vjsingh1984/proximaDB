@@ -1,0 +1,20 @@
+= ProximaDB Coding Standards
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document outlines the coding standards and best practices for ProximaDB development.
+
+=== Code Style
+
+Details on code formatting, naming conventions, and other style guidelines.
+
+=== Best Practices
+
+General recommendations for writing high-quality, maintainable code.
+
+=== Conventions
+
+Project-specific conventions and patterns.

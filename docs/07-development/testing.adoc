@@ -1,0 +1,20 @@
+= ProximaDB Testing Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide covers testing ProximaDB.
+
+=== Unit Tests
+
+How to run unit tests.
+
+=== Integration Tests
+
+How to run integration tests.
+
+=== Benchmarks
+
+How to run performance benchmarks.

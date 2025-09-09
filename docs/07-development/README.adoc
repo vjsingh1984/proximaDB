@@ -128,5 +128,5 @@ proximadb/
 ----
 
 ---
-_For architecture details, see link:../06-architecture/README.adoc[Architecture Documentation]_ +
+_For architecture details, see link:../../06-architecture/README.adoc[Architecture Documentation]_ +
 _For contribution guidelines, see link:../../CONTRIBUTING.adoc[Contributing Guide]_

@@ -1,0 +1,559 @@
+= ProximaDB API Reference
+:toc:
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+ProximaDB exposes gRPC (port 5679) and REST (port 5678) APIs for vector operations. gRPC offers higher throughput; REST offers broad compatibility.
+
+== Connection
+
+=== gRPC (5679)
+
+[source,python]
+----
+import grpc
+from proximadb import proximadb_pb2_grpc
+
+channel = grpc.insecure_channel('localhost:5679')
+stub = proximadb_pb2_grpc.ProximaDbStub(channel)
+----
+
+=== REST (5678)
+
+[source,python]
+----
+import requests
+
+base_url = "http://localhost:5678/api/v1"
+headers = {"Content-Type": "application/json"}
+----
+
+== Collections
+
+=== Create Collection
+
+.gRPC Example
+[source,python]
+----
+request = CollectionRequest(
+    operation=CollectionOperation.COLLECTION_CREATE,
+    collection_config=CollectionConfig(
+        name="embeddings",
+        dimension=1536,
+        distance_metric=DistanceMetric.COSINE,
+        storage_engine=StorageEngine.VIPER,
+        index_configs=[
+            IndexConfig(
+                algorithm=IndexingAlgorithm.HNSW
+            )
+        ]
+    )
+)
+response = stub.CollectionOperation(request)
+----
+
+.REST Example
+[source,bash]
+----
+POST /api/v1/collections
+{
+    "name": "embeddings",
+    "dimension": 1536,
+    "distance_metric": "cosine",
+    "storage_engine": "VIPER",
+    "indexing_algorithm": "HNSW"
+}
+----
+
+=== List Collections
+
+.gRPC Example
+[source,python]
+----
+request = CollectionRequest(
+    operation=CollectionOperation.COLLECTION_LIST
+)
+response = stub.CollectionOperation(request)
+----
+
+.REST Example
+[source,bash]
+----
+GET /api/v1/collections
+----
+
+=== Delete Collection
+
+.gRPC Example
+[source,python]
+----
+request = CollectionRequest(
+    operation=CollectionOperation.COLLECTION_DELETE,
+    collection_id="embeddings"
+)
+response = stub.CollectionOperation(request)
+----
+
+.REST Example
+[source,bash]
+----
+DELETE /api/v1/collections/embeddings
+----
+
+== Vector Operations
+
+=== Insert Vectors
+
+.gRPC Example (typed metadata oneof)
+[source,python]
+----
+vectors = [
+    VectorRecord(
+        id="vec_001",
+        vector=[0.1, 0.2, ...],  # 1536 dimensions
+        metadata=[
+            MetadataItem(
+                key="category",
+                value=MetadataItem.Value(string_value="product")
+            ),
+            MetadataItem(
+                key="price",
+                value=MetadataItem.Value(number_value=29.99)
+            ),
+            MetadataItem(
+                key="in_stock",
+                value=MetadataItem.Value(bool_value=True)
+            ),
+        ]
+    )
+]
+request = VectorBatchRequest(
+    collection_id="embeddings",
+    vectors=vectors
+)
+response = stub.VectorBatch(request)
+----
+
+.REST Example
+[source,json]
+----
+POST /api/v1/collections/embeddings/vectors
+{
+    "vectors": [
+        {
+            "id": "vec_001",
+            "vector": [0.1, 0.2, ...],
+            "metadata": {
+                "category": "product",
+                "price": 29.99
+            }
+        }
+    ]
+}
+----
+
+=== Search Vectors
+
+.gRPC Example
+[source,python]
+----
+request = VectorSearchRequest(
+    collection_id="embeddings",
+    queries=[
+        SearchQuery(
+            vector=[0.15, 0.25, ...],
+        )
+    ],
+    top_k=10,
+    distance_metric_override=DistanceMetric.COSINE,
+    # Optional: search_params for engine hints or advanced params
+)
+response = stub.VectorSearch(request)
+----
+
+.REST Example
+[source,json]
+----
+POST /api/v1/collections/embeddings/search
+{
+    "vector": [0.15, 0.25, ...],
+    "k": 10,
+    "distance_metric": "cosine",
+    "params": {
+        "ef_search": 200,
+        "nprobe": 10
+    }
+}
+----
+
+=== Get Vector by ID
+
+.gRPC Example
+[source,python]
+----
+request = VectorGetRequest(
+    collection_id="embeddings",
+    vector_id="vec_001"
+)
+response = stub.VectorGet(request)
+----
+
+.REST Example
+[source,bash]
+----
+GET /api/v1/collections/embeddings/vectors/vec_001
+----
+
+=== Update Vector
+
+.gRPC Example
+[source,python]
+----
+request = VectorBatchRequest(
+    collection_id="embeddings",
+    vectors=[
+        VectorRecord(
+            id="vec_001",
+            vector=[0.2, 0.3, ...],
+            metadata=[
+                MetadataItem(key="updated", value=MetadataItem.Value(bool_value=True))
+            ],
+            version=2, # Increment version for update
+            timestamp=int(time.time()) # Current timestamp
+        )
+    ]
+)
+response = stub.VectorBatch(request)
+----
+
+.REST Example
+[source,json]
+----
+PUT /api/v1/collections/embeddings/vectors/vec_001
+{
+    "vector": [0.2, 0.3, ...],
+    "metadata": {
+        "updated": true
+    }
+}
+----
+
+=== Delete Vector
+
+.gRPC Example
+[source,python]
+----
+request = VectorBatchRequest(
+    collection_id="embeddings",
+    vectors=[
+        VectorRecord(
+            id="vec_001",
+            expires_at=int(time.time()) # Set expires_at to mark for deletion
+        )
+    ]
+)
+response = stub.VectorBatch(request)
+----
+
+.REST Example
+[source,bash]
+----
+DELETE /api/v1/collections/embeddings/vectors/vec_001
+----
+
+== Advanced Features
+
+=== Filtered Search
+
+[source,python]
+----
+# Search with metadata filters
+request = VectorSearchRequest(
+    collection_id="embeddings",
+    queries=[
+        SearchQuery(
+            vector=[...],
+            metadata_filter=MetadataFilter(
+                conditions=[
+                    FilterCondition(
+                        field_name="category",
+                        operation=FilterOperation.EQUALS,
+                        value=MetadataValue(string_value="product")
+                    ),
+                    FilterCondition(
+                        field_name="price",
+                        operation=FilterOperation.GREATER_THAN_OR_EQUAL,
+                        value=MetadataValue(number_value=20.0)
+                    ),
+                    FilterCondition(
+                        field_name="price",
+                        operation=FilterOperation.LESS_THAN_OR_EQUAL,
+                        value=MetadataValue(number_value=100.0)
+                    )
+                ],
+                operator=FilterOperator.AND
+            )
+        )
+    ],
+    top_k=10
+)
+----
+
+=== Batch Operations
+
+[source,python]
+----
+# Batch search
+requests = [
+    SearchQuery(vector=[...]),
+    SearchQuery(vector=[...])
+]
+request = VectorSearchRequest(
+    collection_id="embeddings",
+    queries=requests,
+    top_k=5
+)
+response = stub.VectorSearch(request)
+
+# Batch delete
+request = VectorBatchRequest(
+    collection_id="embeddings",
+    vectors=[
+        VectorRecord(id="vec_001", expires_at=int(time.time())),
+        VectorRecord(id="vec_002", expires_at=int(time.time())),
+        VectorRecord(id="vec_003", expires_at=int(time.time()))
+    ]
+)
+response = stub.VectorBatch(request)
+----
+
+=== Quantization Control (per collection)
+
+[source,python]
+----
+# Configure quantization for a collection
+config = QuantizationConfig(
+    enabled=True,
+    strategy=QuantizationConfig.Strategy.CUSTOM_LEVELS,
+    custom_levels=[
+        QuantizationLevel(
+            level_id="pq8",
+            type=QuantizationLevel.QuantizationType.PRODUCT,
+            bits=8,
+            num_subvectors=64
+        )
+    ]
+)
+----
+
+=== Index Configuration
+
+.HNSW Configuration
+[source,python]
+----
+index_config = IndexConfig(
+    algorithm=IndexingAlgorithm.HNSW,
+    hnsw_config=HnswConfig(
+        m=16,
+        ef_construction=200,
+        ef_search=100
+    )
+)
+----
+
+.IVF Configuration
+[source,python]
+----
+index_config = {
+    "type": "IVF",
+    "parameters": {
+        "nlist": 100,    # Number of clusters
+        "nprobe": 10     # Clusters to search
+    }
+}
+----
+
+== Distance Metrics
+
+[cols="1,2,1,2", options="header"]
+|===
+| Metric | Description | Range | Use Case
+
+| `COSINE`
+| Cosine similarity
+| [0, 2]
+| Text embeddings
+
+| `EUCLIDEAN`
+| L2 distance
+| [0, ∞)
+| General purpose
+
+| `DOT_PRODUCT`
+| Inner product
+| (-∞, ∞)
+| Normalized vectors
+
+| `MANHATTAN`
+| L1 distance
+| [0, ∞)
+| Sparse vectors
+
+| `HAMMING`
+| Bit differences
+| [0, n]
+| Binary vectors
+|===
+
+== Storage Engines
+
+[cols="1,2,2", options="header"]
+|===
+| Engine | Description | Best For
+
+| `VIPER`
+| Columnar storage
+| Analytics, batch operations
+
+| `SST`
+| LSM-tree based
+| High write throughput
+
+| `RAPTOR`
+| HNSW integrated
+| Graph-based search
+
+| `NOVA`
+| Zone maps
+| Range queries
+
+| `SWIFT`
+| Adaptive blocks
+| Mixed workloads
+
+| `PRISM`
+| Progressive search
+| Large-scale search
+|===
+
+== Error Codes
+
+[cols="1,2,2", options="header"]
+|===
+| Code | Description | Resolution
+
+| `INVALID_ARGUMENT`
+| Invalid parameters
+| Check request format
+
+| `NOT_FOUND`
+| Collection/vector not found
+| Verify resource exists
+
+| `ALREADY_EXISTS`
+| Duplicate resource
+| Use update instead
+
+| `RESOURCE_EXHAUSTED`
+| Out of memory/disk
+| Scale resources
+
+| `INTERNAL`
+| Server error
+| Check server logs
+|===
+
+== Rate Limiting
+
+[source,http]
+----
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Reset: 1693526400
+----
+
+== Health Check
+
+[source,bash]
+----
+# Check server health
+GET /health
+
+# Response
+{
+    "status": "healthy",
+    "version": "0.1.4",
+    "uptime_seconds": 86400,
+    "collections": 5,
+    "total_vectors": 1000000
+}
+----
+
+== Performance Tips
+
+. *Use gRPC* for better throughput
+. *Batch operations* for better efficiency
+. *Configure indexes* based on your dataset size
+. *Enable quantization* for memory savings
+. *Choose the right storage engine* for your workload
+
+== Client Libraries
+
+[cols="1,2,3", options="header"]
+|===
+| Language | Package | Installation
+
+| Python
+| `proximadb`
+| `pip install proximadb`
+
+| Go
+| `proximadb-go`
+| `go get github.com/proximadb/go-client`
+
+| Rust
+| `proximadb`
+| `cargo add proximadb`
+
+| Node.js
+| `@proximadb/client`
+| `npm install @proximadb/client`
+|===
+
+---
+
+Notes:
+- REST base URL: `http://localhost:5678/api/v1` (adjust for TLS/host).
+- gRPC service stubs are generated from `src/proto/*.proto` (see repository).
+- For configuration, see link:../../03-user-guide/CONFIGURATION.adoc[CONFIGURATION.adoc].
+=== Progressive Search (REST)
+
+.GET query variant (for small vectors)
+[source,http]
+----
+GET /api/v1/progressive/search/{collection_id}?k=10&include_metadata=true&include_vectors=false
+----
+
+.POST JSON variant (preferred)
+[source,json]
+----
+POST /api/v1/progressive/search/{collection_id}
+{
+  "vector": [0.12, 0.03, ...],
+  "k": 10,
+  "scenario": "high_recall",
+  "include_vectors": false,
+  "include_metadata": true
+}
+----
+
+.Explain stages
+[source,http]
+----
+GET /api/v1/progressive/explain/{collection_id}?k=10&scenario=balanced
+----
+
+Response returns SearchVectorRecord fields (proto) for results and stage plan for explain. Use the POST variant for larger inputs.

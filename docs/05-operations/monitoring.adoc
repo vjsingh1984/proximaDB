@@ -1,0 +1,20 @@
+= Monitoring ProximaDB
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to monitor ProximaDB instances.
+
+=== Health Checks
+
+ProximaDB provides a health endpoint to check the status of the service.
+
+=== Metrics
+
+ProximaDB exposes various metrics for performance monitoring.
+
+=== Logs
+
+ProximaDB logs important events to standard output or a configured log file.

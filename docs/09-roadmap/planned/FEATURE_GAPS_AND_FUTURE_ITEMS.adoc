@@ -1,0 +1,46 @@
+= Feature Gaps and Future Items
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document outlines the known feature gaps and future development items for ProximaDB.
+
+=== Feature Gaps
+
+This section lists features that are currently missing or incomplete in the current implementation:
+
+*   *Complete Progressive Search Implementation*: While the framework is in place, full optimization across all stages (Binary, INT8, PQ, FP32) and dynamic stage selection needs further refinement and robust testing.
+*   *Full REST/Proto API Alignment*: Ensuring all REST endpoints are fully aligned with the Protobuf definitions and provide consistent behavior and error handling.
+*   *Comprehensive Test Coverage and Hygiene*: Expanding unit, integration, and performance tests to cover all new features and edge cases, and improving overall test hygiene.
+*   *Full Distance Metric Support*: Optimizing all supported distance metrics (e.g., Manhattan, Hamming, Chebyshev) with hardware-accelerated (SIMD) implementations across all storage engines.
+*   *Complete Zero-Copy Data Path*: Fully implementing memory-mapped I/O and zero-copy data transfers for all data types and operations to minimize serialization/deserialization overhead.
+*   *Advanced Caching Strategies*: Implementing and fine-tuning dynamic memory allocation, predictive prefetching, and cascade invalidation across all cache tiers.
+*   *Robust Error Handling and Logging*: Enhancing error propagation, detailed logging, and metrics for better observability and debugging across all layers of the system.
+
+=== Future Items
+
+This section outlines planned features and development items for future releases:
+
+*   *Distributed Features*:
+    *   **Clustering**: Support for horizontal scaling and sharding of data across multiple nodes.
+    *   **Replication**: Ensuring data durability and high availability through data replication.
+    *   **High Availability (HA)**: Mechanisms for automatic failover and recovery in case of node failures.
+*   *Security*:
+    *   **TLS Hardening**: Comprehensive TLS configuration and enforcement for all network communication.
+    *   **Authentication (authN)**: User authentication mechanisms (e.g., API keys, OAuth).
+    *   **Authorization (authZ)**: Fine-grained access control for users and roles.
+    *   **Role-Based Access Control (RBAC)**: Defining roles and permissions for different user types.
+*   *Backup/Restore Tooling*: Comprehensive tools for backing up and restoring data and metadata, including incremental backups and point-in-time recovery.
+*   *Expanded Monitoring and Metrics*:
+    *   **Prometheus Integration**: Exposing metrics in a Prometheus-compatible format for external monitoring.
+    *   **Alerting**: Implementing alerting rules for critical system events and performance deviations.
+*   *Cloud Backend Hardening*: Extensive validation and CI tests for all supported cloud storage backends (S3, Azure Blob Storage, Google Cloud Storage) to ensure reliability and performance in cloud environments.
+*   *Client Tooling*:
+    *   **SDK Packaging**: Providing official SDKs for popular programming languages (e.g., Python, Java, Go).
+    *   **Comprehensive Examples**: Detailed examples and tutorials for using the client SDKs and interacting with ProximaDB.
+    *   **Language Bindings**: Auto-generated language bindings for gRPC and REST APIs.
+*   *Advanced Indexing Algorithms*: Research and implementation of cutting-edge indexing algorithms (e.g., DiskANN, ScaNN) for even higher performance and recall.
+*   *Support for More Data Types*: Extending support for additional vector data types (e.g., sparse vectors, binary vectors) and complex metadata structures.
+*   *Query Optimization for Complex Queries*: Enhancing the query optimizer to handle multi-vector queries, complex filter conditions, and data joins efficiently.

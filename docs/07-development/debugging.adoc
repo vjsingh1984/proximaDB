@@ -1,0 +1,16 @@
+= ProximaDB Debugging Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides techniques and tools for debugging ProximaDB.
+
+=== Debugging Tools
+
+Details on recommended debugging tools.
+
+=== Common Debugging Scenarios
+
+Solutions for common debugging problems.

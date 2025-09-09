@@ -19,7 +19,7 @@ Get up and running with ProximaDB in 5 minutes.
 [source,bash]
 ----
 # Clone the repository
-git clone https://github.com/yourorg/proximadb.git
+git clone https://github.com/vjsingh1984/proximaDB.git
 cd proximadb
 
 # Build in release mode
@@ -106,40 +106,20 @@ for result in results:
 client.delete_collection("my_vectors")
 ----
 
-== REST API Example
+== REST API
+
+See link:API.adoc[API Reference] for current endpoints. Quick checks:
 
 [source,bash]
 ----
-# Create a collection
-curl -X POST http://localhost:5678/api/v1/collections \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "products",
-    "dimension": 512,
-    "distance_metric": "euclidean"
-  }'
+# Health
+curl http://localhost:5678/health
 
-# Insert a vector
-curl -X POST http://localhost:5678/api/v1/collections/products/vectors \
+# Progressive search (POST)
+curl -X POST \
+  http://localhost:5678/api/v1/progressive/search/demo \
   -H "Content-Type: application/json" \
-  -d '{
-    "vectors": [{
-      "id": "product_001",
-      "vector": [0.1, 0.2, ...],
-      "metadata": {
-        "name": "Red Shirt",
-        "price": 29.99
-      }
-    }]
-  }'
-
-# Search
-curl -X POST http://localhost:5678/api/v1/collections/products/search \
-  -H "Content-Type: application/json" \
-  -d '{
-    "vector": [0.15, 0.25, ...],
-    "k": 5
-  }'
+  -d '{"vector":[0.1,0.2,0.3],"k":5}'
 ----
 
 == Common Use Cases
@@ -303,10 +283,10 @@ tail -f /var/log/proximadb/server.log
 
 == Next Steps
 
-* link:API.adoc[API Reference] - Complete API documentation
-* link:ARCHITECTURE.adoc[Architecture] - System design details
-* link:CONFIGURATION.adoc[Configuration] - Advanced configuration
-* link:BENCHMARKS.adoc[Benchmarks] - Performance metrics
+* link:../08-reference/API.adoc[API Reference] - Complete API documentation
+* link:../06-architecture/ARCHITECTURE.adoc[Architecture] - System design details
+* link:../03-user-guide/CONFIGURATION.adoc[Configuration] - Advanced configuration
+* link:../05-operations/BENCHMARKS.adoc[Benchmarks] - Performance metrics
 
 == Troubleshooting
 

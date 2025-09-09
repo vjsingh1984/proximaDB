@@ -50,7 +50,7 @@ NOTE: For detailed implementation analysis, see link:IMPLEMENTATION_STATUS.adoc[
 | SuperBlocks
 | 🚧 85%
 | Complex Query
-| TBD
+| 🚧 85%
 | 8-12x
 | link:nova.adoc[image:../assets/logos/nova-engine-logo.svg[NOVA,50]]
 
@@ -58,7 +58,7 @@ NOTE: For detailed implementation analysis, see link:IMPLEMENTATION_STATUS.adoc[
 | Hierarchical
 | 🚧 75%
 | Billion-scale
-| 300K vec/s
+| 🚧 75%
 | 6-10x
 | link:swift.adoc[image:../assets/logos/swift-engine-logo.svg[SWIFT,50]]
 
@@ -66,7 +66,7 @@ NOTE: For detailed implementation analysis, see link:IMPLEMENTATION_STATUS.adoc[
 | Memory-first
 | 🚧 70%
 | Ultra-low latency
-| 1M QPS
+| 🚧 70%
 | 2-4x
 | link:prism.adoc[image:../assets/logos/prism-engine-logo.svg[PRISM,50]]
 |===

@@ -16,32 +16,11 @@ This section provides detailed technical documentation of ProximaDB's architectu
 | link:system-design.adoc[System Design]
 | Overall system architecture and design principles
 
-| link:storage-layer.adoc[Storage Layer]
-| Storage engine architecture and implementations
+| link:ARCHITECTURE.adoc[Architecture Overview]
+| High-level architecture and roadmap
 
-| link:compute-layer.adoc[Compute Layer]
-| Distance computation and hardware acceleration
-
-| link:index-architecture.adoc[Index Architecture]
-| Indexing algorithms and data structures
-
-| link:api-layer.adoc[API Layer]
-| REST and gRPC API architecture
-
-| link:caching.adoc[Caching System]
-| Multi-level caching architecture
-
-| link:quantization.adoc[Quantization System]
-| Vector quantization and compression
-
-| link:distributed.adoc[Distributed Architecture]
-| Clustering, sharding, and replication
-
-| link:data-flow.adoc[Data Flow]
-| Request processing and data pipelines
-
-| link:performance.adoc[Performance Architecture]
-| Optimization strategies and benchmarks
+| link:progressive-search.adoc[Progressive Search]
+| 7‑phase pipeline and stage planning
 |===
 
 == Key Architectural Principles
@@ -157,5 +136,5 @@ Event-driven architecture for async operations
 Complex object construction (queries, configurations)
 
 ---
-_For implementation details, see link:../07-development/README.adoc[Development Guide]_ +
-_For operational aspects, see link:../05-operations/README.adoc[Operations Guide]_
+_For implementation details, see link:../../07-development/README.adoc[Development Guide]_ +
+_For operational aspects, see link:../../05-operations/README.adoc[Operations Guide]_

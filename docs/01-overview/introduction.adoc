@@ -165,9 +165,9 @@ Automatic detection and optimization for:
 
 Ready to experience ProximaDB?
 
-1. **Quick Start**: link:../02-getting-started/quickstart.adoc[5-minute setup guide]
+1. **Quick Start**: link:../02-getting-started/QUICKSTART.adoc[5-minute setup guide]
 2. **Learn More**: link:features.adoc[Explore all features]
-3. **Deep Dive**: link:architecture.adoc[Understand the architecture]
+3. **Deep Dive**: link:detailed-architecture.adoc[Understand the architecture]
 4. **Performance**: link:performance.adoc[See benchmarks]
 
 ---
