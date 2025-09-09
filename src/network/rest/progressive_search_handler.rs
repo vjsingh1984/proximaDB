@@ -11,7 +11,7 @@ use tracing::{error, info};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;
-use crate::proto::proximadb::{VectorSearchRequest, VectorOperationResponse, VectorOperation, SearchResult};
+use crate::proto::proximadb_v1 as v1;
 
 /// Progressive search handler - now uses protobuf types directly
 /// 
@@ -22,8 +22,8 @@ use crate::proto::proximadb::{VectorSearchRequest, VectorOperationResponse, Vect
 pub async fn progressive_search_handler(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
-    Json(mut request): Json<VectorSearchRequest>,
-) -> ApiResult<Json<VectorOperationResponse>> {
+    Json(mut request): Json<v1::VectorSearchRequest>,
+) -> ApiResult<Json<v1::VectorOperationResponse>> {
     let start_time = std::time::Instant::now();
     
     // Set the collection_id from the path
@@ -126,10 +126,10 @@ pub async fn progressive_search_handler(
 
 /// Build protobuf response from search results
 fn build_proto_response(
-    results: Vec<SearchResult>,
+    results: Vec<crate::proto::proximadb::SearchResult>,
     elapsed: std::time::Duration,
     _collection_id: &str,
-) -> VectorOperationResponse {
+) -> v1::VectorOperationResponse {
     // Flatten all results into a single list
     let mut all_records = Vec::new();
     let mut total_processed = 0;
@@ -141,10 +141,10 @@ fn build_proto_response(
         }
     }
     
-    VectorOperationResponse {
+    v1::VectorOperationResponse {
         success: true,
-        operation: VectorOperation::VectorSearch as i32,
-        metrics: Some(crate::proto::proximadb::OperationMetrics {
+        operation: 2, // VectorSearch
+        metrics: Some(v1::OperationMetrics {
             total_processed: total_processed as i64,
             successful_count: total_processed as i64,
             failed_count: 0,
@@ -153,8 +153,14 @@ fn build_proto_response(
             wal_write_time_us: 0,
             index_update_time_us: 0,
         }),
-        results: Some(SearchResult {
-            results: all_records,
+        results: Some(v1::SearchResult {
+            results: all_records.into_iter().map(|rec| v1::SearchVectorRecord {
+                id: rec.id,
+                score: rec.score,
+                vector: rec.vector,
+                metadata: std::collections::HashMap::new(),
+                version: rec.version,
+            }).collect(),
             total_found: total_processed as i64,
             collection_id: Some(_collection_id.to_string()),
         }),
