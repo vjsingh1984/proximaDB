@@ -53,6 +53,14 @@ reduces operational complexity
 and infrastructure costs
 |===
 
+== 🧭 Three‑Mode Platform (Vector • Graph • SKS)
+
+- Vector‑Only: High‑performance semantic search with progressive optimization (Binary → INT8 → PQ → FP32), SIMD‑accelerated distances, and specialized engines (SST, VIPER, HELIX).
+- Graph‑Only: Native graph engine (ORION) with CSR storage, label/property indexes, BFS/DFS, Dijkstra/A*, connected components, unique constraints, REST + gRPC APIs.
+- SKS Unified: Semantic Knowledge Store combining vector + graph. Hybrid queries exist in the stack; public gRPC handler is staged, with two‑step flows available today (vector → graph or graph → vector).
+
+Ports: REST :5678, gRPC :5679. Metrics: `GET /metrics` (Prometheus).
+
 == 📊 Technical Advantages
 
 === Architecture Benefits
@@ -83,13 +91,29 @@ and infrastructure costs
 [source,mermaid]
 ----
 graph LR
-    A[API Layer] --> B[Service Layer]
-    B --> C[Storage Layer]
+    A[API Layer (REST/gRPC)] --> B[Service Layer]
+    B --> C[Vector Engines]
+    B --> D[Graph Engine]
+    B --> E[Unified SKS]
 
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style B fill:#bbf,stroke:#333,stroke-width:2px
-    style C fill:#f9f,stroke:#333,stroke-width:2px
+    style C fill:#e8f,stroke:#333,stroke-width:2px
+    style D fill:#efe,stroke:#333,stroke-width:2px
+    style E fill:#ffe,stroke:#333,stroke-width:2px
 ----
+
+== 🔰 Quickstart Highlights
+
+- Start server: `make server-start` (or `cargo run --bin proximadb-server`) → REST :5678, gRPC :5679
+- Vector search (REST): `POST /api/v1/search` with `VectorSearchRequest` JSON
+- Graph (REST):
+  - Create node: `POST /api/v1/graph/nodes`
+  - Create edge: `POST /api/v1/graph/edges`
+  - Traverse: `POST /api/v1/graph/traverse` (BFS/DFS)
+  - Shortest path: `POST /api/v1/graph/shortest_path`
+- Graph (gRPC): `proximadb.v1.GraphService` (TraverseGraph, ShortestPath, GetNeighbors, QueryNodes/Edges, StreamTraverse)
+- Hybrid SKS: Two‑step today (vector, then graph); proto includes `ExecuteHybridQuery` (server handler staged).
 
 == 🎯 Strategic Advantages
 

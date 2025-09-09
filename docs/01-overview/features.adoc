@@ -8,6 +8,16 @@ Complete inventory of ProximaDB features, capabilities, and development status.
 
 == Core Capabilities
 
+=== Three‑Mode Platform
+
+[cols="1,3,1", options="header"]
+|===
+| Mode | Capabilities | Status
+| Vector‑Only | Progressive search (Binary→INT8→PQ→FP32), SIMD distances, specialized engines (SST, VIPER, HELIX) | Production
+| Graph‑Only | ORION engine (CSR), label/property indexes, BFS/DFS, Dijkstra/A*, stats, constraints | Functional
+| SKS Unified | Hybrid vector+graph queries, semantic traversal | In progress (proto + internals present)
+|===
+
 === Storage Engines (7 Total)
 
 [cols="1,2,2,1,1", options="header"]
@@ -158,6 +168,23 @@ _Additional: Bzip2, Deflate, XZ, Zlib, LZO, LZ4HC, LZMA, None_
 | 8-bit integer
 | Medium precision
 | 4x
+
+=== Graph Database Capabilities
+
+[cols="2,3", options="header"]
+|===
+| Area | Features
+| Storage | CSR (compressed sparse row), Arc‑shared node/edge data
+| Indexes | Label index, property B‑tree (range/prefix)
+| Traversal | BFS, DFS, Parallel BFS (fallback), Dijkstra, A*
+| Analytics | Connected components, cycle detection, degree stats
+| APIs | REST `/v1/graph/*`, gRPC `GraphService`
+|===
+
+=== SKS (Semantic Knowledge Store)
+
+- Hybrid queries: combine vector results with graph traversal.
+- Proto includes `HybridSearchRequest/Response`; engine logic present; public gRPC handler staging. Recommended today: compose vector + graph in two steps.
 
 | **PQ4**
 | 4-bit product quantization

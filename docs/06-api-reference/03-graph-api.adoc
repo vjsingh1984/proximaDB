@@ -99,6 +99,22 @@ curl -X POST http://localhost:5678/v1/graph/query/nodes \
 
 == Examples
 
+=== REST — CRUD (Nodes/Edges)
+
+Create node:
+----
+curl -X POST http://localhost:5678/v1/graph/nodes \
+  -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"n1","labels":["Person"],"properties":{"name":{"stringValue":"Ada"}}}}'
+----
+
+Create edge:
+----
+curl -X POST http://localhost:5678/v1/graph/edges \
+  -H 'Content-Type: application/json' \
+  -d '{"edge":{"id":"e1","from_node_id":"n1","to_node_id":"n2","edge_type":"KNOWS"}}'
+----
+
 === REST — Traversal (BFS with budget)
 
 Request:
@@ -192,6 +208,10 @@ Response:
 === REST — Add/Remove Unique Constraint
 
 ----
+
+== Hybrid (SKS)
+
+- Proto includes `ExecuteHybridQuery(HybridSearchRequest)`; server handler is staging. Compose vector + graph today (two calls).
 curl -X POST http://localhost:5678/v1/graph/constraints/unique \
   -H 'Content-Type: application/json' \
   -d '{"label":"Person","property":"email"}'

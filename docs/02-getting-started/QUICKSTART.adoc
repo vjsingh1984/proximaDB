@@ -52,6 +52,35 @@ docker run -p 5678:5678 -p 5679:5679 proximadb/proximadb
 # - gRPC API: localhost:5679
 ----
 
+== Graph Quickstart (REST)
+
+[source,bash]
+----
+# Create a node
+curl -X POST http://localhost:5678/v1/graph/nodes \
+  -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"user_1","labels":["User"],"properties":{"name":{"stringValue":"Alice"}}}}'
+
+# Create another node and edge
+curl -X POST http://localhost:5678/v1/graph/nodes \
+  -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"user_2","labels":["User"],"properties":{"name":{"stringValue":"Bob"}}}}'
+
+curl -X POST http://localhost:5678/v1/graph/edges \
+  -H 'Content-Type: application/json' \
+  -d '{"edge":{"id":"e1","from_node_id":"user_1","to_node_id":"user_2","edge_type":"FOLLOWS"}}'
+
+# Traverse (BFS)
+curl -X POST http://localhost:5678/v1/graph/traverse \
+  -H 'Content-Type: application/json' \
+  -d '{"start_node_id":"user_1","max_depth":2,"algorithm":"BFS"}'
+----
+
+== Hybrid (SKS) Today
+
+- Two‑step composition: perform a vector search to pick anchors, then call graph traversal from those node IDs.
+- Proto includes `GraphService/ExecuteHybridQuery` for unified execution; server handler is staged. Use the two‑step flow for now.
+
 == Python Client Example
 
 === Install Client

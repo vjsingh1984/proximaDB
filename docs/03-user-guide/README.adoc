@@ -19,6 +19,12 @@ This guide provides comprehensive documentation for ProximaDB users, covering ev
 | link:vector-operations.adoc[Vector Operations]
 | Inserting, updating, searching, and deleting vectors
 
+| link:graph-operations.adoc[Graph Operations]
+| Nodes/edges CRUD, traversal (BFS/DFS), shortest path, constraints
+
+| link:hybrid-queries.adoc[Hybrid (SKS) Queries]
+| Compose vector + graph flows; status of unified hybrid execution
+
 | link:examples/README.adoc[Examples]
 | End-to-end examples and sample apps
 |===

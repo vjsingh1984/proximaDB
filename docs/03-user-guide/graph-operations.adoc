@@ -1,0 +1,50 @@
+== Graph Operations
+:toc:
+:icons: font
+
+This guide covers core graph functionality using the native ORION engine.
+
+=== Node and Edge CRUD (REST)
+
+- Create node: `POST /v1/graph/nodes` → body: `{ "node": Node }`
+- Get node: `GET /v1/graph/nodes/{id}`
+- Update node: `PUT /v1/graph/nodes/{id}`
+- Delete node: `DELETE /v1/graph/nodes/{id}`
+- Create edge: `POST /v1/graph/edges` → body: `{ "edge": Edge }`
+- Get/Update/Delete edge similarly via `/v1/graph/edges/{id}`
+
+Example (create node):
+----
+curl -X POST http://localhost:5678/v1/graph/nodes \
+  -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"user_1","labels":["User"],"properties":{"name":{"stringValue":"Alice"}}}}'
+----
+
+=== Traversal and Shortest Path
+
+- Traverse: `POST /v1/graph/traverse` with `TraversalRequest`
+- Algorithms: `BFS`, `DFS` (Parallel BFS currently falls back to BFS)
+- Shortest path: `POST /v1/graph/shortest_path` (Dijkstra/A*)
+
+Example (shortest path):
+----
+curl -X POST http://localhost:5678/v1/graph/shortest_path \
+  -H 'Content-Type: application/json' \
+  -d '{"start_node_id":"n1","target_node_id":"n8","algorithm":"DIJKSTRA"}'
+----
+
+=== Indexes, Constraints, and Stats
+
+- Property and label indexes are used internally for filters.
+- Unique constraints:
+  - Add: `POST /v1/graph/constraints/unique` → `{ "label":"Person","property":"email" }`
+  - Remove: `DELETE /v1/graph/constraints/unique` → same body
+- Stats: `GET /v1/graph/stats` (counts, avg degree, etc.)
+
+=== gRPC API
+
+- Service: `proximadb.v1.GraphService`
+- Methods: `CreateNode`, `CreateEdge`, `GetNeighbors`, `TraverseGraph`, `ShortestPath`, `QueryNodes`, `QueryEdges`, `StreamTraverse`, `GetGraphStats`, constraints DDL, components/cycles.
+
+See also: docs/06-api-reference/03-graph-api.adoc
+
