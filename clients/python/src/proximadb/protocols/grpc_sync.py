@@ -18,7 +18,7 @@ from ..exceptions import ProximaDBError
 try:
     import grpc
     from .. import proximadb_pb2 as pb2
-    from .. import proximadb_pb2_grpc as pb2_grpc
+    from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -104,7 +104,8 @@ class ProximaDBSyncGrpcClient:
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
                 # Create stub for this operation
-                stub = pb2_grpc.ProximaDBStub(channel)
+                # Use versioned VectorService exclusively (v1)
+                stub = v1_vector_pb2_grpc.VectorServiceStub(channel)
                 
                 # Execute the operation with timeout
                 return operation_func(stub)

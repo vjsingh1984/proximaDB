@@ -831,35 +831,33 @@ impl MultiServer {
                 )
                 .await;
 
-            // Create gRPC server
-            let grpc_service =
-                crate::proto::proximadb::proxima_db_server::ProximaDbServer::new(grpc_handler);
-
-            // Apply compression if enabled
-            let grpc_service = if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                info!("🗜️  gRPC compression enabled (gzip)");
-                grpc_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip)
-            } else {
-                grpc_service
-            };
-
-            let mut server_builder = tonic::transport::Server::builder().add_service(grpc_service);
+            // Create gRPC server builder
+            let mut server_builder = tonic::transport::Server::builder();
 
             // Add versioned VectorService (v1)
             let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
                 services.unified_handlers.clone(),
             );
-            let vector_service = crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(vector_service_impl);
+            let mut vector_service = crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(vector_service_impl);
+            if self.config.grpc_config.compression {
+                use tonic::codec::CompressionEncoding;
+                vector_service = vector_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
             server_builder = server_builder.add_service(vector_service);
 
             // Add versioned SqlService (v1)
             let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
                 services.unified_handlers.clone(),
             );
-            let sql_service = crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(sql_service_impl);
+            let mut sql_service = crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(sql_service_impl);
+            if self.config.grpc_config.compression {
+                use tonic::codec::CompressionEncoding;
+                sql_service = sql_service
+                    .accept_compressed(CompressionEncoding::Gzip)
+                    .send_compressed(CompressionEncoding::Gzip);
+            }
             server_builder = server_builder.add_service(sql_service);
 
             // Add GraphService for native graph database operations

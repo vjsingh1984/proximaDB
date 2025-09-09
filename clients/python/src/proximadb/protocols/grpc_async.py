@@ -77,21 +77,12 @@ class ProximaDBClient:
         
         # Import proto modules dynamically
         try:
-            # Try absolute imports first
-            import proximadb.proximadb_pb2 as pb2_local
-            import proximadb.proximadb_pb2_grpc as pb2_grpc_local
-        except ImportError:
-            try:
-                # Fall back to relative imports
-                from .. import proximadb_pb2 as pb2_local
-                from .. import proximadb_pb2_grpc as pb2_grpc_local
-            except ImportError as e:
-                logger.error(f"Failed to import proto modules: {e}")
-                raise ProximaDBError(f"Failed to import proto modules: {e}")
-        
-        # Check if imports actually contain the expected classes
-        if not hasattr(pb2_grpc_local, 'ProximaDBStub'):
-            raise ProximaDBError(f"pb2_grpc_local is missing ProximaDBStub: {pb2_grpc_local}")
+            # Messages remain in proximadb_pb2; services are under v1
+            from .. import proximadb_pb2 as pb2_local
+            from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
+        except ImportError as e:
+            logger.error(f"Failed to import v1 proto modules: {e}")
+            raise ProximaDBError(f"Failed to import v1 proto modules: {e}")
         # Note: DistanceMetric is an enum constant, not a class attribute, so we can't check it this way
         # if not hasattr(pb2_local, 'DistanceMetric'):
         #     raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
@@ -126,9 +117,9 @@ class ProximaDBClient:
                 self.channel = grpc.secure_channel(self.endpoint, credentials, options=options)
             else:
                 self.channel = grpc.insecure_channel(self.endpoint, options=options)
-            
-            self.stub = pb2_grpc_local.ProximaDBStub(self.channel)
-            logger.info(f"Connected to ProximaDB gRPC service at {self.endpoint} (64MB message limit)")
+            # Use v1 VectorService exclusively
+            self.stub = v1_vector_pb2_grpc.VectorServiceStub(self.channel)
+            logger.info(f"Connected to proximadb.v1.VectorService at {self.endpoint} (64MB limit)")
             
         except Exception as e:
             raise ProximaDBError(f"Failed to connect to gRPC server: {e}")

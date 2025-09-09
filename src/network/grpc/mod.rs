@@ -8,6 +8,8 @@
 pub mod v1;
 pub mod entity_service;
 pub mod graph_service;
+pub mod vector_service;
+pub mod sql_service;
 
 // Re-export the service from v1
 pub use v1::service::ProximaDbGrpcService;

@@ -29,7 +29,6 @@
   - `POST /api/v1/search` (vector search), `POST /api/v1/vectors/batch` (batch upsert)
 - gRPC
   - Service `proximadb.v1.VectorService` → `CollectionOperation`, `VectorBatch`, `VectorSearch`, `VectorGet`
-  - Legacy `proximadb.ProximaDB` is served for compatibility (deprecated)
 
 === Graph
 
@@ -39,4 +38,4 @@
 === SQL
 
 - REST: `POST /api/v1/sql/execute`, `POST /api/v1/sql/explain`
-- gRPC: `ExecuteSql` defined in protobuf (handler wiring staged)
+- gRPC: `proximadb.v1.SqlService/ExecuteSql`
