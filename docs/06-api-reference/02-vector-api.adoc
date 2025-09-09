@@ -65,5 +65,9 @@ for r in resp.results.results:
 ----
 
 Enums:
-- DistanceMetric: COSINE, EUCLIDEAN, DOT_PRODUCT, ...
+- DistanceMetric: COSINE, EUCLIDEAN, DOT_PRODUCT, HAMMING, MANHATTAN, JACCARD, ANGULAR, CHEBYSHEV, CANBERRA, MINKOWSKI, BRAY_CURTIS, HELLINGER, CUSTOM
 - StorageEngine: VIPER, SST, NOVA, HELIX, SWIFT
+
+Notes:
+- String aliases in SQL and REST may include: "l2" → EUCLIDEAN, "l1" → MANHATTAN, "dot"/"inner_product" → DOT_PRODUCT.
+- Default metric is COSINE if unspecified.
