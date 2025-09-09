@@ -20,6 +20,8 @@ try:
     from .. import proximadb_pb2 as pb2
     from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
     from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
+    from proximadb.v1 import collection_pb2_grpc as v1_collection_pb2_grpc  # type: ignore
+    from proximadb.v1 import collection_types_pb2 as v1_collection_types_pb2  # type: ignore
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -193,6 +195,56 @@ class ProximaDBSyncGrpcClient:
             }
 
         return self._execute_with_pool("execute_sql", _sql_operation)
+
+    # Collections (v1)
+    def create_collection_v1(
+        self,
+        name: str,
+        dimension: int,
+        distance_metric: int,
+        storage_engine: int,
+        tags: Optional[list] = None,
+        description: Optional[str] = None,
+    ):
+        def _op(channel):
+            stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+            cfg = v1_collection_types_pb2.CollectionConfig(
+                name=name,
+                dimension=dimension,
+                distance_metric=distance_metric,
+                storage_engine=storage_engine,
+                tags=tags or [],
+                description=description or "",
+            )
+            return stub.CreateCollection(cfg, timeout=self.timeout)
+
+        return self._execute_with_pool("create_collection_v1", _op)
+
+    def get_collection_v1(self, collection_id: str):
+        def _op(channel):
+            stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+            req = v1_collection_types_pb2.GetCollectionRequest(collection_id=collection_id)
+            return stub.GetCollection(req, timeout=self.timeout)
+
+        return self._execute_with_pool("get_collection_v1", _op)
+
+    def list_collections_v1(self, limit: Optional[int] = None, offset: Optional[int] = None, include_stats: Optional[bool] = None):
+        def _op(channel):
+            stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+            req = v1_collection_types_pb2.ListCollectionsRequest(
+                limit=limit or 0, offset=offset or 0, include_stats=include_stats or False
+            )
+            return stub.ListCollections(req, timeout=self.timeout)
+
+        return self._execute_with_pool("list_collections_v1", _op)
+
+    def delete_collection_v1(self, collection_id: str):
+        def _op(channel):
+            stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+            req = v1_collection_types_pb2.DeleteCollectionRequest(collection_id=collection_id)
+            return stub.DeleteCollection(req, timeout=self.timeout)
+
+        return self._execute_with_pool("delete_collection_v1", _op)
     
     # Collection Operations - Unified Interface  
     def create_collection(

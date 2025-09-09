@@ -37,6 +37,7 @@
   - `POST /api/v1/collections` (create), `GET /api/v1/collections` (list), `DELETE /api/v1/collections/:id`
 - gRPC (v1)
   - Service `proximadb.v1.CollectionService` → `CreateCollection`, `GetCollection`, `ListCollections`, `DeleteCollection`
+  - See: link:04-collection-api.adoc[Collection API]
 
 === Graph
 
