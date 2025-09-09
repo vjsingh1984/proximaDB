@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "proximadb/v1/types.proto"; // reuse SqlValue for metadata maps
+
+message IncludeFields {
+  bool vector = 1;
+  bool metadata = 2;
+}
+
+message MetadataItem {
+  string key = 1;
+  oneof value {
+    string string_value = 2;
+    double number_value = 3;
+    bool bool_value = 4;
+  }
+}
+
+message SearchQuery {
+  repeated float vector = 1;
+  // Simplified filter; details are handled server-side
+  // Optional to preserve compatibility
+  // map<string, SqlValue> filter = 2;
+}
+
+message SearchParams {
+  optional uint32 top_k = 1;
+  optional double accuracy_threshold = 2;
+  optional bool include_expired = 3;
+  optional uint32 timeout_ms = 4;
+  optional bool enable_two_stage = 5;
+  optional bool enable_clustering_hint = 6;
+  optional bool enable_metadata_filtering_hint = 7;
+  // Simplified hints map
+  map<string, SqlValue> custom_hints = 10;
+}
+
+message SearchOptimization {
+  optional uint32 top_k = 1;
+  optional double accuracy_threshold = 2;
+  map<string, SqlValue> filters = 3;
+}
+
+message VectorSearchRequest {
+  string collection_id = 1;
+  repeated SearchQuery queries = 2;
+  uint32 top_k = 3;
+  optional IncludeFields include_fields = 4;
+  optional SearchParams search_params = 5;
+  optional uint32 distance_metric_override = 6;
+  optional SearchOptimization search_optimization = 7;
+}
+
+message VectorRecord {
+  string id = 1;
+  repeated float vector = 2;
+  map<string, SqlValue> metadata = 3;
+  int64 timestamp = 4;
+  optional int64 updated_at = 5;
+  optional int64 expires_at = 6;
+  optional int64 version = 7;
+  bytes quantized_vector = 8;
+  optional string source = 9;
+}
+
+message VectorBatchRequest {
+  string collection_id = 1;
+  repeated VectorRecord vectors = 2;
+}
+
+message VectorGetRequest {
+  string collection_id = 1;
+  string vector_id = 2;
+  optional bool include_vector = 3;
+  optional bool include_metadata = 4;
+}
+
+message OperationMetrics {
+  int64 total_processed = 1;
+  int64 successful_count = 2;
+  int64 failed_count = 3;
+  int64 updated_count = 4;
+  int64 processing_time_us = 5;
+  int64 wal_write_time_us = 6;
+  int64 index_update_time_us = 7;
+}
+
+message SearchVectorRecord {
+  string id = 1;
+  double score = 2;
+  repeated float vector = 3;
+  map<string, SqlValue> metadata = 4;
+  optional int64 version = 5;
+}
+
+message SearchResult {
+  repeated SearchVectorRecord results = 1;
+  int64 total_found = 2;
+  optional string collection_id = 3;
+}
+
+message VectorOperationResponse {
+  bool success = 1;
+  int32 operation = 2;
+  OperationMetrics metrics = 3;
+  SearchResult results = 4;
+  repeated string vector_ids = 5;
+  optional string error_message = 6;
+  optional string error_code = 7;
+}
+

@@ -2,11 +2,11 @@ syntax = "proto3";
 
 package proximadb.v1;
 
-import "proximadb.proto"; // Reuse existing messages for vector operations
+import "proximadb/v1/vector_types.proto";
 
 // Vector operations (v1, versioned namespace)
 service VectorService {
-  rpc VectorBatch(proximadb.VectorBatchRequest) returns (proximadb.VectorOperationResponse);
-  rpc VectorSearch(proximadb.VectorSearchRequest) returns (proximadb.VectorOperationResponse);
-  rpc VectorGet(proximadb.VectorGetRequest) returns (proximadb.VectorOperationResponse);
+  rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);
+  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);
+  rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);
 }

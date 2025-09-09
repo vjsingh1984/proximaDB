@@ -400,6 +400,7 @@ EXPLAIN/ANALYZE semantics:
 
 - REST: `/api/v1/sql/execute` (SQL), `/api/v1/graph/*` (graph). Streaming supported for large results.
 - gRPC: `proximadb.v1.SqlService`, `proximadb.v1.VectorService`, `proximadb.v1.GraphService`.
+  - Messages: SQL under `proximadb.v1.types`, Vector under `proximadb.v1.vector_types`
 - gRPC: `ExecuteSql` RPC; graph service RPCs.
 
 Error semantics:
