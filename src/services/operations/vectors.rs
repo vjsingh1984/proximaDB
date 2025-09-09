@@ -281,6 +281,51 @@ impl VectorOperationsService {
         Ok(results)
     }
 
+    /// Domain-friendly wrapper for unified search
+    pub async fn unified_search_domain(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<Vec<crate::core::service_types::DomainSearchResult>> {
+        let legacy = self
+            .unified_search(collection_id, query_vector, k, filter, config)
+            .await?;
+        let mut out = Vec::with_capacity(legacy.len());
+        for res in legacy {
+            let mut hits = Vec::with_capacity(res.results.len());
+            for rec in res.results {
+                // Convert proto MetadataItem vec into JSON map (best-effort)
+                let mut meta = std::collections::HashMap::new();
+                for item in rec.metadata {
+                    let key = item.key;
+                    let val = match item.value {
+                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
+                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::json!(n),
+                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
+                        None => serde_json::Value::Null,
+                    };
+                    meta.insert(key, val);
+                }
+                hits.push(crate::core::service_types::SearchHit {
+                    id: rec.id,
+                    score: rec.score as f32,
+                    vector: rec.vector,
+                    metadata: meta,
+                    version: rec.version,
+                });
+            }
+            out.push(crate::core::service_types::DomainSearchResult {
+                results: hits,
+                total_found: res.total_found,
+                collection_id: res.collection_id,
+            });
+        }
+        Ok(out)
+    }
+
     /// Like `unified_search`, but also returns lightweight planning/pruning hints for EXPLAIN.
     pub async fn unified_search_with_hints(
         &self,

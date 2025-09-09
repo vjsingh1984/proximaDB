@@ -359,6 +359,24 @@ impl VectorRecord {
     }
 }
 
+/// Domain search hit (engine-agnostic)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SearchHit {
+    pub id: String,
+    pub score: f32,
+    pub vector: Vec<f32>,
+    pub metadata: HashMap<String, serde_json::Value>,
+    pub version: Option<i64>,
+}
+
+/// Domain search result set
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DomainSearchResult {
+    pub results: Vec<SearchHit>,
+    pub total_found: i64,
+    pub collection_id: Option<String>,
+}
+
 /// Use proto-generated enums as single source of truth
 pub use crate::proto::proximadb::DistanceMetric;
 pub use crate::proto::proximadb::IndexingAlgorithm;

@@ -93,7 +93,7 @@ pub async fn progressive_search_handler(
     match state
         .unified_handlers
         .vector_operations_service
-        .unified_search(
+        .unified_search_domain(
             &collection_id,
             vector,
             top_k,
@@ -126,7 +126,7 @@ pub async fn progressive_search_handler(
 
 /// Build protobuf response from search results
 fn build_proto_response(
-    results: Vec<crate::proto::proximadb::SearchResult>,
+    results: Vec<crate::core::service_types::DomainSearchResult>,
     elapsed: std::time::Duration,
     _collection_id: &str,
 ) -> v1::VectorOperationResponse {
@@ -154,13 +154,16 @@ fn build_proto_response(
             index_update_time_us: 0,
         }),
         results: Some(v1::SearchResult {
-            results: all_records.into_iter().map(|rec| v1::SearchVectorRecord {
-                id: rec.id,
-                score: rec.score,
-                vector: rec.vector,
-                metadata: std::collections::HashMap::new(),
-                version: rec.version,
-            }).collect(),
+            results: all_records
+                .into_iter()
+                .map(|rec| v1::SearchVectorRecord {
+                    id: rec.id,
+                    score: rec.score,
+                    vector: rec.vector,
+                    metadata: rec.metadata,
+                    version: rec.version,
+                })
+                .collect(),
             total_found: total_processed as i64,
             collection_id: Some(_collection_id.to_string()),
         }),
