@@ -275,7 +275,7 @@ impl GraphService {
         self.engine.get_neighbors(node_id, None)
     }
     
-    /// Perform graph traversal
+    /// Perform graph traversal using advanced algorithms
     pub async fn traverse(&self, request: TraversalRequest) -> Result<TraversalResponse> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
@@ -283,28 +283,59 @@ impl GraphService {
             ));
         }
         
-        // For now, implement a simple traversal - this should be enhanced later
-        // TODO: Implement full traversal algorithms (BFS, DFS, etc.)
-        let start_node = match self.engine.get_node(&request.start_node_id)? {
-            Some(node) => node,
-            None => return Err(ProximaDBError::InvalidInput(
-                format!("Starting node '{}' not found", request.start_node_id)
-            ))
+        use crate::graph::engines::orion::traversal::{
+            breadth_first_search, depth_first_search, TraversalConfig
+        };
+        use crate::proto::proximadb_v1::TraversalAlgorithm;
+        
+        // Configure traversal
+        let config = TraversalConfig {
+            max_depth: if request.max_depth == 0 { None } else { Some(request.max_depth) },
+            max_nodes: request.limit.map(|l| l as usize),
+            edge_types: if request.edge_types.is_empty() { None } else { Some(request.edge_types) },
+            node_filter: None, // TODO: Implement property filters
+            early_stop: None,
+            track_paths: true,
+            parallel_processing: true,
         };
         
-        let nodes = vec![start_node];
-        let edges = vec![];
-        let paths = vec![];
+        // Perform traversal based on algorithm
+        let traversal_result = match request.algorithm() {
+            TraversalAlgorithm::Dfs => {
+                depth_first_search(&*self.engine, &request.start_node_id, config).await?
+            },
+            TraversalAlgorithm::ParallelBfs => {
+                // For now, use regular BFS (parallel implementation pending)
+                breadth_first_search(&*self.engine, &request.start_node_id, config).await?
+            },
+            TraversalAlgorithm::Bfs | _ => {
+                breadth_first_search(&*self.engine, &request.start_node_id, config).await?
+            }
+        };
+        
+        // Convert to proto format
+        let nodes = traversal_result.nodes.into_iter()
+            .map(|n| (*n).clone())
+            .collect();
+        
+        let edges = vec![]; // TODO: Include traversed edges in result
+        
+        let paths = traversal_result.paths.into_iter()
+            .map(|path| crate::proto::proximadb_v1::GraphPath {
+                node_ids: path,
+                total_weight: None,
+            })
+            .collect();
         
         Ok(TraversalResponse {
             nodes,
             edges,
             paths,
             stats: Some(crate::proto::proximadb_v1::TraversalStats {
-                nodes_visited: 1,
-                edges_traversed: 0,
-                max_depth_reached: 0,
-                execution_time_microseconds: 0,
+                nodes_visited: traversal_result.stats.nodes_visited as u32,
+                edges_traversed: traversal_result.stats.edges_traversed as u32,
+                max_depth_reached: traversal_result.stats.max_depth_reached,
+                execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
             }),
         })
     }

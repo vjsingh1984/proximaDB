@@ -160,7 +160,7 @@ pub async fn create_node(
             info!("Successfully created node: {}", node.id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: node,
+                data: (*node).clone(),
             }).into_response()
         },
         Err(err) => {
@@ -189,7 +189,7 @@ pub async fn get_node(
             info!("Successfully retrieved node: {}", node_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: node,
+                data: (*node).clone(),
             }).into_response()
         },
         Ok(None) => {
@@ -233,7 +233,7 @@ pub async fn update_node(
             info!("Successfully updated node: {}", node_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: updated_node,
+                data: (*updated_node).clone(),
             }).into_response()
         },
         Err(err) => {
@@ -262,7 +262,7 @@ pub async fn delete_node(
             info!("Successfully deleted node: {}", node_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: deleted_node,
+                data: (*deleted_node).clone(),
             }).into_response()
         },
         Ok(None) => {
@@ -302,7 +302,7 @@ pub async fn get_node_neighbors(
             info!("Successfully retrieved {} neighbors for node: {}", neighbors.len(), node_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: neighbors,
+                data: neighbors.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
             }).into_response()
         },
         Err(err) => {
@@ -331,7 +331,7 @@ pub async fn create_edge(
             info!("Successfully created edge: {}", edge.id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: edge,
+                data: (*edge).clone(),
             }).into_response()
         },
         Err(err) => {
@@ -360,7 +360,7 @@ pub async fn get_edge(
             info!("Successfully retrieved edge: {}", edge_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: edge,
+                data: (*edge).clone(),
             }).into_response()
         },
         Ok(None) => {
@@ -404,7 +404,7 @@ pub async fn update_edge(
             info!("Successfully updated edge: {}", edge_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: updated_edge,
+                data: (*updated_edge).clone(),
             }).into_response()
         },
         Err(err) => {
@@ -433,7 +433,7 @@ pub async fn delete_edge(
             info!("Successfully deleted edge: {}", edge_id);
             Json(GraphSuccessResponse {
                 success: true,
-                data: deleted_edge,
+                data: (*deleted_edge).clone(),
             }).into_response()
         },
         Ok(None) => {
@@ -502,7 +502,7 @@ pub async fn query_nodes(
             info!("Successfully queried {} nodes", nodes.len());
             Json(GraphSuccessResponse {
                 success: true,
-                data: nodes,
+                data: nodes.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
             }).into_response()
         },
         Err(err) => {
@@ -531,7 +531,7 @@ pub async fn query_edges(
             info!("Successfully queried {} edges", edges.len());
             Json(GraphSuccessResponse {
                 success: true,
-                data: edges,
+                data: edges.into_iter().map(|e| (*e).clone()).collect::<Vec<_>>(),
             }).into_response()
         },
         Err(err) => {
@@ -562,7 +562,7 @@ pub async fn batch_create_nodes(
                 success: true,
                 created_count: nodes.len(),
                 failed_count: 0,
-                results: nodes,
+                results: nodes.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
                 errors: vec![],
             }).into_response()
         },
@@ -594,7 +594,7 @@ pub async fn batch_create_edges(
                 success: true,
                 created_count: edges.len(),
                 failed_count: 0,
-                results: edges,
+                results: edges.into_iter().map(|e| (*e).clone()).collect::<Vec<_>>(),
                 errors: vec![],
             }).into_response()
         },

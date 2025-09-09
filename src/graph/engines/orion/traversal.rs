@@ -62,7 +62,7 @@ pub struct TraversalStats {
 }
 
 /// Traversal configuration and filters
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TraversalConfig {
     /// Maximum depth to traverse (None = unlimited)
     pub max_depth: Option<u32>,
@@ -403,8 +403,8 @@ fn estimate_memory_usage(nodes: &[Arc<Node>], paths: &[Vec<NodeId>]) -> usize {
     nodes_size + paths_size
 }
 
-/// Utility function to find shortest path between two nodes
-pub async fn shortest_path(
+/// Utility function to find shortest path between two nodes using BFS
+pub async fn shortest_path_bfs(
     engine: &OrionGraphEngine,
     start_node_id: &NodeId,
     target_node_id: &NodeId,
@@ -430,6 +430,182 @@ pub async fn shortest_path(
     }
     
     Ok(None)
+}
+
+/// Dijkstra's shortest path algorithm for weighted graphs
+pub async fn dijkstra_shortest_path(
+    engine: &OrionGraphEngine,
+    start_node_id: &NodeId,
+    target_node_id: &NodeId,
+    config: TraversalConfig,
+) -> Result<Option<(Vec<NodeId>, f64)>> {
+    use std::collections::{BinaryHeap, HashMap};
+    use std::cmp::Ordering;
+
+    #[derive(Debug, PartialEq)]
+    struct DijkstraNode {
+        node_id: NodeId,
+        distance: f64,
+    }
+
+    impl Eq for DijkstraNode {}
+
+    impl PartialOrd for DijkstraNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            // Reverse ordering for min-heap
+            other.distance.partial_cmp(&self.distance)
+        }
+    }
+
+    impl Ord for DijkstraNode {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+        }
+    }
+
+    let start_time = std::time::Instant::now();
+    
+    // Validate start node exists
+    if engine.get_node(start_node_id)?.is_none() {
+        return Err(ProximaDBError::InvalidInput(
+            format!("Start node {} not found", start_node_id)
+        ));
+    }
+
+    let mut distances = HashMap::new();
+    let mut predecessors = HashMap::new();
+    let mut heap = BinaryHeap::new();
+
+    // Initialize distances
+    distances.insert(start_node_id.clone(), 0.0);
+    heap.push(DijkstraNode {
+        node_id: start_node_id.clone(),
+        distance: 0.0,
+    });
+
+    while let Some(current) = heap.pop() {
+        // Check if we reached the target
+        if current.node_id == *target_node_id {
+            // Reconstruct path
+            let mut path = Vec::new();
+            let mut current_id = target_node_id.clone();
+            
+            while let Some(pred) = predecessors.get(&current_id) {
+                path.push(current_id.clone());
+                current_id = pred.clone();
+            }
+            path.push(start_node_id.clone());
+            path.reverse();
+
+            let total_distance = current.distance;
+            return Ok(Some((path, total_distance)));
+        }
+
+        // Skip if we've found a better path already
+        if let Some(&best_distance) = distances.get(&current.node_id) {
+            if current.distance > best_distance {
+                continue;
+            }
+        }
+
+        // Get outgoing edges
+        let outgoing_edges = engine.get_outgoing_edges(
+            &current.node_id,
+            config.edge_types.as_ref().and_then(|types| {
+                if types.is_empty() { None } else { Some(types[0].as_str()) }
+            })
+        )?;
+
+        for edge in outgoing_edges {
+            // Filter by edge type if specified
+            if let Some(ref allowed_types) = config.edge_types {
+                if !allowed_types.contains(&edge.edge_type) {
+                    continue;
+                }
+            }
+
+            let neighbor_id = &edge.to_node_id;
+            let weight = edge.weight.unwrap_or(1.0);
+            let new_distance = current.distance + weight;
+
+            let should_update = distances
+                .get(neighbor_id)
+                .map_or(true, |&existing_dist| new_distance < existing_dist);
+
+            if should_update {
+                distances.insert(neighbor_id.clone(), new_distance);
+                predecessors.insert(neighbor_id.clone(), current.node_id.clone());
+                heap.push(DijkstraNode {
+                    node_id: neighbor_id.clone(),
+                    distance: new_distance,
+                });
+            }
+        }
+    }
+
+    Ok(None) // No path found
+}
+
+/// PageRank algorithm for node importance scoring
+pub async fn page_rank(
+    engine: &OrionGraphEngine,
+    damping_factor: f64,
+    max_iterations: usize,
+    tolerance: f64,
+) -> Result<HashMap<NodeId, f64>> {
+    use std::collections::HashMap;
+
+    let start_time = std::time::Instant::now();
+    
+    // Get all node IDs - we'll need to implement this in the engine
+    // For now, we'll start with a simple approach
+    let mut node_scores = HashMap::new();
+    let mut node_out_degrees = HashMap::new();
+    let mut all_nodes = Vec::new();
+
+    // This is a simplified version - in reality we'd need to get all nodes from the engine
+    // TODO: Add method to get all node IDs from OrionGraphEngine
+    
+    // Initialize scores
+    let initial_score = 1.0;
+    for node_id in &all_nodes {
+        node_scores.insert(node_id.clone(), initial_score);
+        
+        // Calculate out-degree
+        let outgoing_edges = engine.get_outgoing_edges(node_id, None)?;
+        node_out_degrees.insert(node_id.clone(), outgoing_edges.len());
+    }
+
+    // Iterate PageRank
+    for iteration in 0..max_iterations {
+        let mut new_scores = HashMap::new();
+        let mut max_change = 0.0;
+
+        for node_id in &all_nodes {
+            let mut score = (1.0 - damping_factor) / all_nodes.len() as f64;
+
+            // Get incoming edges - we'd need to implement this in the engine
+            // let incoming_edges = engine.get_incoming_edges(node_id, None)?;
+            
+            // For now, return placeholder implementation
+            new_scores.insert(node_id.clone(), score);
+        }
+
+        // Check convergence
+        for (node_id, &new_score) in &new_scores {
+            let old_score = node_scores.get(node_id).unwrap_or(&initial_score);
+            let change = (new_score - old_score).abs();
+            max_change = max_change.max(change);
+        }
+
+        node_scores = new_scores;
+
+        if max_change < tolerance {
+            break;
+        }
+    }
+
+    Ok(node_scores)
 }
 
 #[cfg(test)]
@@ -608,7 +784,7 @@ mod tests {
         
         // Find shortest path
         let config = TraversalConfig::default();
-        let path = shortest_path(&engine, &"0".to_string(), &"3".to_string(), config).await.unwrap();
+        let path = shortest_path_bfs(&engine, &"0".to_string(), &"3".to_string(), config).await.unwrap();
         
         assert!(path.is_some());
         let path = path.unwrap();

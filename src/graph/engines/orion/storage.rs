@@ -127,7 +127,7 @@ impl CsrStorage {
         // Check if edge already exists
         let neighbors = self.get_neighbors(from_index)?;
         for (i, &target) in neighbors.iter().enumerate() {
-            if target == to_index && self.get_edge_id(from_index, i)? == edge_id {
+            if target == to_index && self.get_edge_id(from_index, i)? == &edge_id {
                 return Err(ProximaDBError::InvalidInput(
                     format!("Edge {} already exists", edge_id)
                 ));
@@ -219,18 +219,20 @@ impl CsrStorage {
     /// Get specific edge ID by neighbor index
     pub fn get_edge_id(&self, node_index: usize, neighbor_index: usize) -> Result<&EdgeId> {
         if node_index >= self.node_count {
-            return Err(ProximaDBError::NotFound(
-                format!("Node index {} not found", node_index)
-            ));
+            return Err(ProximaDBError::NotFound {
+                resource_type: "node".to_string(),
+                id: node_index.to_string(),
+            });
         }
         
         let start = self.offsets[node_index];
         let edge_idx = start + neighbor_index;
         
         if edge_idx >= self.edge_ids.len() {
-            return Err(ProximaDBError::NotFound(
-                format!("Neighbor index {} not found for node {}", neighbor_index, node_index)
-            ));
+            return Err(ProximaDBError::NotFound {
+                resource_type: "neighbor".to_string(),
+                id: format!("{}:{}", node_index, neighbor_index),
+            });
         }
         
         Ok(&self.edge_ids[edge_idx])

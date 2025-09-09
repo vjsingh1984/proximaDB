@@ -829,6 +829,12 @@ impl MultiServer {
 
             let mut server_builder = tonic::transport::Server::builder().add_service(grpc_service);
 
+            // Add GraphService for native graph database operations
+            let graph_service_impl = crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
+            let graph_service = crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(graph_service_impl);
+            server_builder = server_builder.add_service(graph_service);
+            debug!("✅ Added GraphService to gRPC server");
+
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service");
