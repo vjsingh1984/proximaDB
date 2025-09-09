@@ -108,11 +108,11 @@ curl -s -X POST "$BASE/v1/graph/edges" -H 'Content-Type: application/json' \
   -d '{"edge":{"id":"e2","from_node_id":"u2","to_node_id":"u3","edge_type":"FOLLOWS"}}' >/dev/null
 
 echo "BFS traversal from u1 (depth 2)..."
-curl -s -X POST "$BASE/v1/graph/traverse" -H 'Content-Type: application/json' \
+curl -s -X POST "$BASE/api/v1/graph/traverse" -H 'Content-Type: application/json' \
   -d '{"start_node_id":"u1","max_depth":2,"algorithm":"BFS"}' | jq '.stats,.nodes|length'
 
 echo "Shortest path u1 -> u3 (Dijkstra)..."
-curl -s -X POST "$BASE/v1/graph/shortest_path" -H 'Content-Type: application/json' \
+curl -s -X POST "$BASE/api/v1/graph/shortest_path" -H 'Content-Type: application/json' \
   -d '{"start_node_id":"u1","target_node_id":"u3","algorithm":"DIJKSTRA"}' | jq
 ----
 

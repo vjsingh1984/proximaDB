@@ -24,7 +24,7 @@ Limitations:
 == Implementation Status (Reviewed: 2025-09-09)
 
 - SQL Frontend: Present under `src/query/sql_frontend/` (parser complete; lowering WIP).
-- REST: `/api/v1/sql/execute` implemented; `/api/v1/sql/explain` now calls `QueryEngine::explain_sql()` and surfaces VOS plan hints; no gRPC `ExecuteSql` yet.
+- REST: `/api/v1/sql/execute` implemented; `/api/v1/sql/explain` now calls `QueryEngine::explain_sql()` and surfaces VOS plan hints; gRPC `proximadb.v1.SqlService/ExecuteSql` implemented.
 - Vector orchestration: Delegation to VOS is functional; hybrid orchestration path exists but not wired to public APIs.
 - Next steps: Choose single SQL path (frontend vs engine), wire EXPLAIN to real plan/hints, add gRPC ExecuteSql, and integrate hybrid execution end-to-end.
 

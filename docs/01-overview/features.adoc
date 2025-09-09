@@ -178,7 +178,7 @@ _Additional: Bzip2, Deflate, XZ, Zlib, LZO, LZ4HC, LZMA, None_
 | Indexes | Label index, property B‑tree (range/prefix)
 | Traversal | BFS, DFS, Parallel BFS (fallback), Dijkstra, A*
 | Analytics | Connected components, cycle detection, degree stats
-| APIs | REST `/v1/graph/*`, gRPC `GraphService`
+| APIs | REST `/api/v1/graph/*`, gRPC `proximadb.v1.GraphService`
 |===
 
 === SKS (Semantic Knowledge Store)

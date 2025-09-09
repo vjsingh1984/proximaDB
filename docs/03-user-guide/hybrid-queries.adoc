@@ -8,7 +8,7 @@ Hybrid queries combine vector similarity with graph traversal to assemble richer
 
 - Two‑step composition (recommended today):
   1) Perform a vector search (REST `/api/v1/search` or gRPC `VectorSearch`).
-  2) Use result IDs as starting points for a graph traversal (REST `/v1/graph/traverse` or gRPC `TraverseGraph`).
+  2) Use result IDs as starting points for a graph traversal (REST `/api/v1/graph/traverse` or gRPC `TraverseGraph`).
 
 === gRPC Proto
 
@@ -26,7 +26,7 @@ curl -X POST http://localhost:5678/api/v1/search \
 
 2) Graph traversal (use a top result id as start):
 ----
-curl -X POST http://localhost:5678/v1/graph/traverse \
+curl -X POST http://localhost:5678/api/v1/graph/traverse \
   -H 'Content-Type: application/json' \
   -d '{"start_node_id":"doc_123","max_depth":2,"algorithm":"BFS"}'
 ----
@@ -34,4 +34,3 @@ curl -X POST http://localhost:5678/v1/graph/traverse \
 === EXPLAIN
 
 - `POST /api/v1/sql/explain` returns orchestration‑level plans with vector/graph hints.
-

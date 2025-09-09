@@ -26,7 +26,7 @@ Provide a coherent, shared architecture for graph and vector queries that standa
 | Component | Status | Evidence & Critical Findings | Completion %
 
 | **SQL Frontend** | ✅ | `src/query/sql_frontend/parser.rs` - 346 lines, full sqlparser-rs, production-ready | 95%
-| **REST API** | 🟡 | `/api/v1/sql/execute` active; EXPLAIN wired to `QueryEngine::explain_sql()` with real VOS hints | 85%
+| **REST API** | 🟡 | `/api/v1/sql/execute` active; EXPLAIN wired to `QueryEngine::explain_sql()` with real VOS hints; Graph REST under `/api/v1/graph/*` | 85%
 | **Query Orchestration** | 🟡 | **Dual SQL systems**: Traditional parser + Vector SQL engine cause confusion | 70%
 | **Vector Integration** | ✅ | VectorOperationsService fully operational, comprehensive capabilities | 95%
 | **Graph Integration** | ✅ | ORION query planner (1,085 lines), real cost-based optimization | 90%
@@ -399,6 +399,7 @@ EXPLAIN/ANALYZE semantics:
 == API Surfaces
 
 - REST: `/api/v1/sql/execute` (SQL), `/api/v1/graph/*` (graph). Streaming supported for large results.
+- gRPC: `proximadb.v1.SqlService`, `proximadb.v1.VectorService`, `proximadb.v1.GraphService`.
 - gRPC: `ExecuteSql` RPC; graph service RPCs.
 
 Error semantics:

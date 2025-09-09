@@ -9,7 +9,7 @@ This document provides a refined, phased, and actionable implementation plan for
 
 == Status Snapshot (Reviewed: 2025-09-09)
 
-- Implemented: Proto schemas (`proto/proximadb/v1/graph.proto`), GraphService (`src/graph/service.rs`), ORION engine CSR storage and indexes (`src/graph/engines/orion/{storage.rs,index.rs}`), traversal (BFS/DFS/Dijkstra; PageRank), REST and gRPC endpoints (`src/network/rest/v1/graph.rs`, `src/network/grpc/graph_service.rs`).
+- Implemented: Proto schemas (`proto/proximadb/v1/graph.proto`), GraphService (`src/graph/service.rs`), ORION engine CSR storage and indexes (`src/graph/engines/orion/{storage.rs,index.rs}`), traversal (BFS/DFS/Dijkstra; PageRank), REST and gRPC endpoints (`src/network/rest/v1/graph.rs`, `src/network/grpc/graph_service.rs`). REST base is `/api/v1/graph/*`; gRPC service is `proximadb.v1.GraphService`.
 - In Progress: Parallel BFS (falls back to BFS), pattern-matching execution path (planner exists; executor wiring pending), documentation polish and tutorials.
 - Next: Harden hybrid graph+vector execution path and add EXPLAIN/metrics surfaces for graph queries.
 
@@ -87,14 +87,14 @@ This document provides a refined, phased, and actionable implementation plan for
 3.  **Expose via REST API:**
     *   **File:** `src/network/rest/v1/graph.rs`
     *   **Endpoints:**
-        *   `POST /v1/graph/nodes`
-        *   `GET /v1/graph/nodes/{id}`
-        *   `DELETE /v1/graph/nodes/{id}`
-        *   `POST /v1/graph/edges`
-        *   `GET /v1/graph/edges/{id}`
-        *   `DELETE /v1/graph/edges/{id}`
-        *   `GET /v1/graph/nodes/{id}/edges/outgoing`
-        *   `GET /v1/graph/nodes/{id}/edges/incoming`
+        *   `POST /api/v1/graph/nodes`
+        *   `GET /api/v1/graph/nodes/{id}`
+        *   `DELETE /api/v1/graph/nodes/{id}`
+        *   `POST /api/v1/graph/edges`
+        *   `GET /api/v1/graph/edges/{id}`
+        *   `DELETE /api/v1/graph/edges/{id}`
+        *   `GET /api/v1/graph/nodes/{id}/edges/outgoing`
+        *   `GET /api/v1/graph/nodes/{id}/edges/incoming`
     *   **Verification:** Integration tests for all REST endpoints.
 
 4.  **Expose via gRPC API:**
@@ -139,8 +139,8 @@ This document provides a refined, phased, and actionable implementation plan for
 3.  **Expose Traversal via API:**
     *   **File:** `src/network/rest/v1/graph.rs`
     *   **Endpoints:**
-        *   `GET /v1/graph/nodes/{id}/traverse/bfs`
-        *   `GET /v1/graph/nodes/{id}/traverse/dfs`
+        *   `GET /api/v1/graph/nodes/{id}/traverse/bfs`
+        *   `GET /api/v1/graph/nodes/{id}/traverse/dfs`
     *   **File:** `src/network/grpc/graph_service.rs`
     *   **RPCs:**
         *   `Bfs`
@@ -172,8 +172,8 @@ This document provides a refined, phased, and actionable implementation plan for
 3.  **Expose Querying via API:**
     *   **File:** `src/network/rest/v1/graph.rs`
     *   **Endpoints:**
-        *   `GET /v1/graph/nodes?label={label}`
-        *   `GET /v1/graph/nodes?property_key={key}&property_value={value}`
+        *   `GET /api/v1/graph/nodes?label={label}`
+        *   `GET /api/v1/graph/nodes?property_key={key}&property_value={value}`
     *   **File:** `src/network/grpc/graph_service.rs`
     *   **RPCs:**
         *   `FindNodesByLabel`
