@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+// SQL EXECUTION (wire-efficient row encoding)
+
+// Simple typed value for SQL parameters and row fields
+message SqlValue {
+  oneof value {
+    string string_value = 1;
+    double number_value = 2;
+    bool bool_value = 3;
+  }
+}
+
+// Single SQL row field
+message SqlRowField {
+  string key = 1;
+  SqlValue value = 2;
+}
+
+// SQL row with optional similarity score
+message SqlRow {
+  repeated SqlRowField fields = 1;
+  optional float similarity = 2;
+}
+
+message ExecuteSqlRequest {
+  string query = 1;
+  repeated SqlValue parameters = 2;
+  optional string collection = 3;  // Optional collection context
+  optional uint32 limit = 4;        // Optional limit override
+  optional uint32 offset = 5;       // Optional offset override
+}
+
+message ExecuteSqlResponse {
+  repeated SqlRow rows = 1;
+  uint64 rows_scanned = 2;
+  uint64 rows_returned = 3;
+  uint64 execution_time_ms = 4;
+  repeated string columns = 5;
+  repeated string column_types = 6;
+}
+

@@ -2,10 +2,9 @@ syntax = "proto3";
 
 package proximadb.v1;
 
-import "proximadb.proto"; // For ExecuteSqlRequest/Response types
+import "proximadb/v1/types.proto";
 
 // SQL execution service (v1, versioned namespace)
 service SqlService {
-  rpc ExecuteSql(proximadb.ExecuteSqlRequest) returns (proximadb.ExecuteSqlResponse);
+  rpc ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse);
 }
-

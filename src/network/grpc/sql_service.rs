@@ -2,8 +2,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::api_handlers::UnifiedHandlers;
-use crate::proto::proximadb;
-use crate::proto::proximadb_v1::sql_service_server::{SqlService, SqlServiceServer};
+use crate::proto::proximadb_v1::{self, sql_service_server::{SqlService, SqlServiceServer}};
 
 pub struct SqlServiceImpl {
     unified_handlers: Arc<UnifiedHandlers>,
@@ -18,8 +17,8 @@ impl SqlServiceImpl {
 impl SqlService for SqlServiceImpl {
     async fn execute_sql(
         &self,
-        request: Request<proximadb::ExecuteSqlRequest>,
-    ) -> Result<Response<proximadb::ExecuteSqlResponse>, Status> {
+        request: Request<proximadb_v1::ExecuteSqlRequest>,
+    ) -> Result<Response<proximadb_v1::ExecuteSqlResponse>, Status> {
         let req = request.into_inner();
 
         // Convert parameters to serde_json for existing handler
@@ -30,9 +29,9 @@ impl SqlService for SqlServiceImpl {
                 req.parameters
                     .iter()
                     .map(|p| match &p.value {
-                        Some(proximadb::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(proximadb::sql_value::Value::NumberValue(n)) => serde_json::json!(n),
-                        Some(proximadb::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::json!(n),
+                        Some(proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     })
                     .collect(),
@@ -52,24 +51,24 @@ impl SqlService for SqlServiceImpl {
                 let mut fields = Vec::new();
                 for (k, v) in map.iter() {
                     let sql_value = match v {
-                        serde_json::Value::String(s) => proximadb::SqlValue {
-                            value: Some(proximadb::sql_value::Value::StringValue(s.clone())),
+                        serde_json::Value::String(s) => proximadb_v1::SqlValue {
+                            value: Some(proximadb_v1::sql_value::Value::StringValue(s.clone())),
                         },
-                        serde_json::Value::Number(n) => proximadb::SqlValue {
-                            value: Some(proximadb::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
+                        serde_json::Value::Number(n) => proximadb_v1::SqlValue {
+                            value: Some(proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
                         },
-                        serde_json::Value::Bool(b) => proximadb::SqlValue {
-                            value: Some(proximadb::sql_value::Value::BoolValue(*b)),
+                        serde_json::Value::Bool(b) => proximadb_v1::SqlValue {
+                            value: Some(proximadb_v1::sql_value::Value::BoolValue(*b)),
                         },
-                        _ => proximadb::SqlValue { value: None },
+                        _ => proximadb_v1::SqlValue { value: None },
                     };
-                    fields.push(proximadb::SqlRowField { key: k.clone(), value: Some(sql_value) });
+                    fields.push(proximadb_v1::SqlRowField { key: k.clone(), value: Some(sql_value) });
                 }
-                rows_proto.push(proximadb::SqlRow { fields, similarity: None });
+                rows_proto.push(proximadb_v1::SqlRow { fields, similarity: None });
             }
         }
 
-        let resp = proximadb::ExecuteSqlResponse {
+        let resp = proximadb_v1::ExecuteSqlResponse {
             rows: rows_proto,
             rows_scanned: result.row_count as u64, // best-effort
             rows_returned: result.row_count as u64,
@@ -81,4 +80,3 @@ impl SqlService for SqlServiceImpl {
         Ok(Response::new(resp))
     }
 }
-

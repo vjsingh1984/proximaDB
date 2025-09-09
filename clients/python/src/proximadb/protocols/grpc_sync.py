@@ -162,11 +162,12 @@ class ProximaDBSyncGrpcClient:
         """
         def _sql_operation(channel):
             stub = v1_sql_pb2_grpc.SqlServiceStub(channel)
-            # Build ExecuteSqlRequest using proximadb_pb2 messages
-            req = pb2.ExecuteSqlRequest(query=query)
+            # Build ExecuteSqlRequest using v1 messages
+            from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
+            req = v1_types_pb2.ExecuteSqlRequest(query=query)
             if parameters:
                 for p in parameters:
-                    sv = pb2.SqlValue()
+                    sv = v1_types_pb2.SqlValue()
                     if isinstance(p, bool):
                         sv.bool_value = p
                     elif isinstance(p, (int, float)):

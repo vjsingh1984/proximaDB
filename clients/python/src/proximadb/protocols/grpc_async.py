@@ -78,9 +78,9 @@ class ProximaDBClient:
         # Import proto modules dynamically
         try:
             # Messages remain in proximadb_pb2; services are under v1
-            from .. import proximadb_pb2 as pb2_local
             from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
             from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
+            from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
         except ImportError as e:
             logger.error(f"Failed to import v1 proto modules: {e}")
             raise ProximaDBError(f"Failed to import v1 proto modules: {e}")
@@ -140,10 +140,10 @@ class ProximaDBClient:
         """Execute SQL via proximadb.v1.SqlService.ExecuteSql (synchronous call)"""
         try:
             stub = v1_sql_pb2_grpc.SqlServiceStub(self.channel)
-            req = pb2.ExecuteSqlRequest(query=query)
+            req = v1_types_pb2.ExecuteSqlRequest(query=query)
             if parameters:
                 for p in parameters:
-                    sv = pb2.SqlValue()
+                    sv = v1_types_pb2.SqlValue()
                     if isinstance(p, bool):
                         sv.bool_value = p
                     elif isinstance(p, (int, float)):
