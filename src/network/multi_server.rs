@@ -848,6 +848,20 @@ impl MultiServer {
 
             let mut server_builder = tonic::transport::Server::builder().add_service(grpc_service);
 
+            // Add versioned VectorService (v1)
+            let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
+                services.unified_handlers.clone(),
+            );
+            let vector_service = crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(vector_service_impl);
+            server_builder = server_builder.add_service(vector_service);
+
+            // Add versioned SqlService (v1)
+            let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
+                services.unified_handlers.clone(),
+            );
+            let sql_service = crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(sql_service_impl);
+            server_builder = server_builder.add_service(sql_service);
+
             // Add GraphService for native graph database operations
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service = crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(graph_service_impl);

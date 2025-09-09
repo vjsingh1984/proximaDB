@@ -28,7 +28,8 @@
   - `POST /api/v1/collections` (create), `GET /api/v1/collections` (list), `DELETE /api/v1/collections/:id`
   - `POST /api/v1/search` (vector search), `POST /api/v1/vectors/batch` (batch upsert)
 - gRPC
-  - Service `proximadb.ProximaDB` → `CollectionOperation`, `VectorBatch`, `VectorSearch`, `VectorGet`
+  - Service `proximadb.v1.VectorService` → `CollectionOperation`, `VectorBatch`, `VectorSearch`, `VectorGet`
+  - Legacy `proximadb.ProximaDB` is served for compatibility (deprecated)
 
 === Graph
 
