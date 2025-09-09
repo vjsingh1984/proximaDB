@@ -24,6 +24,21 @@ impl VectorService for VectorServiceImpl {
         request: Request<proximadb_v1::VectorBatchRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
         let req_v1 = request.into_inner();
+        // Helper: convert v1 metadata map to legacy MetadataItem vec
+        fn v1_meta_to_legacy(meta: std::collections::HashMap<String, proximadb_v1::SqlValue>) -> Vec<proximadb::MetadataItem> {
+            meta.into_iter()
+                .map(|(k,v)| {
+                    let val = match v.value {
+                        Some(proximadb_v1::sql_value::Value::StringValue(s)) => Some(proximadb::metadata_item::Value::StringValue(s)),
+                        Some(proximadb_v1::sql_value::Value::NumberValue(n)) => Some(proximadb::metadata_item::Value::NumberValue(n)),
+                        Some(proximadb_v1::sql_value::Value::BoolValue(b)) => Some(proximadb::metadata_item::Value::BoolValue(b)),
+                        None => None,
+                    };
+                    proximadb::MetadataItem { key: k, value: val }
+                })
+                .collect()
+        }
+
         let legacy = proximadb::VectorBatchRequest {
             collection_id: req_v1.collection_id.clone(),
             vectors: req_v1
@@ -32,7 +47,7 @@ impl VectorService for VectorServiceImpl {
                 .map(|v| proximadb::VectorRecord {
                     id: v.id,
                     vector: v.vector,
-                    metadata: std::collections::HashMap::new(),
+                    metadata: v1_meta_to_legacy(v.metadata),
                     timestamp: v.timestamp,
                     updated_at: v.updated_at,
                     expires_at: v.expires_at,
@@ -46,6 +61,21 @@ impl VectorService for VectorServiceImpl {
             .handle_vector_batch(legacy)
             .await
             .map(|resp| {
+                // Helper: convert legacy MetadataItem vec to v1 metadata map
+                fn legacy_meta_to_v1(meta: Vec<proximadb::MetadataItem>) -> std::collections::HashMap<String, proximadb_v1::SqlValue> {
+                    let mut out = std::collections::HashMap::new();
+                    for item in meta {
+                        let val = match item.value {
+                            Some(proximadb::metadata_item::Value::StringValue(s)) => proximadb_v1::SqlValue { value: Some(proximadb_v1::sql_value::Value::StringValue(s)) },
+                            Some(proximadb::metadata_item::Value::NumberValue(n)) => proximadb_v1::SqlValue { value: Some(proximadb_v1::sql_value::Value::NumberValue(n)) },
+                            Some(proximadb::metadata_item::Value::BoolValue(b)) => proximadb_v1::SqlValue { value: Some(proximadb_v1::sql_value::Value::BoolValue(b)) },
+                            None => proximadb_v1::SqlValue { value: None },
+                        };
+                        out.insert(item.key, val);
+                    }
+                    out
+                }
+
                 let v1 = proximadb_v1::VectorOperationResponse {
                     success: resp.success,
                     operation: resp.operation,
@@ -66,7 +96,7 @@ impl VectorService for VectorServiceImpl {
                                 id: rec.id,
                                 score: rec.score,
                                 vector: rec.vector,
-                                metadata: std::collections::HashMap::new(),
+                                metadata: legacy_meta_to_v1(rec.metadata),
                                 version: rec.version,
                             })
                             .collect(),

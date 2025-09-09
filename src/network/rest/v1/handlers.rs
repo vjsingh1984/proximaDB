@@ -70,6 +70,21 @@ pub async fn vector_search(
         })?;
 
     // Map legacy response to v1
+    // Helper: convert legacy MetadataItem vec to v1 metadata map
+    fn legacy_meta_to_v1(meta: Vec<crate::proto::proximadb::MetadataItem>) -> std::collections::HashMap<String, v1::SqlValue> {
+        let mut out = std::collections::HashMap::new();
+        for item in meta {
+            let val = match item.value {
+                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => v1::SqlValue { value: Some(v1::sql_value::Value::StringValue(s)) },
+                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => v1::SqlValue { value: Some(v1::sql_value::Value::NumberValue(n)) },
+                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => v1::SqlValue { value: Some(v1::sql_value::Value::BoolValue(b)) },
+                None => v1::SqlValue { value: None },
+            };
+            out.insert(item.key, val);
+        }
+        out
+    }
+
     let v1_resp = V1VectorOperationResponse {
         success: response_legacy.success,
         operation: response_legacy.operation,
@@ -87,7 +102,7 @@ pub async fn vector_search(
                 id: rec.id,
                 score: rec.score,
                 vector: rec.vector,
-                metadata: std::collections::HashMap::new(),
+                metadata: legacy_meta_to_v1(rec.metadata),
                 version: rec.version,
             }).collect(),
             total_found: r.total_found,
@@ -121,6 +136,7 @@ pub async fn vector_batch(
         return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
     }
     
+    // Delegate to UnifiedHandlers v1 wrapper
     let response_legacy = state
         .unified_handlers
         .handle_vector_batch_v1(request)
@@ -147,7 +163,7 @@ pub async fn vector_batch(
                 id: rec.id,
                 score: rec.score,
                 vector: rec.vector,
-                metadata: std::collections::HashMap::new(),
+                metadata: legacy_meta_to_v1(rec.metadata),
                 version: rec.version,
             }).collect(),
             total_found: r.total_found,
