@@ -546,10 +546,10 @@ impl ColumnarFactory {
 
     /// Create columnar optimizer with hardware-specific settings
     pub fn create_optimizer(
-        hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
-        config: ColumnarConfig,
+        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
+        _config: ColumnarConfig,
     ) -> ColumnarOptimizer {
-        let distance_compute = Arc::new(
+        let _distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::compute::distance_computation::engine::DistanceMetric::Cosine,
             ),
@@ -582,7 +582,7 @@ impl OptimizationRecommendations {
     pub fn for_dataset(
         num_vectors: u64,
         dimension: usize,
-        query_pattern: QueryPattern,
+        _query_pattern: QueryPattern,
         storage_budget: StorageBudget,
     ) -> Self {
         let use_bloom_filters = num_vectors > 100_000;

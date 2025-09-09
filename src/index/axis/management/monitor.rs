@@ -413,7 +413,7 @@ impl PerformanceMonitor {
         let metrics_collector = self.metrics_collector.clone();
         let alert_manager = self.alert_manager.clone();
         let health_checker = self.health_checker.clone();
-        let interval_seconds = self.config.metrics_interval_seconds;
+        let _interval_seconds = self.config.metrics_interval_seconds;
 
         // Metrics collection task - optimized from 30s to 180s (3 minutes)
         tokio::spawn(async move {
@@ -635,7 +635,7 @@ impl PerformanceTracker {
     }
 
     /// Update performance trends
-    async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
+    async fn update_trends(&self, collection_id: &str, _metrics: &CollectionMetrics) {
         // TODO: Implement trend analysis
     }
 }

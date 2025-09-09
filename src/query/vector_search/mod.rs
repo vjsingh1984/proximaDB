@@ -316,8 +316,8 @@ impl SearchAlgorithmFactory {
 }
 /// Execute vector search with given parameters
 pub async fn execute_search(
-    vector_service: &VectorOperationsService,
-    params: &SearchConfig,
+    _vector_service: &VectorOperationsService,
+    _params: &SearchConfig,
 ) -> Result<VectorSearchResult> {
     // Placeholder implementation - delegates to vector service
     Err(anyhow!("Vector search not yet implemented"))

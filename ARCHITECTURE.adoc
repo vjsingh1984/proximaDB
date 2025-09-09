@@ -1,0 +1,144 @@
+= ProximaDB Architecture Overview
+:toc: macro
+:toclevels: 2
+
+This document provides a detailed overview of the ProximaDB architecture, illustrating its key components and data flows.
+
+toc::[]
+
+== System Architecture
+
+=== Detailed Component Diagram
+
+[source,mermaid]
+----
+graph TD
+    subgraph API Layer
+        A[MultiServer] --> B(REST API)
+        A --> C(gRPC API)
+    end
+
+    subgraph Service Layer
+        D[SharedServices] --> E(CollectionService)
+        D --> F(VectorOperationsService)
+    end
+
+    subgraph Storage Layer
+        G[StorageEngine] --> H(Write-Ahead Log)
+        G --> I(Memtable)
+        G --> J(SSTables/Parquet Files)
+        G --> K(Pluggable Storage Backends)
+    end
+
+    B --> D
+    C --> D
+    E --> G
+    F --> G
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#bbf,stroke:#333,stroke-width:2px
+    style D fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#bbf,stroke:#333,stroke-width:2px
+    style G fill:#f9f,stroke:#333,stroke-width:2px
+    style H fill:#bbf,stroke:#333,stroke-width:2px
+    style I fill:#bbf,stroke:#333,stroke-width:2px
+    style J fill:#bbf,stroke:#333,stroke-width:2px
+    style K fill:#bbf,stroke:#333,stroke-width:2px
+----
+
+== Data Flow
+
+=== Vector Ingestion Data Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Client
+    participant API
+    participant ServiceLayer
+    participant WAL
+    participant Memtable
+    participant StorageEngine
+
+    Client->>API: Insert Vector(s)
+    API->>ServiceLayer: Call VectorOperationsService
+    ServiceLayer->>WAL: Write to WAL (durability)
+    WAL->>Memtable: Append to Memtable (in-memory)
+    Memtable->>StorageEngine: Flush (periodically/on-threshold)
+    StorageEngine->>StorageEngine: Write to SSTable/Parquet File
+    StorageEngine-->>Memtable: Clear flushed data
+    ServiceLayer-->>API: Acknowledge
+    API-->>Client: Success Response
+----
+
+=== Vector Search Data Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Client
+    participant API
+    participant ServiceLayer
+    participant QueryOptimizer
+    participant StorageEngine
+    participant Indexes
+    participant Cache
+
+    Client->>API: Search Vector(s)
+    API->>ServiceLayer: Call VectorOperationsService
+    ServiceLayer->>QueryOptimizer: Optimize Query Plan
+    QueryOptimizer->>Cache: Check Cache (e.g., Query Cache, Metadata Cache)
+    Cache-->>QueryOptimizer: Cached Results / Miss
+
+    alt Cache Miss / No Cache
+        QueryOptimizer->>Indexes: Query Indexes (e.g., HNSW, IVF)
+        Indexes-->>QueryOptimizer: Candidate Vectors
+        QueryOptimizer->>StorageEngine: Fetch Data (e.g., SSTables, Parquet)
+        StorageEngine-->>QueryOptimizer: Full Vectors / Metadata
+    end
+
+    QueryOptimizer->>ServiceLayer: Processed Results
+    ServiceLayer-->>API: Return Search Results
+    API-->>Client: Search Results
+----
+
+== Storage Layer Details
+
+=== LSM-tree Architecture
+
+[source,mermaid]
+----
+graph TD
+    subgraph Write Path
+        A[Client Write] --> B(Write-Ahead Log)
+        B --> C(Memtable)
+    end
+
+    subgraph Read Path
+        D[Client Read] --> C
+        C --> E{Search Memtable}
+        E -- No Match --> F[Search SSTables (L0)]
+        F -- No Match --> G[Search SSTables (L1)]
+        G -- No Match --> H[Search SSTables (Ln)]
+    end
+
+    subgraph Background Operations
+        C -- Flush --> I(SSTable L0)
+        I -- Compaction --> J(SSTable L1)
+        J -- Compaction --> K(SSTable Ln)
+    end
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#bbf,stroke:#333,stroke-width:2px
+    style D fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#bbf,stroke:#333,stroke-width:2px
+    style G fill:#bbf,stroke:#333,stroke-width:2px
+    style H fill:#bbf,stroke:#333,stroke-width:2px
+    style I fill:#bbf,stroke:#333,stroke-width:2px
+    style J fill:#bbf,stroke:#333,stroke-width:2px
+    style K fill:#bbf,stroke:#333,stroke-width:2px
+----

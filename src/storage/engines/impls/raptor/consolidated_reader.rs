@@ -15,7 +15,8 @@ use tracing::debug;
 
 // Use unified components instead of custom implementations
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::core::search::results::{OptimizedSearchRecord, InternalSearchResult};
+use crate::core::search::results::OptimizedSearchRecord;
+
 use crate::core::metadata_types::TypedMetadata;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::io::zero_copy::{BandwidthOptimizer, ZeroCopyIOSystem};
@@ -246,7 +247,7 @@ pub struct RaptorReader {
     fastlanes_decoder: FastLanesDecoder,
 
     /// Bandwidth optimizer for smart I/O decisions
-    bandwidth_optimizer: Option<Arc<BandwidthOptimizer>>,
+    _bandwidth_optimizer: Option<Arc<BandwidthOptimizer>>,
 
     /// Filesystem for zero-copy operations
     filesystem: Arc<ZeroCopyFilesystem>,
@@ -322,7 +323,7 @@ impl RaptorReader {
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             fastlanes_decoder: FastLanesDecoder::new(fastlanes_scheme),
-            bandwidth_optimizer: None,
+            _bandwidth_optimizer: None,
             filesystem,
             zero_copy_system,
             transaction_coordinator,
@@ -331,7 +332,7 @@ impl RaptorReader {
 
     /// Create reader with bandwidth optimization support
     pub fn with_bandwidth_optimizer(mut self, optimizer: Arc<BandwidthOptimizer>) -> Self {
-        self.bandwidth_optimizer = Some(optimizer);
+        self._bandwidth_optimizer = Some(optimizer);
         self
     }
 
@@ -473,7 +474,7 @@ impl RaptorReader {
                 .calculate_distance(query, &vector, &metric);
 
             // DIRECT use of standardized similarity scoring
-            let similarity_score = InternalSearchResult::standardized_distance_to_similarity(similarity_result.raw_value, &metric);
+            let similarity_score = OptimizedSearchRecord::standardized_distance_to_similarity(similarity_result.raw_value, &metric);
             results.push(
                 OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
@@ -2543,7 +2544,7 @@ impl RaptorReader {
     }
 
     /// Load vectors from a rowgroup for P² matrix navigation
-    async fn load_rowgroup_vectors(&self, file_path: &str, rg_id: u16) -> Result<Vec<Vec<f32>>> {
+    async fn load_rowgroup_vectors(&self, _file_path: &str, rg_id: u16) -> Result<Vec<Vec<f32>>> {
         // Read the row group data
         let batch = self.read_rowgroup(rg_id).await?;
 
@@ -3463,7 +3464,7 @@ impl RaptorReader {
     }
 
     /// Read a single row group by index
-    pub async fn read_rowgroup(&self, rg_id: u16) -> Result<RecordBatch> {
+    pub async fn read_rowgroup(&self, _rg_id: u16) -> Result<RecordBatch> {
         // This would read from the actual file using the row group metadata
         // For now, return empty batch with correct schema
         

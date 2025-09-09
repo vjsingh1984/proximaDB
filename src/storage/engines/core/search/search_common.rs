@@ -13,7 +13,8 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::VectorRecord;
-use crate::core::search::FilterExpression;
+use crate::core::search::{FilterExpression, OptimizedSearchRecord};
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 
 /// Configuration for the universal search pipeline
 #[derive(Debug, Clone)]
@@ -130,7 +131,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         file: &F,
         query_vector: &[f32],
         config: &SearchConfig,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
+    ) -> Result<Vec<OptimizedSearchRecord>>;
 
     /// Get searchable blocks from a file
     async fn get_blocks(&self, file: &F) -> Result<Vec<B>>;
@@ -141,7 +142,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         block: &B,
         query_vector: &[f32],
         config: &SearchConfig,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>>;
+    ) -> Result<Vec<OptimizedSearchRecord>>;
 }
 
 /// Universal search pipeline used by all engines
@@ -172,7 +173,7 @@ impl UniversalSearchPipeline {
         query_vector: &[f32],
         config: SearchConfig,
         file_searcher: Arc<S>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>>
+    ) -> Result<Vec<OptimizedSearchRecord>>
     where
         F: SearchableFile + Send + 'static,
         B: SearchableBlock + Send + 'static,
@@ -233,7 +234,7 @@ impl UniversalSearchPipeline {
         query_vector: &[f32],
         config: &SearchConfig,
         file_searcher: Arc<S>,
-    ) -> Result<Vec<Vec<crate::core::search::InternalSearchResult>>>
+    ) -> Result<Vec<Vec<OptimizedSearchRecord>>>
     where
         F: SearchableFile + Send + 'static,
         B: SearchableBlock + Send + 'static,
@@ -253,7 +254,7 @@ impl UniversalSearchPipeline {
         });
 
         // Execute with controlled parallelism
-        let results: Vec<Result<Vec<crate::core::search::InternalSearchResult>>> =
+        let results: Vec<Result<Vec<OptimizedSearchRecord>>> =
             stream::iter(search_futures)
                 .buffer_unordered(max_parallel)
                 .collect()
@@ -266,10 +267,10 @@ impl UniversalSearchPipeline {
     /// Rerank top results with full precision
     async fn rerank_results(
         &self,
-        candidates: Vec<crate::core::search::InternalSearchResult>,
+        candidates: Vec<OptimizedSearchRecord>,
         query_vector: &[f32],
         config: &SearchConfig,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         if !config.include_vectors {
             // Can't rerank without vectors
             return Ok(candidates);
@@ -306,7 +307,7 @@ impl UniversalSearchPipeline {
         records: Vec<VectorRecord>,
         query_vector: &[f32],
         config: &ProgressiveConfig,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut candidates = records;
 
         // Stage 1: Binary filtering
@@ -411,7 +412,7 @@ impl UniversalSearchPipeline {
         records: Vec<VectorRecord>,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut results = Vec::with_capacity(records.len());
 
         for record in records {
@@ -446,16 +447,34 @@ impl UniversalSearchPipeline {
                 })
                 .collect::<HashMap<String, serde_json::Value>>();
 
-            results.push(crate::core::search::InternalSearchResult {
-                id: record.id.clone(),
-                score: similarity_result.normalized_score,
-                vector: Some(record.vector),
-                metadata: metadata_map,
-                version: record.updated_at,
-                timestamp: Some(record.timestamp),
-                semantic_similarity: Some(similarity_result),
-                ..Default::default()
-            });
+            // Convert metadata_map (HashMap<String, serde_json::Value>) to TypedMetadata
+            let mut typed_metadata_map = std::collections::HashMap::new();
+            for (key, value) in metadata_map {
+                let typed_value = match value {
+                    serde_json::Value::String(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                    serde_json::Value::Number(n) => {
+                        if let Some(f) = n.as_f64() {
+                            MetadataValue::Number(f)
+                        } else {
+                            MetadataValue::Null
+                        }
+                    },
+                    serde_json::Value::Bool(b) => MetadataValue::Bool(b),
+                    _ => MetadataValue::Null,
+                };
+                typed_metadata_map.insert(key, typed_value);
+            }
+            
+            results.push(
+                OptimizedSearchRecord::new(
+                    record.id.clone(),
+                    similarity_result.normalized_score
+                )
+                .with_similarity(similarity_result.normalized_score)
+                .add_vector(record.vector)
+                .with_metadata(TypedMetadata::from_map(typed_metadata_map))
+                .with_version_info(record.updated_at.unwrap_or(0), record.timestamp as u32)
+            );
         }
 
         // Sort by score (higher score = better result)
@@ -526,8 +545,8 @@ impl ResultManager {
     /// Merge multiple result sets
     pub fn merge_results(
         &self,
-        results: Vec<Vec<crate::core::search::InternalSearchResult>>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+        results: Vec<Vec<OptimizedSearchRecord>>,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut merged = Vec::new();
         for result_set in results {
             merged.extend(result_set);
@@ -538,9 +557,9 @@ impl ResultManager {
     /// Rank results by distance
     pub fn rank_by_distance(
         &self,
-        mut results: Vec<crate::core::search::InternalSearchResult>,
+        mut results: Vec<OptimizedSearchRecord>,
         _distance_metric: &DistanceMetric,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         results.sort_by(|a, b| {
             a.similarity
                 .partial_cmp(&b.similarity)
@@ -552,9 +571,9 @@ impl ResultManager {
     /// Select top-k results
     pub fn select_top_k(
         &self,
-        mut results: Vec<crate::core::search::InternalSearchResult>,
+        mut results: Vec<OptimizedSearchRecord>,
         k: usize,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         results.truncate(k.min(results.len()));
         Ok(results)
     }
@@ -562,9 +581,9 @@ impl ResultManager {
     /// Apply field configuration to results
     pub fn apply_field_config(
         &self,
-        mut results: Vec<crate::core::search::InternalSearchResult>,
+        mut results: Vec<OptimizedSearchRecord>,
         config: &SearchConfig,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         for result in &mut results {
             if !config.include_vectors {
                 result.vector = None;

@@ -102,15 +102,14 @@ impl RestServer {
         tracing::info!("🗜️  Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
         tracing::info!("📋 Available endpoints:");
         tracing::info!("   GET    /health                           - Health check");
-        tracing::info!(
-            "   POST   /api/v1/collection                - Unified collection operations"
-        );
-        tracing::info!("   POST   /api/v1/vector/batch              - Vector batch operations");
-        tracing::info!("   POST   /api/v1/vector/search             - Vector search");
-        tracing::info!("   POST   /internal/flush                   - Flush all (testing only)");
-        tracing::info!(
-            "   POST   /internal/flush/:id               - Flush collection (testing only)"
-        );
+        tracing::info!("   POST   /api/v1/search                    - Vector search");
+        tracing::info!("   POST   /api/v1/vectors/batch             - Vector batch operations");
+        tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
+        tracing::info!("   POST   /api/v1/collections               - Unified collection operations");
+        tracing::info!("   GET    /api/v1/collections               - List collections");
+        tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");
+        tracing::info!("   DELETE /api/v1/collections/:id           - Delete collection");
+        tracing::info!("   POST   /api/v1/search/with_metadata      - Vector search with metadata");
 
         // For axum 0.6, use axum::Server
         axum::Server::bind(&self.bind_addr)

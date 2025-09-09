@@ -11,7 +11,7 @@ use tracing::{error, info};
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;
-use crate::proto::proximadb::{VectorSearchRequest, VectorOperationResponse, VectorOperation, OperationMetrics, SearchResult, SearchVectorRecord};
+use crate::proto::proximadb::{VectorSearchRequest, VectorOperationResponse, VectorOperation, SearchResult};
 
 /// Progressive search handler - now uses protobuf types directly
 /// 
@@ -55,7 +55,7 @@ pub async fn progressive_search_handler(
     }
     
     // Build search configuration from protobuf search_params
-    let mut progressive_config = crate::services::operations::vectors::UnifiedSearchConfig {
+    let progressive_config = crate::services::operations::vectors::UnifiedSearchConfig {
         optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
         progressive_search: true,
         progressive_recalls: None,

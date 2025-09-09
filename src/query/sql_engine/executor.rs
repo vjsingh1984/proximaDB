@@ -110,7 +110,7 @@ impl SqlExecutor {
         search_params: &super::planner::VectorSearchParams,
     ) -> Result<Vec<ResultRow>> {
         // Convert metric name to enum
-        let metric = match search_params.metric.to_lowercase().as_str() {
+        let _metric = match search_params.metric.to_lowercase().as_str() {
             "cosine" => DistanceMetric::Cosine,
             "euclidean" | "l2" => DistanceMetric::Euclidean,
             "manhattan" | "l1" => DistanceMetric::Manhattan,
@@ -119,7 +119,7 @@ impl SqlExecutor {
         };
 
         // Build metadata filter using FilterExpression
-        let search_params_obj = if let Some(filter) = &plan.metadata_filter {
+        let _search_params_obj = if let Some(filter) = &plan.metadata_filter {
             let mut params = crate::core::search::SearchParams::default();
             params.filter_expression = Some(filter.expression.clone());
             params.requires_ordering = Some(plan.has_order_by);

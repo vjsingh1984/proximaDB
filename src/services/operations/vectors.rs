@@ -381,16 +381,15 @@ impl VectorOperationsService {
         );
 
         // Execute the unified plan with search parameters
-        let internal_results = self
+        let optimized_results = self
             .execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter)
             .await?;
 
-        // Convert InternalSearchResult to proto SearchResult at API boundary
-        let proto_results = vec![self.convert_to_proto_search_result(
-            internal_results,
+        // Convert OptimizedSearchRecord to proto SearchResult at API boundary
+        let proto_results = vec![self.optimized_results_to_proto(
+            optimized_results,
             collection_id,
             true, // include_vectors
-            true, // include_metadata
             true, // include_source
         )];
 
@@ -416,9 +415,9 @@ impl VectorOperationsService {
         query_vector: Vec<f32>,
         top_k: usize,
         filter: Option<FilterExpression>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
-        let mut results: Vec<crate::core::search::InternalSearchResult> = Vec::new();
-        let mut intermediate_results: Option<Vec<crate::core::search::InternalSearchResult>> = None;
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
+        let mut intermediate_results: Option<Vec<crate::core::search::results::OptimizedSearchRecord>> = None;
 
         for step in plan.execution_steps {
             match step {
@@ -455,7 +454,7 @@ impl VectorOperationsService {
                     conditions,
                     execution_method,
                     estimated_selectivity,
-                    estimated_cost,
+                    estimated_cost: _,
                 } => {
                     debug!(
                         "🔍 Executing metadata filter (selectivity: {:.2})",
@@ -563,7 +562,7 @@ impl VectorOperationsService {
                     estimated_reduction * 100.0
                 );
                 // Convert FilterCondition to UnifiedMetadataFilter
-                let unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
+                let _unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
                     conditions: vec![filter],
                     logic: crate::query::unified_query_optimizer::FilterLogic::And,
                     optimization_hints:
@@ -582,7 +581,7 @@ impl VectorOperationsService {
             FilterPushdownOperation::IndexLevel { filter, index_name } => {
                 debug!("⬇️ Pushing filter to index: {:?}", index_name);
                 // Convert FilterCondition to UnifiedMetadataFilter
-                let unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
+                let _unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
                     conditions: vec![filter],
                     logic: crate::query::unified_query_optimizer::FilterLogic::And,
                     optimization_hints:
@@ -609,13 +608,13 @@ impl VectorOperationsService {
     async fn execute_filtered_search(
         &self,
         collection_id: &str,
-        search_method: crate::query::unified_query_optimizer::SearchExecutionMethod,
-        early_termination: crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig,
-        input_vectors: Option<&Vec<crate::core::search::InternalSearchResult>>,
+        _search_method: crate::query::unified_query_optimizer::SearchExecutionMethod,
+        _early_termination: crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig,
+        _input_vectors: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
         query_vector: Vec<f32>,
         top_k: usize,
         filter: Option<FilterExpression>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         info!(
             "🎯 Executing TWO-STAGE optimized filter+search for collection {}",
             collection_id
@@ -698,23 +697,26 @@ impl VectorOperationsService {
             .search_vectors_unified(&search_context)
             .await?;
         
-        // Convert OptimizedSearchRecord back to InternalSearchResult for compatibility
-        let storage_results: Vec<crate::core::search::InternalSearchResult> = optimized_results
-            .into_iter()
-            .map(|r| r.to_internal())
-            .collect();
+        // Use OptimizedSearchRecord directly - no conversion needed
+        let storage_results = optimized_results;
         info!(
             "✅ Stage 2 complete: Found {} vectors from storage",
             storage_results.len()
         );
 
+        // Convert WAL results to OptimizedSearchRecord and merge with storage results
+        let wal_optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> = wal_results
+            .into_iter()
+            .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
+            .collect();
+        
         // Merge and rank results from both stages
-        let mut all_results = Vec::with_capacity(wal_results.len() + storage_results.len());
-        all_results.extend(wal_results);
+        let mut all_results = Vec::with_capacity(wal_optimized_results.len() + storage_results.len());
+        all_results.extend(wal_optimized_results);
         all_results.extend(storage_results);
 
         // Sort by similarity score in descending order (higher = more similar)
-        // All engines now return standardized similarity scores via InternalSearchResult::from_distance_standard
+        // OptimizedSearchRecord uses the same score field as InternalSearchResult
         all_results.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -753,7 +755,7 @@ impl VectorOperationsService {
     // REMOVED: get_available_files - storage engines handle their own file listing
     // NOTE: The following methods were removed as they belong in the storage engine layer
     /*
-    async fn get_available_files(&self, collection_id: &str) -> Result<Vec<String>> {
+    async fn get_available_files(&self, _collection_id: &str) -> Result<Vec<String>> {
         // Get collection config to find storage location
         let collection = self.get_or_load_collection(collection_id).await?;
         
@@ -801,8 +803,8 @@ impl VectorOperationsService {
         collection_id: &str,
         conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
         _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
-        _input: Option<&Vec<crate::core::search::InternalSearchResult>>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+        input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "🔍 Executing metadata filter for collection {}",
             collection_id
@@ -883,14 +885,9 @@ impl VectorOperationsService {
             .search_vectors_unified(&search_context)
             .await?;
 
-        // Convert OptimizedSearchRecord back to InternalSearchResult for compatibility
-        let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
-            .into_iter()
-            .map(|r| r.to_internal())
-            .collect();
-
-        debug!("✅ Metadata filter returned {} results", results.len());
-        Ok(results)
+        // Return OptimizedSearchRecord directly - no conversion needed
+        debug!("✅ Metadata filter returned {} results", optimized_results.len());
+        Ok(optimized_results)
     }
 
     async fn execute_search(
@@ -899,8 +896,8 @@ impl VectorOperationsService {
         method: crate::query::unified_query_optimizer::SearchExecutionMethod,
         quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
         candidates: usize,
-        input: Option<&Vec<crate::core::search::InternalSearchResult>>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+        input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "🎯 Executing vector search for collection {} with method {:?}",
             collection_id, method
@@ -943,14 +940,9 @@ impl VectorOperationsService {
             .search_vectors_unified(&search_context)
             .await?;
 
-        // Convert OptimizedSearchRecord back to InternalSearchResult for compatibility
-        let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
-            .into_iter()
-            .map(|r| r.to_internal())
-            .collect();
-
-        debug!("✅ Vector search returned {} results", results.len());
-        Ok(results)
+        // Return OptimizedSearchRecord directly - no conversion needed
+        debug!("✅ Vector search returned {} results", optimized_results.len());
+        Ok(optimized_results)
     }
 
     async fn execute_index_lookup(
@@ -958,7 +950,7 @@ impl VectorOperationsService {
         collection_id: &str,
         index_type: crate::query::unified_query_optimizer::Index,
         params: crate::query::unified_query_optimizer::IndexLookupParams,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "📚 Executing index lookup for collection {} with index type {:?}",
             collection_id, index_type
@@ -1023,17 +1015,17 @@ impl VectorOperationsService {
         // Perform index lookup using axis_index_manager
         let query_result = self.axis_index_manager.query(hybrid_query).await?;
 
-        // Convert QueryResult to Vec<InternalSearchResult>
-        let results: Vec<crate::core::search::InternalSearchResult> = query_result
+        // Convert QueryResult to Vec<OptimizedSearchRecord>
+        let results: Vec<crate::core::search::results::OptimizedSearchRecord> = query_result
             .results
             .into_iter()
-            .map(|scored_result| crate::core::search::InternalSearchResult {
+            .map(|scored_result| crate::core::search::results::OptimizedSearchRecord {
                 id: scored_result.vector_id.clone(),
+                vector_id: Some(scored_result.vector_id),
                 score: scored_result.similarity,
+                similarity: Some(scored_result.similarity),
                 vector: None, // AXIS doesn't return vectors by default
                 metadata: Default::default(),
-                vector_id: Some(scored_result.vector_id),
-                similarity: Some(scored_result.similarity),
                 debug_info: None,
                 version: None,
                 timestamp: None,
@@ -1056,8 +1048,8 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
         filter_type: crate::query::unified_query_optimizer::BloomFilter,
-        input: Option<&Vec<crate::core::search::InternalSearchResult>>,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+        input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "🌸 Applying bloom filter {:?} for collection {}",
             filter_type, collection_id
@@ -1350,6 +1342,33 @@ impl VectorOperationsService {
         }))
     }
 
+    /// Get unflushed vectors for a collection from the WAL/memtable
+    pub async fn get_unflushed_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+        // Get vectors from WAL that haven't been flushed to storage
+        let wal_entries = self.wal_manager.read_entries(collection_id, 0, None).await?;
+        
+        // Convert WAL entries to VectorRecord proto format
+        let unflushed_vectors = wal_entries
+            .into_iter()
+            .map(|entry| crate::proto::proximadb::VectorRecord {
+                id: entry.id,
+                vector: entry.vector,
+                metadata: entry.metadata,
+                timestamp: entry.timestamp,
+                updated_at: None,
+                expires_at: None,
+                version: entry.version,
+                quantized_vector: None,
+                source: None,
+            })
+            .collect();
+        
+        Ok(unflushed_vectors)
+    }
+
     /// Debug method to list unflushed vectors
     pub async fn debug_list_all_unflushed_vectors(
         &self,
@@ -1498,6 +1517,10 @@ mod migration_example {
     impl OldVectorOperationsService {
         async fn old_search_with_filters(&self) -> Result<Vec<VectorRecord>> {
             // Problem 1: Two separate optimization calls
+            // NOTE: These are placeholder variables for migration example
+            let search_context = "example_context";
+            let filter = "example_filter";
+            
             let search_strategy = self
                 .search_optimizer
                 .optimize_search(search_context)

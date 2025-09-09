@@ -51,7 +51,7 @@ graph TB
 
 [source]
 ----
-Traditional Stack (Competitors):          ProximaDB Intra-Process:
+Traditional Multi-Component Stack:       ProximaDB Intra-Process Architecture:
 ┌──────────────┐                          ┌─────────────────────────┐
 │ Application  │                          │     Application         │
 ├──────────────┤                          ├─────────────────────────┤
@@ -81,26 +81,27 @@ Total: 4-10ms overhead                    └───────────�
 | **Enterprise** | Unlimited<br/>Custom engines<br/>SLA | Mission-critical | Custom
 |===
 
-=== Revenue Projections
+=== Market Opportunity & Growth Strategy
 
 [source]
 ----
-Year 1: Capture 1% of each market
-  Vector:  $3B × 0.01 = $30M
-  Graph:   $5B × 0.01 = $50M
-  Total:   $80M ARR
+Year 1: Foundation - Single Mode Excellence
+  Vector Mode:  Capture AI/ML teams needing fast vector search
+  Graph Mode:   Capture data teams needing graph analytics
+  Focus:        Performance leadership in each mode
+  Target:       $80M ARR
 
-Year 2: Introduce SKS, capture 5% combined
-  Vector:  $3.5B × 0.03 = $105M
-  Graph:   $5.5B × 0.03 = $165M
-  SKS:     $2B × 0.05 = $100M (early adopters)
-  Total:   $370M ARR
+Year 2: Integration - Unified SKS Launch
+  Vector+Graph: Combined capabilities for semantic applications
+  SKS Platform: New category for knowledge-intensive systems
+  Focus:        Early adopter success stories
+  Target:       $370M ARR
 
-Year 3: Dominate SKS category
-  Vector:  $4B × 0.05 = $200M
-  Graph:   $6B × 0.05 = $300M
-  SKS:     $7B × 0.15 = $1.05B (category leader)
-  Total:   $1.55B ARR → IPO
+Year 3: Dominance - Category Leadership
+  Market Lead:  Established as SKS category standard
+  Enterprise:   Mission-critical deployments
+  Focus:        Platform ecosystem and partnerships
+  Target:       $1.5B+ ARR
 ----
 
 == Technical Architecture
@@ -566,4 +567,4 @@ impl GraphService {
 * Expand to TITAN (distributed) and MERCURY (hybrid) engines
 * Reach $1.55B ARR → IPO
 
-**Moat:** Intra-process architecture with 10x performance advantage that competitors cannot match without complete rewrite.
+**Strategic Moat:** Our intra-process architecture delivers 10x performance through zero network overhead and Arc-based memory sharing - a fundamental architectural advantage requiring complete system redesign to replicate.

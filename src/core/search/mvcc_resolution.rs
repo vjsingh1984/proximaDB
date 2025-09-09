@@ -192,17 +192,17 @@ mod tests {
         timestamp: u32,
         expires_at: Option<u32>,
     ) -> VectorRecord {
-        VectorRecord {
-            id,
+        // Use empty string to represent append-only semantics when id is None
+        crate::proto::proximadb::VectorRecord {
+            id: id.unwrap_or_default(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],
             timestamp,
             updated_at: Some(timestamp),
             expires_at,
             version,
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: None,
+            source: None,
         }
     }
 
@@ -293,13 +293,10 @@ mod tests {
         let mut by_id: std::collections::HashMap<String, &VectorRecord> =
             std::collections::HashMap::new();
         for record in &resolved {
-            if let Some(ref id) = record.id {
-                by_id.insert(id.clone(), record);
-            }
+            by_id.insert(record.id.clone(), record);
         }
-
-        assert_eq!(by_id.get(key).unwrap().version, Some(2));
-        assert_eq!(by_id.get(key).unwrap().version, Some(1));
+        assert_eq!(by_id.get("id1").unwrap().version, Some(2));
+        assert_eq!(by_id.get("id2").unwrap().version, Some(1));
         assert!(!by_id.contains_key("id3")); // Excluded due to gap
     }
 
@@ -321,14 +318,11 @@ mod tests {
         let mut by_id: std::collections::HashMap<String, &VectorRecord> =
             std::collections::HashMap::new();
         for record in &resolved {
-            if let Some(ref id) = record.id {
-                by_id.insert(id.clone(), record);
-            }
+            by_id.insert(record.id.clone(), record);
         }
-
-        assert_eq!(by_id.get(key).unwrap().version, Some(2));
-        assert_eq!(by_id.get(key).unwrap().version, None); // Original None preserved
-        assert_eq!(by_id.get(key).unwrap().timestamp, 120); // Earlier timestamp wins
+        assert_eq!(by_id.get("id1").unwrap().version, Some(2));
+        assert_eq!(by_id.get("id2").unwrap().version, None); // Original None preserved
+        assert_eq!(by_id.get("id2").unwrap().timestamp, 120); // Earlier timestamp wins
     }
 
     #[test]
@@ -356,13 +350,10 @@ mod tests {
         let mut by_id: std::collections::HashMap<String, &VectorRecord> =
             std::collections::HashMap::new();
         for record in &resolved {
-            if let Some(ref id) = record.id {
-                by_id.insert(id.clone(), record);
-            }
+            by_id.insert(record.id.clone(), record);
         }
-
-        assert_eq!(by_id.get(key).unwrap().version, Some(3)); // Continuous, gets highest
-        assert_eq!(by_id.get(key).unwrap().version, Some(1)); // Gap at 2, stops at 1
+        assert_eq!(by_id.get("id1").unwrap().version, Some(3)); // Continuous, gets highest
+        assert_eq!(by_id.get("id2").unwrap().version, Some(1)); // Gap at 2, stops at 1
         assert!(!by_id.contains_key("id3")); // Gap from start, excluded
     }
 
@@ -391,12 +382,11 @@ mod tests {
         let mut versioned_count = 0;
 
         for record in &resolved {
-            match &record.id {
-                None => append_only_count += 1,
-                Some(id) if id.is_none() || id == "null" || id.trim().is_none() => {
-                    append_only_count += 1
-                }
-                Some(_) => versioned_count += 1,
+            let id = record.id.as_str();
+            if id.is_empty() || id.trim().is_empty() || id == "null" || id == "none" {
+                append_only_count += 1;
+            } else {
+                versioned_count += 1;
             }
         }
 
@@ -440,21 +430,15 @@ mod tests {
 
         let mut by_id: std::collections::HashMap<String, &VectorRecord> =
             std::collections::HashMap::new();
-        let mut append_only_count = 0;
-
         for record in &resolved {
-            match &record.id {
-                None => append_only_count += 1,
-                Some(id) => {
-                    by_id.insert(id.clone(), record);
-                }
-            }
+            by_id.insert(record.id.clone(), record);
         }
 
         assert_eq!(by_id.len(), 1);
-        assert_eq!(append_only_count, 0); // Expired append-only is excluded
+        // Expired append-only is excluded
+        assert!(!by_id.contains_key(""));
         assert!(by_id.contains_key("id2"));
-        assert_eq!(by_id.get(key).unwrap().version, Some(2));
+        assert_eq!(by_id.get("id2").unwrap().version, Some(2));
     }
 
     #[test]

@@ -195,7 +195,7 @@ impl QueryPreprocessor {
             // Compute magnitude squared using AVX2
             let mut mag_sq = 0.0f32;
             let chunks = len / 8;
-            let remainder = len % 8;
+            let _remainder = len % 8;
 
             for i in 0..chunks {
                 let v = _mm256_loadu_ps(vector.as_ptr().add(i * 8));
@@ -246,7 +246,7 @@ impl QueryPreprocessor {
             // Compute magnitude squared using SSE
             let mut mag_sq = 0.0f32;
             let chunks = len / 4;
-            let remainder = len % 4;
+            let _remainder = len % 4;
 
             for i in 0..chunks {
                 let v = _mm_loadu_ps(vector.as_ptr().add(i * 4));

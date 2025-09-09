@@ -28,6 +28,8 @@ use tracing::{debug, info, trace};
 // Note: SearchResult is proto type, not in core::search anymore
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::core::search::OptimizedSearchRecord;
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
 use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
 use crate::proto::proximadb::VectorRecord;
@@ -104,7 +106,7 @@ impl ProgressiveSearchExecutor {
         ctx: &StorageQueryContext,
         initial_candidates: Vec<VectorRecord>,
         query_vector: &[f32],
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         // Check if progressive search is enabled
         if !ctx.is_progressive_search_enabled() {
             debug!("Progressive search not enabled, falling back to full precision search");
@@ -574,7 +576,7 @@ impl ProgressiveSearchExecutor {
         ctx: &StorageQueryContext,
         records: Vec<VectorRecord>,
         query_vector: &[f32],
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut results = Vec::with_capacity(records.len());
 
         for record in records {
@@ -585,34 +587,29 @@ impl ProgressiveSearchExecutor {
             );
             let distance = result.rank_value;
 
-            results.push(crate::core::search::InternalSearchResult {
-                id: record.id.clone(),
-                score: distance,
-                vector: Some(record.vector),
-                metadata: record
-                    .metadata
-                    .into_iter()
-                    .map(|item| {
-                        let value = match item.value {
-                            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
-                                serde_json::Value::String(s)
-                            }
-                            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
-                                serde_json::Value::Number(
-                                    serde_json::Number::from_f64(n)
-                                        .unwrap_or(serde_json::Number::from(0)),
-                                )
-                            }
-                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
-                                serde_json::Value::Bool(b)
-                            }
-                            None => serde_json::Value::Null,
-                        };
-                        (item.key, value)
-                    })
-                    .collect(),
-                ..Default::default()
-            });
+            // Convert metadata to TypedMetadata
+            let mut metadata_map = std::collections::HashMap::new();
+            for item in record.metadata {
+                if let Some(value) = item.value {
+                    use crate::proto::proximadb::metadata_item;
+                    let typed_value = match value {
+                        metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
+                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
+                    };
+                    metadata_map.insert(item.key, typed_value);
+                }
+            }
+            
+            results.push(
+                OptimizedSearchRecord::new(
+                    record.id.clone(),
+                    distance
+                )
+                .with_similarity(distance)
+                .add_vector(record.vector)
+                .with_metadata(TypedMetadata::from_map(metadata_map))
+            );
         }
 
         // Sort and truncate
@@ -627,17 +624,22 @@ impl ProgressiveSearchExecutor {
         &self,
         candidates: Vec<SearchCandidate>,
         top_k: usize,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut results = Vec::with_capacity(top_k.min(candidates.len()));
 
         for candidate in candidates.into_iter().take(top_k) {
-            results.push(crate::core::search::InternalSearchResult {
-                id: candidate.id,
-                score: candidate.score,
-                vector: candidate.vector,
-                metadata: Default::default(),
-                ..Default::default()
-            });
+            let mut result = OptimizedSearchRecord::new(
+                candidate.id,
+                candidate.score
+            )
+            .with_similarity(candidate.score)
+            .with_metadata(TypedMetadata::default());
+            
+            if let Some(vec) = candidate.vector {
+                result = result.add_vector(vec);
+            }
+            
+            results.push(result);
         }
 
         Ok(results)

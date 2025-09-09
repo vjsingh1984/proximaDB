@@ -167,7 +167,7 @@ pub trait UnifiedScanEngine: Send + Sync {
     /// This is the main entry point, similar to RAPTOR's scan_vectors_with_strategy
     async fn create_scan_iterator(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         strategy: ScanStrategy,
         collection_config: Option<&Collection>,
     ) -> Result<Box<dyn ScanIterator>>;
@@ -175,7 +175,7 @@ pub trait UnifiedScanEngine: Send + Sync {
     /// Estimate scan cost for query planning
     async fn estimate_scan_cost(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         strategy: &ScanStrategy,
     ) -> Result<ScanCostEstimate>;
 
@@ -183,7 +183,7 @@ pub trait UnifiedScanEngine: Send + Sync {
     /// Engines can upgrade/downgrade strategies based on their capabilities
     async fn optimize_scan_strategy(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         strategy: ScanStrategy,
     ) -> Result<ScanStrategy> {
         // Default: return as-is
@@ -265,7 +265,7 @@ pub mod scan_helpers {
 
     /// From SST: Check if block should be scanned based on bloom filter
     pub async fn should_scan_block(
-        block_id: &str,
+        _block_id: &str,
         bloom_filter: Option<&[u8]>,
         target_ids: &[String],
     ) -> bool {

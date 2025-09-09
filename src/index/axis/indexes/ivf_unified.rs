@@ -1175,10 +1175,10 @@ impl UnifiedIvfIndex {
         self.posting_lists.insert(key, posting_list).await?;
 
         // Store vector separately (for efficient random access)
-        let vector_key = PartitionedKey::new(self.collection_id.clone(), id.clone());
+        let _vector_key = PartitionedKey::new(self.collection_id.clone(), id.clone());
 
         // Convert HashMap metadata to Vec<MetadataItem>
-        let metadata_items = metadata
+        let _metadata_items = metadata
             .map(|map| {
                 map.into_iter()
                     .map(|(key, value)| crate::proto::proximadb::MetadataItem {
@@ -1671,6 +1671,8 @@ pub struct IvfStats {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
+    use super::{IvfClusteringMethod, PartitionedKey};
+    use crate::compute::distance_computation::DistanceMetric;
 
     #[tokio::test]
     async fn test_unified_ivf_basic() {

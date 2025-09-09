@@ -114,7 +114,7 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe
     let sum_128_hi = _mm256_extracti128_si256(sum_vec, 1);
     let sum_128 = _mm_add_epi32(sum_128_lo, sum_128_hi);
 
-    let sum_64 = _mm_add_epi32(sum_128, _mm_srli_si128(sum_128, 8));;
+    let sum_64 = _mm_add_epi32(sum_128, _mm_srli_si128(sum_128, 8));
     let sum_32 = _mm_add_epi32(sum_64, _mm_srli_si128(sum_64, 4));
     let mut result = _mm_cvtsi128_si32(sum_32);
 

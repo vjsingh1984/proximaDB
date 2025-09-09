@@ -208,7 +208,7 @@ mod tests {
             similarity: None,
         };
 
-        let service_record = proto_to_avro(&proto_record, "test-collection");
+        let service_record = proto_to_service(&proto_record, "test-collection");
 
         assert_eq!(service_record.id, "test-vector-1");
         assert_eq!(service_record.collection_id, "test-collection");

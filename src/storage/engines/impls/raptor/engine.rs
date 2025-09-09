@@ -739,12 +739,24 @@ impl RaptorEngine {
             for (i, distance) in distances.iter().enumerate() {
                 let id = self.get_id_from_batch(&batch, i)?;
 
-                // Use standardized distance-to-similarity conversion for consistent ranking
-                use crate::core::search::results::InternalSearchResult; // For the static method
-                let similarity_score = InternalSearchResult::standardized_distance_to_similarity(*distance, distance_metric);
+                // Convert distance to similarity score for consistent ranking
+                // Note: This logic should match the standardized conversion
+                let similarity_score = match distance_metric {
+                    DistanceMetric::Cosine => {
+                        if distance.is_infinite() {
+                            0.0
+                        } else {
+                            1.0 - (distance / 2.0).min(1.0).max(0.0)
+                        }
+                    },
+                    DistanceMetric::Euclidean => {
+                        1.0 / (1.0 + distance)
+                    },
+                    _ => 1.0 / (1.0 + distance), // Default conversion
+                };
                 let search_result = OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
-                    .with_metadata(TypedMetadata::new());
+                    .with_metadata(TypedMetadata::default());
 
                 all_results.push(search_result);
             }
@@ -1312,12 +1324,24 @@ impl RaptorEngine {
             for (i, distance) in distances.iter().enumerate() {
                 let id = self.get_id_from_batch(&batch, i)?;
 
-                // Use standardized distance-to-similarity conversion for consistent ranking
-                use crate::core::search::results::InternalSearchResult; // For the static method
-                let similarity_score = InternalSearchResult::standardized_distance_to_similarity(*distance, distance_metric);
+                // Convert distance to similarity score for consistent ranking
+                // Note: This logic should match the standardized conversion
+                let similarity_score = match distance_metric {
+                    DistanceMetric::Cosine => {
+                        if distance.is_infinite() {
+                            0.0
+                        } else {
+                            1.0 - (distance / 2.0).min(1.0).max(0.0)
+                        }
+                    },
+                    DistanceMetric::Euclidean => {
+                        1.0 / (1.0 + distance)
+                    },
+                    _ => 1.0 / (1.0 + distance), // Default conversion
+                };
                 let search_result = OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
-                    .with_metadata(TypedMetadata::new());
+                    .with_metadata(TypedMetadata::default());
 
                 all_results.push(search_result);
             }

@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
+use crate::core::search::OptimizedSearchRecord;
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 // SearchResult is now only used from proto layer - not re-exported in core::search
 
 // Hardcoded Avro schema for compile-time reliability and zero dependencies
@@ -271,26 +273,33 @@ impl VectorRecord {
     }
 
     /// Convert to search result (zero-copy field mapping)
-    pub fn to_search_result(&self, similarity: f32) -> crate::core::search::InternalSearchResult {
-        crate::core::search::InternalSearchResult {
-            id: self.id.clone(),
-            vector_id: Some(self.id.clone()),
-            score: similarity,
-            similarity: Some(similarity),
-            vector: Some(self.vector.clone()),
-            metadata: self.metadata.clone(),
-            debug_info: None,
-            semantic_similarity: None,
-            quantization_info: None,
-            engine_stats: None,
-            index_path: None,
-            version: self.version.map(|v| v as u32),
-            timestamp: Some(self.timestamp as u32),
-            expanded_context: Vec::new(),
-            expires_at: None,
-            source: None,
-            updated_at: None,
+    pub fn to_search_result(&self, similarity: f32) -> OptimizedSearchRecord {
+        // Convert metadata to TypedMetadata
+        let mut metadata_map = std::collections::HashMap::new();
+        for (key, value) in &self.metadata {
+            let typed_value = match value {
+                serde_json::Value::String(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        MetadataValue::Number(f)
+                    } else {
+                        MetadataValue::Null
+                    }
+                },
+                serde_json::Value::Bool(b) => MetadataValue::Bool(*b),
+                _ => MetadataValue::Null,
+            };
+            metadata_map.insert(key.clone(), typed_value);
         }
+        
+        OptimizedSearchRecord::new(
+            self.id.clone(),
+            similarity,
+        )
+        .with_similarity(similarity)
+        .add_vector(self.vector.clone())
+        .with_metadata(TypedMetadata::from_map(metadata_map))
+        .with_version_info(self.version.map(|v| v as u32).unwrap_or(0), self.timestamp as u32)
     }
 
     /// Calculate the actual memory size of this vector record including vector data
@@ -623,7 +632,7 @@ pub struct SearchDebugInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorSearchResponse {
     pub success: bool,
-    pub results: Vec<crate::core::search::InternalSearchResult>,
+    pub results: Vec<OptimizedSearchRecord>,
     pub total_count: i64,
     pub total_found: i64,
     pub processing_time_us: i64,
@@ -947,7 +956,7 @@ pub enum OperationResult {
     /// Vector was deleted
     Deleted { vector_id: String },
     /// Search results
-    SearchResults(Vec<crate::core::search::InternalSearchResult>),
+    SearchResults(Vec<OptimizedSearchRecord>),
     /// Vector data retrieved
     VectorData {
         vector_id: String,
@@ -1136,6 +1145,6 @@ impl OperationResponse {
 
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
-pub type UnifiedSearchResult = crate::core::search::InternalSearchResult;
+pub type UnifiedSearchResult = OptimizedSearchRecord;
 pub type UnifiedCollection = crate::proto::proximadb::Collection;
-pub type VectorSearchResult = crate::core::search::InternalSearchResult; // Alias from schema_types.rs
+pub type VectorSearchResult = OptimizedSearchRecord; // Alias from schema_types.rs

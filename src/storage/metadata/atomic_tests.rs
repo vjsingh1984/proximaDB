@@ -204,7 +204,7 @@ mod tests {
         }
 
         async fn get_collection(&self, collection_id: &str) -> Result<Option<CollectionMetadata>> {
-            Ok(self.metadata.read().await.get(key).cloned())
+            Ok(self.metadata.read().await.get(collection_id).cloned())
         }
 
         async fn update_collection(
@@ -281,7 +281,7 @@ mod tests {
             Ok(())
         }
 
-        async fn get_storage_stats(&self) -> Result<MetadataStorageStats> {
+        async fn get_stats(&self) -> Result<MetadataStorageStats> {
             let metadata = self.metadata.read().await;
             Ok(MetadataStorageStats {
                 total_collections: metadata.len() as u64,

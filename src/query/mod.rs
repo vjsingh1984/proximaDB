@@ -120,7 +120,7 @@
 //! ```rust
 //! use proximadb::query::{QueryEngine, VectorSearchQuery};
 //!
-//! let engine = QueryEngine::new_with_storage(storage).await?;
+//! let _engine = QueryEngine::new_with_storage(storage).await?;
 //!
 //! // SQL query
 //! let results = engine.execute_sql(
@@ -161,6 +161,7 @@
 pub mod sql_engine;
 pub mod unified_query_optimizer;
 pub mod vector_search;
+pub mod sks_extensions;
 
 // Re-export main types
 pub use sql_engine::{QueryPlanner, SqlEngine, SqlExecutionResult, SqlParser};
@@ -250,7 +251,7 @@ impl QueryEngine {
     /// Execute vector search query
     pub async fn execute_vector_search(
         &self,
-        query: &VectorSearchQuery,
+        _query: &VectorSearchQuery,
     ) -> Result<VectorSearchResult> {
         if let Some(vector_service) = &self.vector_service {
             // Convert SearchQuery to SearchConfig for execution

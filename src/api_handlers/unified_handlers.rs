@@ -119,7 +119,7 @@ impl UnifiedHandlers {
         let operation = CollectionOperation::try_from(request.operation)
             .context("Invalid collection operation")?;
 
-        let (success, collection, collections_opt, affected_count, error_msg, error_code) =
+        let (success, collection, collections_opt, affected_count, _error_msg, error_code) =
             match operation {
                 CollectionOperation::CollectionCreate => {
                     self.handle_create_collection(request).await?
@@ -583,11 +583,11 @@ impl UnifiedHandlers {
             .vector;
 
         // Convert distance metric (default to Cosine for now)
-        let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
+        let _distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
 
         // Extract search parameters and metadata filters from request
         // Convert proto SearchParams to core SearchParams with filter expressions
-        let search_params = if let Some(first_query) = request.queries.first() {
+        let _search_params = if let Some(first_query) = request.queries.first() {
             if let Some(ref metadata_filter) = first_query.metadata_filter {
                 if !metadata_filter.conditions.is_empty() {
                     // Convert proto MetadataFilter to HashMap first
@@ -748,13 +748,25 @@ impl UnifiedHandlers {
     /// List unflushed vectors for a collection
     /// This queries the global partitioned memtable to get vectors that haven't been flushed yet
     pub async fn list_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
-        // TODO: Implement proper access to global partitioned memtable
-        // For now, return an empty vec as a placeholder
-        // The actual implementation should:
-        // 1. Access the global partitioned memtable through vector_operations_service
-        // 2. Get unflushed batches for the specific collection
-        // 3. Convert batches to individual VectorRecords
-        Ok(Vec::new())
+        debug!(
+            "📋 UnifiedHandlers: Listing unflushed vectors for collection {}",
+            collection_id
+        );
+        
+        // Access the global partitioned memtable through vector_operations_service
+        // The VectorOperationsService maintains a unified view of both WAL and storage
+        let unflushed_vectors = self
+            .vector_operations_service
+            .get_unflushed_vectors(collection_id)
+            .await?;
+        
+        debug!(
+            "Found {} unflushed vectors for collection {}",
+            unflushed_vectors.len(),
+            collection_id
+        );
+        
+        Ok(unflushed_vectors)
     }
 
     /// Force flush all collections

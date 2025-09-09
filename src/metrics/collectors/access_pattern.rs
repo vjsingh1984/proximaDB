@@ -430,7 +430,7 @@ impl CorrelationTracker {
         }
     }
 
-    pub async fn update_correlations(&self, file_key: &str, collection_id: &str) {
+    pub async fn update_correlations(&self, _file_key: &str, _collection_id: &str) {
         // This would implement correlation tracking logic
         // For now, just increment counters
     }

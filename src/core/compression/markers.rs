@@ -90,8 +90,8 @@ mod tests {
         ];
 
         for algorithm in algorithms {
-            let marker = get_compression_marker(&algorithm);
-            let roundtrip = get_compression_algorithm_from_marker(marker);
+            let marker = compression_marker(&algorithm);
+            let roundtrip = compression_algorithm_from_marker(marker);
             assert_eq!(algorithm, roundtrip, "Roundtrip failed for {:?}", algorithm);
         }
     }

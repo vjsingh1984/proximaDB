@@ -219,6 +219,11 @@ pub mod strategy;
 // Specialized cache system with shared infrastructure
 pub mod cache;
 
+// Semantic Knowledge Store (SKS) modules
+pub mod entity_store;
+pub mod relations;
+pub mod provenance;
+
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers

@@ -202,8 +202,8 @@ mod base_traits_tests {
             value: 123,
         };
         let map = config.to_map();
-        assert_eq!(map.get(key).unwrap(), "test_config");
-        assert_eq!(map.get(key).unwrap(), "123");
+        assert_eq!(map.get("name").unwrap(), "test_config");
+        assert_eq!(map.get("value").unwrap(), "123");
         assert_eq!(map.len(), 2);
     }
 
@@ -329,13 +329,13 @@ mod base_traits_tests {
         };
 
         let metrics = service.metrics().await;
-        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(false));
-        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(false));
+        assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(false));
+        assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(false));
 
         service.start().await.unwrap();
         let metrics = service.metrics().await;
-        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(true));
-        assert_eq!(metrics.get(key).unwrap(), &serde_json::Value::Bool(true));
+        assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(true));
+        assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(true));
     }
 }
 

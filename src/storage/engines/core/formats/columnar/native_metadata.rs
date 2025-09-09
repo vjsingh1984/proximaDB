@@ -11,8 +11,7 @@
 //! - Optimized predicate pushdown for metadata queries
 
 use anyhow::Result;
-use arrow_array::{
-    Array, ArrayRef,
+use arrow_array::{ArrayRef,
     builder::{
         BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, StringBuilder,
     },

@@ -3192,10 +3192,10 @@ impl UnifiedStorageEngine for SstStorage {
 
         // Convert InternalSearchResult to OptimizedSearchRecord
         // Note: This still needs to convert from InternalSearchResult because the search engine returns that type
-        // TODO: Update the search engine to return OptimizedSearchRecord directly
+        // Results are already OptimizedSearchRecord
         let mut optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
             result_set.results.iter()
-                .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r.clone()))
+                .cloned()
                 .collect();
         
         // Filter results based on include_vectors and include_metadata

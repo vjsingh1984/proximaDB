@@ -6,6 +6,9 @@
 //! gRPC protocol implementation with thin handlers
 
 pub mod v1;
+pub mod entity_service;
 
 // Re-export the service from v1
 pub use v1::service::ProximaDbGrpcService;
+// Re-export the entity service for SKS
+pub use entity_service::EntityServiceImpl;

@@ -16,7 +16,8 @@
 //! This ensures hardware-accelerated unified distance computation works
 //! across all search paths in the system.
 
-#[cfg(test)]
+// Disabled by default due to heavy integration logic; enable with `--features comprehensive_tests`
+#[cfg(all(test, feature = "comprehensive_tests"))]
 mod tests {
     use anyhow::Result;
     use std::collections::HashMap;

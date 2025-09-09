@@ -33,24 +33,24 @@ toc::[]
 
 == 🎯 Executive Summary
 
-ProximaDB is a next-generation vector database designed to deliver **high-performance vector search with simplified architecture**, targeting reduced operational complexity and infrastructure costs through innovative storage engine design.
+ProximaDB is a next-generation vector database engineered for **unparalleled performance and efficiency**, leveraging a novel multi-engine architecture and hardware-aware optimizations to deliver superior vector search capabilities with reduced operational overhead.
 
 [cols="1,1,1", frame=none, grid=none]
 |===
-^.^| **💰 Reduced Complexity**
-Optimized architecture
-designed for efficiency
-and simplicity
+^.^| **⚡ High-Performance**
+Engineered for speed
+and efficiency across
+diverse workloads
 
-^.^| **⚡ Hardware Optimized**
-7-phase search pipeline
-with SIMD acceleration
+^.^| **🚀 Hardware-Optimized**
+Leverages SIMD acceleration
 and adaptive storage
+for maximum throughput
 
-^.^| **🚀 Quick Start**
-Docker-based deployment
-with minimal configuration
-requirements
+^.^| **⚙️ Simplified Operations**
+Streamlined architecture
+reduces operational complexity
+and infrastructure costs
 |===
 
 == 📊 Technical Advantages
@@ -59,198 +59,177 @@ requirements
 
 [cols="2,1,1", options="header"]
 |===
-| Feature | Traditional Approach | ProximaDB Approach
+| Feature | Common Challenges | ProximaDB Approach
 
 | **Storage Architecture**
-| Single engine for all workloads
-| 7 specialized engines optimized for different patterns
+| Single engine often leads to compromises across diverse workloads.
+| Employs 7 specialized engines, each meticulously optimized for distinct data patterns and access needs, ensuring peak performance and efficiency for every use case.
 
 | **Hardware Utilization**
-| Generic implementation
-| Auto-detection and use of SIMD/GPU acceleration
+| Relies on generic implementations, often underutilizing modern CPU and GPU capabilities.
+| Features automatic detection and intelligent utilization of SIMD (e.g., AVX-512, AVX2, NEON) and GPU acceleration, maximizing throughput and minimizing latency.
 
 | **Memory Management**
-| Standard allocation
-| Zero-copy operations with memory-mapped files
+| Standard memory allocation can lead to high memory footprints and inefficient resource usage.
+| Implements zero-copy operations and memory-mapped files, significantly reducing memory overhead and enabling efficient handling of large datasets.
 
 | **Search Pipeline**
-| Single-phase search
-| Progressive 7-phase refinement
+| Typically uses a single-phase search, which can be inefficient for complex queries or large datasets.
+| Utilizes a progressive 7-phase refinement pipeline that intelligently narrows down search results from coarse to fine-grained matching, optimizing for both speed and accuracy.
 |===
 
-=== Performance Benchmarks
-
-**Early benchmark results show promising performance:**
-
-* **Distance Computation**: 13.5M - 20.8M ops/sec (128D vectors)
-* **Search Latency**: Sub-microsecond for small dimensions
-* **Memory Efficiency**: 45-65% reduction through progressive search
-* **Hardware Acceleration**: Automatic SIMD optimization across platforms
-
-_Note: These are preliminary benchmarks from our test environment. Production performance may vary based on hardware and workload._
-
-== 🎯 Strategic Advantages
-
-=== Why ProximaDB Wins
-
-[cols="1,2,2", options="header", frame=topbot]
-|===
-| Challenge | Industry Standard | ProximaDB Advantage
-
-| **Complexity**
-| Distributed systems requiring specialized expertise, complex orchestration, and constant tuning
-| Single-server simplicity with automatic optimization and self-tuning capabilities
-
-| **Cost Predictability**
-| Unpredictable scaling costs, hidden operational expenses, surprise cloud bills
-| Fixed resource model with transparent pricing and no scaling surprises
-
-| **Performance**
-| Trade-offs between speed and accuracy, degraded performance at scale
-| Consistent sub-millisecond latency with patented optimization pipeline
-
-| **Data Sovereignty**
-| Vendor lock-in, data residency concerns, compliance challenges
-| Complete control over your data, deploy anywhere, open-source transparency
-
-| **Time to Value**
-| Months of integration, specialized training required, complex migrations
-| Production-ready in minutes, intuitive APIs, zero-downtime migration tools
-|===
-
-== 🏢 Potential Use Cases
-
-=== Ideal for Early-Stage AI Projects
-
-[cols="1,3", frame=none]
-|===
-| **🛍️ E-Commerce Startups**
-a| 
-* Build MVP recommendation systems quickly
-* Prototype visual search features
-* Test similarity-based product discovery
-* Experiment with personalization algorithms
-
-| **🤖 AI/ML Developers**
-a|
-* RAG (Retrieval Augmented Generation) applications
-* Semantic search for documentation
-* Embedding storage for LLM applications
-* Prototype similarity matching systems
-
-| **📊 Data Science Teams**
-a|
-* Vector similarity experiments
-* Feature store for ML models
-* Clustering and classification tasks
-* Proof-of-concept development
-
-| **🔬 Research Projects**
-a|
-* Academic research in vector search
-* Benchmark different search algorithms
-* Test quantization strategies
-* Evaluate storage optimizations
-
-| **🚀 Startups & MVPs**
-a|
-* Quick prototype development
-* Test market fit with vector search
-* Build demo applications
-* Validate use cases before scaling
-|===
-
-== 💎 Key Differentiators
-
-=== Technical Innovation
-
-[cols="1,1,1", frame=none, grid=none]
-|===
-^.^| **7-Phase Progressive Search**
-Multi-stage pipeline that progressively
-refines search results from coarse
-to fine-grained matching
-
-^.^| **7 Specialized Storage Engines**
-Different engines optimized for
-specific workload patterns
-(SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX)
-
-^.^| **Hardware Optimization**
-Automatic detection and use of
-SIMD instructions (AVX-512, AVX2, NEON)
-for accelerated distance computation
-|===
-
-=== Performance Benchmarks
+=== High-Level System Architecture
 
 [source,mermaid]
 ----
 graph LR
-    subgraph "Search Latency (ms)"
-        A[ProximaDB: 2.5ms] 
-        B[Competitor A: 8.3ms]
-        C[Competitor B: 12.1ms]
-        D[Elasticsearch: 45ms]
-    end
-    
-    style A fill:#4CAF50,color:#fff
-    style B fill:#FFC107
-    style C fill:#FF9800
-    style D fill:#F44336
+    A[API Layer] --> B[Service Layer]
+    B --> C[Storage Layer]
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#f9f,stroke:#333,stroke-width:2px
 ----
 
-== 🚀 Implementation Roadmap
+== 🎯 Strategic Advantages
 
-=== Week 1: Proof of Concept
+=== Why ProximaDB Excels
+
+[cols="1,2,2", options="header", frame=topbot]
+|===
+| Key Challenge | Traditional Solutions | ProximaDB's Differentiated Advantage
+
+| **Operational Simplicity**
+| Distributed systems often demand specialized expertise, complex orchestration, and continuous manual tuning, leading to high operational burden.
+| Offers streamlined deployment and management with automatic optimization and self-tuning capabilities, drastically reducing operational complexity and freeing up valuable engineering resources.
+
+| **Cost Efficiency**
+| Unpredictable scaling costs, hidden operational expenses, and unexpected cloud bills due to inefficient resource utilization.
+| Provides optimized resource utilization through intelligent workload-aware engines and adaptive tiering, leading to predictable operational costs and significant reductions in infrastructure overhead.
+
+| **Performance at Scale**
+| Often involves trade-offs between speed and accuracy, with performance degrading significantly as data volumes grow.
+| Delivers consistently high performance across diverse workloads and scales, intelligently adapting to your data characteristics and query patterns to maintain optimal speed and accuracy.
+
+| **Data Sovereignty & Control**
+| Can lead to vendor lock-in, data residency concerns, and compliance challenges due to reliance on proprietary systems or specific cloud providers.
+| Ensures complete control over your data with the flexibility to deploy anywhere (on-premise, any cloud), coupled with open-source transparency and a commitment to open standards.
+
+| **Time to Value**
+| Can involve months of complex integration, requiring specialized training and often necessitating disruptive migrations.
+| Designed for rapid deployment and integration, enabling a production-ready state in minutes. Features intuitive APIs and zero-downtime migration tools, accelerating your path to impactful AI applications.
+|===
+
+== 🏢 Potential Use Cases
+
+=== Empowering AI-Driven Applications Across Industries
+
+ProximaDB is engineered to be a foundational component for a wide range of AI-driven applications, offering robust vector search capabilities that unlock new possibilities for innovation.
 
 [cols="1,3", frame=none]
 |===
-| **Day 1-2**
-| Deploy ProximaDB, import sample data, validate performance
+| **🛍️ E-Commerce & Retail**
+a|
+*   **Personalized Recommendations**: Power real-time product recommendations based on user behavior and product similarity, enhancing customer experience and driving sales.
+*   **Visual Search**: Enable customers to find products using images, transforming the online shopping experience.
+*   **Intelligent Product Discovery**: Improve search relevance and allow for semantic exploration of product catalogs, moving beyond keyword matching.
+*   **Fraud Detection**: Identify anomalous transaction patterns by comparing vector embeddings of financial activities.
 
-| **Day 3-4**
-| Integrate with existing systems, run parallel testing
+| **🤖 AI/ML Development & Research**
+a|
+*   **Retrieval Augmented Generation (RAG)**: Serve as the high-performance vector store for RAG architectures, enabling large language models (LLMs) to access and synthesize up-to-date, external knowledge.
+*   **Semantic Search for Knowledge Bases**: Implement highly accurate semantic search across documentation, research papers, and internal knowledge bases, improving information retrieval for developers and researchers.
+*   **Embedding Storage & Management**: Efficiently store, index, and manage large volumes of vector embeddings generated by various AI models.
+*   **Prototype & Experimentation**: Rapidly prototype and test new similarity matching systems, clustering algorithms, and classification tasks with diverse datasets.
 
-| **Day 5**
-| Performance benchmarking, ROI validation
+| **📊 Data Science & Analytics**
+a|
+*   **Feature Stores for ML Models**: Act as a dynamic feature store, providing fast access to vector embeddings for machine learning model training and inference.
+*   **Clustering & Anomaly Detection**: Facilitate large-scale clustering of high-dimensional data and identify outliers or anomalies through efficient nearest neighbor searches.
+*   **Data Exploration & Visualization**: Enable interactive exploration of complex datasets by finding similar data points and visualizing relationships in embedding spaces.
+*   **Proof-of-Concept Development**: Accelerate the development of AI-driven solutions by providing a robust and performant vector database for initial proofs-of-concept.
+
+| **📱 Edge Devices & Embedded Systems**
+a|
+*   **On-Device AI**: Deploy AI models directly on edge devices (phones, tablets, industrial equipment) for real-time inference without cloud dependency.
+*   **Offline Capabilities**: Enable vector search in disconnected or intermittently connected environments, crucial for remote or mobile applications.
+*   **Resource-Constrained Environments**: Leverage Rust's small binary footprint and ProximaDB's memory efficiency to run advanced vector search on devices with limited resources.
+*   **Local Data Processing**: Perform vector operations directly on the device, reducing data transfer costs and improving privacy.
+
+| **🚀 Startups & Rapid Prototyping**
+a|
+*   **Accelerated MVP Development**: Quickly build and deploy minimum viable products (MVPs) that leverage advanced vector search capabilities.
+*   **Market Validation**: Test market fit for new AI-powered features and applications with real-world data and user feedback.
+*   **Scalable Demo Applications**: Develop high-performance demo applications that showcase the power of semantic search without significant infrastructure investment.
+*   **Iterative Innovation**: Support agile development cycles by providing a flexible and performant backend for iterative feature development and testing.
 |===
 
-=== Week 2-4: Production Rollout
+== 💎 Key Differentiators
+
+=== Technical Innovation Driving Superior Value
+
+ProximaDB stands apart through its foundational technical innovations, designed to deliver unmatched performance, efficiency, and operational simplicity.
+
+[cols="1,1,1", frame=none, grid=none]
+|===
+^.^| **7-Phase Progressive Search**
+Our unique multi-stage pipeline intelligently refines search results. It starts with coarse-grained filtering for speed and progressively moves to fine-grained matching for accuracy, ensuring optimal balance between latency and recall for every query.
+
+^.^| **7 Specialized Storage Engines**
+Unlike monolithic databases, ProximaDB features a pluggable architecture with 7 distinct storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX). Each engine is meticulously optimized for specific workload patterns (e.g., OLTP, OLAP, real-time, batch), allowing you to choose the perfect fit for your data and achieve unparalleled performance and cost efficiency.
+
+^.^| **Hardware-Aware Optimization**
+ProximaDB automatically detects and leverages the full potential of your underlying hardware. By utilizing advanced SIMD instructions (such as AVX-512, AVX2, NEON) for accelerated distance computation, we ensure your vector search operations run at maximum efficiency, reducing processing time and energy consumption.
+|===
+
+== 🚀 User Journey & Adoption Roadmap
+
+ProximaDB is designed for a smooth adoption experience, from initial exploration to full production deployment.
+
+=== Phase 1: Exploration & Proof of Concept (Days 1-5)
 
 [cols="1,3", frame=none]
 |===
-| **Week 2**
-| Migrate production data, configure optimization settings
+| **Day 1-2: Quick Start**
+| Easily deploy ProximaDB using Docker or build from source. Import your initial sample data and run basic queries to immediately validate performance and functionality.
 
-| **Week 3**
-| A/B testing, performance tuning, team training
+| **Day 3-4: Integration & Testing**
+| Begin integrating ProximaDB with your existing applications using our intuitive APIs. Conduct parallel testing with your current systems to observe initial performance gains and identify areas for optimization.
 
-| **Week 4**
-| Full production cutover, decommission legacy systems
+| **Day 5: Evaluate & Plan**
+| Analyze preliminary performance benchmarks and assess the return on investment (ROI) for your specific use cases. Develop a high-level plan for integrating ProximaDB into your production environment.
 |===
 
-== 🔓 Open Source Project
+=== Phase 2: Production Readiness & Rollout (Weeks 2-4)
 
-=== Apache 2.0 License
+[cols="1,3", frame=none]
+|===
+| **Week 2: Data Migration & Configuration**
+| Migrate your production data using our robust migration tools. Configure advanced optimization settings, including specialized storage engines and indexing strategies, to tailor ProximaDB to your workload.
 
-**ProximaDB is 100% open source and free to use**
+| **Week 3: A/B Testing & Performance Tuning**
+| Conduct A/B testing to compare ProximaDB's performance against your existing solutions. Fine-tune configurations based on real-world workload patterns and provide training to your team on operational best practices.
 
-* ✅ **Free for any use** - Commercial or non-commercial
-* ✅ **No vendor lock-in** - Full control over your data and deployment
-* ✅ **Community-driven** - We welcome contributions and feedback
-* ✅ **Transparent development** - All development happens in the open
+| **Week 4: Full Production Cutover**
+| Execute a seamless, zero-downtime cutover to ProximaDB for your production workloads. Decommission legacy systems and fully leverage the enhanced capabilities and efficiencies of your new vector database.
+|===
 
-=== Early Access Program
+== 🔓 Open Source & Early Stage
 
-**We're seeking early adopters to help shape ProximaDB's future:**
+ProximaDB is an early‑stage, open‑source project (no production customers yet). We’re building in the open and actively seeking feedback and contributors.
 
-* Provide feedback on features and performance
-* Help identify use cases and requirements
-* Contribute to the codebase and documentation
-* Join our growing community of vector search enthusiasts
+=== What this means today
+* ✅ Working core: collection management, vector insert/search, REST + gRPC
+* ✅ Multiple storage engines with progressive search path
+* 🚧 In progress: index orchestration, distributed features, security hardening
+* 🧪 Expect API evolution as we stabilize
 
-_Contact us at singhvjd@gmail.com to discuss your use case._
+=== Get involved
+* Try it locally (see Quick Start)
+* File issues and propose improvements
+* Contribute code or docs
+
+Contact: singhvjd@gmail.com • LinkedIn: https://www.linkedin.com/company/proximadb[proximadb]
 
 == 🎯 Getting Started
 
@@ -307,26 +286,20 @@ Regular updates
 [.text-center]
 _We're looking for early adopters to help shape ProximaDB's future_
 
-* **Provide Feedback**: Help us understand your use cases and requirements
-* **Test Performance**: Benchmark against your workloads
-* **Contribute Code**: Join our open-source development effort
-* **Shape the Roadmap**: Influence feature prioritization
+*   **Provide Feedback**: Help us understand your use cases and requirements
+*   **Test Performance**: Benchmark against your workloads
+*   **Contribute Code**: Join our open-source development effort
+*   **Shape the Roadmap**: Influence feature prioritization
 
-== 📞 Contact Our Team
+== 📞 Contact
 
-[cols="1,1,1", frame=none, grid=none]
+[cols="1,2", frame=none, grid=none]
 |===
-^.^| **Sales Inquiries**
-enterprise@proximadb.com
-+1-800-PROXIMA
+^.^| **Email**
+singhvjd@gmail.com
 
-^.^| **Technical Support**
-support@proximadb.com
-24/7 for Enterprise
-
-^.^| **Partnerships**
-partners@proximadb.com
-Global partner network
+^.^| **LinkedIn**
+https://www.linkedin.com/company/proximadb
 |===
 
 ---

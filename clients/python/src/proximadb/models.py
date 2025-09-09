@@ -667,6 +667,7 @@ class CollectionConfig(BaseModel):
     # STORAGE CONFIGURATION
     storage_engine: Optional[StorageEngine] = StorageEngine.VIPER  # Align with server default
     storage_config: Optional['StorageConfig'] = None  # Complete storage configuration
+    compression: Optional['CompressionConfig'] = None  # Optional compression configuration (SDK convenience)
     
     # INDEX CONFIGURATION
     index_configs: Optional[List[IndexConfiguration]] = None
@@ -914,6 +915,22 @@ class SearchResult(BaseModel):
     vector: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
     rank: Optional[int] = None
+
+
+class SearchProgress(BaseModel):
+    """Progress state for progressive search"""
+    stage: int
+    stages: int
+    complete: bool
+
+
+class SearchEnvelope(BaseModel):
+    """Envelope for paginated/progressive SKS search results"""
+    items: List[SearchResult]
+    total: Optional[int] = None
+    cursor: Optional[str] = None
+    has_more: bool = False
+    progress: Optional[SearchProgress] = None
 
 
 class VectorGetResponse(BaseModel):

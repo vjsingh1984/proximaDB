@@ -99,6 +99,9 @@ class ProximaDBClient:
         
         # Initialize HTTP client
         self._http_client = self._create_http_client()
+        # Capability probes (cached after first attempt)
+        self._sks_search_supported: Optional[bool] = None
+        self._sks_entities_supported: Optional[bool] = None
         
         # Initialize request batching if enabled
         self.enable_batching = enable_batching
@@ -122,7 +125,30 @@ class ProximaDBClient:
             )
             logger.info("Enabled response caching for read operations")
         
+        # SKS capability cache and warmup tracking
+        self._sks_search_supported: Optional[bool] = None
+        self._sks_entities_supported: Optional[bool] = None
+        self._warmed_collections: set[str] = set()
         logger.info(f"Initialized ProximaDB client for {self.config.url}")
+
+    def _auto_warmup(self, collection_id: str) -> None:
+        """Auto-warmup SKS support once per collection (best-effort)."""
+        if not collection_id or collection_id in self._warmed_collections:
+            return
+        if self._sks_search_supported is None or self._sks_entities_supported is None:
+            try:
+                self.warmup_sks_capabilities(collection_id)
+            except Exception:
+                pass
+        self._warmed_collections.add(collection_id)
+
+    def get_capabilities(self) -> Dict[str, Any]:
+        """Return cached capability flags and warmed collections."""
+        return {
+            "sks_search_supported": self._sks_search_supported,
+            "sks_entities_supported": self._sks_entities_supported,
+            "warmed_collections": list(self._warmed_collections),
+        }
     
     def _setup_logging(self) -> None:
         """Setup logging configuration"""
@@ -378,15 +404,16 @@ class ProximaDBClient:
                         f"For guaranteed support, use: {', '.join(ServerCapabilities().supported_storage_engines)}"
                     )
         
-        if config.primary_indexing_algorithm:
-            algo_str = config.primary_indexing_algorithm if isinstance(config.primary_indexing_algorithm, str) else config.primary_indexing_algorithm.value
-            if not ServerCapabilities.is_supported("indexing_algorithm", algo_str):
-                fallback = ServerCapabilities.get_fallback_for("indexing_algorithm", algo_str)
-                if fallback:
-                    fallback_warnings.append(
-                        f"💡 Indexing algorithm '{algo_str}' will fallback to '{fallback}' (server decision). "
-                        f"For guaranteed support, use: {', '.join(ServerCapabilities().supported_indexing_algorithms)}"
-                    )
+        if config.index_configs:
+            for ic in (config.index_configs or []):
+                algo_str = ic.algorithm if isinstance(ic.algorithm, str) else ic.algorithm.value
+                if not ServerCapabilities.is_supported("indexing_algorithm", algo_str):
+                    fallback = ServerCapabilities.get_fallback_for("indexing_algorithm", algo_str)
+                    if fallback:
+                        fallback_warnings.append(
+                            f"💡 Indexing algorithm '{algo_str}' will fallback to '{fallback}' (server decision). "
+                            f"For guaranteed support, use: {', '.join(ServerCapabilities().supported_indexing_algorithms)}"
+                        )
         
         # Issue all fallback warnings at once for better UX
         if fallback_warnings:
@@ -399,13 +426,51 @@ class ProximaDBClient:
             warnings.warn(combined_message, UserWarning)
         
         # Build config object as expected by server
-        config_data = {
+        config_data: Dict[str, Any] = {
             "name": name,
             "dimension": config.dimension,
-            "distance_metric": config.distance_metric,
-            "primary_indexing_algorithm": config.primary_indexing_algorithm if hasattr(config, 'primary_indexing_algorithm') else "hnsw",
-            "storage_engine": getattr(config, 'storage_engine', 'viper'),  # Default to VIPER storage
+            "distance_metric": config.distance_metric if isinstance(config.distance_metric, str) else getattr(config.distance_metric, 'value', 'cosine'),
+            "storage_engine": getattr(config, 'storage_engine', 'viper') if isinstance(getattr(config, 'storage_engine', 'viper'), str) else getattr(getattr(config, 'storage_engine', None), 'value', 'viper'),
         }
+
+        # Build index_configs aligned with proto
+        index_configs: List[Dict[str, Any]] = []
+        primary_index_name: Optional[str] = None
+        if getattr(config, 'index_configs', None):
+            for ic in (config.index_configs or []):
+                algo_str = ic.algorithm if isinstance(ic.algorithm, str) else ic.algorithm.value
+                entry: Dict[str, Any] = {
+                    "index_name": ic.index_name,
+                    "algorithm": algo_str,
+                    "is_primary": bool(getattr(ic, 'is_primary', False)),
+                }
+                if entry["is_primary"]:
+                    primary_index_name = ic.index_name
+                index_configs.append(entry)
+        else:
+            # Default to a primary HNSW index when none provided
+            primary_index_name = f"{name}_primary"
+            index_configs.append({
+                "index_name": primary_index_name,
+                "algorithm": "hnsw",
+                "is_primary": True,
+            })
+
+        config_data["index_configs"] = index_configs
+        if primary_index_name:
+            config_data["primary_index"] = primary_index_name
+
+        # Quantization
+        if getattr(config, 'quantization', None):
+            try:
+                # Pydantic v2
+                q = config.quantization.model_dump(exclude_none=True)
+            except Exception:
+                try:
+                    q = config.quantization.dict(exclude_none=True)
+                except Exception:
+                    q = {}
+            config_data["quantization"] = q
         
         request_data = {
             "operation": "create",
@@ -435,25 +500,25 @@ class ProximaDBClient:
         
         # Handle unified API response format
         if "collection" in response_data:
-            # Response contains collection object
             coll_data = response_data["collection"]
-            if coll_data is None:
-                # Check if we have an error response
+            if not coll_data:
                 if "error" in response_data:
                     raise ProximaDBError(f"Collection creation failed: {response_data['error']}")
-                else:
-                    raise ProximaDBError(f"Unexpected response format: {response_data}")
+                raise ProximaDBError(f"Unexpected response format: {response_data}")
+
+            # Build config from response if present; otherwise fallback to request config
+            cfg_src = coll_data.get("config", {})
+            cfg = CollectionConfig(
+                name=cfg_src.get("name", name),
+                dimension=cfg_src.get("dimension", config.dimension),
+                distance_metric=cfg_src.get("distance_metric", getattr(config, 'distance_metric', 'cosine')),
+                storage_engine=cfg_src.get("storage_engine", getattr(config, 'storage_engine', 'viper')),
+            )
             return Collection(
                 id=coll_data.get("id", name),
-                config=CollectionConfig(
-                    name=coll_data["config"]["name"],
-                    dimension=coll_data["config"]["dimension"],
-                    distance_metric=coll_data["config"].get("distance_metric", "cosine"),
-                    storage_engine=coll_data["config"].get("storage_engine", "viper"),
-                    primary_indexing_algorithm=coll_data["config"].get("primary_indexing_algorithm", "hnsw")
-                ),
+                config=cfg,
                 created_at=coll_data.get("created_at"),
-                updated_at=coll_data.get("updated_at")
+                updated_at=coll_data.get("updated_at"),
             )
         else:
             # Fallback for other response formats
@@ -484,7 +549,7 @@ class ProximaDBClient:
             dimension=response_data["dimension"],
             distance_metric=response_data.get("metric", "cosine"),
             storage_engine=response_data.get("storage_engine", "viper"),
-            primary_indexing_algorithm=response_data.get("indexing_algorithm", "hnsw")
+            primary_indexing_algorithm = None
         )
         
         # Create CollectionStats if available
@@ -537,7 +602,7 @@ class ProximaDBClient:
                 dimension=coll_data["dimension"],
                 distance_metric=coll_data.get("metric", "cosine"),
                 storage_engine=coll_data.get("storage_engine", "viper"),
-                primary_indexing_algorithm=coll_data.get("indexing_algorithm", "hnsw")
+                primary_indexing_algorithm = None
             )
             
             # Create CollectionStats if available
@@ -674,6 +739,7 @@ class ProximaDBClient:
         Returns:
             Batch insert operation result
         """
+        self._auto_warmup(collection_id)
         vectors_list = self._normalize_vectors(vectors)
         
         if len(vectors_list) != len(ids):
@@ -718,11 +784,38 @@ class ProximaDBClient:
             import json as debug_json
             logger.debug(f"Full request JSON:\n{debug_json.dumps(unified_request, indent=2)[:1000]}")
             
-            response = self._make_request(
-                "POST",
-                "/api/v1/vector/batch",
-                json=unified_request
-            )
+            # Try SKS entities endpoint first if supported/unknown
+            response = None
+            if self._sks_entities_supported is not False:
+                try:
+                    response = self._make_request(
+                        "POST",
+                        f"/api/v1/entities/{collection_id}",
+                        json=unified_request
+                    )
+                    # If we reached here without exception, consider SKS entities supported
+                    self._sks_entities_supported = True
+                except Exception as e:
+                    # Mark unsupported on 404/405; otherwise remain unknown to retry later
+                    try:
+                        status = getattr(e, 'response', None).status_code if hasattr(e, 'response') else None
+                    except Exception:
+                        status = None
+                    if status in (404, 405, 501):
+                        self._sks_entities_supported = False
+                    # Fallback to legacy endpoint
+                    response = self._make_request(
+                        "POST",
+                        "/api/v1/vector/batch",
+                        json=unified_request
+                    )
+            else:
+                # Known unsupported: use legacy endpoint directly
+                response = self._make_request(
+                    "POST",
+                    "/api/v1/vector/batch",
+                    json=unified_request
+                )
             
             response_data = response.json()
             # Handle unified API response
@@ -766,6 +859,7 @@ class ProximaDBClient:
                         "collection_id": collection_id,
                         "vectors": batch_data
                     }
+                    # For multi-batch, use legacy endpoint to minimize negotiation overhead
                     response = self._make_request(
                         "POST",
                         "/api/v1/vector/batch",
@@ -857,7 +951,7 @@ class ProximaDBClient:
             metadata_filter=metadata_filter_obj
         )
         
-        # Create search request using model
+        # Create search request using model (legacy/compat path)
         search_request = VectorSearchRequest(
             collection_id=collection_id,
             queries=[search_query],
@@ -890,43 +984,197 @@ class ProximaDBClient:
             if optimization:
                 request_data['search_optimization'] = optimization
         
+        # Try SKS-aligned endpoint first; fall back to legacy if unavailable
+        if self._sks_search_supported is not False:
+            try:
+                sks_body = {
+                    "vector": vector,
+                    "top_k": top_k,
+                    "include_vector": include_vectors,
+                    "include_metadata": include_metadata,
+                }
+                sks_resp = self._make_request(
+                    "POST",
+                    f"/api/v1/search/{collection_id}",
+                    json=sks_body,
+                    timeout=timeout or self.config.timeout,
+                )
+                sks_data = sks_resp.json()
+                if isinstance(sks_data, dict) and "items" in sks_data:
+                    self._sks_search_supported = True
+                    results: List[SearchResult] = []
+                    for item in sks_data.get("items", []) or []:
+                        results.append(
+                            SearchResult(
+                                id=item.get("entity_id") or item.get("id", ""),
+                                score=item.get("score", 0.0),
+                                vector=None,  # vectors omitted unless server supports include_vector
+                                metadata=(item.get("typed_metadata") or item.get("metadata") or {}) if include_metadata else None,
+                            )
+                        )
+                    return results
+            except Exception as e:
+                # Disable SKS probe on explicit 404/405/501; otherwise leave as None to retry later
+                try:
+                    status = getattr(e, 'response', None).status_code if hasattr(e, 'response') else None
+                except Exception:
+                    status = None
+                if status in (404, 405, 501):
+                    self._sks_search_supported = False
+
+        # Legacy vector search path
         response = self._make_request(
             "POST",
             "/api/v1/vector/search",
             json=request_data,
             timeout=timeout or self.config.timeout,
         )
-        
         response_data = response.json()
         
         # Check for errors in response
-        if response_data.get("error_message"):
+        if isinstance(response_data, dict) and response_data.get("error_message"):
             error_msg = response_data.get("error_message")
-            if "not found" in error_msg.lower():
-                # For collection not found, return empty results (common pattern)
+            if isinstance(error_msg, str) and "not found" in error_msg.lower():
                 return []
-            else:
-                raise ProximaDBError(f"Search failed: {error_msg}")
+            raise ProximaDBError(f"Search failed: {error_msg}")
         
         # Handle proto-aligned response format
-        if "results" in response_data:
-            # Extract search results from results field
-            search_results = []
-            for result in response_data["results"]:
-                # Convert proto-aligned result to SearchResult
-                search_results.append(SearchResult(
+        results: List[SearchResult] = []
+        for result in response_data.get("results", []) or []:
+            results.append(
+                SearchResult(
                     id=result.get("id", ""),
                     score=result.get("score", 0.0),
-                    distance=result.get("distance", 0.0),
                     rank=result.get("rank", 0),
-                    vector=result.get("vector", []) if include_vectors else [],
-                    metadata=result.get("metadata", {}) if include_metadata else {},
-                    collection_id=collection_id
-                ))
-            return search_results
-        else:
-            # Fallback for other response formats
-            return []
+                    vector=(result.get("vector", []) if include_vectors else None),
+                    metadata=(result.get("metadata", {}) if include_metadata else None),
+                )
+            )
+        return results
+
+    def search_envelope(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        include_vectors: bool = False,
+        include_metadata: bool = True,
+        timeout: Optional[float] = None,
+    ) -> 'SearchEnvelope':
+        """Search returning SKS envelope (cursor/progress) when supported.
+
+        Falls back to legacy path and returns envelope with no cursor/progress.
+        """
+        from ..models import SearchEnvelope, SearchProgress
+        self._auto_warmup(collection_id)
+        # Normalize vector
+        if isinstance(vector, np.ndarray):
+            if vector.dtype != np.float32:
+                vector = vector.astype(np.float32)
+            vector = vector.tolist()
+
+        # Try SKS
+        if self._sks_search_supported is not False:
+            try:
+                sks_body = {
+                    "vector": vector,
+                    "top_k": top_k,
+                    "include_vector": include_vectors,
+                    "include_metadata": include_metadata,
+                }
+                sks_resp = self._make_request(
+                    "POST",
+                    f"/api/v1/search/{collection_id}",
+                    json=sks_body,
+                    timeout=timeout or self.config.timeout,
+                )
+                sks_data = sks_resp.json()
+                if isinstance(sks_data, dict) and ("items" in sks_data):
+                    self._sks_search_supported = True
+                    # Map envelope
+                    items: List[SearchResult] = []
+                    for item in sks_data.get("items", []) or []:
+                        items.append(
+                            SearchResult(
+                                id=item.get("entity_id") or item.get("id", ""),
+                                score=item.get("score", 0.0),
+                                vector=None if not include_vectors else item.get("vector"),
+                                metadata=(item.get("typed_metadata") or item.get("metadata") or {}) if include_metadata else None,
+                            )
+                        )
+                    progress = None
+                    if sks_data.get("progress"):
+                        pr = sks_data["progress"]
+                        progress = SearchProgress(stage=pr.get("stage", 0), stages=pr.get("stages", 0), complete=pr.get("complete", False))
+                    cursor = None
+                    has_more = False
+                    if sks_data.get("page"):
+                        page = sks_data["page"]
+                        cursor = page.get("cursor")
+                        has_more = page.get("has_more", False)
+                    return SearchEnvelope(items=items, total=sks_data.get("total"), cursor=cursor, has_more=has_more, progress=progress)
+            except Exception as e:
+                try:
+                    status = getattr(e, 'response', None).status_code if hasattr(e, 'response') else None
+                except Exception:
+                    status = None
+                if status in (404, 405, 501):
+                    self._sks_search_supported = False
+
+        # Legacy fallback
+        results = self.search(collection_id, vector, top_k, include_vectors=include_vectors, include_metadata=include_metadata, timeout=timeout)
+        return SearchEnvelope(items=results, total=None, cursor=None, has_more=False, progress=None)
+
+    def search_next_page(
+        self,
+        collection_id: str,
+        cursor: str,
+        include_vectors: bool = False,
+        include_metadata: bool = True,
+        timeout: Optional[float] = None,
+    ) -> 'SearchEnvelope':
+        """Fetch next SKS search page by cursor. Returns empty envelope if unsupported."""
+        from ..models import SearchEnvelope, SearchProgress
+        self._auto_warmup(collection_id)
+        if not cursor:
+            return SearchEnvelope(items=[], total=None, cursor=None, has_more=False, progress=None)
+        if self._sks_search_supported is not True:
+            # Unsupported or unknown
+            return SearchEnvelope(items=[], total=None, cursor=None, has_more=False, progress=None)
+        # Query param per SKS design
+        try:
+            resp = self._make_request(
+                "POST",
+                f"/api/v1/search/{collection_id}?cursor={cursor}",
+                json={"include_vector": include_vectors, "include_metadata": include_metadata},
+                timeout=timeout or self.config.timeout,
+            )
+            data = resp.json()
+            if not isinstance(data, dict) or "items" not in data:
+                return SearchEnvelope(items=[], total=None, cursor=None, has_more=False, progress=None)
+            items: List[SearchResult] = []
+            for item in data.get("items", []) or []:
+                items.append(
+                    SearchResult(
+                        id=item.get("entity_id") or item.get("id", ""),
+                        score=item.get("score", 0.0),
+                        vector=None if not include_vectors else item.get("vector"),
+                        metadata=(item.get("typed_metadata") or item.get("metadata") or {}) if include_metadata else None,
+                    )
+                )
+            progress = None
+            if data.get("progress"):
+                pr = data["progress"]
+                progress = SearchProgress(stage=pr.get("stage", 0), stages=pr.get("stages", 0), complete=pr.get("complete", False))
+            next_cursor = None
+            has_more = False
+            if data.get("page"):
+                page = data["page"]
+                next_cursor = page.get("cursor")
+                has_more = page.get("has_more", False)
+            return SearchEnvelope(items=items, total=data.get("total"), cursor=next_cursor, has_more=has_more, progress=progress)
+        except Exception:
+            return SearchEnvelope(items=[], total=None, cursor=None, has_more=False, progress=None)
     
     def search_batch(
         self,
@@ -977,18 +1225,39 @@ class ProximaDBClient:
         ]
     
     def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
-        """Delete a single vector"""
-        # Use batch delete endpoint with single vector ID
-        request_data = {"ids": [vector_id]}
+        """Delete a single vector (SKS-first fallback)"""
+        self._auto_warmup(collection_id)
+        # Try SKS entity DELETE first if supported/unknown
+        if getattr(self, "_sks_entities_supported", None) is not False:
+            try:
+                resp = self._make_request(
+                    "DELETE",
+                    f"/api/v1/entities/{collection_id}/{vector_id}",
+                )
+                data = resp.json() if hasattr(resp, 'json') else {}
+                self._sks_entities_supported = True
+                return DeleteResult(
+                    success=bool(data.get("success", True)),
+                    deleted_count=1,
+                    errors=[],
+                )
+            except Exception as e:
+                try:
+                    status = getattr(e, 'response', None).status_code if hasattr(e, 'response') else None
+                except Exception:
+                    status = None
+                if status in (404, 405, 501):
+                    self._sks_entities_supported = False
+                # fallthrough to legacy
         
+        # Legacy batch delete with one ID
+        request_data = {"ids": [vector_id]}
         response = self._make_request(
             "DELETE",
             f"/api/v1/vectors/{collection_id}",
             json=request_data
         )
         response_data = response.json()
-        
-        # Convert VectorOperationResponse to DeleteResult
         return DeleteResult(
             success=response_data.get("success", False),
             deleted_count=response_data.get("metrics", {}).get("successful_count", 0),
@@ -996,17 +1265,29 @@ class ProximaDBClient:
         )
     
     def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> DeleteResult:
-        """Delete multiple vectors"""
-        request_data = {"ids": vector_ids}
+        """Delete multiple vectors with SKS-first fallback"""
+        self._auto_warmup(collection_id)
+        # If SKS entities are supported, issue individual deletes to SKS path
+        if getattr(self, "_sks_entities_supported", False):
+            deleted = 0
+            errors: List[str] = []
+            for vid in vector_ids:
+                try:
+                    res = self.delete_vector(collection_id, vid)
+                    if res.success:
+                        deleted += 1
+                except Exception as e:
+                    errors.append(str(e))
+            return DeleteResult(success=deleted == len(vector_ids), deleted_count=deleted, errors=errors)
         
+        # Legacy batch delete
+        request_data = {"ids": vector_ids}
         response = self._make_request(
             "DELETE",
             f"/api/v1/vectors/{collection_id}",
             json=request_data
         )
         response_data = response.json()
-        
-        # Convert VectorOperationResponse to DeleteResult
         return DeleteResult(
             success=response_data.get("success", False),
             deleted_count=response_data.get("metrics", {}).get("successful_count", 0),
@@ -1020,23 +1301,46 @@ class ProximaDBClient:
         include_vector: bool = True,
         include_metadata: bool = True,
     ) -> Optional[Dict[str, Any]]:
-        """Get a single vector by ID"""
+        """Get a single vector by ID with SKS-first fallback"""
+        self._auto_warmup(collection_id)
+        # Try SKS entity GET first if supported/unknown
+        if getattr(self, "_sks_entities_supported", None) is not False:
+            try:
+                params = {
+                    "include_vector": include_vector,
+                    "include_metadata": include_metadata,
+                }
+                resp = self._make_request(
+                    "GET",
+                    f"/api/v1/entities/{collection_id}/{vector_id}",
+                    params=params,
+                )
+                data = resp.json()
+                if isinstance(data, dict) and (data.get("id") or data.get("entity_id")):
+                    self._sks_entities_supported = True
+                    return data
+            except Exception as e:
+                try:
+                    status = getattr(e, 'response', None).status_code if hasattr(e, 'response') else None
+                except Exception:
+                    status = None
+                if status in (404, 405, 501):
+                    self._sks_entities_supported = False
+                # fallthrough to legacy
+        
+        # Legacy path
         params = {
             "include_vector": include_vector,
             "include_metadata": include_metadata,
         }
-        
         response = self._make_request(
             "GET",
             f"/api/v1/vector/get/{collection_id}/{vector_id}",
             params=params
         )
         data = response.json()
-        
-        # Check if vector was found
         if not data or (isinstance(data, dict) and data.get('error')):
             raise ProximaDBError(f"Vector not found: {vector_id}")
-        
         return data
     
     def upsert_vectors(

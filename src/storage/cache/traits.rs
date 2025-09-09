@@ -10,6 +10,10 @@ use crate::storage::cache::metrics::CacheMetrics;
 /// Base trait for cache keys
 pub trait CacheKey: Hash + Eq + Clone + Send + Sync + Debug + 'static {}
 
+// Implement CacheKey for common types
+impl CacheKey for String {}
+impl CacheKey for u64 {}
+
 /// Base trait for cache values
 pub trait CacheValue: Clone + Send + Sync + Debug + 'static {
     /// Get the approximate size in bytes

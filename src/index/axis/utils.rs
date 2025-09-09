@@ -439,34 +439,35 @@ mod tests {
 
     #[test]
     fn test_concurrent_vector_store() {
+        use crate::proto::proximadb::VectorRecord;
+        use crate::proto::proximadb::MetadataItem;
+
         let store = IndexVectorStore::new(3);
 
         let vector = Arc::new(VectorRecord {
-            id: Some("test1".to_string()),
+            id: "test1".to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: Vec::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: None,
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: None,
+            source: None,
         });
 
         // Test insert
         assert!(store.insert("test1".to_string(), vector.clone()).is_ok());
         assert_eq!(store.len(), 1);
-        assert!(!store.is_none());
+        assert!(!store.is_empty());
 
         // Test get
-        assert!(store.get(key).is_some());
-        assert!(store.get(key).is_none());
+        assert!(store.get("test1").is_some());
 
         // Test remove
         assert!(store.remove("test1").is_some());
         assert_eq!(store.len(), 0);
-        assert!(store.is_none());
+        assert!(store.is_empty());
     }
 
     #[test]
@@ -483,7 +484,7 @@ mod tests {
 
         // Test lookups
         assert_eq!(mapping.get_internal("external1"), Some(0));
-        assert_eq!(mapping.external(1), Some("external2".to_string()));
+        assert_eq!(mapping.external(1).as_deref(), Some("external2"));
 
         // Test remove
         assert_eq!(mapping.remove_by_external("external1"), Some(0));

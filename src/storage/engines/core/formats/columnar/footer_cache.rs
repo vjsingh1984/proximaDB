@@ -416,7 +416,6 @@ impl ParquetFooterCache {
             .modified
             .map(|dt| {
                 // Convert DateTime<Utc> to SystemTime
-                use chrono::TimeZone;
                 let timestamp = dt.timestamp();
                 UNIX_EPOCH + Duration::from_secs(timestamp as u64)
             })

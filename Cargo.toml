@@ -192,12 +192,18 @@ env_logger = "0.10"
 
 [features]
 default = []  # Minimal features for testing and ARM64 Ubuntu compatibility
+distributed = []
+standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["dep:aws-config", "dep:aws-sdk-s3"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"] 
 gcp = ["dep:google-cloud-storage"]
+
+# Test gating (keeps default test runs lean)
+comprehensive_tests = []
+perf_tests = []
 cloud-full = ["aws", "azure", "gcp"]
 
 # Hardware acceleration features

@@ -48,18 +48,7 @@ impl Clone for PrismFastLanesSerializer {
     }
 }
 
-// Remove the original struct definition that follows
-#[cfg(never)]
-pub struct PrismFastLanesSerializer {
-    /// Unified quantization engine for all quantization operations
-    quantization_engine: Arc<StorageQuantizationEngine>,
 
-    /// FastLanes encoder for FP32 data only (quantized data uses unified module)
-    fp32_encoder: FastLanesEncoder,
-
-    /// FastLanes decoder for FP32 data only
-    fp32_decoder: FastLanesDecoder,
-}
 
 /// Metadata for PRISM's multi-resolution storage
 #[derive(Debug, Clone, Serialize, Deserialize)]

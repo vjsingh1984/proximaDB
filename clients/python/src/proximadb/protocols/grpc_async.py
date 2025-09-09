@@ -256,17 +256,27 @@ class ProximaDBClient:
         if index_configs is None:
             index_configs = []
         
-        # Build CollectionConfig using proto types
+        # Build CollectionConfig using proto types (align with current proto)
         config = pb2.CollectionConfig(
             name=name,
             dimension=dimension,
             distance_metric=distance_metric,
-            primary_indexing_algorithm=indexing_algorithm,
             storage_engine=storage_engine,
             filterable_columns=filterable_columns or [],
-            index_configs=index_configs or [],
-            quantization_config=quantization_config
         )
+        # Indexing: prefer provided index_configs; otherwise create a simple primary index config
+        if index_configs:
+            config.index_configs.extend(index_configs)
+        elif indexing_algorithm is not None:
+            ic = pb2.IndexConfig(
+                index_name=f"{name}_primary",
+                algorithm=indexing_algorithm,
+                is_primary=True,
+            )
+            config.index_configs.extend([ic])
+        # Quantization config
+        if quantization_config is not None:
+            config.quantization.CopyFrom(quantization_config)
         
         # Build CollectionRequest
         request = pb2.CollectionRequest(

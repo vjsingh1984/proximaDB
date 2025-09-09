@@ -691,7 +691,7 @@ impl AxisEventLogConsumer {
         // These should be read from local cache to avoid cloud storage costs
         for file_path in files {
             // Create access event for tracking
-            let access_event = AccessEvent {
+            let _access_event = AccessEvent {
                 file_path: file_path.to_string(),
                 collection_id: collection_id.to_string(),
                 query_type: ZeroCopyQueryType::FullScan,
@@ -1292,7 +1292,7 @@ impl AxisEventLogConsumer {
 
                     // Read the Parquet file
                     let fs = filesystem_factory.get_filesystem(file_path)?;
-                    let file_data = fs.read(file_path).await.map_err(|e| {
+                    let _file_data = fs.read(file_path).await.map_err(|e| {
                         error!(
                             "[AXIS Consumer] Failed to read Parquet file {}: {}",
                             file_path, e

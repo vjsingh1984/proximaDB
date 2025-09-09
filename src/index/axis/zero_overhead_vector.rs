@@ -382,7 +382,7 @@ mod tests {
 
         assert_eq!(collection.len(), 2);
 
-        let view = collection.get(key).unwrap();
+        let view = collection.get("vec1").unwrap();
         assert_eq!(view.id(), "vec1");
         assert_eq!(view.as_f32().unwrap(), &[1.0, 2.0, 3.0]);
 
@@ -401,7 +401,7 @@ mod tests {
             .add_quantized("q1".to_string(), &quantized)
             .unwrap();
 
-        let view = collection.get(key).unwrap();
+        let view = collection.get("q1").unwrap();
         assert_eq!(view.id(), "q1");
         assert_eq!(view.as_quantized().unwrap(), &quantized[..]);
 

@@ -652,7 +652,7 @@ impl AxisTieringManager {
     /// Apply index type specific preferences
     async fn apply_index_type_preferences(
         &self,
-        _collection_id: &str,
+        collection_id: &str,
         global_recommendation: &InfrastructureTier,
         workload_metrics: &WorkloadMetrics,
     ) -> anyhow::Result<Option<InfrastructureTier>> {

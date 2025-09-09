@@ -456,7 +456,7 @@ impl InternalSearchResult {
 
 /// Optimized search record structure with performance improvements
 /// This variant uses Arc for vectors and TypedMetadata for better performance
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct OptimizedSearchRecord {
     /// Vector/document identifier
     pub id: String,
@@ -524,6 +524,42 @@ impl OptimizedSearchRecord {
             id,
             score,
             ..Default::default()
+        }
+    }
+    
+    /// Standardized distance-to-similarity conversion for consistent ranking across all metrics
+    /// This is a static method that can be used without an instance
+    pub fn standardized_distance_to_similarity(
+        distance: f32,
+        metric: &crate::compute::distance_computation::DistanceMetric,
+    ) -> f32 {
+        use crate::compute::distance_computation::DistanceMetric;
+        match metric {
+            DistanceMetric::Cosine => {
+                // Cosine distance is in [0, 2], similarity = 1 - distance/2 for normalized range
+                if distance.is_infinite() {
+                    0.0 // Zero vectors get worst similarity score
+                } else {
+                    1.0 - (distance / 2.0).min(1.0).max(0.0)
+                }
+            }
+            DistanceMetric::Euclidean => {
+                // Euclidean distance is in [0, ∞), convert using 1/(1+d) for [0,1] range
+                1.0 / (1.0 + distance)
+            }
+            DistanceMetric::DotProduct => {
+                // Dot product similarity is already in similarity form (higher = better)
+                // Just ensure it's in [0,1] range
+                ((distance + 1.0) / 2.0).min(1.0).max(0.0)
+            }
+            DistanceMetric::Manhattan => {
+                // Manhattan distance is in [0, ∞), use exponential decay
+                (-distance / 10.0).exp()
+            }
+            _ => {
+                // Default conversion for other metrics
+                1.0 / (1.0 + distance)
+            }
         }
     }
     
@@ -626,12 +662,12 @@ impl OptimizedSearchRecord {
 }
 
 /// Collection of search results with metadata
-/// Using Arc<[InternalSearchResult]> for immutable, zero-copy sharing of results
+/// Using Arc<[OptimizedSearchRecord]> for immutable, zero-copy sharing of results
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResultSet {
     /// Individual search results - immutable for performance
     #[serde(with = "arc_slice_serde")]
-    pub results: Arc<[InternalSearchResult]>,
+    pub results: Arc<[OptimizedSearchRecord]>,
     /// Total number of matching documents (before pagination)
     pub total_count: u64,
     /// Query that generated these results
@@ -645,9 +681,9 @@ pub struct SearchResultSet {
 }
 
 impl SearchResultSet {
-    /// Create a SearchResultSet from a Vec<SearchResult>
+    /// Create a SearchResultSet from a Vec<OptimizedSearchRecord>
     pub fn from_vec(
-        results: Vec<InternalSearchResult>,
+        results: Vec<OptimizedSearchRecord>,
         total_count: u64,
         query_id: Option<String>,
         processing_time_us: u64,
@@ -679,12 +715,12 @@ impl SearchResultSet {
 
 /// Helper module for serializing Arc<[T]>
 mod arc_slice_serde {
-    use super::InternalSearchResult;
+    use super::OptimizedSearchRecord;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use std::sync::Arc;
 
     pub fn serialize<S>(
-        results: &Arc<[InternalSearchResult]>,
+        results: &Arc<[OptimizedSearchRecord]>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -693,11 +729,11 @@ mod arc_slice_serde {
         results.as_ref().serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[InternalSearchResult]>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[OptimizedSearchRecord]>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let vec = Vec::<InternalSearchResult>::deserialize(deserializer)?;
+        let vec = Vec::<OptimizedSearchRecord>::deserialize(deserializer)?;
         Ok(Arc::from(vec.into_boxed_slice()))
     }
 }

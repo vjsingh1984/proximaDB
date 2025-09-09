@@ -910,9 +910,9 @@ pub enum AMDLibrary {
 /// NVIDIA acceleration libraries
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NVIDIALibrary {
-    cuBLAS,
-    cuFFT,
-    cuSPARSE,
+    CuBlas,
+    CuFft,
+    CuSparse,
     NPP, // NVIDIA Performance Primitives
     Thrust,
 }
@@ -1774,7 +1774,7 @@ impl Default for CompressionHardwareConfig {
             acceleration_libraries: AccelerationLibraries {
                 intel_libraries: vec![IntelLibrary::IPP, IntelLibrary::MKL],
                 amd_libraries: vec![AMDLibrary::BLIS],
-                nvidia_libraries: vec![NVIDIALibrary::cuBLAS],
+                nvidia_libraries: vec![NVIDIALibrary::CuBlas],
                 arm_libraries: vec![ARMLibrary::NEON],
             },
         }

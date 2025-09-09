@@ -183,8 +183,15 @@ class ProximaDBSyncGrpcClient:
             
             if distance_metric is not None:
                 config.distance_metric = distance_metric
-            if indexing_algorithm is not None:
-                config.primary_indexing_algorithm = indexing_algorithm  # Note: different field name
+            # Indexing algorithm is configured via IndexConfig; prefer index_configs param
+            # If a simple algorithm enum is provided without configs, create a basic index config
+            if indexing_algorithm is not None and not index_configs:
+                ic = pb2.IndexConfig(
+                    index_name=f"{name}_primary",
+                    algorithm=indexing_algorithm,
+                    is_primary=True,
+                )
+                config.index_configs.extend([ic])
             if storage_engine is not None:
                 config.storage_engine = storage_engine
             if filterable_columns:
@@ -192,7 +199,8 @@ class ProximaDBSyncGrpcClient:
             if index_configs:
                 config.index_configs.extend(index_configs)
             if quantization_config:
-                config.quantization_config.CopyFrom(quantization_config)
+                # Field name in proto is `quantization`
+                config.quantization.CopyFrom(quantization_config)
             
             # Use CollectionOperation with CREATE operation
             request = pb2.CollectionRequest(

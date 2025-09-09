@@ -100,7 +100,7 @@ impl MetadataValue {
 
 /// Optimized metadata storage with strongly-typed values
 /// Uses Arc internally to minimize cloning overhead
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TypedMetadata {
     // Use Arc to enable cheap cloning
     inner: Arc<HashMap<String, MetadataValue>>,
@@ -205,6 +205,11 @@ impl TypedMetadata {
     /// Iterator over key-value pairs
     pub fn iter(&self) -> impl Iterator<Item = (&String, &MetadataValue)> {
         self.inner.iter()
+    }
+    
+    /// Clear all metadata entries
+    pub fn clear(&mut self) {
+        Arc::make_mut(&mut self.inner).clear();
     }
 }
 

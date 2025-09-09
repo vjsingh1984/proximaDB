@@ -308,11 +308,13 @@ pub fn sort_by_hilbert(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::hilbert_curve::HilbertCurve;
 
     #[test]
     fn test_hilbert_2d() {
-        let key1 = hilbert_2d(0, 0);
-        let key2 = hilbert_2d(u32::MAX, u32::MAX);
+        let curve = HilbertCurve::new(2, 32); // 2 dimensions, 32 bits per dimension
+        let key1 = curve.encode(&[0, 0]);
+        let key2 = curve.encode(&[u32::MAX, u32::MAX]);
         assert!(key1 < key2);
     }
 

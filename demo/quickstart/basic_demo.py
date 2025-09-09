@@ -71,12 +71,8 @@ class ProximaDBDemo:
         
         # Initialize client
         try:
-            self.client = ProximaDBClient(
-                rest_url=self.config.server_url,
-                grpc_url=self.config.grpc_url
-            )
-            await self.client.connect()
-            logger.info("✅ Connected to ProximaDB server")
+            self.client = connect_rest(self.config.server_url)
+            logger.info("✅ Connected to ProximaDB server via REST")
         except Exception as e:
             logger.error(f"❌ Failed to connect to ProximaDB: {e}")
             raise

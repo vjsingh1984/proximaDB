@@ -1657,7 +1657,7 @@ impl UnifiedSstableReader {
         filesystem: Arc<FilesystemFactory>,
         zero_copy_system: Arc<ZeroCopyIOSystem>,
         collection_id: String,
-        bandwidth_optimizer: Option<
+        _bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
         >,
     ) -> Self {
@@ -4398,7 +4398,7 @@ impl ReadingStrategySelector {
         );
 
         // Create minimal context for compaction
-        let context = CollectionContext {
+        let _context = CollectionContext {
             file_path: String::new(),
             sstable_files: sstable_files.to_vec(),
             total_vectors: 0,

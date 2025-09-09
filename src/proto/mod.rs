@@ -216,3 +216,7 @@
 //! 5. **Document Fields**: Add comments in .proto files
 
 pub mod proximadb;
+
+// V1 proto definitions for SKS (Semantic Knowledge Store)
+#[path = "proximadb.v1.rs"]
+pub mod proximadb_v1;

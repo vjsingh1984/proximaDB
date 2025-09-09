@@ -1287,8 +1287,8 @@ where
         // Use the active storage based on current mode
         let result = if let Some(ref index) = self.index_storage {
             Ok(index.insert(key, value))
-        } else if let Some(ref cache) = self.cache_storage {
-            cache.insert(key, value).await;
+        } else if let Some(ref _cache) = self.cache_storage {
+            _cache.insert(key, value).await;
             Ok(None)
         } else {
             Err(anyhow!("No active storage backend"))

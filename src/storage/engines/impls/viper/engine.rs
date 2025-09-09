@@ -1575,7 +1575,7 @@ impl UnifiedStorageEngine for ViperEngine {
             let axis_manager = self.get_axis_manager().await?;
             let cost_estimator = self.get_cost_estimator().await?;
 
-            let mut orchestrator = crate::core::search::integrated_search_optimization::IntegratedSearchOptimizer::new(
+            let mut orchestrator = crate::core::search::integrated_search_optimization::AdvancedSearchOptimizer::new(
                 ctx.clone(),
                 axis_manager,
                 cost_estimator,

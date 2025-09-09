@@ -15,7 +15,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::index::axis::eventlog::IndexEvent;
+use crate::index::axis::eventlog::{EventType, IndexEvent, StorageEngineType};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence

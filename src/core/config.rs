@@ -14,6 +14,7 @@ pub struct Config {
     pub network: Option<NetworkConfig>,
     pub tls: Option<TlsConfig>,
     pub hardware: Option<HardwareConfig>,
+    pub sks: Option<SksConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +87,105 @@ impl Default for HardwareConfig {
     }
 }
 
+/// Semantic Knowledge Store (SKS) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SksConfig {
+    /// Enable SKS features (default: false)
+    #[serde(default = "default_false_sks")]
+    pub enabled: bool,
+
+    /// Enable entity storage (default: true when SKS enabled)
+    #[serde(default = "default_true")]
+    pub enable_entities: bool,
+
+    /// Enable graph relationships (default: true when SKS enabled)
+    #[serde(default = "default_true")]
+    pub enable_relations: bool,
+
+    /// Enable provenance tracking (default: true when SKS enabled)
+    #[serde(default = "default_true")]
+    pub enable_provenance: bool,
+
+    /// Enable temporal versioning (default: false)
+    #[serde(default = "default_false_sks")]
+    pub enable_temporal: bool,
+
+    /// Enable SQL extensions (SIMILAR, FOLLOW, ASSEMBLE)
+    #[serde(default = "default_true")]
+    pub enable_sql_extensions: bool,
+
+    /// Maximum embedding versions per entity (default: 10)
+    #[serde(default = "default_max_embedding_versions")]
+    pub max_embedding_versions: usize,
+
+    /// Maximum graph traversal depth (default: 5)
+    #[serde(default = "default_max_traversal_depth")]
+    pub max_traversal_depth: usize,
+
+    /// Cache size for entity store in MB (default: 256)
+    #[serde(default = "default_entity_cache_mb")]
+    pub entity_cache_mb: usize,
+
+    /// Cache size for relations in MB (default: 128)
+    #[serde(default = "default_relations_cache_mb")]
+    pub relations_cache_mb: usize,
+
+    /// Default embedding model for text-to-vector conversion
+    #[serde(default = "default_embedding_model")]
+    pub default_embedding_model: String,
+
+    /// Storage backend for SKS data ("memory", "sst", "viper")
+    #[serde(default = "default_sks_backend")]
+    pub storage_backend: String,
+}
+
+fn default_false_sks() -> bool {
+    false
+}
+
+fn default_max_embedding_versions() -> usize {
+    10
+}
+
+fn default_max_traversal_depth() -> usize {
+    5
+}
+
+fn default_entity_cache_mb() -> usize {
+    256
+}
+
+fn default_relations_cache_mb() -> usize {
+    128
+}
+
+fn default_embedding_model() -> String {
+    "openai/text-embedding-3-large".to_string()
+}
+
+fn default_sks_backend() -> String {
+    "sst".to_string()
+}
+
+impl Default for SksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            enable_entities: true,
+            enable_relations: true,
+            enable_provenance: true,
+            enable_temporal: false,
+            enable_sql_extensions: true,
+            max_embedding_versions: 10,
+            max_traversal_depth: 5,
+            entity_cache_mb: 256,
+            relations_cache_mb: 128,
+            default_embedding_model: "openai/text-embedding-3-large".to_string(),
+            storage_backend: "sst".to_string(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -97,6 +197,7 @@ impl Default for Config {
             network: None,
             tls: None,
             hardware: Some(HardwareConfig::default()),
+            sks: None,  // SKS disabled by default
         }
     }
 }
@@ -107,6 +208,7 @@ impl Default for ServerConfig {
             node_id: "node-1".to_string(),
             bind_address: "127.0.0.1".to_string(),
             port: 5678,
+            grpc_port: None,
             data_dir: PathBuf::from("./data"),
         }
     }
@@ -136,6 +238,8 @@ pub struct ServerConfig {
     pub node_id: String,
     pub bind_address: String,
     pub port: u16,
+    /// Optional gRPC port for convenience; if not set, ApiConfig.grpc_port is used
+    pub grpc_port: Option<u16>,
     pub data_dir: PathBuf,
 }
 

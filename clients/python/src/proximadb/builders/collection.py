@@ -10,7 +10,6 @@ from ..models import (
     DistanceMetric,
     StorageEngine,
     IndexingAlgorithm,
-    CompressionType,
 )
 
 
@@ -54,8 +53,7 @@ class CollectionBuilder:
         self._index_type = IndexingAlgorithm.HNSW
         self._description: Optional[str] = None
         self._index_params: Dict[str, Any] = {}
-        self._compression = CompressionType.ZSTD
-        self._enable_bloom_filter = True
+        # Compression/bloom moved to server/engine config; SDK leaves defaults
     
     # Distance metrics
     def cosine_similarity(self) -> 'CollectionBuilder':
@@ -228,12 +226,12 @@ class CollectionBuilder:
     # Build
     def build(self) -> CollectionConfig:
         """Build CollectionConfig object"""
+        # Build a clean config (index set at call site as IndexConfig)
         return CollectionConfig(
             name=self._name,
             dimension=self._dimension,
             distance_metric=self._distance_metric,
             storage_engine=self._storage_engine,
-            primary_indexing_algorithm=self._index_type,
             description=self._description,
         )
     
@@ -245,7 +243,8 @@ class CollectionBuilder:
             "dimension": config.dimension,
             "distance_metric": config.distance_metric.value if config.distance_metric else None,
             "storage_engine": config.storage_engine.value if config.storage_engine else None,
-            "primary_indexing_algorithm": config.primary_indexing_algorithm.value if config.primary_indexing_algorithm else None,
+            # Indexing is specified via index_configs in proto; builder omits it here
+            "primary_indexing_algorithm": None,
             "description": config.description,
         }
 

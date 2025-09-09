@@ -14,7 +14,8 @@ use tracing::debug;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::search::{FilterExpression, InternalSearchResult};
+use crate::core::search::{FilterExpression, OptimizedSearchRecord};
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::proto::proximadb::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 
@@ -54,7 +55,7 @@ impl ParallelWALSearch {
         metadata_filters: Option<&FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let start = std::time::Instant::now();
 
         if batches.is_empty() {
@@ -433,17 +434,37 @@ struct SearchCandidate {
 }
 
 impl SearchCandidate {
-    /// Convert to InternalSearchResult - preserves all source information
-    fn to_search_result(self) -> InternalSearchResult {
-        // Use the new from_vector_record method to preserve all fields including source
-        let mut result = InternalSearchResult::from_vector_record(&self.record, self.score);
+    /// Convert to OptimizedSearchRecord - preserves all source information
+    fn to_search_result(self) -> OptimizedSearchRecord {
+        // Convert metadata from proto to TypedMetadata
+        let metadata = if self.include_metadata {
+            let mut metadata_map = std::collections::HashMap::new();
+            for item in &self.record.metadata {
+                if let Some(value) = &item.value {
+                    use crate::proto::proximadb::metadata_item;
+                    let typed_value = match value {
+                        metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
+                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                    };
+                    metadata_map.insert(item.key.clone(), typed_value);
+                }
+            }
+            TypedMetadata::from_map(metadata_map)
+        } else {
+            TypedMetadata::default()
+        };
 
-        // Override vector and metadata based on include flags
-        if !self.include_vectors {
-            result.vector = None;
-        }
-        if !self.include_metadata {
-            result.metadata = std::collections::HashMap::new();
+        let mut result = OptimizedSearchRecord::new(
+            self.record.id.clone(),
+            self.score,
+        )
+        .with_similarity(self.score)
+        .with_metadata(metadata)
+        .with_version_info(self.record.version.unwrap_or(0), self.record.timestamp);
+
+        if self.include_vectors {
+            result = result.add_vector(self.record.vector.clone());
         }
 
         result

@@ -632,7 +632,7 @@ impl FastLanesDataBlock {
     /// Uses optimized columnar compression with dimension grouping and sparse metadata
     pub fn serialize_with_config(
         &self,
-        config: &BlockCompressionConfig,
+        _config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         use crate::core::compression::CompressionAlgorithm;
         use crate::core::compression::{CompressionContext, compress};

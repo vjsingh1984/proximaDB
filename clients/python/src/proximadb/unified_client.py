@@ -93,6 +93,7 @@ class ProximaDBClient:
         enable_operation_routing: bool = False,
         routing_strategy: RoutingStrategy = RoutingStrategy.HYBRID,
         routing_config: Optional[RoutingConfig] = None,
+        sks_warmup_collection: Optional[str] = None,
         **kwargs
     ):
         """
@@ -136,6 +137,7 @@ class ProximaDBClient:
         self.selection_strategy = selection_strategy
         self.enable_operation_routing = enable_operation_routing
         self.routing_strategy = routing_strategy
+        self._sks_warmup_collection = sks_warmup_collection
         
         # Client state
         self._client = None
@@ -172,6 +174,15 @@ class ProximaDBClient:
                 logger.warning(f"⚠️ gRPC client failed: {e}, falling back to REST")
                 self._client = self._create_rest_client()
                 self._active_protocol = Protocol.REST
+            # Optional SKS warmup when REST is active
+            if self._active_protocol == Protocol.REST and self._sks_warmup_collection:
+                try:
+                    # Warmup only for REST path
+                    rest_client = self._client
+                    if hasattr(rest_client, 'warmup_sks_capabilities'):
+                        rest_client.warmup_sks_capabilities(self._sks_warmup_collection)
+                except Exception as e:
+                    logger.debug(f"SKS warmup skipped due to error: {e}")
                     
         elif self.protocol == Protocol.GRPC:
             # Force gRPC
@@ -186,6 +197,14 @@ class ProximaDBClient:
             self._client = self._create_rest_client()
             self._active_protocol = Protocol.REST
             logger.info("🌐 Using REST client (forced)")
+            # Optional SKS warmup when REST is forced
+            if self._sks_warmup_collection:
+                try:
+                    rest_client = self._client
+                    if hasattr(rest_client, 'warmup_sks_capabilities'):
+                        rest_client.warmup_sks_capabilities(self._sks_warmup_collection)
+                except Exception as e:
+                    logger.debug(f"SKS warmup skipped due to error: {e}")
         
         else:
             raise ValueError(f"Unknown protocol: {self.protocol}")
@@ -206,6 +225,14 @@ class ProximaDBClient:
             self._active_protocol = self._protocol_selector.select_protocol()
             
             logger.info(f"🧠 Intelligent protocol selection initialized: {self._active_protocol.value}")
+            # Optional SKS warmup if REST is initially selected
+            if self._active_protocol == Protocol.REST and self._sks_warmup_collection:
+                try:
+                    rest_client = self._client if hasattr(self._client, 'warmup_sks_capabilities') else None
+                    if rest_client:
+                        rest_client.warmup_sks_capabilities(self._sks_warmup_collection)
+                except Exception as e:
+                    logger.debug(f"SKS warmup skipped due to error: {e}")
             
         except Exception as e:
             logger.warning(f"⚠️ Intelligent selection failed: {e}, falling back to traditional auto-selection")
@@ -682,12 +709,29 @@ class ProximaDBClient:
             # Note: gRPC client expects individual parameters, not the full config
             # Compression and storage_engine_config are embedded in the proto_config
             # and passed through the collection metadata on the server side
+            # Build optional IndexConfig if primary_indexing_algorithm is set
+            index_configs = []
+            if getattr(config, 'primary_indexing_algorithm', None):
+                index_configs.append(
+                    pb2.IndexConfig(
+                        index_name=f"{config.name}_primary",
+                        algorithm=self._pydantic_to_proto_indexing_algorithm(config.primary_indexing_algorithm),
+                        is_primary=True,
+                    )
+                )
+            # Quantization config (converted to proto)
+            qcfg = None
+            if getattr(config, 'quantization', None):
+                qcfg = self._pydantic_to_proto_quantization_config(config.quantization)
+
             response = self._client.create_collection(
                 name=config.name,
                 dimension=config.dimension,
                 distance_metric=self._pydantic_to_proto_distance_metric(config.distance_metric),
-                indexing_algorithm=self._pydantic_to_proto_indexing_algorithm(config.primary_indexing_algorithm),
-                storage_engine=self._pydantic_to_proto_storage_engine(config.storage_engine)
+                indexing_algorithm=self._pydantic_to_proto_indexing_algorithm(getattr(config, 'primary_indexing_algorithm', None)) if getattr(config, 'primary_indexing_algorithm', None) else None,
+                storage_engine=self._pydantic_to_proto_storage_engine(config.storage_engine),
+                index_configs=index_configs,
+                quantization_config=qcfg,
             )
             # Handle VectorOperationResponse
             if hasattr(response, 'collection') and response.collection:
@@ -1137,6 +1181,51 @@ class ProximaDBClient:
                 enable_simd=enable_simd,
                 **filtered_kwargs
             )
+
+    def search_iter(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        include_metadata: bool = True,
+        include_vectors: bool = False,
+        page_limit: Optional[int] = None,
+    ):
+        """Iterate across pages of search results. Uses SKS cursors on REST when available.
+
+        For gRPC (no pagination), yields only the first page of results.
+        """
+        if self._active_protocol == Protocol.REST and hasattr(self._client, 'search_envelope'):
+            env = self._client.search_envelope(
+                collection_id=collection_id,
+                vector=vector,
+                top_k=top_k,
+                include_vectors=include_vectors,
+                include_metadata=include_metadata,
+            )
+            count = 0
+            for item in env.items:
+                yield item
+                count += 1
+            cursor = env.cursor
+            pages = 1
+            while env.has_more and cursor and (page_limit is None or pages < page_limit):
+                env = self._client.search_next_page(collection_id, cursor, include_vectors=include_vectors, include_metadata=include_metadata)
+                for item in env.items:
+                    yield item
+                    count += 1
+                cursor = env.cursor
+                pages += 1
+        else:
+            # gRPC: yield single page
+            for item in self.search_single(
+                collection_id=collection_id,
+                vector=vector,
+                top_k=top_k,
+                include_metadata=include_metadata,
+                include_vectors=include_vectors,
+            ):
+                yield item
     
     # The generic search method is defined above and forwards to search_single
     

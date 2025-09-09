@@ -462,7 +462,7 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating VIPER engine...");
         let viper_config = crate::core::config::ViperConfig::default();
         debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
-        let viper_engine = Arc::new(
+        let _viper_engine = Arc::new(
             crate::storage::engines::impls::viper::ViperEngine::from_core_config(
                 viper_config,
                 filesystem_factory.clone(),

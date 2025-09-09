@@ -641,19 +641,21 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
+        use crate::proto::proximadb::{metadata_item::Value, MetadataItem, VectorRecord};
+
         let mut builder = MetadataBloomBuilder::new(1000);
 
         let record = VectorRecord {
-            id: Some("test1".to_string()),
+            id: "test1".to_string(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: "electronics".to_string(),
+                    value: Some(Value::StringValue("electronics".to_string())),
                 },
                 MetadataItem {
                     key: "price".to_string(),
-                    value: "99.99".to_string(),
+                    value: Some(Value::NumberValue(99.99)),
                 },
             ],
             timestamp: 0,
@@ -661,6 +663,7 @@ mod tests {
             expires_at: None,
             version: None,
             quantized_vector: None,
+            source: None,
         };
 
         builder.add_record(&record);

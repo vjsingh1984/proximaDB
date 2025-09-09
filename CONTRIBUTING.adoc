@@ -68,12 +68,7 @@ cargo bench
 
 == Architecture Guidelines
 
-See link:CLAUDE.md[CLAUDE.md] for detailed development guidelines including:
-
-* Hardware acceleration best practices
-* Storage engine implementation
-* Performance optimization techniques
-* Proto-first design principles
+See link:GEMINI.md[GEMINI.md] for detailed development guidelines.
 
 == Commit Messages
 
@@ -96,14 +91,7 @@ feat: add SIMD support for Manhattan distance
 - Benchmark shows 3x speedup
 ----
 
-== Performance Contributions
 
-When contributing performance improvements:
-
-. Run benchmarks before and after
-. Document the improvement in the PR
-. Include benchmark results
-. Consider multiple architectures (x86, ARM)
 
 == Questions?
 

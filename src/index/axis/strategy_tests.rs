@@ -4,29 +4,7 @@ use super::types::*;
 use super::*;
 use std::collections::HashMap;
 
-#[test]
-fn test_optimization_config_creation() {
-    let config = OptimizationConfig {
-        goal: OptimizationGoal::MinLatency,
-        max_memory_gb: Some(4.0),
-        target_latency_ms: Some(10.0),
-        min_accuracy: Some(0.95),
-    };
-
-    assert!(matches!(config.goal, OptimizationGoal::MinLatency));
-    assert_eq!(config.max_memory_gb, Some(4.0));
-    assert_eq!(config.target_latency_ms, Some(10.0));
-    assert_eq!(config.min_accuracy, Some(0.95));
-}
-
-#[test]
-fn test_optimization_config_defaults() {
-    let config = OptimizationConfig::default();
-    assert!(matches!(config.goal, OptimizationGoal::Balanced));
-    assert_eq!(config.max_memory_gb, Some(8.0));
-    assert_eq!(config.target_latency_ms, Some(100.0));
-    assert_eq!(config.min_accuracy, Some(0.95));
-}
+// Removed outdated OptimizationConfig tests; configuration lives in optimizers
 
 #[test]
 fn test_collection_statistics_creation() {

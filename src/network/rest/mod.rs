@@ -20,6 +20,7 @@
 
 pub use crate::api_handlers;
 pub mod progressive_search_handler;
+pub mod proto_json;
 pub mod server;
 pub mod v1;
 

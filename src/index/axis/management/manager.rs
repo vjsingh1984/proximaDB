@@ -735,7 +735,7 @@ impl AxisManager {
     }
 
     /// Maybe evaluate if search_strategy should change
-    async fn maybe_evaluate_strategy(&self, _collection_id: &str) -> Result<()> {
+    async fn maybe_evaluate_strategy(&self, collection_id: &str) -> Result<()> {
         // TODO: Implement periodic evaluation logic
         // For now, we'll rely on explicit analyze_and_optimize calls
         Ok(())

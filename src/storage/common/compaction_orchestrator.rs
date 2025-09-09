@@ -424,7 +424,7 @@ impl CompactionCoordinator {
     async fn evaluate_queue_aware_compaction(
         &self,
         collection_id: &str,
-        operation_type: &OperationType,
+        _operation_type: &OperationType,
     ) -> Result<Option<String>> {
         // TODO: Restore when QueueManager is available
         // let queue_manager = match &self.queue_manager {

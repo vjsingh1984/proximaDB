@@ -125,7 +125,7 @@ class ProximaDBProgressiveClient:
                 "enable_binary": enable_progressive,
                 "enable_int8": enable_progressive,
                 "enable_pq": enable_progressive,
-                "pq_subvectors": 8,
+                "pq_segments": 8,
                 "pq_bits": 8,
             },
         }

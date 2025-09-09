@@ -96,6 +96,9 @@ pub mod compute;
 /// Core types, errors, configuration, and foundational components
 pub mod core;
 
+/// Unified error handling for REST and gRPC APIs
+pub mod errors;
+
 // pub mod distributed;  // Temporarily disabled for single-node optimization
 
 /// Unified API handlers for REST and gRPC with proto-first zero-copy design
@@ -192,12 +195,16 @@ impl ProximaDB {
         // Create multi-server configuration from actual config values
         use std::net::SocketAddr;
         tracing::debug!("🔧 ProximaDB::new - Creating server addresses...");
+        // Determine ports: prefer ApiConfig, fall back to ServerConfig
+        let rest_port = config.api.rest_port;
+        let grpc_port = config.api.grpc_port;
+
         let rest_addr: SocketAddr =
-            format!("{}:{}", config.server.bind_address, config.api.rest_port)
+            format!("{}:{}", config.server.bind_address, rest_port)
                 .parse()
                 .map_err(|e| format!("Invalid REST address: {}", e))?;
         let grpc_addr: SocketAddr =
-            format!("{}:{}", config.server.bind_address, config.api.grpc_port)
+            format!("{}:{}", config.server.bind_address, grpc_port)
                 .parse()
                 .map_err(|e| format!("Invalid gRPC address: {}", e))?;
         tracing::debug!(

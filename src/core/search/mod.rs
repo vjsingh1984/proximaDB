@@ -229,15 +229,19 @@ pub use multi_tier_deduplication::{
 
 // Filter types are already defined above, no need to re-export
 pub use results::{
-    EngineStats, InternalSearchResult, QuantizationInfo, SearchDebugInfo, SearchResultSet,
+    EngineStats, InternalSearchResult, OptimizedSearchRecord, QuantizationInfo, SearchDebugInfo,
+    SearchResultSet,
 };
 // NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.
-// They belong in the API layer only. Services should use InternalSearchResult
+// They belong in the API layer only. Services should use OptimizedSearchRecord
 // and convert to proto types at the API boundary.
 pub use unified_interface::{
     CollectionConfig, ColumnData, FilterableColumn, IntegratedSearchOptimizer, OptimizationHint,
     SearchPlan, StorageInfo, UnifiedSearchEngine,
 };
+
+// Provide a distinct export for the advanced optimizer to avoid name collisions
+pub use integrated_search_optimization::{AdvancedSearchOptimizer, SearchOptimizer};
 
 /// JSON Value Comparison Utilities
 ///

@@ -4,12 +4,12 @@
 :icons: font
 :source-highlighter: pygments
 
-The official Python client for ProximaDB - the cloud-native vector database for AI applications.
+The official Python client for ProximaDB — gRPC‑first, aligned with current proto.
 
 == Features
 
 * High Performance: **High Performance**: Optimized for ML workloads with numpy integration
-* **Async/Sync APIs**: Both synchronous and asynchronous client support
+* **Async/Sync APIs**: Both synchronous and asynchronous gRPC client support
 * **Type Safe**: Full typing support with dataclasses
 * **Batching**: Efficient batch operations for bulk inserts and searches
 * **Rich Filtering**: Advanced metadata filtering with complex queries
@@ -30,95 +30,57 @@ For development:
 pip install -e .
 ----
 
-== Quick Start
-
-=== Synchronous Client
+== Quick Start (gRPC)
 
 [source,python]
 ----
 import numpy as np
-from proximadb import GrpcClient
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+from proximadb import proximadb_pb2 as pb2
 
-# Initialize client
-client = GrpcClient(
-host="localhost",
-port=5678
+# Initialize sync gRPC client (5679)
+client = ProximaDBSyncGrpcClient("localhost:5679")
+
+# Create a collection with primary HNSW index
+ic = pb2.IndexConfig(index_name="documents_primary", algorithm=pb2.IndexingAlgorithm.HNSW, is_primary=True)
+qcfg = pb2.QuantizationConfig(enabled=False)
+client.create_collection(
+    name="documents",
+    dimension=768,
+    distance_metric=pb2.DistanceMetric.COSINE,
+    storage_engine=pb2.StorageEngine.VIPER,
+    index_configs=[ic],
+    quantization_config=qcfg,
 )
 
-# Connect to server
-await client.connect()
-
-# Create a collection
-result = await client.create_collection(
-name="documents",
-dimension=768,
-distance_metric="COSINE",
-indexing_algorithm="HNSW"
-)
-
-# Insert vectors
-vectors = [
-{
-"id": "doc1",
-"vector": np.random.rand(768).tolist(),
-"metadata": {"title": "First document", "category": "test"}
-},
-{
-"id": "doc2",
-"vector": np.random.rand(768).tolist(),
-"metadata": {"title": "Second document", "category": "test"}
-}
-]
-
-insert_result = await client.insert_vectors(
-collection_id="documents",
-vectors=vectors
-)
-
-# Search vectors
-query_vector = np.random.rand(768).tolist()
-search_results = await client.search_vectors(
-collection_id="documents",
-query_vectors=[query_vector],
-top_k=5,
-include_metadata=True
-)
-
-# Disconnect
-await client.disconnect()
+# Insert vectors via VectorBatch (build pb2.VectorBatchRequest in higher-level helpers)
+# See unified_client or batching helpers for convenience wrappers.
 ----
 
-=== REST Client
+// REST client references are being refactored; prefer gRPC for v1.
+
+=== SKS Compatibility (Experimental)
+
+- The Python SDK automatically probes and uses SKS endpoints when available:
+  - Search: `POST /api/v1/search/{collection_id}` (envelope response)
+  - Entities: `POST/GET/DELETE /api/v1/entities/{collection_id}[/{entity_id}]`
+- When SKS is not available, the SDK falls back to legacy endpoints:
+  - Search: `POST /api/v1/vector/search`
+  - Batch write: `POST /api/v1/vector/batch`
+  - Delete: `DELETE /api/v1/vectors/{collection_id}`
+
+You can pre‑probe SKS support for a collection to avoid first‑call probing:
 
 [source,python]
 ----
-from proximadb import RestClient
+from proximadb.protocols.rest_sync import ProximaDBClient as RestClient
 
-# Initialize REST client
-client = RestClient(
-base_url="http://localhost:5678"
-)
-
-# Create collection via REST
-collection = client.create_collection({
-"name": "embeddings",
-"config": {
-"dimension": 384,
-"distance_metric": "COSINE",
-"storage_engine": "VIPER"
-}
-})
-
-# Insert vectors via REST
-response = client.insert_vectors(
-collection_id="embeddings",
-vectors=[{
-"id": "vec1",
-"vector": [0.1] * 384,
-"metadata": {"source": "BERT"}
-}]
-)
+client = RestClient(url="http://localhost:5678")
+support = client.warmup_sks_capabilities("my_collection")
+print(support)  # {'search': True/False, 'entities': True/False}
 ----
+
+Search returns a consistent list of SearchResult regardless of protocol. When SKS is active, results are parsed from the envelope (`items[*].entity_id`, `score`, `typed_metadata`).
 
 == Advanced Usage
 
@@ -167,20 +129,42 @@ info = await client.get_collection("documents")
 await client.delete_collection("documents")
 ----
 
-== Configuration
+== Development: Generate gRPC Stubs
 
 === Connection Options
 
 [source,python]
 ----
-client = GrpcClient(
-host="localhost",
-port=5678,
-max_retries=3,
-timeout=30,
-keepalive_time=60
-)
+cd clients/python
+make gen-proto  # Requires: pip install grpcio grpcio-tools
 ----
+
+=== Running Tests
+
+Unit tests (no mocks) focus on local model/utility behavior:
+
+[source,bash]
+----
+cd clients/python
+pytest -q clients/python/tests/test_models_and_utils.py
+----
+
+Integration tests (no mocks) require a running server:
+
+- REST server at PROXIMADB_URL (default http://localhost:5678)
+- gRPC server at PROXIMADB_GRPC (default localhost:5679) for gRPC-specific tests
+
+[source,bash]
+----
+# Start ProximaDB in another terminal (from repo root):
+# cargo run --bin proximadb-server
+
+cd clients/python
+export PROXIMADB_URL=http://localhost:5678
+pytest -q clients/python/tests/integration_sks -m integration
+----
+
+CI note: mark integration jobs to run only when a ProximaDB service is available. The tests skip gracefully if the server is not reachable.
 
 === TLS/SSL
 

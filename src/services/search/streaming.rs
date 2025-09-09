@@ -23,22 +23,18 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::search::InternalSearchResult;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use std::collections::HashMap;
 use crate::proto::proximadb::metadata_item;
 use crate::services::operations::vectors::VectorOperationsService;
 
-/// Helper function to convert proto metadata Value to serde_json::Value
-fn convert_proto_value_to_json(value: metadata_item::Value) -> serde_json::Value {
+/// Helper function to convert proto metadata Value to TypedMetadata value
+fn convert_proto_value_to_typed(value: metadata_item::Value) -> MetadataValue {
     match value {
-        metadata_item::Value::StringValue(s) => serde_json::Value::String(s),
-        metadata_item::Value::NumberValue(f) => {
-            if let Some(n) = serde_json::Number::from_f64(f) {
-                serde_json::Value::Number(n)
-            } else {
-                serde_json::Value::Null
-            }
-        }
-        metadata_item::Value::BoolValue(b) => serde_json::Value::Bool(b),
+        metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+        metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
+        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
     }
 }
 
@@ -124,7 +120,7 @@ pub struct SearchResultStream {
 #[derive(Debug, Clone)]
 pub struct SearchResultBatch {
     /// Results in this batch
-    pub results: Vec<InternalSearchResult>,
+    pub results: Vec<OptimizedSearchRecord>,
 
     /// Whether this is the final batch
     pub is_final: bool,
@@ -359,35 +355,24 @@ impl StreamingSearchService {
                 };
 
                 if should_include {
-                    // Convert SearchVectorRecord to InternalSearchResult
-                    let internal_result = InternalSearchResult {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id.clone()),
-                        score: record.score,
-                        similarity: Some(record.similarity.unwrap_or(record.score)),
-                        vector: Some(record.vector.clone()),
-                        metadata: record
-                            .metadata
-                            .clone()
-                            .into_iter()
-                            .filter_map(|item| {
-                                item.value
-                                    .map(|v| (item.key, convert_proto_value_to_json(v)))
-                            })
-                            .collect(),
-                        debug_info: None,
-                        version: record.version,
-                        timestamp: record.timestamp,
-                        updated_at: None, // SearchVectorRecord doesn't have this
-                        expires_at: None, // SearchVectorRecord doesn't have this
-                        source: None,     // TODO: Convert source if needed
-                        expanded_context: Vec::new(),
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                    };
-                    deduped_storage_records.push(internal_result);
+                    // Convert SearchVectorRecord to OptimizedSearchRecord
+                    let mut metadata_map = HashMap::new();
+                    for item in &record.metadata {
+                        if let Some(value) = &item.value {
+                            metadata_map.insert(item.key.clone(), convert_proto_value_to_typed(value.clone()));
+                        }
+                    }
+                    
+                    let optimized_result = OptimizedSearchRecord::new(
+                        record.id.clone(),
+                        record.score
+                    )
+                    .with_similarity(record.similarity.unwrap_or(record.score))
+                    .add_vector(record.vector.clone())
+                    .with_metadata(TypedMetadata::from_map(metadata_map))
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0));
+                    
+                    deduped_storage_records.push(optimized_result);
                     if deduped_storage_records.len() >= remaining_k {
                         break;
                     }
@@ -446,11 +431,11 @@ impl StreamingSearchService {
     /// Search WAL with streaming
     async fn search_wal_streaming(
         &self,
-        collection_id: &str,
+        _collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: DistanceMetric,
-    ) -> Result<Vec<InternalSearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("🔍 STREAMING_WAL: Searching unflushed vectors");
 
         // Get direct access to WAL memtable
@@ -475,34 +460,22 @@ impl StreamingSearchService {
                         &distance_metric,
                     );
 
-                    // Create InternalSearchResult directly with all VectorRecord information
-                    let search_result = InternalSearchResult {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id.clone()),
-                        score: similarity.normalized_score,
-                        similarity: Some(similarity.rank_value),
-                        vector: Some(record.vector.clone()),
-                        metadata: record
-                            .metadata
-                            .clone()
-                            .into_iter()
-                            .filter_map(|item| {
-                                item.value
-                                    .map(|v| (item.key, convert_proto_value_to_json(v)))
-                            })
-                            .collect(),
-                        debug_info: None,
-                        version: record.version,
-                        timestamp: Some(record.timestamp),
-                        updated_at: record.updated_at,
-                        expires_at: record.expires_at,
-                        source: None,                 // TODO: Convert source if needed
-                        expanded_context: Vec::new(), // No expanded context from WAL
-                        semantic_similarity: Some(similarity),
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                    };
+                    // Create OptimizedSearchRecord directly with all VectorRecord information
+                    let mut metadata_map = HashMap::new();
+                    for item in &record.metadata {
+                        if let Some(value) = &item.value {
+                            metadata_map.insert(item.key.clone(), convert_proto_value_to_typed(value.clone()));
+                        }
+                    }
+                    
+                    let search_result = OptimizedSearchRecord::new(
+                        record.id.clone(),
+                        similarity.normalized_score
+                    )
+                    .with_similarity(similarity.rank_value)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(TypedMetadata::from_map(metadata_map))
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp);
 
                     results.push(search_result);
                 }
@@ -566,7 +539,7 @@ impl SearchResultStream {
     }
 
     /// Collect all results (consumes the stream)
-    pub async fn collect_all(mut self) -> Result<Vec<InternalSearchResult>> {
+    pub async fn collect_all(mut self) -> Result<Vec<OptimizedSearchRecord>> {
         let mut all_results = Vec::new();
 
         while let Some(batch) = self.receiver.recv().await {
@@ -580,7 +553,7 @@ impl SearchResultStream {
     }
 
     /// Take first N results (consumes the stream)
-    pub async fn take(mut self, n: usize) -> Result<Vec<InternalSearchResult>> {
+    pub async fn take(mut self, n: usize) -> Result<Vec<OptimizedSearchRecord>> {
         let mut results = Vec::with_capacity(n);
 
         while results.len() < n {

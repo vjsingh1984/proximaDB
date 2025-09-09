@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::metadata_types::TypedMetadata;
+
 
 /// Query pattern for tracking and prediction
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -624,6 +624,7 @@ impl IndexData for LshBucket {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
+    use super::{HnswNode, StorageEngine, UniversalIndexStorage};
 
     #[tokio::test]
     async fn test_tier_hierarchy() {
@@ -652,7 +653,7 @@ mod tests {
         );
 
         // Retrieve should promote back to memory
-        let node = storage.get(&key).await.unwrap();
+        let node = storage.get("node_0_0").await.unwrap();
         assert!(node.is_some());
     }
 }

@@ -31,23 +31,23 @@ mod tests {
 
         // Verify JSON metadata preserves types
         assert_eq!(
-            json_metadata.get(key),
+            json_metadata.get("category"),
             Some(&serde_json::Value::String("electronics".to_string()))
         );
         assert_eq!(
-            json_metadata.get(key),
+            json_metadata.get("price"),
             Some(&serde_json::Value::Number(
                 serde_json::Number::from_f64(99.99).unwrap()
             ))
         );
-        assert_eq!(json_metadata.get(key), Some(&serde_json::Value::Bool(true)));
+        assert_eq!(json_metadata.get("in_stock"), Some(&serde_json::Value::Bool(true)));
 
         // Test proto_metadata_to_hashmap (converts to strings)
         let hashmap_metadata = proto_metadata_helper::proto_metadata_to_hashmap(&proto_metadata);
 
         // Verify hashmap metadata is all strings
-        assert_eq!(hashmap_metadata.get(key), Some(&"electronics".to_string()));
-        assert_eq!(hashmap_metadata.get(key), Some(&"99.99".to_string()));
-        assert_eq!(hashmap_metadata.get(key), Some(&"true".to_string()));
+        assert_eq!(hashmap_metadata.get("category"), Some(&"electronics".to_string()));
+        assert_eq!(hashmap_metadata.get("price"), Some(&"99.99".to_string()));
+        assert_eq!(hashmap_metadata.get("in_stock"), Some(&"true".to_string()));
     }
 }

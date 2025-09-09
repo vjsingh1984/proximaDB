@@ -211,4 +211,4 @@ pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
 pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 
 // Re-export specialized caches
-pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorStore};
+pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache};
