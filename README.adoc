@@ -61,6 +61,11 @@ and infrastructure costs
 
 Ports: REST :5678, gRPC :5679. Metrics: `GET /metrics` (Prometheus).
 
+Quick examples of what you can build
+- Vector: Semantic search, recommendations, anomaly detection
+- Graph: Entity graphs, fraud/risk rings, identity resolution
+- SKS: RAG with context assembly and provenance (hybrid vector+graph)
+
 == 📊 Technical Advantages
 
 === Architecture Benefits
@@ -195,12 +200,16 @@ a|
 *   **Identity Resolution**: Use label/property indexes to rapidly locate, merge, and constrain entities (unique constraints).
 *   **Operational Knowledge Graphs**: Power explainable decisions with paths, neighbors, and degree/label statistics surfaced to clients.
 
+See: link:docs/03-user-guide/graph-operations.adoc[Graph Operations Guide]
+
 | **🧠 Semantic Knowledge Store (SKS)**
 a|
 *   **Hybrid Vector + Graph for RAG**: Retrieve semantically similar chunks, then assemble graph-connected context for grounded answers.
 *   **Context Assembly & Provenance**: Compose multi-hop neighborhoods from anchors returned by vector search; return paths and sources.
 *   **Entity-Centric Navigation**: Jump between semantically close entities and their explicit relations to enable semantic browsing.
 *   **Policy/Compliance Workflows**: Enforce uniqueness and lineage; explain recommendations via both similarity scores and graph paths.
+
+See: link:docs/03-user-guide/hybrid-queries.adoc[Hybrid (SKS) Queries]
 |===
 
 == 💎 Key Differentiators
