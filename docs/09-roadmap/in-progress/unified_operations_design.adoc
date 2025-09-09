@@ -3,6 +3,7 @@
 :toc-placement!:
 :sectanchors:
 :sectlinks:
+:status: in-progress
 
 [abstract]
 == Abstract
@@ -10,6 +11,12 @@
 This document specifies the unified design for coordinating flush, compaction, and re-quantization operations in ProximaDB. It establishes a robust locking mechanism, automatic evaluation criteria, and integration patterns to ensure data consistency while maximizing throughput.
 
 toc::[]
+
+== Status Snapshot (Reviewed: 2025-09-09)
+
+- Implemented: Locking primitives and background task orchestration in storage/index subsystems; metrics surfaced via dashboard (`/metrics`).
+- In Progress: Coordinator consolidation across engines; automatic re-quantization triggers; cross-operation cost model.
+- Next: Add end-to-end tests for conflict matrices, expose admin ops via REST/gRPC, and integrate delegated execution (spot/remote) behind feature flag.
 
 == Overview
 

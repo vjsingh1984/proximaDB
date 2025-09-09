@@ -325,6 +325,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-recursion"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3849,6 +3860,7 @@ dependencies = [
  "arrow-data",
  "arrow-ipc",
  "arrow-schema",
+ "async-recursion",
  "async-trait",
  "aws-config",
  "aws-sdk-s3",
@@ -3878,6 +3890,7 @@ dependencies = [
  "metrics",
  "moka",
  "nalgebra",
+ "nom",
  "num_cpus",
  "once_cell",
  "parking_lot",
@@ -3895,7 +3908,9 @@ dependencies = [
  "rocksdb",
  "serde",
  "serde_json",
+ "sha2",
  "snap",
+ "sqlparser",
  "sysinfo",
  "tempdir",
  "tempfile",
@@ -4780,6 +4795,15 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der 0.7.10",
+]
+
+[[package]]
+name = "sqlparser"
+version = "0.44.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf9c7ff146298ffda83a200f8d5084f08dcee1edfc135fcc1d646a45d50ffd6"
+dependencies = [
+ "log",
 ]
 
 [[package]]

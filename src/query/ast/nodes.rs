@@ -1,0 +1,80 @@
+//! Internal AST nodes for query representation.
+
+#[derive(Debug, Clone)]
+pub enum Query {
+    Select(Select),
+}
+
+#[derive(Debug, Clone)]
+pub struct Select {
+    pub projection: Vec<Expr>,
+    pub from: Vec<TableRef>,
+    pub joins: Vec<Join>,
+    pub selection: Option<Expr>,
+    pub group_by: Vec<Expr>,
+    pub having: Option<Expr>,
+    pub order_by: Vec<OrderByExpr>,
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TableRef {
+    pub name: Option<String>,
+    pub subquery: Option<Box<Query>>, 
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Join {
+    pub kind: JoinKind,
+    pub left: TableRef,
+    pub right: TableRef,
+    pub on: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub enum JoinKind {
+    Inner,
+    Left,
+}
+
+#[derive(Debug, Clone)]
+pub struct OrderByExpr {
+    pub expr: Expr,
+    pub asc: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum Expr {
+    // Generic
+    Identifier(String),
+    Literal(Literal),
+    Param(String),
+    Unary { op: UnaryOp, expr: Box<Expr> },
+    Binary { left: Box<Expr>, op: BinaryOp, right: Box<Expr> },
+    FuncCall { name: String, args: Vec<Expr> },
+    // Aggregates
+    AggCall { name: String, args: Vec<Expr> },
+    // Table functions (SIMILAR, FOLLOW, ASSEMBLE) lowered as function calls
+}
+
+#[derive(Debug, Clone)]
+pub enum Literal {
+    String(String),
+    Number(f64),
+    Bool(bool),
+    Null,
+}
+
+#[derive(Debug, Clone)]
+pub enum UnaryOp { Not, Neg }
+
+#[derive(Debug, Clone)]
+pub enum BinaryOp {
+    Eq, Ne, Lt, Le, Gt, Ge,
+    And, Or,
+    Like,
+    Add, Sub, Mul, Div,
+}
+

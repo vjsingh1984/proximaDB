@@ -4,6 +4,12 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
+:status: in-progress
+
+== Implementation Status (Reviewed: 2025-09-09)
+
+- Implemented: Core entity/source fields in proto and REST; storage backends support large payloads; examples include retrieval pipelines.
+- In Progress: Standardized size limits/streaming semantics and SDK helpers; end-to-end tests across binary types (images/audio) pending.
 
 == Executive Summary
 

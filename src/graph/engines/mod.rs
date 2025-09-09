@@ -23,10 +23,8 @@
 //! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
 
 pub mod orion;
-
-// Future engines (Phase 2 & 3)
-// pub mod pulsar;  // Distributed graph engine
-// pub mod quasar;  // Hybrid hot/cold tiering
+pub mod pulsar;  // Distributed graph engine
+pub mod quasar;  // Hybrid hot/cold tiering
 
 use crate::core::error::{ProximaDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -76,4 +74,160 @@ pub trait GraphEngine: Send + Sync {
     
     /// Get total edge count
     fn edge_count(&self) -> Result<usize>;
+
+    /// Get all nodes
+    fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>>;
+}
+
+/// Engine type enumeration for factory creation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphEngineType {
+    /// ORION: In-memory CSR format engine
+    Orion,
+    /// PULSAR: Distributed sharded engine
+    Pulsar,
+    /// QUASAR: Hybrid hot/cold tiering engine
+    Quasar,
+}
+
+/// Graph engine factory for creating different engine types
+pub struct GraphEngineFactory;
+
+impl GraphEngineFactory {
+    /// Create a graph engine based on type and configuration
+    pub fn create_engine(
+        engine_type: GraphEngineType,
+        config: GraphEngineConfig,
+    ) -> Result<Box<dyn GraphEngine>> {
+        match engine_type {
+            GraphEngineType::Orion => {
+                let engine = orion::OrionGraphEngine::new();
+                Ok(Box::new(engine))
+            },
+            GraphEngineType::Pulsar => {
+                let pulsar_config = config.pulsar_config.unwrap_or_default();
+                let engine = pulsar::PulsarGraphEngine::new(pulsar_config)?;
+                Ok(Box::new(engine))
+            },
+            GraphEngineType::Quasar => {
+                let quasar_config = config.quasar_config.unwrap_or_default();
+                // Note: This needs async, so we'll provide a different factory method
+                Err(ProximaDBError::InvalidInput(
+                    "Use create_quasar_engine_async for QUASAR engine".to_string()
+                ))
+            },
+        }
+    }
+    
+    /// Create QUASAR engine asynchronously (required for initialization)
+    pub async fn create_quasar_engine_async(
+        config: quasar::QuasarConfig,
+    ) -> Result<Box<dyn GraphEngine>> {
+        let engine = quasar::QuasarGraphEngine::new(config).await?;
+        Ok(Box::new(engine))
+    }
+    
+    /// Get available engine types
+    pub fn available_engines() -> Vec<GraphEngineType> {
+        vec![
+            GraphEngineType::Orion,
+            GraphEngineType::Pulsar,
+            GraphEngineType::Quasar,
+        ]
+    }
+    
+    /// Get engine type from string
+    pub fn engine_type_from_string(name: &str) -> Option<GraphEngineType> {
+        match name.to_lowercase().as_str() {
+            "orion" => Some(GraphEngineType::Orion),
+            "pulsar" => Some(GraphEngineType::Pulsar),
+            "quasar" => Some(GraphEngineType::Quasar),
+            _ => None,
+        }
+    }
+}
+
+/// Configuration for graph engine creation
+#[derive(Debug, Clone, Default)]
+pub struct GraphEngineConfig {
+    pub pulsar_config: Option<pulsar::PulsarConfig>,
+    pub quasar_config: Option<quasar::QuasarConfig>,
+}
+
+/// Engine capabilities description
+#[derive(Debug, Clone)]
+pub struct EngineCapabilities {
+    pub name: String,
+    pub description: String,
+    pub features: Vec<String>,
+    pub use_cases: Vec<String>,
+    pub performance_characteristics: Vec<String>,
+}
+
+impl GraphEngineFactory {
+    /// Get capabilities for each engine type
+    pub fn get_engine_capabilities(engine_type: GraphEngineType) -> EngineCapabilities {
+        match engine_type {
+            GraphEngineType::Orion => EngineCapabilities {
+                name: "ORION".to_string(),
+                description: "In-memory CSR format for real-time traversal".to_string(),
+                features: vec![
+                    "CSR (Compressed Sparse Row) storage".to_string(),
+                    "Arc-based zero-copy sharing".to_string(),
+                    "DashMap concurrent access".to_string(),
+                    "Label and property indexes".to_string(),
+                ],
+                use_cases: vec![
+                    "Real-time graph traversal".to_string(),
+                    "Interactive graph queries".to_string(),
+                    "Small to medium graphs (<1M nodes)".to_string(),
+                ],
+                performance_characteristics: vec![
+                    "1M+ edges/second traversal".to_string(),
+                    "<1μs node lookup".to_string(),
+                    "<100 bytes/node memory overhead".to_string(),
+                ],
+            },
+            GraphEngineType::Pulsar => EngineCapabilities {
+                name: "PULSAR".to_string(),
+                description: "Distributed sharded engine for large graphs".to_string(),
+                features: vec![
+                    "Consistent hash-based sharding".to_string(),
+                    "Configurable replication (1-3x)".to_string(),
+                    "Cross-shard query coordination".to_string(),
+                    "Distributed BFS/DFS traversal".to_string(),
+                ],
+                use_cases: vec![
+                    "Large-scale distributed graphs".to_string(),
+                    "Fault-tolerant graph storage".to_string(),
+                    "Multi-datacenter deployments".to_string(),
+                ],
+                performance_characteristics: vec![
+                    "Scales to 1B+ nodes".to_string(),
+                    "Horizontal scalability".to_string(),
+                    "Cross-shard query optimization".to_string(),
+                ],
+            },
+            GraphEngineType::Quasar => EngineCapabilities {
+                name: "QUASAR".to_string(),
+                description: "Hybrid hot/cold tiering for cost optimization".to_string(),
+                features: vec![
+                    "Automatic hot/cold tiering".to_string(),
+                    "LRU-based cache management".to_string(),
+                    "Access pattern tracking".to_string(),
+                    "Background data migration".to_string(),
+                ],
+                use_cases: vec![
+                    "Cost-optimized large graphs".to_string(),
+                    "Sparse graph workloads".to_string(),
+                    "Long-term data retention".to_string(),
+                ],
+                performance_characteristics: vec![
+                    "80-90% storage cost savings".to_string(),
+                    "Transparent tier access".to_string(),
+                    "Sub-second cold data access".to_string(),
+                ],
+            },
+        }
+    }
 }

@@ -26,8 +26,8 @@ use proximadb::storage::StorageEngine;
 use proximadb::storage::metadata::backends::universal_backend::{
     UniversalMetadataBackend, UniversalMetadataConfig,
 };
-use proximadb::storage::traits::MetadataProvider;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb::storage::traits::MetadataProvider;
 // CollectionMetadataProvider import removed - trait not found
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -145,10 +145,10 @@ async fn test_collection_service_dependency_injection() {
     // Create metadata backend with minimal configuration to prevent stack overflow
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        compression: false, // Disable compression to reduce complexity
-        enable_snapshots: false,   // Disable snapshots to prevent recursion
+        compression: false,         // Disable compression to reduce complexity
+        enable_snapshots: false,    // Disable snapshots to prevent recursion
         snapshot_threshold: 100000, // Very high threshold to prevent snapshots
-        keep_snapshots: 0,         // No snapshots
+        keep_snapshots: 0,          // No snapshots
         backup_url: None,
         temp_dir: Some(temp_dir.path().join("temp").to_string_lossy().to_string()),
     };
@@ -720,10 +720,10 @@ async fn test_metadata_backend_trait_implementation() {
 
     let filestore_config = UniversalMetadataConfig {
         storage_url: format!("file://{}", metadata_path.to_string_lossy()),
-        compression: false, // Disable compression to prevent complexity
-        enable_snapshots: false,   // Disable snapshots to prevent stack overflow
+        compression: false,         // Disable compression to prevent complexity
+        enable_snapshots: false,    // Disable snapshots to prevent stack overflow
         snapshot_threshold: 100000, // Very high threshold
-        keep_snapshots: 0,         // No snapshots
+        keep_snapshots: 0,          // No snapshots
         backup_url: None,
         temp_dir: Some(temp_path.to_string_lossy().to_string()),
     };

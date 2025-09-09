@@ -172,3 +172,5 @@ help:
 	@echo "  clean              - Clean all build artifacts"
 	@echo "  docs               - Generate documentation"
 	@echo "  help               - Show this help"
+docs-update-gaps:
+	python3 tools/update_critical_gaps.py docs/09-roadmap/planned/graph_database_requirements_spec.adoc

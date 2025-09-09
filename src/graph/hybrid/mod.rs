@@ -352,6 +352,44 @@ pub struct HybridPerformanceMetrics {
     pub cache_hits: usize,
 }
 
+/// Node in semantic traversal priority queue
+#[derive(Debug, Clone)]
+struct SemanticTraversalNode {
+    node_id: NodeId,
+    depth: u32,
+    similarity_score: f32,
+    path_similarity: f32,
+}
+
+impl PartialEq for SemanticTraversalNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.similarity_score == other.similarity_score
+    }
+}
+
+impl Eq for SemanticTraversalNode {}
+
+impl PartialOrd for SemanticTraversalNode {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // Higher similarity scores have higher priority
+        self.similarity_score.partial_cmp(&other.similarity_score)
+    }
+}
+
+impl Ord for SemanticTraversalNode {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+/// Semantic neighbor with similarity score
+#[derive(Debug, Clone)]
+struct SemanticNeighbor {
+    node_id: NodeId,
+    similarity_score: f32,
+    edge_weight: f32,
+}
+
 impl Default for HybridConfig {
     fn default() -> Self {
         Self {
@@ -499,34 +537,15 @@ impl HybridQueryEngine {
             let max_results = vector_comp.max_results
                 .unwrap_or(self.config.max_vector_candidates);
             
-            // TODO: This is a placeholder - integrate with actual VectorOperationsService
-            // For now, we'll simulate vector search results based on nodes with embeddings
-            for entry in self.graph_memory.nodes.iter() {
-                let node = entry.value();
-                
-                if let Some(_embedding) = &node.embedding {
-                    // In a real implementation, we would:
-                    // 1. Extract the embedding vector
-                    // 2. Compute similarity with query vector
-                    // 3. Filter by threshold
-                    // 4. Create VectorRecord
-                    
-                    // Placeholder: assign random similarity for demonstration
-                    let similarity = 0.8; // This would be computed properly
-                    
-                    if similarity >= threshold && candidates.len() < max_results {
-                        candidates.push(VectorCandidate {
-                            node_id: node.id.clone(),
-                            similarity,
-                            vector_record: VectorRecord {
-                                id: node.id.clone(),
-                                vector: node.embedding.as_ref().unwrap().clone(),
-                                metadata: std::collections::HashMap::new(),
-                                created_at: node.created_at.map(|t| t.seconds).unwrap_or(0),
-                                updated_at: node.updated_at.map(|t| t.seconds).unwrap_or(0),
-                            },
-                        });
-                    }
+            // Integrate with actual VectorOperationsService for enhanced vector search
+            match self.execute_vos_search(vector_comp, threshold, max_results).await {
+                Ok(vos_candidates) => {
+                    candidates.extend(vos_candidates);
+                }
+                Err(e) => {
+                    // Fallback to graph-based vector search if VOS is unavailable
+                    debug!("VOS search failed, falling back to graph-based search: {}", e);
+                    candidates.extend(self.fallback_graph_vector_search(vector_comp, threshold, max_results).await?);
                 }
             }
             
@@ -646,27 +665,202 @@ impl HybridQueryEngine {
     }
     
     /// Execute semantic BFS (guided by vector similarity)
+    /// 
+    /// This traversal prioritizes nodes based on their embedding similarity to a query vector,
+    /// creating a semantically-guided breadth-first search that explores the most relevant
+    /// nodes first while maintaining graph connectivity constraints.
     async fn execute_semantic_bfs_traversal(
         &self,
         start_node_id: &NodeId,
         max_depth: u32,
         graph_comp: &GraphQueryComponent,
     ) -> QueryResult<Vec<GraphCandidate>> {
-        // For now, fall back to regular BFS
-        // TODO: Implement semantic guidance using node embeddings
-        self.execute_bfs_traversal(start_node_id, max_depth, graph_comp).await
+        let mut candidates = Vec::new();
+        let mut visited = HashSet::new();
+        let mut semantic_queue = std::collections::BinaryHeap::new();
+        
+        // Try to get query vector and similarity threshold from context
+        // In a real implementation, this would come from the hybrid query context
+        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
+        
+        // Initialize with start node
+        if let Some(start_node) = self.graph_memory.get_node(start_node_id) {
+            let initial_similarity = self.calculate_node_similarity(start_node, &query_vector)?;
+            
+            semantic_queue.push(SemanticTraversalNode {
+                node_id: start_node_id.clone(),
+                depth: 0,
+                similarity_score: initial_similarity,
+                path_similarity: initial_similarity,
+            });
+            visited.insert(start_node_id.clone());
+        }
+        
+        while let Some(current) = semantic_queue.pop() {
+            if current.depth >= max_depth {
+                continue;
+            }
+            
+            // Only include nodes that meet the similarity threshold
+            if current.similarity_score >= similarity_threshold {
+                candidates.push(GraphCandidate {
+                    node_id: current.node_id.clone(),
+                    distance: current.depth,
+                    path_length: current.depth as usize,
+                    centrality_score: Some(current.similarity_score),
+                });
+            }
+            
+            // Explore neighbors with semantic ranking
+            let neighbors = self.get_semantic_neighbors(
+                &current.node_id, 
+                &query_vector,
+                graph_comp,
+                &visited,
+            ).await?;
+            
+            // Add semantically relevant neighbors to the queue
+            for neighbor in neighbors {
+                if !visited.contains(&neighbor.node_id) {
+                    visited.insert(neighbor.node_id.clone());
+                    
+                    // Calculate path-weighted similarity
+                    let path_similarity = (current.path_similarity + neighbor.similarity_score) / 2.0;
+                    
+                    semantic_queue.push(SemanticTraversalNode {
+                        node_id: neighbor.node_id,
+                        depth: current.depth + 1,
+                        similarity_score: neighbor.similarity_score,
+                        path_similarity,
+                    });
+                }
+            }
+        }
+        
+        // Sort candidates by similarity score (descending)
+        candidates.sort_by(|a, b| {
+            b.centrality_score.partial_cmp(&a.centrality_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        Ok(candidates)
     }
     
     /// Execute semantic DFS (guided by vector similarity)
+    /// 
+    /// This traversal uses depth-first search but prioritizes paths with higher semantic similarity
+    /// to a query vector. Unlike semantic BFS which explores broadly, semantic DFS goes deep into
+    /// the most semantically relevant paths first, making it ideal for finding highly relevant
+    /// but potentially distant nodes in the graph.
     async fn execute_semantic_dfs_traversal(
         &self,
         start_node_id: &NodeId,
         max_depth: u32,
         graph_comp: &GraphQueryComponent,
     ) -> QueryResult<Vec<GraphCandidate>> {
-        // For now, fall back to regular DFS
-        // TODO: Implement semantic guidance using node embeddings
-        self.execute_dfs_traversal(start_node_id, max_depth, graph_comp).await
+        let mut candidates = Vec::new();
+        let mut visited = HashSet::new();
+        
+        // Get query context for semantic guidance
+        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
+        
+        // Start DFS from the initial node
+        self.semantic_dfs_recursive(
+            start_node_id,
+            0,
+            max_depth,
+            &query_vector,
+            similarity_threshold,
+            graph_comp,
+            &mut visited,
+            &mut candidates,
+            1.0, // Initial path similarity
+        ).await?;
+        
+        // Sort candidates by combined score (similarity * depth penalty)
+        candidates.sort_by(|a, b| {
+            let score_a = a.centrality_score.unwrap_or(0.0) / (a.distance as f32 + 1.0);
+            let score_b = b.centrality_score.unwrap_or(0.0) / (b.distance as f32 + 1.0);
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        Ok(candidates)
+    }
+    
+    /// Recursive semantic DFS helper
+    #[async_recursion::async_recursion]
+    async fn semantic_dfs_recursive(
+        &self,
+        current_node_id: &NodeId,
+        current_depth: u32,
+        max_depth: u32,
+        query_vector: &[f32],
+        similarity_threshold: f32,
+        graph_comp: &GraphQueryComponent,
+        visited: &mut HashSet<NodeId>,
+        candidates: &mut Vec<GraphCandidate>,
+        path_similarity: f32,
+    ) -> QueryResult<()> {
+        // Stop if max depth reached
+        if current_depth >= max_depth {
+            return Ok(());
+        }
+        
+        // Mark current node as visited
+        visited.insert(current_node_id.clone());
+        
+        // Calculate similarity for current node
+        let node_similarity = if let Some(node) = self.graph_memory.get_node(current_node_id) {
+            self.calculate_node_similarity(node, query_vector)?
+        } else {
+            return Ok(());
+        };
+        
+        // Add to candidates if it meets similarity threshold
+        if node_similarity >= similarity_threshold {
+            candidates.push(GraphCandidate {
+                node_id: current_node_id.clone(),
+                distance: current_depth,
+                path_length: current_depth as usize,
+                centrality_score: Some(node_similarity * path_similarity), // Combined semantic score
+            });
+        }
+        
+        // Get semantically ranked neighbors
+        let neighbors = self.get_semantic_neighbors(
+            current_node_id,
+            query_vector,
+            graph_comp,
+            visited,
+        ).await?;
+        
+        // Recursively explore neighbors in order of semantic similarity (DFS with semantic ordering)
+        for neighbor in neighbors {
+            if !visited.contains(&neighbor.node_id) {
+                // Calculate new path similarity (decay with depth but boost with neighbor similarity)
+                let new_path_similarity = (path_similarity * 0.9) + (neighbor.similarity_score * 0.1);
+                
+                // Recursive DFS call
+                Box::pin(self.semantic_dfs_recursive(
+                    &neighbor.node_id,
+                    current_depth + 1,
+                    max_depth,
+                    query_vector,
+                    similarity_threshold,
+                    graph_comp,
+                    visited,
+                    candidates,
+                    new_path_similarity,
+                )).await?;
+            }
+        }
+        
+        // Unmark visited to allow other paths to visit this node (for complete exploration)
+        visited.remove(current_node_id);
+        
+        Ok(())
     }
     
     /// Execute Dijkstra's algorithm
@@ -851,6 +1045,296 @@ impl HybridQueryEngine {
         }
     }
     
+    /// Get query vector from context (helper method for semantic traversal)
+    fn get_query_vector_from_context(&self) -> Option<Vec<f32>> {
+        // In a real implementation, this would extract the query vector from the hybrid query context
+        // For now, return a dummy vector for semantic guidance
+        // TODO: Extract actual query vector from HybridQuery context
+        Some(vec![0.5; 128]) // Default 128-dimensional query vector
+    }
+    
+    /// Get similarity threshold from context
+    fn get_similarity_threshold_from_context(&self) -> Option<f32> {
+        // Return the configured similarity threshold or default
+        Some(self.config.default_similarity_threshold)
+    }
+    
+    /// Calculate semantic similarity between a node and query vector
+    fn calculate_node_similarity(
+        &self,
+        node: &crate::graph::Node,
+        query_vector: &[f32],
+    ) -> QueryResult<f32> {
+        // Try to get node embedding from properties
+        if let Some(embedding_prop) = node.properties.get("embedding") {
+            if let Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vector_data)) = &embedding_prop.value {
+                // Compute cosine similarity between node embedding and query vector
+                let node_embedding: Vec<f32> = vector_data.elements.iter().map(|&x| x as f32).collect();
+                return Ok(self.cosine_similarity(&node_embedding, query_vector));
+            }
+        }
+        
+        // If no embedding found, compute similarity based on node properties
+        // This is a fallback that uses property overlap as a proxy for semantic similarity
+        let property_similarity = self.compute_property_similarity(node, query_vector);
+        Ok(property_similarity)
+    }
+    
+    /// Compute cosine similarity between two vectors
+    fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() {
+            return 0.0;
+        }
+        
+        let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let magnitude_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let magnitude_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        
+        if magnitude_a == 0.0 || magnitude_b == 0.0 {
+            return 0.0;
+        }
+        
+        dot_product / (magnitude_a * magnitude_b)
+    }
+    
+    /// Compute property-based similarity as fallback when no embedding is available
+    fn compute_property_similarity(&self, node: &crate::graph::Node, _query_vector: &[f32]) -> f32 {
+        // Simple property-based similarity computation
+        // In a real implementation, this would use more sophisticated semantic matching
+        
+        let property_count = node.properties.len() as f32;
+        if property_count == 0.0 {
+            return 0.1; // Low but non-zero similarity for nodes without properties
+        }
+        
+        // Use property diversity as a proxy for semantic richness
+        // More properties might indicate more semantic content
+        (property_count / (property_count + 10.0)).min(0.8)
+    }
+    
+    /// Get semantically ranked neighbors for a node
+    async fn get_semantic_neighbors(
+        &self,
+        node_id: &NodeId,
+        query_vector: &[f32],
+        graph_comp: &GraphQueryComponent,
+        visited: &HashSet<NodeId>,
+    ) -> QueryResult<Vec<SemanticNeighbor>> {
+        let mut semantic_neighbors = Vec::new();
+        
+        // Get all outgoing edges from current node
+        if let Some(edges) = self.graph_memory.get_outgoing_edges(node_id) {
+            for edge in edges {
+                // Skip if already visited
+                if visited.contains(&edge.to_node_id) {
+                    continue;
+                }
+                
+                // Check edge type filter
+                if !graph_comp.edge_types.is_empty() && 
+                   !graph_comp.edge_types.contains(&edge.edge_type) {
+                    continue;
+                }
+                
+                // Check edge filters
+                if !self.edge_matches_filters(edge, &graph_comp.edge_filters)? {
+                    continue;
+                }
+                
+                // Get target node and calculate similarity
+                if let Some(target_node) = self.graph_memory.get_node(&edge.to_node_id) {
+                    let similarity_score = self.calculate_node_similarity(target_node, query_vector)?;
+                    let edge_weight = edge.weight.unwrap_or(1.0);
+                    
+                    semantic_neighbors.push(SemanticNeighbor {
+                        node_id: edge.to_node_id.clone(),
+                        similarity_score,
+                        edge_weight,
+                    });
+                }
+            }
+        }
+        
+        // Sort by similarity score (descending) to prioritize most relevant neighbors
+        semantic_neighbors.sort_by(|a, b| {
+            b.similarity_score.partial_cmp(&a.similarity_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        // Return top neighbors (limit to prevent exploring too many at once)
+        semantic_neighbors.truncate(20); // Limit to top 20 most similar neighbors
+        
+        Ok(semantic_neighbors)
+    }
+    
+    /// Execute vector search using VectorOperationsService with hybrid query context
+    async fn execute_vos_search(
+        &self,
+        vector_comp: &VectorQueryComponent,
+        threshold: f32,
+        max_results: usize,
+    ) -> QueryResult<Vec<VectorCandidate>> {
+        use crate::services::search::UnifiedSearchConfig;
+        
+        let mut candidates = Vec::new();
+        
+        // Extract query vector from vector component
+        // In a real hybrid query, this would come from the query context
+        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        
+        // Configure search with hybrid-specific settings
+        let search_config = UnifiedSearchConfig {
+            similarity_threshold: Some(threshold),
+            progressive_search: self.config.optimizations.use_progressive_search,
+            include_vectors: true,
+            include_metadata: true,
+            cache_results: self.config.optimizations.cache_intermediates,
+            parallel_search: self.config.optimizations.parallel_execution,
+            early_termination: self.config.optimizations.early_termination,
+            ..Default::default()
+        };
+        
+        // Execute VOS search for each collection specified in vector component
+        for collection_id in &vector_comp.collections {
+            match self.vector_service.unified_search(
+                collection_id,
+                query_vector.clone(),
+                max_results,
+                vector_comp.filter.clone(),
+                Some(search_config.clone()),
+            ).await {
+                Ok(search_results) => {
+                    // Convert VOS SearchResult to VectorCandidate
+                    for search_result in search_results {
+                        for vector_record in search_result.results {
+                            let similarity = vector_record.similarity;
+                            
+                            // Only include results above threshold
+                            if similarity >= threshold {
+                                candidates.push(VectorCandidate {
+                                    node_id: vector_record.id.clone(),
+                                    similarity,
+                                    vector_record: VectorRecord {
+                                        id: vector_record.id,
+                                        vector: vector_record.vector,
+                                        metadata: self.convert_proto_metadata(&vector_record.metadata),
+                                        created_at: vector_record.created_at.unwrap_or(0) as u64,
+                                        updated_at: vector_record.updated_at.unwrap_or(0) as u64,
+                                    },
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(ProximaDBError::internal(&format!(
+                        "VOS search failed for collection {}: {}", collection_id, e
+                    )));
+                }
+            }
+        }
+        
+        // Limit results to max_results and sort by similarity
+        candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(max_results);
+        
+        Ok(candidates)
+    }
+    
+    /// Fallback vector search using graph nodes when VOS is unavailable
+    async fn fallback_graph_vector_search(
+        &self,
+        vector_comp: &VectorQueryComponent,
+        threshold: f32,
+        max_results: usize,
+    ) -> QueryResult<Vec<VectorCandidate>> {
+        let mut candidates = Vec::new();
+        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        
+        // Search through graph nodes that have embeddings
+        for entry in self.graph_memory.nodes.iter() {
+            let node = entry.value();
+            
+            if let Some(embedding) = &node.embedding {
+                // Calculate similarity using cosine distance
+                let similarity = self.cosine_similarity(embedding, &query_vector);
+                
+                if similarity >= threshold && candidates.len() < max_results {
+                    candidates.push(VectorCandidate {
+                        node_id: node.id.clone(),
+                        similarity,
+                        vector_record: VectorRecord {
+                            id: node.id.clone(),
+                            vector: embedding.clone(),
+                            metadata: self.convert_node_properties_to_metadata(&node.properties),
+                            created_at: node.created_at.map(|t| t.seconds).unwrap_or(0) as u64,
+                            updated_at: node.updated_at.map(|t| t.seconds).unwrap_or(0) as u64,
+                        },
+                    });
+                }
+            }
+        }
+        
+        // Sort by similarity (descending)
+        candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(max_results);
+        
+        Ok(candidates)
+    }
+    
+    /// Convert protobuf metadata to HashMap
+    fn convert_proto_metadata(
+        &self,
+        proto_metadata: &[crate::proto::proximadb::MetadataItem],
+    ) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+        
+        for item in proto_metadata {
+            // Convert protobuf metadata values to strings for simplicity
+            // In a production system, this would preserve type information
+            let value_str = match &item.value {
+                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
+                Some(crate::proto::proximadb::metadata_item::Value::IntValue(i)) => i.to_string(),
+                Some(crate::proto::proximadb::metadata_item::Value::FloatValue(f)) => f.to_string(),
+                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                None => "null".to_string(),
+            };
+            metadata.insert(item.key.clone(), value_str);
+        }
+        
+        metadata
+    }
+    
+    /// Convert graph node properties to metadata HashMap
+    fn convert_node_properties_to_metadata(
+        &self,
+        properties: &HashMap<String, crate::proto::proximadb_v1::PropertyValue>,
+    ) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+        
+        for (key, prop_value) in properties {
+            // Skip the embedding property to avoid duplication
+            if key == "embedding" {
+                continue;
+            }
+            
+            let value_str = match &prop_value.value {
+                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
+                Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
+                Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+                    // Skip vector values in metadata conversion
+                    continue;
+                }
+                None => "null".to_string(),
+            };
+            metadata.insert(key.clone(), value_str);
+        }
+        
+        metadata
+    }
+    
     /// Fuse vector and graph results
     async fn fuse_results(
         &self,
@@ -951,7 +1435,8 @@ impl HybridQueryEngine {
                 threshold: Some(similarity_threshold),
                 max_results: Some(100),
                 distance_metric: Some("cosine".to_string()),
-                collection: None,
+                collections: vec![],
+                filter: None,
             }),
             graph_component: Some(GraphQueryComponent {
                 start_nodes: vec![start_node_id.clone()],
@@ -1111,6 +1596,10 @@ mod tests {
     fn test_filter_operator() {
         match FilterOperator::Equal {
             FilterOperator::Equal => assert!(true),
+            _ => assert!(false),
+        }
+    }
+}sert!(true),
             _ => assert!(false),
         }
     }

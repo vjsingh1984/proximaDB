@@ -98,6 +98,12 @@ message TraversalRequest {
   
   // Maximum number of results
   optional uint32 limit = 7;
+
+  // Optional timeout in milliseconds for traversal
+  optional uint32 timeout_ms = 8;
+
+  // Optional cap on frontier size to control memory usage
+  optional uint32 max_frontier = 9;
 }
 
 // Property filter for graph queries
@@ -167,6 +173,8 @@ message NodeQuery {
   
   // Skip/offset for pagination
   optional uint32 offset = 4;
+  // Continuation token for pagination
+  optional string continuation_token = 5;
 }
 
 // Edge query request  
@@ -188,6 +196,8 @@ message EdgeQuery {
   
   // Skip/offset for pagination
   optional uint32 offset = 6;
+  // Continuation token for pagination
+  optional string continuation_token = 7;
 }
 
 // Batch operations for high-performance ingestion
@@ -204,6 +214,8 @@ message BatchResponse {
   repeated Node nodes = 2;
   repeated Edge edges = 3;
   optional string error_message = 4;
+  // Continuation token for pagination
+  optional string next_token = 10;
   // Legacy fields for backward compatibility
   optional uint32 created_count = 5;
   optional uint32 updated_count = 6;
@@ -213,6 +225,58 @@ message BatchResponse {
 }
 
 // Graph statistics and metadata
+import "proximadb.proto";
+
+// Hybrid query request combining vector and graph components
+message HybridSearchRequest {
+  // Vector search component
+  proximadb.VectorSearchRequest vector_search_request = 1;
+  
+  // Graph traversal component
+  TraversalRequest graph_traversal_request = 2;
+  
+  // Strategy for combining vector and graph results
+  CombinationStrategy combination_strategy = 3;
+  
+  // Optional: Limit the number of results
+  optional uint32 limit = 4;
+  
+  // Optional: Offset for pagination
+  optional uint32 offset = 5;
+}
+
+// Strategy for combining vector and graph results
+enum CombinationStrategy {
+  COMBINATION_STRATEGY_UNSPECIFIED = 0;
+  COMBINATION_STRATEGY_VECTOR_THEN_GRAPH = 1; // Perform vector search, then graph traversal from results
+  COMBINATION_STRATEGY_GRAPH_THEN_VECTOR = 2; // Perform graph traversal, then vector search on results
+  COMBINATION_STRATEGY_BALANCED = 3;          // Balance both components
+}
+
+// Hybrid query response
+message HybridSearchResponse {
+  // Combined results (nodes and edges)
+  repeated Node nodes = 1;
+  repeated Edge edges = 2;
+  
+  // Optional: Paths found during traversal
+  repeated GraphPath paths = 3;
+  
+  // Statistics for the hybrid search
+  HybridSearchStats stats = 4;
+
+  // Vector search results
+  repeated proximadb.SearchVectorRecord vector_results = 5;
+}
+
+// Statistics for hybrid search
+message HybridSearchStats {
+  uint32 vector_results_count = 1;
+  uint32 graph_traversal_count = 2;
+  uint64 execution_time_microseconds = 3;
+  // Add more detailed stats as needed
+}
+
 message GraphStats {
   uint64 total_nodes = 1;
   uint64 total_edges = 2;
@@ -299,9 +363,79 @@ service GraphService {
     // Graph operations
     rpc GetNeighbors(GetNeighborsRequest) returns (BatchResponse);
     rpc TraverseGraph(TraversalRequest) returns (TraversalResponse);
+    // Server streaming traversal
+    rpc StreamTraverse(TraversalRequest) returns (stream TraversalChunk);
     rpc GetGraphStats(GetStatsRequest) returns (GraphStats);
+    // Shortest path between nodes
+    rpc ShortestPath(ShortestPathRequest) returns (ShortestPathResponse);
+    // Graph analysis
+    rpc GetConnectedComponents(GetStatsRequest) returns (ConnectedComponentsResponse);
+    rpc HasCycle(GetStatsRequest) returns (CycleCheckResponse);
+    // Unique constraint DDL
+    rpc AddUniqueConstraint(UniqueConstraintRequest) returns (UniqueConstraintResponse);
+    rpc RemoveUniqueConstraint(UniqueConstraintRequest) returns (UniqueConstraintResponse);
     
     // Batch operations
     rpc BatchCreateNodes(BatchNodeRequest) returns (BatchResponse);
     rpc BatchCreateEdges(BatchEdgeRequest) returns (BatchResponse);
+
+    // Hybrid operations
+    rpc ExecuteHybridQuery(HybridSearchRequest) returns (HybridSearchResponse);
+}
+
+// Shortest path request/response
+message ShortestPathRequest {
+  string start_node_id = 1;
+  string target_node_id = 2;
+  optional uint32 max_depth = 3;
+  repeated string edge_types = 4;
+  // Algorithm selection
+  optional ShortestPathAlgorithm algorithm = 5; // default DIJKSTRA
+  // Number of paths for k-shortest (if > 1, Yen's algorithm is used)
+  optional uint32 k = 6;
+}
+
+message ShortestPathResponse {
+  repeated string node_ids = 1;  // path nodes from start to target
+  optional double total_weight = 2;
+}
+
+// Traversal streaming chunk
+message TraversalChunk {
+  repeated Node nodes = 1;
+  repeated Edge edges = 2;
+  repeated GraphPath paths = 3;
+  optional TraversalStats stats = 4; // present on final chunk
+  bool done = 5; // true on final chunk
+}
+
+enum ShortestPathAlgorithm {
+  SHORTEST_PATH_ALGORITHM_UNSPECIFIED = 0;
+  SHORTEST_PATH_ALGORITHM_DIJKSTRA = 1;
+  SHORTEST_PATH_ALGORITHM_ASTAR = 2;
+}
+
+// Unique constraint DDL
+message UniqueConstraintRequest {
+  string label = 1;
+  string property = 2;
+}
+
+message UniqueConstraintResponse {
+  bool success = 1;
+  optional string error_message = 2;
+}
+
+// Connected components response
+message ConnectedComponentsResponse {
+  repeated Component components = 1;
+}
+
+message Component {
+  repeated string node_ids = 1;
+}
+
+// Cycle detection response
+message CycleCheckResponse {
+  bool has_cycle = 1;
 }

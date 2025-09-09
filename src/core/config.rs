@@ -881,6 +881,9 @@ pub struct ApiConfig {
     pub max_request_size_mb: u64,
     pub timeout_seconds: u64,
     pub enable_tls: Option<bool>,
+    /// Interval for background TTL sweeper in seconds (default: 900 = 15 minutes)
+    #[serde(default = "default_ttl_sweep_interval")]
+    pub ttl_sweep_interval_seconds: u64,
 
     /// Enable REST API compression (default: false)
     #[serde(default = "default_false")]
@@ -923,9 +926,12 @@ impl Default for ApiConfig {
             grpc_compression: false,
             compression_algorithm: "gzip".to_string(),
             compression_level: 6,
+            ttl_sweep_interval_seconds: 900,
         }
     }
 }
+
+fn default_ttl_sweep_interval() -> u64 { 900 }
 
 /// WAL storage configuration supporting multiple directories and cloud storage
 #[derive(Debug, Clone, Serialize, Deserialize)]

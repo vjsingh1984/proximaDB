@@ -45,6 +45,8 @@ grpc_port = 5679
 rest_port = 5678
 max_request_size_mb = 32
 timeout_seconds = 30
+# Background TTL sweeper interval in seconds (default 900 = 15 minutes)
+ttl_sweep_interval_seconds = 900
 
 [monitoring]
 metrics_enabled = true

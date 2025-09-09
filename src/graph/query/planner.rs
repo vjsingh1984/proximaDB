@@ -29,6 +29,7 @@ use crate::core::error::ProximaDBError;
 use crate::utils::Uuid;
 use crate::graph::{NodeId, EdgeId, GraphMemoryPool};
 use super::{QueryResult, QueryContext, QueryStats};
+use super::ast::CompiledPattern;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -391,6 +392,44 @@ impl QueryPlanner {
             let count = entry.value().len() as u64;
             stats.edge_type_selectivity.insert(edge_type, count);
         }
+
+        // NEW: Update property selectivity and index stats
+        stats.property_selectivity.clear();
+        stats.index_stats.clear();
+
+        for (prop_name, prop_index) in memory_pool.node_property_indexes.iter() {
+            stats.property_selectivity.insert(prop_name.clone(), prop_index.stats.unique_values as u64);
+            stats.index_stats.insert(
+                format!("node_prop_{}", prop_name),
+                IndexStats {
+                    cardinality: prop_index.stats.total_entries as u64,
+                    selectivity: if stats.node_count > 0 {
+                        prop_index.stats.total_entries as f64 / stats.node_count as f64
+                    } else {
+                        0.0
+                    },
+                    avg_seek_time_us: 0.0, // TODO: Populate with actual benchmark data
+                    last_updated: Instant::now(),
+                },
+            );
+        }
+
+        for (prop_name, prop_index) in memory_pool.edge_property_indexes.iter() {
+            stats.property_selectivity.insert(prop_name.clone(), prop_index.stats.unique_values as u64);
+            stats.index_stats.insert(
+                format!("edge_prop_{}", prop_name),
+                IndexStats {
+                    cardinality: prop_index.stats.total_entries as u64,
+                    selectivity: if stats.edge_count > 0 {
+                        prop_index.stats.total_entries as f64 / stats.edge_count as f64
+                    } else {
+                        0.0
+                    },
+                    avg_seek_time_us: 0.0, // TODO: Populate with actual benchmark data
+                    last_updated: Instant::now(),
+                },
+            );
+        }
         
         Ok(())
     }
@@ -659,15 +698,198 @@ impl QueryPlanner {
         
         self.plan_traversal_query(&dijkstra_params, TraversalAlgorithm::Dijkstra)
     }
+
+    /// Plan a pattern query from a CompiledPattern
+    pub fn plan_pattern_query(
+        &self,
+        pattern: &CompiledPattern,
+    ) -> QueryResult<QueryPlan> {
+        let stats = self.stats.read().map_err(|_| {
+            ProximaDBError::internal("Failed to acquire stats read lock")
+        })?;
+
+        let mut best_plan: Option<QueryPlan> = None;
+        let mut min_cost = f64::MAX;
+
+        // Iterate through all node patterns as potential starting points
+        for starting_node_pattern in &pattern.nodes {
+            let mut current_steps = Vec::new();
+            let mut current_estimated_cost = CostEstimate::zero();
+            let mut current_estimated_result_size = 0;
+
+            let node_count = stats.node_count as f64;
+            let mut initial_cardinality = node_count;
+            let mut steps = Vec::new();
+            let mut estimated_cost = CostEstimate::zero();
+            let mut estimated_result_size = 0;
+
+            // Estimate selectivity based on labels
+            if !node_pattern.labels.is_empty() {
+                // Use the most selective label if multiple are present
+                let mut label_selectivity = 1.0;
+                for label in &node_pattern.labels {
+                    if let Some(&count) = stats.label_selectivity.get(label) {
+                        label_selectivity *= (count as f64 / node_count).min(1.0);
+                    } else {
+                        // If label not found in stats, assume low selectivity (e.g., 10%)
+                        label_selectivity *= 0.1;
+                    }
+                }
+                current_cardinality *= label_selectivity;
+            }
+
+            // Estimate selectivity based on properties (simplified)
+            if !node_pattern.properties.is_empty() {
+                // For each property, assume a default selectivity (e.g., 10%)
+                // TODO: Use actual property selectivity from stats
+                current_cardinality *= 0.1_f64.powi(node_pattern.properties.len() as i32);
+            }
+
+            let estimated_output_cardinality = current_cardinality.max(1.0) as usize;
+
+            // Choose strategy based on selectivity and index availability
+            let step_cost;
+            let step_type;
+
+            // Simplified logic: if labels are present, assume index seek is possible
+            if self.config.optimizations.use_indexes && !node_pattern.labels.is_empty() {
+                step_type = PlanStepType::IndexSeek {
+                    index_name: format!("label_index_{}", node_pattern.labels.first().unwrap()),
+                    key_value: serde_json::Value::String(node_pattern.labels.first().unwrap().clone()),
+                };
+                step_cost = CostEstimate::new(
+                    self.config.cost_model.index_seek_cost,
+                    0.0,
+                    estimated_output_cardinality as f64 * self.config.cost_model.memory_cost_factor,
+                );
+            } else {
+                step_type = PlanStepType::NodeScan {
+                    labels: if !node_pattern.labels.is_empty() {
+                        Some(node_pattern.labels.clone())
+                    } else {
+                        None
+                    },
+                    property_filters: Vec::new(), // TODO: Convert PropertyConstraint to PropertyFilter
+                };
+                step_cost = CostEstimate::new(
+                    node_count * self.config.cost_model.node_access_cost,
+                    0.0,
+                    estimated_output_cardinality as f64 * self.config.cost_model.memory_cost_factor,
+                );
+            }
+
+            let node_scan_step = PlanStep {
+                step_type,
+                parameters: HashMap::new(),
+                cost: step_cost,
+                output_cardinality: estimated_output_cardinality,
+            };
+            estimated_cost = estimated_cost.add(&node_scan_step.cost);
+            estimated_result_size = node_scan_step.output_cardinality;
+            steps.push(node_scan_step);
+        }
+
+        // Step 2: Handle Edge Patterns (simplified to a generic traversal for now)
+        if !pattern.edges.is_empty() || !pattern.paths.is_empty() {
+            let avg_degree = stats.avg_node_degree;
+            let traversal_cost = estimated_result_size as f64 * avg_degree * self.config.cost_model.edge_traversal_cost;
+            let traversal_output_cardinality = (estimated_result_size as f64 * avg_degree).max(1.0) as usize;
+
+            let traversal_step = PlanStep {
+                step_type: PlanStepType::Traverse {
+                    algorithm: TraversalAlgorithm::BFS, // Default to BFS
+                    max_depth: None, // TODO: Infer from path patterns
+                    edge_filters: Vec::new(), // TODO: Convert EdgePattern properties to EdgeFilter
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::new(traversal_cost, 0.0, traversal_output_cardinality as f64 * self.config.cost_model.memory_cost_factor),
+                output_cardinality: traversal_output_cardinality,
+            };
+            estimated_cost = estimated_cost.add(&traversal_step.cost);
+            steps.push(traversal_step);
+        }
+
+        // Step 3: Handle WHERE clauses
+        if !pattern.where_clauses.is_empty() {
+            // Assume WHERE clause reduces cardinality by 50% (simplified)
+            let filter_cardinality = (estimated_result_size as f64 * 0.5).max(1.0) as usize;
+            let filter_step = PlanStep {
+                step_type: PlanStepType::Filter {
+                    condition: FilterCondition::And(Vec::new()), // TODO: Convert WhereClause to FilterCondition
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::new(filter_cardinality as f64 * self.config.cost_model.cpu_cost, 0.0, 0.0), // CPU cost for filtering
+                output_cardinality: filter_cardinality,
+            };
+            estimated_cost = estimated_cost.add(&filter_step.cost);
+            estimated_result_size = filter_cardinality;
+            steps.push(filter_step);
+        }
+
+        // Step 4: Handle RETURN clause (simplified to Project and Limit)
+        if !pattern.return_spec.variables.is_empty() || !pattern.return_spec.projections.is_empty() {
+            let project_step = PlanStep {
+                step_type: PlanStepType::Project {
+                    fields: pattern.return_spec.variables.clone(), // Simplified
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::new(estimated_result_size as f64 * self.config.cost_model.cpu_cost, 0.0, 0.0),
+                output_cardinality: estimated_result_size,
+            };
+            estimated_cost = estimated_cost.add(&project_step.cost);
+            steps.push(project_step);
+        }
+
+        if let Some(limit) = pattern.return_spec.limit {
+            let limit_step = PlanStep {
+                step_type: PlanStepType::Limit {
+                    count: limit as usize,
+                    offset: pattern.return_spec.skip.map(|s| s as usize),
+                },
+                parameters: HashMap::new(),
+                cost: CostEstimate::zero(), // Minimal cost
+                output_cardinality: limit as usize,
+            };
+            estimated_cost = estimated_cost.add(&limit_step.cost);
+            steps.push(limit_step);
+        }
+
+        // Set current_steps and current_estimated_cost for comparison
+        current_steps = steps;
+        current_estimated_cost = estimated_cost;
+
+        // Compare with best plan found so far
+        if current_estimated_cost.total_cost < min_cost {
+            min_cost = current_estimated_cost.total_cost;
+            best_plan = Some(QueryPlan {
+                id: Uuid::new_v4().to_string(),
+                steps: current_steps,
+                estimated_cost: current_estimated_cost,
+                estimated_result_size: current_estimated_result_size,
+                created_at: std::time::SystemTime::now(),
+            });
+        }
+    } // End of the for loop
+
+        best_plan.ok_or_else(|| ProximaDBError::invalid_argument("Could not generate a plan for the given pattern"))
+    }
     
     /// Plan a pattern matching query (simplified for now)
-    fn plan_pattern_match_query(
+    pub fn plan_pattern_match_query(
         &self,
         parameters: &HashMap<String, serde_json::Value>,
     ) -> QueryResult<QueryPlan> {
-        // For now, treat as a complex traversal
-        // TODO: Implement proper pattern matching planning
-        self.plan_traversal_query(parameters, TraversalAlgorithm::BFS)
+        // For now, assume the 'pattern' parameter contains the Cypher-like string
+        let pattern_str = parameters.get("pattern")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ProximaDBError::invalid_argument("Missing 'pattern' parameter for pattern match query"))?;
+
+        // Use the QueryParser to parse the pattern string into a CompiledPattern
+        let parser = super::parser::QueryParser::new(); // Assuming parser is in super::parser
+        let compiled_pattern = parser.parse(pattern_str)?;
+
+        // Now plan the compiled pattern
+        self.plan_pattern_query(&compiled_pattern)
     }
     
     /// Generate cache key for query

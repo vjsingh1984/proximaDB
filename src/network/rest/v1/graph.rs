@@ -40,6 +40,11 @@
 //! DELETE /v1/graph/edges/{id}      - Delete edge
 //! GET    /v1/graph/nodes/{id}/neighbors - Get node neighbors
 //! POST   /v1/graph/traverse        - Graph traversal
+//! POST   /v1/graph/shortest_path   - Dijkstra shortest path
+//! POST   /v1/graph/constraints/unique   - Add unique constraint
+//! DELETE /v1/graph/constraints/unique   - Remove unique constraint
+//! GET    /v1/graph/components       - Connected components (weak)
+//! GET    /v1/graph/cycles           - Detect directed cycles
 //! GET    /v1/graph/stats           - Graph statistics
 //! POST   /v1/graph/nodes/batch     - Batch create nodes
 //! POST   /v1/graph/edges/batch     - Batch create edges
@@ -92,6 +97,15 @@ struct GraphBatchResponse<T> {
     errors: Vec<String>,
 }
 
+/// Query response with optional pagination token
+#[derive(Debug, Serialize)]
+struct GraphQueryResponse<T> {
+    success: bool,
+    data: T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_token: Option<String>,
+}
+
 /// Query parameters for pagination
 #[derive(Debug, Deserialize)]
 struct PaginationQuery {
@@ -115,12 +129,16 @@ struct CreateEdgeRequest {
 #[derive(Debug, Deserialize)]
 struct BatchCreateNodesRequest {
     nodes: Vec<Node>,
+    #[serde(default)]
+    if_exists: Option<String>, // "update" | "skip" | "error"
 }
 
 /// Batch create edges request
 #[derive(Debug, Deserialize)]
 struct BatchCreateEdgesRequest {
     edges: Vec<Edge>,
+    #[serde(default)]
+    if_exists: Option<String>, // "update" | "skip" | "error"
 }
 
 /// Create the graph REST router
@@ -139,6 +157,7 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/edges/:id", delete(delete_edge))
         // Traversal and querying
         .route("/traverse", post(traverse_graph))
+        .route("/shortest_path", post(shortest_path))
         .route("/query/nodes", post(query_nodes))
         .route("/query/edges", post(query_edges))
         // Batch operations
@@ -146,6 +165,12 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/edges/batch", post(batch_create_edges))
         // Statistics
         .route("/stats", get(get_graph_stats))
+        // Constraints DDL
+        .route("/constraints/unique", post(add_unique_constraint))
+        .route("/constraints/unique", delete(remove_unique_constraint))
+        // Graph analysis
+        .route("/components", get(get_connected_components))
+        .route("/cycles", get(check_cycles))
 }
 
 /// Create a new node
@@ -348,6 +373,147 @@ pub async fn create_edge(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ShortestPathRequest {
+    start_node_id: String,
+    target_node_id: String,
+    #[serde(default)]
+    max_depth: Option<u32>,
+    #[serde(default)]
+    edge_types: Option<Vec<String>>,
+    #[serde(default)]
+    algorithm: Option<String>, // "DIJKSTRA" or "ASTAR"
+    #[serde(default)]
+    k: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct ShortestPathResponse {
+    success: bool,
+    path: Option<Vec<String>>, // node IDs
+    total_weight: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UniqueConstraintRequest { label: String, property: String }
+
+#[derive(Debug, Serialize)]
+struct DdlResponse { success: bool }
+
+/// Compute shortest path using Dijkstra algorithm
+pub async fn shortest_path(
+    State(app_state): State<AppState>,
+    Json(req): Json<ShortestPathRequest>,
+) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .shortest_path(
+            &req.start_node_id,
+            &req.target_node_id,
+            req.max_depth,
+            req.edge_types,
+            parse_sp_algorithm(req.algorithm.as_deref()),
+            req.k,
+        )
+        .await
+    {
+        Ok(Some((path, total_weight))) => Json(ShortestPathResponse {
+            success: true,
+            path: Some(path),
+            total_weight: Some(total_weight),
+        })
+        .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(GraphErrorResponse {
+                error: "no_path".to_string(),
+                message: "No path found between nodes".to_string(),
+                code: "GRAPH_NO_PATH".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(GraphErrorResponse {
+                error: "shortest_path_failed".into(),
+                message: e.to_string(),
+                code: "GRAPH_SHORTEST_PATH_ERROR".into(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+fn parse_sp_algorithm(s: Option<&str>) -> Option<crate::proto::proximadb_v1::ShortestPathAlgorithm> {
+    match s.unwrap_or("DIJKSTRA").to_ascii_uppercase().as_str() {
+        "ASTAR" => Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmAstar),
+        "DIJKSTRA" => Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmDijkstra),
+        _ => None,
+    }
+}
+
+/// Add unique constraint (label, property)
+pub async fn add_unique_constraint(
+    State(app_state): State<AppState>,
+    Json(req): Json<UniqueConstraintRequest>,
+) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .add_unique_constraint(&req.label, &req.property)
+    {
+        Ok(()) => Json(DdlResponse { success: true }).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(GraphErrorResponse {
+                error: "add_unique_failed".into(),
+                message: e.to_string(),
+                code: "GRAPH_ADD_UNIQUE_ERROR".into(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+/// Remove unique constraint (label, property)
+pub async fn remove_unique_constraint(
+    State(app_state): State<AppState>,
+    Json(req): Json<UniqueConstraintRequest>,
+) -> impl IntoResponse {
+    app_state
+        .unified_handlers
+        .graph_service
+        .remove_unique_constraint(&req.label, &req.property);
+    Json(DdlResponse { success: true }).into_response()
+}
+
+/// Get connected components (weakly connected)
+pub async fn get_connected_components(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    match app_state.unified_handlers.graph_service.connected_components().await {
+        Ok(components) => Json(ComponentsResponse { success: true, components }).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(GraphErrorResponse { error: "components_failed".into(), message: e.to_string(), code: "GRAPH_COMPONENTS_ERROR".into() }),
+        ).into_response(),
+    }
+}
+
+/// Detect directed cycles
+pub async fn check_cycles(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    match app_state.unified_handlers.graph_service.has_cycle().await {
+        Ok(has) => Json(CycleResponse { success: true, has_cycle: has }).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(GraphErrorResponse { error: "cycles_failed".into(), message: e.to_string(), code: "GRAPH_CYCLE_ERROR".into() }),
+        ).into_response(),
+    }
+}
+
 /// Get an edge by ID
 pub async fn get_edge(
     State(app_state): State<AppState>,
@@ -496,13 +662,28 @@ pub async fn query_nodes(
     Json(query): Json<NodeQuery>,
 ) -> impl IntoResponse {
     debug!("Querying nodes with labels: {:?}", query.labels);
-    
-    match app_state.unified_handlers.graph_service.query_nodes(query) {
+    let mut q = query;
+    // Continuation token support: format "offset:<n>"
+    if q.offset.is_none() {
+        if let Some(token) = &q.continuation_token {
+            if let Some(rest) = token.strip_prefix("offset:") {
+                if let Ok(n) = rest.parse::<u32>() { q.offset = Some(n); }
+            }
+        }
+    }
+
+    match app_state.unified_handlers.graph_service.query_nodes(q.clone()) {
         Ok(nodes) => {
             info!("Successfully queried {} nodes", nodes.len());
-            Json(GraphSuccessResponse {
+            let mut next_token = None;
+            if let Some(lim) = q.limit { if (nodes.len() as u32) == lim {
+                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                next_token = Some(format!("offset:{}", next_off));
+            }}
+            Json(GraphQueryResponse {
                 success: true,
                 data: nodes.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
+                next_token,
             }).into_response()
         },
         Err(err) => {
@@ -525,13 +706,26 @@ pub async fn query_edges(
     Json(query): Json<EdgeQuery>,
 ) -> impl IntoResponse {
     debug!("Querying edges");
-    
-    match app_state.unified_handlers.graph_service.query_edges(query) {
+    let mut q = query;
+    if q.offset.is_none() {
+        if let Some(token) = &q.continuation_token {
+            if let Some(rest) = token.strip_prefix("offset:") {
+                if let Ok(n) = rest.parse::<u32>() { q.offset = Some(n); }
+            }
+        }
+    }
+    match app_state.unified_handlers.graph_service.query_edges(q.clone()) {
         Ok(edges) => {
             info!("Successfully queried {} edges", edges.len());
-            Json(GraphSuccessResponse {
+            let mut next_token = None;
+            if let Some(lim) = q.limit { if (edges.len() as u32) == lim {
+                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                next_token = Some(format!("offset:{}", next_off));
+            }}
+            Json(GraphQueryResponse {
                 success: true,
                 data: edges.into_iter().map(|e| (*e).clone()).collect::<Vec<_>>(),
+                next_token,
             }).into_response()
         },
         Err(err) => {
@@ -554,8 +748,8 @@ pub async fn batch_create_nodes(
     Json(request): Json<BatchCreateNodesRequest>,
 ) -> impl IntoResponse {
     debug!("Batch creating {} nodes", request.nodes.len());
-    
-    match app_state.unified_handlers.graph_service.batch_create_nodes(request.nodes) {
+    let strategy = request.if_exists.unwrap_or_else(|| "error".into());
+    match app_state.unified_handlers.graph_service.batch_create_nodes_with_strategy(request.nodes, strategy.as_str()) {
         Ok(nodes) => {
             info!("Successfully batch created {} nodes", nodes.len());
             Json(GraphBatchResponse {
@@ -586,8 +780,12 @@ pub async fn batch_create_edges(
     Json(request): Json<BatchCreateEdgesRequest>,
 ) -> impl IntoResponse {
     debug!("Batch creating {} edges", request.edges.len());
-    
-    match app_state.unified_handlers.graph_service.batch_create_edges(request.edges) {
+    let strategy = request.if_exists.clone().unwrap_or_else(|| "error".into());
+    match app_state
+        .unified_handlers
+        .graph_service
+        .batch_create_edges_with_strategy(request.edges, strategy.as_str())
+    {
         Ok(edges) => {
             info!("Successfully batch created {} edges", edges.len());
             Json(GraphBatchResponse {
@@ -613,6 +811,12 @@ pub async fn batch_create_edges(
 }
 
 /// Get graph statistics
+#[derive(Debug, Serialize)]
+struct ComponentsResponse { success: bool, components: Vec<Vec<String>> }
+
+#[derive(Debug, Serialize)]
+struct CycleResponse { success: bool, has_cycle: bool }
+
 pub async fn get_graph_stats(
     State(app_state): State<AppState>,
 ) -> impl IntoResponse {

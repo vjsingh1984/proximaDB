@@ -2211,6 +2211,12 @@ pub struct TraversalRequest {
     /// Maximum number of results
     #[prost(uint32, optional, tag = "7")]
     pub limit: ::core::option::Option<u32>,
+    /// Optional timeout in milliseconds for traversal
+    #[prost(uint32, optional, tag = "8")]
+    pub timeout_ms: ::core::option::Option<u32>,
+    /// Optional cap on frontier size to control memory usage
+    #[prost(uint32, optional, tag = "9")]
+    pub max_frontier: ::core::option::Option<u32>,
 }
 /// Property filter for graph queries
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -2273,6 +2279,9 @@ pub struct NodeQuery {
     /// Skip/offset for pagination
     #[prost(uint32, optional, tag = "4")]
     pub offset: ::core::option::Option<u32>,
+    /// Continuation token for pagination
+    #[prost(string, optional, tag = "5")]
+    pub continuation_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Edge query request
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -2297,6 +2306,9 @@ pub struct EdgeQuery {
     /// Skip/offset for pagination
     #[prost(uint32, optional, tag = "6")]
     pub offset: ::core::option::Option<u32>,
+    /// Continuation token for pagination
+    #[prost(string, optional, tag = "7")]
+    pub continuation_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Batch operations for high-performance ingestion
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -2325,6 +2337,9 @@ pub struct BatchResponse {
     pub edges: ::prost::alloc::vec::Vec<Edge>,
     #[prost(string, optional, tag = "4")]
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+    /// Continuation token for pagination
+    #[prost(string, optional, tag = "10")]
+    pub next_token: ::core::option::Option<::prost::alloc::string::String>,
     /// Legacy fields for backward compatibility
     #[prost(uint32, optional, tag = "5")]
     pub created_count: ::core::option::Option<u32>,
@@ -2337,7 +2352,60 @@ pub struct BatchResponse {
     #[prost(string, repeated, tag = "9")]
     pub error_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-/// Graph statistics and metadata
+/// Hybrid query request combining vector and graph components
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridSearchRequest {
+    /// Vector search component
+    #[prost(message, optional, tag = "1")]
+    pub vector_search_request: ::core::option::Option<super::VectorSearchRequest>,
+    /// Graph traversal component
+    #[prost(message, optional, tag = "2")]
+    pub graph_traversal_request: ::core::option::Option<TraversalRequest>,
+    /// Strategy for combining vector and graph results
+    #[prost(enumeration = "CombinationStrategy", tag = "3")]
+    pub combination_strategy: i32,
+    /// Optional: Limit the number of results
+    #[prost(uint32, optional, tag = "4")]
+    pub limit: ::core::option::Option<u32>,
+    /// Optional: Offset for pagination
+    #[prost(uint32, optional, tag = "5")]
+    pub offset: ::core::option::Option<u32>,
+}
+/// Hybrid query response
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridSearchResponse {
+    /// Combined results (nodes and edges)
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: ::prost::alloc::vec::Vec<Node>,
+    #[prost(message, repeated, tag = "2")]
+    pub edges: ::prost::alloc::vec::Vec<Edge>,
+    /// Optional: Paths found during traversal
+    #[prost(message, repeated, tag = "3")]
+    pub paths: ::prost::alloc::vec::Vec<GraphPath>,
+    /// Statistics for the hybrid search
+    #[prost(message, optional, tag = "4")]
+    pub stats: ::core::option::Option<HybridSearchStats>,
+    /// Vector search results
+    #[prost(message, repeated, tag = "5")]
+    pub vector_results: ::prost::alloc::vec::Vec<super::SearchVectorRecord>,
+}
+/// Statistics for hybrid search
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HybridSearchStats {
+    #[prost(uint32, tag = "1")]
+    pub vector_results_count: u32,
+    #[prost(uint32, tag = "2")]
+    pub graph_traversal_count: u32,
+    /// Add more detailed stats as needed
+    #[prost(uint64, tag = "3")]
+    pub execution_time_microseconds: u64,
+}
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2449,6 +2517,75 @@ pub struct GetNeighborsRequest {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetStatsRequest {}
+/// Shortest path request/response
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ShortestPathRequest {
+    #[prost(string, tag = "1")]
+    pub start_node_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub target_node_id: ::prost::alloc::string::String,
+    #[prost(uint32, optional, tag = "3")]
+    pub max_depth: ::core::option::Option<u32>,
+    #[prost(string, repeated, tag = "4")]
+    pub edge_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Algorithm selection
+    ///
+    /// default DIJKSTRA
+    #[prost(enumeration = "ShortestPathAlgorithm", optional, tag = "5")]
+    pub algorithm: ::core::option::Option<i32>,
+    /// Number of paths for k-shortest (if > 1, Yen's algorithm is used)
+    #[prost(uint32, optional, tag = "6")]
+    pub k: ::core::option::Option<u32>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ShortestPathResponse {
+    /// path nodes from start to target
+    #[prost(string, repeated, tag = "1")]
+    pub node_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(double, optional, tag = "2")]
+    pub total_weight: ::core::option::Option<f64>,
+}
+/// Traversal streaming chunk
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TraversalChunk {
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: ::prost::alloc::vec::Vec<Node>,
+    #[prost(message, repeated, tag = "2")]
+    pub edges: ::prost::alloc::vec::Vec<Edge>,
+    #[prost(message, repeated, tag = "3")]
+    pub paths: ::prost::alloc::vec::Vec<GraphPath>,
+    /// present on final chunk
+    #[prost(message, optional, tag = "4")]
+    pub stats: ::core::option::Option<TraversalStats>,
+    /// true on final chunk
+    #[prost(bool, tag = "5")]
+    pub done: bool,
+}
+/// Unique constraint DDL
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UniqueConstraintRequest {
+    #[prost(string, tag = "1")]
+    pub label: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub property: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UniqueConstraintResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(string, optional, tag = "2")]
+    pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+}
 /// Supported property filter operators
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -2535,6 +2672,77 @@ impl TraversalAlgorithm {
             "TRAVERSAL_ALGORITHM_BFS" => Some(Self::Bfs),
             "TRAVERSAL_ALGORITHM_DFS" => Some(Self::Dfs),
             "TRAVERSAL_ALGORITHM_PARALLEL_BFS" => Some(Self::ParallelBfs),
+            _ => None,
+        }
+    }
+}
+/// Strategy for combining vector and graph results
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CombinationStrategy {
+    Unspecified = 0,
+    /// Perform vector search, then graph traversal from results
+    VectorThenGraph = 1,
+    /// Perform graph traversal, then vector search on results
+    GraphThenVector = 2,
+    /// Balance both components
+    Balanced = 3,
+}
+impl CombinationStrategy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            CombinationStrategy::Unspecified => "COMBINATION_STRATEGY_UNSPECIFIED",
+            CombinationStrategy::VectorThenGraph => {
+                "COMBINATION_STRATEGY_VECTOR_THEN_GRAPH"
+            }
+            CombinationStrategy::GraphThenVector => {
+                "COMBINATION_STRATEGY_GRAPH_THEN_VECTOR"
+            }
+            CombinationStrategy::Balanced => "COMBINATION_STRATEGY_BALANCED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "COMBINATION_STRATEGY_UNSPECIFIED" => Some(Self::Unspecified),
+            "COMBINATION_STRATEGY_VECTOR_THEN_GRAPH" => Some(Self::VectorThenGraph),
+            "COMBINATION_STRATEGY_GRAPH_THEN_VECTOR" => Some(Self::GraphThenVector),
+            "COMBINATION_STRATEGY_BALANCED" => Some(Self::Balanced),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ShortestPathAlgorithm {
+    Unspecified = 0,
+    Dijkstra = 1,
+    Astar = 2,
+}
+impl ShortestPathAlgorithm {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ShortestPathAlgorithm::Unspecified => "SHORTEST_PATH_ALGORITHM_UNSPECIFIED",
+            ShortestPathAlgorithm::Dijkstra => "SHORTEST_PATH_ALGORITHM_DIJKSTRA",
+            ShortestPathAlgorithm::Astar => "SHORTEST_PATH_ALGORITHM_ASTAR",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SHORTEST_PATH_ALGORITHM_UNSPECIFIED" => Some(Self::Unspecified),
+            "SHORTEST_PATH_ALGORITHM_DIJKSTRA" => Some(Self::Dijkstra),
+            "SHORTEST_PATH_ALGORITHM_ASTAR" => Some(Self::Astar),
             _ => None,
         }
     }
@@ -2896,6 +3104,32 @@ pub mod graph_service_client {
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "TraverseGraph"));
             self.inner.unary(req, path, codec).await
         }
+        /// Server streaming traversal
+        pub async fn stream_traverse(
+            &mut self,
+            request: impl tonic::IntoRequest<super::TraversalRequest>,
+        ) -> std::result::Result<
+            tonic::Response<tonic::codec::Streaming<super::TraversalChunk>>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/StreamTraverse",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "StreamTraverse"));
+            self.inner.server_streaming(req, path, codec).await
+        }
         pub async fn get_graph_stats(
             &mut self,
             request: impl tonic::IntoRequest<super::GetStatsRequest>,
@@ -2916,6 +3150,90 @@ pub mod graph_service_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "GetGraphStats"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Shortest path between nodes
+        pub async fn shortest_path(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ShortestPathRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ShortestPathResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/ShortestPath",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "ShortestPath"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Unique constraint DDL
+        pub async fn add_unique_constraint(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UniqueConstraintRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/AddUniqueConstraint",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "AddUniqueConstraint"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn remove_unique_constraint(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UniqueConstraintRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/RemoveUniqueConstraint",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.GraphService",
+                        "RemoveUniqueConstraint",
+                    ),
+                );
             self.inner.unary(req, path, codec).await
         }
         /// Batch operations
@@ -2964,6 +3282,34 @@ pub mod graph_service_client {
             req.extensions_mut()
                 .insert(
                     GrpcMethod::new("proximadb.v1.GraphService", "BatchCreateEdges"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Hybrid operations
+        pub async fn execute_hybrid_query(
+            &mut self,
+            request: impl tonic::IntoRequest<super::HybridSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HybridSearchResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/ExecuteHybridQuery",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.GraphService", "ExecuteHybridQuery"),
                 );
             self.inner.unary(req, path, codec).await
         }
@@ -3031,10 +3377,47 @@ pub mod graph_service_server {
             tonic::Response<super::TraversalResponse>,
             tonic::Status,
         >;
+        /// Server streaming response type for the StreamTraverse method.
+        type StreamTraverseStream: tonic::codegen::tokio_stream::Stream<
+                Item = std::result::Result<super::TraversalChunk, tonic::Status>,
+            >
+            + Send
+            + 'static;
+        /// Server streaming traversal
+        async fn stream_traverse(
+            &self,
+            request: tonic::Request<super::TraversalRequest>,
+        ) -> std::result::Result<
+            tonic::Response<Self::StreamTraverseStream>,
+            tonic::Status,
+        >;
         async fn get_graph_stats(
             &self,
             request: tonic::Request<super::GetStatsRequest>,
         ) -> std::result::Result<tonic::Response<super::GraphStats>, tonic::Status>;
+        /// Shortest path between nodes
+        async fn shortest_path(
+            &self,
+            request: tonic::Request<super::ShortestPathRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ShortestPathResponse>,
+            tonic::Status,
+        >;
+        /// Unique constraint DDL
+        async fn add_unique_constraint(
+            &self,
+            request: tonic::Request<super::UniqueConstraintRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        >;
+        async fn remove_unique_constraint(
+            &self,
+            request: tonic::Request<super::UniqueConstraintRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UniqueConstraintResponse>,
+            tonic::Status,
+        >;
         /// Batch operations
         async fn batch_create_nodes(
             &self,
@@ -3044,6 +3427,14 @@ pub mod graph_service_server {
             &self,
             request: tonic::Request<super::BatchEdgeRequest>,
         ) -> std::result::Result<tonic::Response<super::BatchResponse>, tonic::Status>;
+        /// Hybrid operations
+        async fn execute_hybrid_query(
+            &self,
+            request: tonic::Request<super::HybridSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::HybridSearchResponse>,
+            tonic::Status,
+        >;
     }
     /// Service definition for graph operations
     #[derive(Debug)]
@@ -3673,6 +4064,53 @@ pub mod graph_service_server {
                     };
                     Box::pin(fut)
                 }
+                "/proximadb.v1.GraphService/StreamTraverse" => {
+                    #[allow(non_camel_case_types)]
+                    struct StreamTraverseSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::ServerStreamingService<super::TraversalRequest>
+                    for StreamTraverseSvc<T> {
+                        type Response = super::TraversalChunk;
+                        type ResponseStream = T::StreamTraverseStream;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::ResponseStream>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::TraversalRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::stream_traverse(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = StreamTraverseSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/proximadb.v1.GraphService/GetGraphStats" => {
                     #[allow(non_camel_case_types)]
                     struct GetGraphStatsSvc<T: GraphService>(pub Arc<T>);
@@ -3704,6 +4142,149 @@ pub mod graph_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = GetGraphStatsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/ShortestPath" => {
+                    #[allow(non_camel_case_types)]
+                    struct ShortestPathSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::ShortestPathRequest>
+                    for ShortestPathSvc<T> {
+                        type Response = super::ShortestPathResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ShortestPathRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::shortest_path(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ShortestPathSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/AddUniqueConstraint" => {
+                    #[allow(non_camel_case_types)]
+                    struct AddUniqueConstraintSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::UniqueConstraintRequest>
+                    for AddUniqueConstraintSvc<T> {
+                        type Response = super::UniqueConstraintResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UniqueConstraintRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::add_unique_constraint(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = AddUniqueConstraintSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/RemoveUniqueConstraint" => {
+                    #[allow(non_camel_case_types)]
+                    struct RemoveUniqueConstraintSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::UniqueConstraintRequest>
+                    for RemoveUniqueConstraintSvc<T> {
+                        type Response = super::UniqueConstraintResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UniqueConstraintRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::remove_unique_constraint(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = RemoveUniqueConstraintSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -3798,6 +4379,53 @@ pub mod graph_service_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = BatchCreateEdgesSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/ExecuteHybridQuery" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExecuteHybridQuerySvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::HybridSearchRequest>
+                    for ExecuteHybridQuerySvc<T> {
+                        type Response = super::HybridSearchResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::HybridSearchRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::execute_hybrid_query(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ExecuteHybridQuerySvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

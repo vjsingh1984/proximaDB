@@ -62,6 +62,9 @@ pub mod monitoring;
 
 // Re-export public types
 pub use engines::orion::OrionGraphEngine;
+pub use engines::pulsar::PulsarGraphEngine;
+pub use engines::quasar::QuasarGraphEngine;
+pub use engines::{GraphEngineType, GraphEngineFactory, GraphEngineConfig, EngineCapabilities};
 pub use service::GraphService;
 pub use query::{QueryPlanner, PatternMatcher};
 pub use hybrid::HybridQueryEngine;
@@ -109,11 +112,25 @@ pub struct GraphMemoryPool {
     
     /// Property indexes for efficient querying
     pub node_property_indexes: Arc<DashMap<String, DashMap<String, Vec<NodeId>>>>,
+    /// Ordered string indexes for node properties (for range/prefix queries)
+    pub node_property_str_ordered: Arc<DashMap<String, std::sync::RwLock<std::collections::BTreeMap<String, Vec<NodeId>>>>>,
+    /// Ordered numeric indexes for node properties (for numeric range queries)
+    pub node_property_num_indexes: Arc<DashMap<String, std::sync::RwLock<std::collections::BTreeMap<f64, Vec<NodeId>>>>>,
     pub edge_property_indexes: Arc<DashMap<String, DashMap<String, Vec<EdgeId>>>>,
+    /// Ordered string indexes for edge properties (for range/prefix queries)
+    pub edge_property_str_ordered: Arc<DashMap<String, std::sync::RwLock<std::collections::BTreeMap<String, Vec<EdgeId>>>>>,
+    /// Ordered numeric indexes for edge properties (for numeric range queries)
+    pub edge_property_num_indexes: Arc<DashMap<String, std::sync::RwLock<std::collections::BTreeMap<f64, Vec<EdgeId>>>>>,
     
     /// Label indexes for fast label-based queries
     pub label_indexes: Arc<DashMap<String, Vec<NodeId>>>,
     pub edge_type_indexes: Arc<DashMap<String, Vec<EdgeId>>>,
+
+    /// Composite (from,to,type) edge index for uniqueness checks
+    pub edge_composite_index: Arc<DashMap<(NodeId, NodeId, String), EdgeId>>,
+
+    /// Unique constraints registry: (label, property) -> (value -> node_id)
+    pub unique_constraints: Arc<DashMap<(String, String), DashMap<String, NodeId>>>,
 }
 
 impl GraphMemoryPool {
@@ -123,9 +140,15 @@ impl GraphMemoryPool {
             nodes: Arc::new(DashMap::new()),
             edges: Arc::new(DashMap::new()),
             node_property_indexes: Arc::new(DashMap::new()),
+            node_property_str_ordered: Arc::new(DashMap::new()),
+            node_property_num_indexes: Arc::new(DashMap::new()),
             edge_property_indexes: Arc::new(DashMap::new()),
+            edge_property_str_ordered: Arc::new(DashMap::new()),
+            edge_property_num_indexes: Arc::new(DashMap::new()),
             label_indexes: Arc::new(DashMap::new()),
             edge_type_indexes: Arc::new(DashMap::new()),
+            edge_composite_index: Arc::new(DashMap::new()),
+            unique_constraints: Arc::new(DashMap::new()),
         }
     }
     
@@ -212,6 +235,32 @@ impl GraphMemoryPool {
                 .entry(value_str)
                 .or_insert_with(Vec::new)
                 .push(node.id.clone());
+
+            // Ordered string index
+            if matches!(value.value, Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))) {
+                let map_lock = self
+                    .node_property_str_ordered
+                    .entry(key.clone())
+                    .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
+                let mut map = map_lock.write().unwrap();
+                map.entry(property_value_to_string(value))
+                    .or_insert_with(Vec::new)
+                    .push(node.id.clone());
+            }
+
+            // Ordered numeric index
+            if let Some(num) = match &value.value {
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i as f64),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d),
+                _ => None,
+            } {
+                let map_lock = self
+                    .node_property_num_indexes
+                    .entry(key.clone())
+                    .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
+                let mut map = map_lock.write().unwrap();
+                map.entry(num).or_insert_with(Vec::new).push(node.id.clone());
+            }
         }
     }
     
@@ -232,7 +281,39 @@ impl GraphMemoryPool {
                 .entry(value_str)
                 .or_insert_with(Vec::new)
                 .push(edge.id.clone());
+
+            // Ordered string index (for string values)
+            if matches!(value.value, Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))) {
+                let map_lock = self
+                    .edge_property_str_ordered
+                    .entry(key.clone())
+                    .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
+                let mut map = map_lock.write().unwrap();
+                map.entry(property_value_to_string(value))
+                    .or_insert_with(Vec::new)
+                    .push(edge.id.clone());
+            }
+
+            // Ordered numeric index (for int/double)
+            if let Some(num) = match &value.value {
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i as f64),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d),
+                _ => None,
+            } {
+                let map_lock = self
+                    .edge_property_num_indexes
+                    .entry(key.clone())
+                    .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
+                let mut map = map_lock.write().unwrap();
+                map.entry(num).or_insert_with(Vec::new).push(edge.id.clone());
+            }
         }
+
+        // Update composite uniqueness index
+        self.edge_composite_index.insert(
+            (edge.from_node_id.clone(), edge.to_node_id.clone(), edge.edge_type.clone()),
+            edge.id.clone(),
+        );
     }
     
     /// Remove node from indexes
@@ -250,6 +331,32 @@ impl GraphMemoryPool {
             if let Some(prop_map) = self.node_property_indexes.get_mut(key) {
                 if let Some(mut ids) = prop_map.get_mut(&value_str) {
                     ids.retain(|id| id != &node.id);
+                }
+            }
+
+            // Remove from ordered string index
+            if matches!(value.value, Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))) {
+                if let Some(map_lock) = self.node_property_str_ordered.get(key) {
+                    let mut map = map_lock.write().unwrap();
+                    if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
+                        ids.retain(|id| id != &node.id);
+                        if ids.is_empty() { map.remove(&property_value_to_string(value)); }
+                    }
+                }
+            }
+
+            // Remove from ordered numeric index
+            if let Some(num) = match &value.value {
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i as f64),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d),
+                _ => None,
+            } {
+                if let Some(map_lock) = self.node_property_num_indexes.get(key) {
+                    let mut map = map_lock.write().unwrap();
+                    if let Some(ids) = map.get_mut(&num) {
+                        ids.retain(|id| id != &node.id);
+                        if ids.is_empty() { map.remove(&num); }
+                    }
                 }
             }
         }
@@ -270,7 +377,36 @@ impl GraphMemoryPool {
                     ids.retain(|id| id != &edge.id);
                 }
             }
+
+            // Remove from ordered string index
+            if matches!(value.value, Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))) {
+                if let Some(map_lock) = self.edge_property_str_ordered.get(key) {
+                    let mut map = map_lock.write().unwrap();
+                    if let Some(ids) = map.get_mut(&property_value_to_string(value)) {
+                        ids.retain(|id| id != &edge.id);
+                        if ids.is_empty() { map.remove(&property_value_to_string(value)); }
+                    }
+                }
+            }
+
+            // Remove from ordered numeric index
+            if let Some(num) = match &value.value {
+                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i as f64),
+                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => Some(*d),
+                _ => None,
+            } {
+                if let Some(map_lock) = self.edge_property_num_indexes.get(key) {
+                    let mut map = map_lock.write().unwrap();
+                    if let Some(ids) = map.get_mut(&num) {
+                        ids.retain(|id| id != &edge.id);
+                        if ids.is_empty() { map.remove(&num); }
+                    }
+                }
+            }
         }
+
+        // Remove from composite index
+        self.edge_composite_index.remove(&(edge.from_node_id.clone(), edge.to_node_id.clone(), edge.edge_type.clone()));
     }
 }
 

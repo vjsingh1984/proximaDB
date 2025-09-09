@@ -3,6 +3,13 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
+:status: in-progress
+
+== Implementation Status (Reviewed: 2025-09-09)
+
+- Implemented: Hybrid proto (`HybridSearchRequest/Response`) and REST/gRPC scaffolding; hybrid engine with semantic traversal strategies present in `src/graph/hybrid/`.
+- In Progress: Public API wiring to HybridQueryEngine and integration tests; fix struct field mismatches; add EXPLAIN and metrics surfaces for hybrid flows.
+- Next: Deliver end-to-end hybrid examples, stabilize SQL extensions (SIMILAR/FOLLOW/ASSEMBLE), and benchmark unified SKS paths.
 
 == Executive Summary: Creating the SKS Market Category
 

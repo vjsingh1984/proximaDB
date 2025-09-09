@@ -50,14 +50,16 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-pub mod planner;
+pub mod ast;
+pub mod executor;
+pub mod parser;
 pub mod pattern;
-// TODO: Add executor module
-// pub mod executor;
+pub mod planner;
 
 // Re-export public types
+pub use ast::{MatchResult, FoundPath, CompiledPattern};
 pub use planner::{QueryPlanner, QueryPlan, PlanStep, CostEstimate};
-pub use pattern::{PatternMatcher, MatchResult};
+pub use pattern::PatternMatcher;
 
 use crate::core::error::ProximaDBError;
 use crate::graph::{NodeId, EdgeId};

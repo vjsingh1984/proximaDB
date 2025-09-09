@@ -162,6 +162,7 @@ pub mod sql_engine;
 pub mod unified_query_optimizer;
 pub mod vector_search;
 pub mod sks_extensions;
+pub mod explain;
 
 // Re-export main types
 pub use sql_engine::{QueryPlanner, SqlEngine, SqlExecutionResult, SqlParser};
@@ -273,5 +274,35 @@ impl QueryEngine {
     /// Get query optimizer
     pub fn optimizer(&self) -> &Arc<unified_query_optimizer::UnifiedQueryOptimizer> {
         &self.optimizer
+    }
+
+    /// Explain a SQL query at orchestration level.
+    /// For vector paths, this delegates execution planning to VOS and may include
+    /// its hints when available via a higher-level API.
+    pub async fn explain_sql(&self, sql: &str) -> Result<explain::ExplainPlan> {
+        // Until SQL frontend is wired, build a minimal plan and include VOS hint-only data if available.
+        let mut plan = explain::ExplainPlan::new();
+        plan.orchestration_steps.push("Parse (SQL frontend)".to_string());
+        plan.orchestration_steps
+            .push("Orchestrate (Query layer)".to_string());
+        plan.orchestration_steps
+            .push("Delegate vector planning to VOS; graph planning to GraphService".to_string());
+
+        if let Some(vs) = &self.vector_service {
+            let hints = vs.plan_hints_only(None);
+            plan.vector_hints = Some(explain::VectorHints {
+                cache_hit: hints.cache_hit,
+                pruned_files: hints.pruned_files,
+                ef_search: hints.ef_search,
+                nprobe: hints.nprobe,
+                candidates: hints.candidates,
+                progressive_stages: hints.progressive_stages,
+                recall_estimates: hints.recall_estimates,
+            });
+        }
+
+        // Attach the original SQL for reference
+        plan.orchestration_steps.push(format!("SQL: {}", sql));
+        Ok(plan)
     }
 }

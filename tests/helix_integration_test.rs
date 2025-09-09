@@ -6,13 +6,14 @@
 #[cfg(test)]
 mod helix_integration_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
-    use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item, Collection};
-    use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
-    use proximadb::storage::engines::impls::helix::{HelixEngine, HelixConfig};
-    use proximadb::storage::traits::{
-        FlushParameters, CompactionParameters, StorageQueryContext, UnifiedStorageEngine, StorageQueryMetadata, OperationPriority
-    };
     use proximadb::core::search::SearchParams;
+    use proximadb::proto::proximadb::{Collection, MetadataItem, VectorRecord, metadata_item};
+    use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
+    use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
+    use proximadb::storage::traits::{
+        CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
+        StorageQueryMetadata, UnifiedStorageEngine,
+    };
     use rand::{Rng, SeedableRng};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -21,17 +22,17 @@ mod helix_integration_tests {
     /// Helper to create test vectors
     fn create_test_vectors(count: usize, dims: usize, seed: u64) -> Vec<VectorRecord> {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-        
+
         (0..count)
             .map(|i| VectorRecord {
                 id: format!("test_vec_{}", i),
-                vector: (0..dims)
-                    .map(|_| rng.gen_range(-1.0..1.0))
-                    .collect(),
+                vector: (0..dims).map(|_| rng.gen_range(-1.0..1.0)).collect(),
                 metadata: vec![
                     MetadataItem {
                         key: "source".to_string(),
-                        value: Some(metadata_item::Value::StringValue("integration_test".to_string())),
+                        value: Some(metadata_item::Value::StringValue(
+                            "integration_test".to_string(),
+                        )),
                     },
                     MetadataItem {
                         key: "index".to_string(),
@@ -51,21 +52,23 @@ mod helix_integration_tests {
     #[tokio::test]
     async fn test_helix_basic_operations() {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
-        
+
         let engine = HelixEngine::new(
             "test_collection".to_string(),
             config,
             temp_dir.path().to_path_buf(),
             None,
-        ).await.unwrap();
-        
+        )
+        .await
+        .unwrap();
+
         // Test engine properties
         assert_eq!(engine.engine_name(), "helix");
         assert_eq!(engine.engine_version(), "1.0.0");
-        
+
         // Test flush
         let vectors = create_test_vectors(100, 128, 42);
         let query = vectors[0].vector.clone(); // Store query before moving vectors
@@ -81,11 +84,11 @@ mod helix_integration_tests {
             collection_config: None,
             estimated_size: 0,
         };
-        
+
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         assert_eq!(flush_result.entries_flushed, Some(100));
         assert!(flush_result.bytes_written.unwrap_or(0) > 0);
-        
+
         // Test search
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query]),
@@ -93,7 +96,7 @@ mod helix_integration_tests {
             distance_metric: Some(DistanceMetric::Euclidean),
             ..Default::default()
         });
-        
+
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
             config: Some(proximadb::proto::proximadb::CollectionConfig {
@@ -112,17 +115,17 @@ mod helix_integration_tests {
             updated_at: 0,
             storage_assignment: None,
         });
-        
+
         let ctx = StorageQueryContext {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
         };
-        
+
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
         assert!(!results.is_empty());
         assert!(results.len() <= 5);
-        
+
         // The first result should be the query vector itself
         assert_eq!(results[0].id, "test_vec_0");
         assert!(results[0].similarity > Some(0.999)); // Should be very close to 1 for cosine similarity
@@ -131,18 +134,20 @@ mod helix_integration_tests {
     #[tokio::test]
     async fn test_helix_compaction() {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let temp_dir = TempDir::new().unwrap();
         let mut config = HelixConfig::default();
         config.level0_file_num_compaction_trigger = 2;
-        
+
         let engine = HelixEngine::new(
             "test_collection".to_string(),
             config,
             temp_dir.path().to_path_buf(),
             None,
-        ).await.unwrap();
-        
+        )
+        .await
+        .unwrap();
+
         // Create multiple flushes to trigger compaction
         for batch in 0..3 {
             let vectors = create_test_vectors(50, 128, batch);
@@ -160,7 +165,7 @@ mod helix_integration_tests {
             };
             engine.do_flush(&flush_params).await.unwrap();
         }
-        
+
         // Trigger manual compaction
         let compact_params = CompactionParameters {
             collection_id: Some("test_collection".to_string()),
@@ -172,11 +177,11 @@ mod helix_integration_tests {
             collection_config: None,
             estimated_input_size: 0,
         };
-        
+
         let compact_result = engine.do_compact(&compact_params).await.unwrap();
         assert!(compact_result.success);
         assert!(compact_result.bytes_written > Some(0));
-        
+
         // Verify data is still searchable after compaction
         let query = vec![0.0; 128];
         let search_params = Arc::new(SearchParams {
@@ -185,7 +190,7 @@ mod helix_integration_tests {
             distance_metric: Some(DistanceMetric::Euclidean),
             ..Default::default()
         });
-        
+
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
             config: Some(proximadb::proto::proximadb::CollectionConfig {
@@ -204,13 +209,13 @@ mod helix_integration_tests {
             updated_at: 0,
             storage_assignment: None,
         });
-        
+
         let ctx = StorageQueryContext {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
         };
-        
+
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
         assert!(!results.is_empty());
     }
@@ -218,20 +223,22 @@ mod helix_integration_tests {
     #[tokio::test]
     async fn test_helix_clustering_effectiveness() {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
-        
+
         let engine = HelixEngine::new(
             "test_collection".to_string(),
             config,
             temp_dir.path().to_path_buf(),
             None,
-        ).await.unwrap();
-        
+        )
+        .await
+        .unwrap();
+
         // Create clustered data
         let mut all_vectors = Vec::new();
-        
+
         // Cluster 1: vectors around [1.0, 0.0, ...]
         for i in 0..50 {
             let mut vector = vec![1.0; 128];
@@ -239,12 +246,10 @@ mod helix_integration_tests {
             all_vectors.push(VectorRecord {
                 id: format!("cluster1_vec_{}", i),
                 vector,
-                metadata: vec![
-                    MetadataItem {
-                        key: "cluster".to_string(),
-                        value: Some(metadata_item::Value::StringValue("1".to_string())),
-                    },
-                ],
+                metadata: vec![MetadataItem {
+                    key: "cluster".to_string(),
+                    value: Some(metadata_item::Value::StringValue("1".to_string())),
+                }],
                 timestamp: i as u32,
                 updated_at: None,
                 expires_at: None,
@@ -253,7 +258,7 @@ mod helix_integration_tests {
                 source: None,
             });
         }
-        
+
         // Cluster 2: vectors around [-1.0, 0.0, ...]
         for i in 0..50 {
             let mut vector = vec![-1.0; 128];
@@ -261,12 +266,10 @@ mod helix_integration_tests {
             all_vectors.push(VectorRecord {
                 id: format!("cluster2_vec_{}", i),
                 vector,
-                metadata: vec![
-                    MetadataItem {
-                        key: "cluster".to_string(),
-                        value: Some(metadata_item::Value::StringValue("2".to_string())),
-                    },
-                ],
+                metadata: vec![MetadataItem {
+                    key: "cluster".to_string(),
+                    value: Some(metadata_item::Value::StringValue("2".to_string())),
+                }],
                 timestamp: (50 + i) as u32,
                 updated_at: None,
                 expires_at: None,
@@ -275,7 +278,7 @@ mod helix_integration_tests {
                 source: None,
             });
         }
-        
+
         // Flush the data
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
@@ -290,7 +293,7 @@ mod helix_integration_tests {
             estimated_size: 0,
         };
         engine.do_flush(&flush_params).await.unwrap();
-        
+
         // Search for a vector from cluster 1
         let query = vec![1.0; 128];
         let search_params = Arc::new(SearchParams {
@@ -299,7 +302,7 @@ mod helix_integration_tests {
             distance_metric: Some(DistanceMetric::Euclidean),
             ..Default::default()
         });
-        
+
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
             config: Some(proximadb::proto::proximadb::CollectionConfig {
@@ -318,37 +321,44 @@ mod helix_integration_tests {
             updated_at: 0,
             storage_assignment: None,
         });
-        
+
         let ctx = StorageQueryContext {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
         };
-        
+
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
-        
+
         // Most results should be from cluster 1
-        let cluster1_count = results.iter()
+        let cluster1_count = results
+            .iter()
             .filter(|r| r.id.starts_with("cluster1_"))
             .count();
-        
-        assert!(cluster1_count >= 8, "Expected at least 8/10 results from cluster 1, got {}", cluster1_count);
+
+        assert!(
+            cluster1_count >= 8,
+            "Expected at least 8/10 results from cluster 1, got {}",
+            cluster1_count
+        );
     }
 
     #[tokio::test]
     async fn test_helix_with_metadata_filtering() {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        
+
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
-        
+
         let engine = HelixEngine::new(
             "test_collection".to_string(),
             config,
             temp_dir.path().to_path_buf(),
             None,
-        ).await.unwrap();
-        
+        )
+        .await
+        .unwrap();
+
         // Create vectors with different metadata
         let mut vectors = Vec::new();
         for i in 0..100 {
@@ -358,9 +368,11 @@ mod helix_integration_tests {
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(metadata_item::Value::StringValue(
-                            if i % 2 == 0 { "even".to_string() } else { "odd".to_string() }
-                        )),
+                        value: Some(metadata_item::Value::StringValue(if i % 2 == 0 {
+                            "even".to_string()
+                        } else {
+                            "odd".to_string()
+                        })),
                     },
                     MetadataItem {
                         key: "batch".to_string(),
@@ -375,7 +387,7 @@ mod helix_integration_tests {
                 source: None,
             });
         }
-        
+
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
             vector_records: vectors.into_iter().map(|v| v.into()).collect(),
@@ -389,15 +401,15 @@ mod helix_integration_tests {
             estimated_size: 0,
         };
         engine.do_flush(&flush_params).await.unwrap();
-        
+
         // Search with metadata filter
-        use proximadb::core::search::{FilterExpression, ComparisonOperator};
+        use proximadb::core::search::{ComparisonOperator, FilterExpression};
         let filter = FilterExpression::Comparison {
             field: "category".to_string(),
             operator: ComparisonOperator::Equals,
             value: serde_json::Value::String("even".to_string()),
         };
-        
+
         let query = vec![0.5; 128];
         let search_params = Arc::new(SearchParams {
             query_vectors: Some(vec![query]),
@@ -406,7 +418,7 @@ mod helix_integration_tests {
             filter_expression: Some(filter),
             ..Default::default()
         });
-        
+
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
             config: Some(proximadb::proto::proximadb::CollectionConfig {
@@ -425,18 +437,20 @@ mod helix_integration_tests {
             updated_at: 0,
             storage_assignment: None,
         });
-        
+
         let ctx = StorageQueryContext {
             search_params,
             collection,
             metadata: StorageQueryMetadata::default(),
         };
-        
+
         let results = engine.search_vectors_unified(&ctx).await.unwrap();
-        
+
         // All results should have even category
         for result in &results {
-            let vec_id: usize = result.id.strip_prefix("vec_")
+            let vec_id: usize = result
+                .id
+                .strip_prefix("vec_")
                 .and_then(|s| s.parse().ok())
                 .expect("Invalid ID format");
             assert_eq!(vec_id % 2, 0, "Expected only even-indexed vectors");

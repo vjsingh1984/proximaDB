@@ -1,10 +1,10 @@
 //! Unit tests for multi-tier deduplication system
 
 use chrono::{Duration, Utc};
-use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
 use proximadb::core::search::multi_tier_deduplication::{
-    DeduplicationStorageEngine, MultiTierDeduplicator, DataFreshnessTier, TieredSearchCandidate,
+    DataFreshnessTier, DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate,
 };
+use proximadb::proto::proximadb::{MetadataItem, VectorRecord, metadata_item};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -31,9 +31,7 @@ fn test_basic_deduplication() {
         vector: vec![1.0, 0.0, 0.0],
         metadata: vec![MetadataItem {
             key: "type".to_string(),
-            value: Some(
-                metadata_item::Value::StringValue("test".to_string()),
-            ),
+            value: Some(metadata_item::Value::StringValue("test".to_string())),
         }],
         timestamp: Utc::now().timestamp() as u32,
         updated_at: Some(Utc::now().timestamp() as u32),
@@ -170,7 +168,7 @@ fn test_metadata_filtering() {
             expires_at: None,
             version: Some(1),
             quantized_vector: None,
-                source: None,
+            source: None,
         },
         VectorRecord {
             id: "doc2".to_string(),
@@ -198,7 +196,7 @@ fn test_metadata_filtering() {
             expires_at: None,
             version: Some(1),
             quantized_vector: None,
-                source: None,
+            source: None,
         },
     ];
 
@@ -260,7 +258,7 @@ fn test_simple_metadata_query() {
             expires_at: None,
             version: Some(1),
             quantized_vector: None,
-                source: None,
+            source: None,
         },
         VectorRecord {
             id: "doc2".to_string(),
@@ -288,7 +286,7 @@ fn test_simple_metadata_query() {
             expires_at: None,
             version: Some(1),
             quantized_vector: None,
-                source: None,
+            source: None,
         },
     ];
 
@@ -327,7 +325,7 @@ fn test_mixed_engine_deduplication() {
         expires_at: None,
         version: Some(1),
         quantized_vector: None,
-                source: None,
+        source: None,
     };
 
     // Add results from different engines
@@ -436,7 +434,12 @@ fn test_complex_deduplication_scenario() {
             DeduplicationStorageEngine::SST,
             24,
         ),
-        (2, DataFreshnessTier::Flushed, DeduplicationStorageEngine::SST, 12),
+        (
+            2,
+            DataFreshnessTier::Flushed,
+            DeduplicationStorageEngine::SST,
+            12,
+        ),
         (
             3,
             DataFreshnessTier::Unflushed,
@@ -526,7 +529,7 @@ fn test_complex_deduplication_scenario() {
             expires_at: None,
             version: Some(1),
             quantized_vector: None,
-                source: None,
+            source: None,
         },
         similarity: 0.85,
         tier: DataFreshnessTier::Flushed,

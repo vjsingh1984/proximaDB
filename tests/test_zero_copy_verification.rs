@@ -1,14 +1,14 @@
 //! Test to verify protobuf serialization operations
 
-use proximadb::proto::proximadb::{VectorRecord, MetadataItem, metadata_item};
 use prost::Message;
+use proximadb::proto::proximadb::{MetadataItem, VectorRecord, metadata_item};
 use tracing::{debug, info};
 
 #[test]
 fn test_protobuf_serialization() {
     // Initialize hardware capabilities for test
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    
+
     // Create metadata items using the protobuf structure
     let metadata = vec![
         MetadataItem {
@@ -43,7 +43,8 @@ fn test_protobuf_serialization() {
 
     // Test protobuf deserialization
     let start = std::time::Instant::now();
-    let deserialized = VectorRecord::decode(&serialized[..]).expect("Deserialization should succeed");
+    let deserialized =
+        VectorRecord::decode(&serialized[..]).expect("Deserialization should succeed");
     let deserialization_time = start.elapsed();
 
     info!("✅ Deserialization time: {:?}", deserialization_time);
@@ -61,17 +62,15 @@ fn test_protobuf_serialization() {
 fn test_batch_serialization_performance() {
     // Initialize hardware capabilities for test
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    
+
     let mut records = Vec::new();
 
     // Create 1000 test records
     for i in 0..1000 {
-        let metadata = vec![
-            MetadataItem {
-                key: "index".to_string(),
-                value: Some(metadata_item::Value::StringValue(i.to_string())),
-            },
-        ];
+        let metadata = vec![MetadataItem {
+            key: "index".to_string(),
+            value: Some(metadata_item::Value::StringValue(i.to_string())),
+        }];
 
         let record = VectorRecord {
             id: format!("test_id_{}", i),

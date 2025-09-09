@@ -10,18 +10,18 @@
 //! This replaces the fragmented test utilities scattered across different modules
 //! and provides a consistent, reliable test infrastructure.
 
+use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tracing::{debug, info};
-use crate::utils::uuid::Uuid;
 
 // Core ProximaDB imports
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
-use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
 use proximadb::core::config::{BloomFilterConfig, SstConfig};
+use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
 use proximadb::proto::proximadb::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, MetadataItem, StorageAssignment,
     StorageEngine, VectorRecord, metadata_item,
@@ -154,7 +154,8 @@ impl UnifiedTestEnvironment {
             self.viper_config.clone(),
             self.filesystem.clone(),
             Arc::new(UnifiedDistanceCompute::default()),
-        ).await
+        )
+        .await
     }
 
     /// Get the data directory path for SST operations
@@ -449,8 +450,8 @@ impl UnifiedTestEnvironment {
             updated_at: None,
             expires_at,
             version: None,
-                quantized_vector: None,
-                source: None,
+            quantized_vector: None,
+            source: None,
             ..Default::default()
         }
     }
@@ -723,10 +724,7 @@ pub mod operations {
                 }
             };
 
-            config
-                
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) =
+            config.as_ref().and_then(|s| s.compression.as_ref()) =
                 Some(proximadb::proto::proximadb::CompressionConfig {
                     algorithm,
                     level: Some(compression_level),
@@ -780,12 +778,7 @@ pub mod operations {
 
         // Direct production call
         engine
-            .search_vectors(
-                &query_context,
-                query_vector,
-                top_k,
-                None,
-            )
+            .search_vectors(&query_context, query_vector, top_k, None)
             .await
     }
 
@@ -807,12 +800,7 @@ pub mod operations {
 
         // Direct production call to VIPER's search_vectors
         engine
-            .search_vectors(
-                &query_context,
-                query_vector,
-                top_k,
-                None,
-            )
+            .search_vectors(&query_context, query_vector, top_k, None)
             .await
     }
 
@@ -973,26 +961,20 @@ pub async fn flush_sst_with_block_stats(
     // Create SST config with specified block size
     let mut sst_config = environment.sst_config.clone();
     sst_config.block_size_kb = block_size_kb as u32;
-    sst_config
-        
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = compression_algo.to_string();
+    sst_config.as_ref().and_then(|s| s.compression.as_ref()) = compression_algo.to_string();
     sst_config.compression_level = compression_level;
 
     // Create SST storage
-    use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
     use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-    
+    use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+
     let fs_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new(proximadb::compute::distance_computation::DistanceMetric::Euclidean));
-    
-    let sst_storage = SstStorage::new(
-        sst_config.clone(),
-        filesystem,
-        distance_compute,
-    )
-    .await?;
+    let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        proximadb::compute::distance_computation::DistanceMetric::Euclidean,
+    ));
+
+    let sst_storage = SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
 
     // Create collection config with compression
     let compression_config = CompressionConfig {

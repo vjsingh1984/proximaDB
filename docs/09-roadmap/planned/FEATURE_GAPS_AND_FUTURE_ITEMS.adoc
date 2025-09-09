@@ -34,8 +34,8 @@ This section outlines planned features and development items for future releases
     *   **Role-Based Access Control (RBAC)**: Defining roles and permissions for different user types.
 *   *Backup/Restore Tooling*: Comprehensive tools for backing up and restoring data and metadata, including incremental backups and point-in-time recovery.
 *   *Expanded Monitoring and Metrics*:
-    *   **Prometheus Integration**: Exposing metrics in a Prometheus-compatible format for external monitoring.
-    *   **Alerting**: Implementing alerting rules for critical system events and performance deviations.
+    *   **Prometheus Integration**: Implemented. Metrics exposed via `/metrics` (dashboard exporter); continue refining business/domain metrics.
+    *   **Alerting**: Basic in-app alerts exist; add external PrometheusRule examples and SLO-based alerts in Helm.
 *   *Cloud Backend Hardening*: Extensive validation and CI tests for all supported cloud storage backends (S3, Azure Blob Storage, Google Cloud Storage) to ensure reliability and performance in cloud environments.
 *   *Client Tooling*:
     *   **SDK Packaging**: Providing official SDKs for popular programming languages (e.g., Python, Java, Go).

@@ -9,26 +9,26 @@
 
 #[cfg(test)]
 mod sks_integration_tests {
-    use std::sync::Arc;
     use proximadb::proto::proximadb_v1::{
-        Entity, EmbeddingVersion, Provenance, Relation,
-        TypedMetadata, TypedField, StringArray, Modality,
+        EmbeddingVersion, Entity, Modality, Provenance, Relation, StringArray, TypedField,
+        TypedMetadata,
     };
     use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-    use proximadb::storage::relations::{RelationsStore, InMemoryRelationsStore};
-    use proximadb::storage::provenance::{ProvenanceRegistry, InMemoryProvenanceRegistry};
-    
+    use proximadb::storage::provenance::{InMemoryProvenanceRegistry, ProvenanceRegistry};
+    use proximadb::storage::relations::{InMemoryRelationsStore, RelationsStore};
+    use std::sync::Arc;
+
     /// Create a test entity store
     async fn create_test_store() -> Arc<ProximaEntityStore> {
         // Create mock storage engine
         let storage_engine = create_mock_storage_engine();
-        
+
         // Create relations store
         let relations_store = Arc::new(InMemoryRelationsStore::new(storage_engine.clone()));
-        
+
         // Create provenance registry
         let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new(storage_engine.clone()));
-        
+
         // Create entity store
         Arc::new(ProximaEntityStore::new(
             storage_engine,
@@ -36,22 +36,22 @@ mod sks_integration_tests {
             provenance_registry,
         ))
     }
-    
+
     /// Create a mock storage engine for testing
     fn create_mock_storage_engine() -> Arc<dyn proximadb::storage::engines::UnifiedStorageEngine> {
         // This would be a mock implementation
         // For now, we'll use a placeholder
         struct MockStorageEngine;
-        
+
         #[async_trait::async_trait]
         impl proximadb::storage::engines::UnifiedStorageEngine for MockStorageEngine {
             // Implement required methods
             // This is a simplified mock for testing
         }
-        
+
         Arc::new(MockStorageEngine)
     }
-    
+
     /// Create a test entity with embeddings
     fn create_test_entity(id: &str) -> Entity {
         let embedding = EmbeddingVersion {
@@ -66,7 +66,7 @@ mod sks_integration_tests {
             model_params: Default::default(),
             modality: Modality::Text as i32,
         };
-        
+
         let provenance = Provenance {
             source_id: "test-source".to_string(),
             chunk_id: "chunk-1".to_string(),
@@ -78,7 +78,7 @@ mod sks_integration_tests {
             }),
             metadata: Default::default(),
         };
-        
+
         Entity {
             id: id.to_string(),
             embeddings: vec![embedding],
@@ -90,43 +90,45 @@ mod sks_integration_tests {
             collection_id: "test-collection".to_string(),
         }
     }
-    
+
     #[tokio::test]
     async fn test_entity_upsert_and_retrieve() {
         let store = create_test_store().await;
         let entity = create_test_entity("test-entity-1");
-        
+
         // Upsert entity
         let result = store.upsert_entity("test-collection", entity.clone()).await;
         assert!(result.is_ok());
         let entity_id = result.unwrap();
         assert_eq!(entity_id, "test-entity-1");
-        
+
         // Retrieve entity
-        let retrieved = store.get_entity(
-            "test-collection",
-            &entity_id,
-            true,  // include_embeddings
-            false, // include_relations
-        ).await;
-        
+        let retrieved = store
+            .get_entity(
+                "test-collection",
+                &entity_id,
+                true,  // include_embeddings
+                false, // include_relations
+            )
+            .await;
+
         assert!(retrieved.is_ok());
         let retrieved_entity = retrieved.unwrap();
         assert!(retrieved_entity.is_some());
-        
+
         let retrieved_entity = retrieved_entity.unwrap();
         assert_eq!(retrieved_entity.id, entity_id);
         assert_eq!(retrieved_entity.embeddings.len(), 1);
     }
-    
+
     #[tokio::test]
     async fn test_entity_with_relations() {
         let store = create_test_store().await;
-        
+
         // Create two entities
         let entity1 = create_test_entity("entity-1");
         let entity2 = create_test_entity("entity-2");
-        
+
         // Add a relation
         let relation = Relation {
             source_entity_id: "entity-1".to_string(),
@@ -136,102 +138,120 @@ mod sks_integration_tests {
             created_at: 1609459200,
             properties: Default::default(),
         };
-        
+
         let mut entity1_with_relation = entity1;
         entity1_with_relation.relations.push(relation);
-        
+
         // Upsert entities
-        let _ = store.upsert_entity("test-collection", entity1_with_relation).await.unwrap();
-        let _ = store.upsert_entity("test-collection", entity2).await.unwrap();
-        
+        let _ = store
+            .upsert_entity("test-collection", entity1_with_relation)
+            .await
+            .unwrap();
+        let _ = store
+            .upsert_entity("test-collection", entity2)
+            .await
+            .unwrap();
+
         // Retrieve entity with relations
-        let retrieved = store.get_entity(
-            "test-collection",
-            "entity-1",
-            false, // include_embeddings
-            true,  // include_relations
-        ).await.unwrap();
-        
+        let retrieved = store
+            .get_entity(
+                "test-collection",
+                "entity-1",
+                false, // include_embeddings
+                true,  // include_relations
+            )
+            .await
+            .unwrap();
+
         assert!(retrieved.is_some());
         let entity = retrieved.unwrap();
         assert_eq!(entity.relations.len(), 1);
         assert_eq!(entity.relations[0].relation_type, "cites");
     }
-    
+
     #[tokio::test]
     async fn test_entity_search() {
         let store = create_test_store().await;
-        
+
         // Create and upsert multiple entities
         for i in 0..5 {
             let entity = create_test_entity(&format!("entity-{}", i));
-            let _ = store.upsert_entity("test-collection", entity).await.unwrap();
+            let _ = store
+                .upsert_entity("test-collection", entity)
+                .await
+                .unwrap();
         }
-        
+
         // Search entities
         let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
-        let results = store.search_entities(
-            "test-collection",
-            Some(query_vector),
-            None, // metadata_filter
-            // None, // temporal_filter
-            3,    // top_k
-        ).await;
-        
+        let results = store
+            .search_entities(
+                "test-collection",
+                Some(query_vector),
+                None, // metadata_filter
+                // None, // temporal_filter
+                3, // top_k
+            )
+            .await;
+
         assert!(results.is_ok());
         let search_results = results.unwrap();
         assert!(search_results.len() <= 3);
     }
-    
+
     #[tokio::test]
     async fn test_entity_deletion() {
         let store = create_test_store().await;
         let entity = create_test_entity("entity-to-delete");
-        
+
         // Upsert entity
-        let _ = store.upsert_entity("test-collection", entity).await.unwrap();
-        
+        let _ = store
+            .upsert_entity("test-collection", entity)
+            .await
+            .unwrap();
+
         // Verify it exists
-        let exists = store.get_entity(
-            "test-collection",
-            "entity-to-delete",
-            false,
-            false,
-        ).await.unwrap();
+        let exists = store
+            .get_entity("test-collection", "entity-to-delete", false, false)
+            .await
+            .unwrap();
         assert!(exists.is_some());
-        
+
         // Delete entity
-        let deleted = store.delete_entity(
-            "test-collection",
-            "entity-to-delete",
-            true, // hard_delete
-        ).await.unwrap();
+        let deleted = store
+            .delete_entity(
+                "test-collection",
+                "entity-to-delete",
+                true, // hard_delete
+            )
+            .await
+            .unwrap();
         assert!(deleted);
-        
+
         // Verify it's deleted
-        let after_delete = store.get_entity(
-            "test-collection",
-            "entity-to-delete",
-            false,
-            false,
-        ).await.unwrap();
+        let after_delete = store
+            .get_entity("test-collection", "entity-to-delete", false, false)
+            .await
+            .unwrap();
         assert!(after_delete.is_none());
     }
-    
+
     #[tokio::test]
     async fn test_entity_with_typed_metadata() {
         let store = create_test_store().await;
-        
+
         // Create entity with typed metadata
         let mut entity = create_test_entity("entity-with-metadata");
-        
+
         let mut fields = std::collections::HashMap::new();
         fields.insert(
             "author".to_string(),
             TypedField {
-                value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
-                    "John Doe".to_string()
-                )),
+                value: Some(
+                    proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
+                        "John Doe".to_string(),
+                    ),
+                ),
                 indexed: true,
                 filterable: true,
             },
@@ -244,20 +264,22 @@ mod sks_integration_tests {
                 filterable: true,
             },
         );
-        
+
         entity.typed_metadata = Some(TypedMetadata { fields });
-        
+
         // Upsert entity
-        let _ = store.upsert_entity("test-collection", entity.clone()).await.unwrap();
-        
+        let _ = store
+            .upsert_entity("test-collection", entity.clone())
+            .await
+            .unwrap();
+
         // Retrieve and verify metadata
-        let retrieved = store.get_entity(
-            "test-collection",
-            "entity-with-metadata",
-            false,
-            false,
-        ).await.unwrap().unwrap();
-        
+        let retrieved = store
+            .get_entity("test-collection", "entity-with-metadata", false, false)
+            .await
+            .unwrap()
+            .unwrap();
+
         assert!(retrieved.typed_metadata.is_some());
         let metadata = retrieved.typed_metadata.unwrap();
         assert_eq!(metadata.fields.len(), 2);

@@ -28,7 +28,12 @@ HELIX is a specialized LSM-based storage engine that achieves **70-90% query pru
 | Cache Hit Rate | 95% | Intelligent prefetching
 |===
 
-### Implementation Status: **100% Complete** ✅
+### Implementation Status: **100% Complete** ✅ (Reviewed: 2025-09-09)
+
+Code references:
+- `src/storage/engines/impls/helix/` (fastlane.rs, readers.rs, compaction.rs, query_optimization.rs, pca_impl.rs, metrics.rs)
+- Config: `configs/helix_engine_config.toml`
+- Benchmarks/metrics integrated; Prometheus metrics exposed via dashboard `/metrics`.
 
 ## 1. Introduction
 

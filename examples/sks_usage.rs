@@ -8,57 +8,60 @@
 //! Example usage of the Semantic Knowledge Store (SKS) feature
 
 use proximadb::proto::proximadb_v1::{
-    Entity, EmbeddingVersion, Provenance, Relation,
-    TypedMetadata, TypedField, Modality,
+    EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
 };
 use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-use proximadb::storage::relations::{RelationsStore, InMemoryRelationsStore};
-use proximadb::storage::provenance::{ProvenanceRegistry, InMemoryProvenanceRegistry};
-use std::sync::Arc;
+use proximadb::storage::provenance::{InMemoryProvenanceRegistry, ProvenanceRegistry};
+use proximadb::storage::relations::{InMemoryRelationsStore, RelationsStore};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
-    
+
     println!("🚀 ProximaDB Semantic Knowledge Store (SKS) Example\n");
-    
+
     // Create the entity store with all components
     let entity_store = create_entity_store().await?;
-    
+
     // Example 1: Create and store a research paper entity
     println!("📄 Example 1: Storing a research paper entity");
     let paper_entity = create_research_paper_entity()?;
-    let paper_id = entity_store.upsert_entity("papers", paper_entity.clone()).await?;
+    let paper_id = entity_store
+        .upsert_entity("papers", paper_entity.clone())
+        .await?;
     println!("   ✅ Stored paper with ID: {}", paper_id);
-    
+
     // Example 2: Create and store related entities with relationships
     println!("\n🔗 Example 2: Creating entities with relationships");
     let (author_entity, citation_relation) = create_author_and_citation()?;
     let author_id = entity_store.upsert_entity("authors", author_entity).await?;
     println!("   ✅ Stored author with ID: {}", author_id);
-    
+
     // Example 3: Search for similar entities
     println!("\n🔍 Example 3: Semantic similarity search");
     let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5]; // Example query embedding
-    let search_results = entity_store.search_entities(
-        "papers",
-        Some(query_vector.clone()),
-        None, // No metadata filter
-        5,    // Top 5 results
-    ).await?;
+    let search_results = entity_store
+        .search_entities(
+            "papers",
+            Some(query_vector.clone()),
+            None, // No metadata filter
+            5,    // Top 5 results
+        )
+        .await?;
     println!("   ✅ Found {} similar papers", search_results.len());
-    
+
     // Example 4: Retrieve entity with full details
     println!("\n📖 Example 4: Retrieving entity with embeddings and relations");
-    let retrieved = entity_store.get_entity(
-        "papers",
-        &paper_id,
-        true,  // Include embeddings
-        true,  // Include relations
-    ).await?;
-    
+    let retrieved = entity_store
+        .get_entity(
+            "papers", &paper_id, true, // Include embeddings
+            true, // Include relations
+        )
+        .await?;
+
     if let Some(entity) = retrieved {
         println!("   ✅ Retrieved entity: {}", entity.id);
         println!("      - Embeddings: {}", entity.embeddings.len());
@@ -67,17 +70,17 @@ async fn main() -> anyhow::Result<()> {
             println!("      - Source: {}", provenance.source_id);
         }
     }
-    
+
     // Example 5: SQL-like queries with SKS extensions
     println!("\n💼 Example 5: SQL queries with SKS operators");
     demonstrate_sql_queries();
-    
+
     // Example 6: Graph traversal
     println!("\n🌐 Example 6: Graph traversal for citation networks");
     demonstrate_graph_traversal().await?;
-    
+
     println!("\n✨ SKS examples completed successfully!");
-    
+
     Ok(())
 }
 
@@ -85,16 +88,16 @@ async fn main() -> anyhow::Result<()> {
 async fn create_entity_store() -> anyhow::Result<Arc<ProximaEntityStore>> {
     // In a real application, these would be properly configured
     // This is a simplified setup for demonstration
-    
+
     // Create a mock storage engine (would be real SST/VIPER engine in production)
     let storage_engine = create_mock_storage_engine();
-    
+
     // Create relations store for graph relationships
     let relations_store = Arc::new(InMemoryRelationsStore::new(storage_engine.clone()));
-    
+
     // Create provenance registry for tracking data lineage
     let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new(storage_engine.clone()));
-    
+
     // Create the entity store
     Ok(Arc::new(ProximaEntityStore::new(
         storage_engine,
@@ -122,15 +125,17 @@ fn create_research_paper_entity() -> anyhow::Result<Entity> {
         },
         modality: Modality::Text as i32,
     };
-    
+
     // Create typed metadata
     let mut metadata_fields = HashMap::new();
     metadata_fields.insert(
         "title".to_string(),
         TypedField {
-            value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
-                "Attention Is All You Need".to_string()
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
+                    "Attention Is All You Need".to_string(),
+                ),
+            ),
             indexed: true,
             filterable: true,
         },
@@ -146,20 +151,22 @@ fn create_research_paper_entity() -> anyhow::Result<Entity> {
     metadata_fields.insert(
         "authors".to_string(),
         TypedField {
-            value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringArray(
-                proximadb::proto::proximadb_v1::StringArray {
-                    values: vec![
-                        "Vaswani".to_string(),
-                        "Shazeer".to_string(),
-                        "Parmar".to_string(),
-                    ],
-                }
-            )),
+            value: Some(
+                proximadb::proto::proximadb_v1::typed_field::Value::StringArray(
+                    proximadb::proto::proximadb_v1::StringArray {
+                        values: vec![
+                            "Vaswani".to_string(),
+                            "Shazeer".to_string(),
+                            "Parmar".to_string(),
+                        ],
+                    },
+                ),
+            ),
             indexed: false,
             filterable: true,
         },
     );
-    
+
     // Create provenance information
     let provenance = Provenance {
         source_id: "arxiv:1706.03762".to_string(),
@@ -177,7 +184,7 @@ fn create_research_paper_entity() -> anyhow::Result<Entity> {
             meta
         },
     };
-    
+
     Ok(Entity {
         id: "paper_transformer_2017".to_string(),
         embeddings: vec![embedding],
@@ -204,9 +211,11 @@ fn create_author_and_citation() -> anyhow::Result<(Entity, Relation)> {
                 fields.insert(
                     "name".to_string(),
                     TypedField {
-                        value: Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
-                            "Ashish Vaswani".to_string()
-                        )),
+                        value: Some(
+                            proximadb::proto::proximadb_v1::typed_field::Value::StringValue(
+                                "Ashish Vaswani".to_string(),
+                            ),
+                        ),
                         indexed: true,
                         filterable: true,
                     },
@@ -220,7 +229,7 @@ fn create_author_and_citation() -> anyhow::Result<(Entity, Relation)> {
         temporal: None,
         collection_id: "authors".to_string(),
     };
-    
+
     // Create citation relationship
     let citation = Relation {
         source_entity_id: "paper_transformer_2017".to_string(),
@@ -234,14 +243,14 @@ fn create_author_and_citation() -> anyhow::Result<(Entity, Relation)> {
             props
         },
     };
-    
+
     Ok((author, citation))
 }
 
 /// Demonstrate SQL queries with SKS extensions
 fn demonstrate_sql_queries() {
     // These are example SQL queries that would be executed through the SQL engine
-    
+
     let example_queries = vec![
         // Semantic similarity search
         r#"
@@ -250,7 +259,6 @@ fn demonstrate_sql_queries() {
           AND metadata.year > 2015
           AND metadata.domain = 'machine learning'
         "#,
-        
         // Graph traversal for citations
         r#"
         FIND entities
@@ -258,7 +266,6 @@ fn demonstrate_sql_queries() {
         FOLLOW relations.cites TO depth=2
         RETURN path
         "#,
-        
         // Context assembly for document reconstruction
         r#"
         ASSEMBLE CONTEXT
@@ -267,7 +274,6 @@ fn demonstrate_sql_queries() {
         WITH radius=3
         ORDER BY chunk_position
         "#,
-        
         // Temporal query for evolution tracking
         r#"
         TRACK EVOLUTION OF concept
@@ -275,9 +281,13 @@ fn demonstrate_sql_queries() {
         FROM '2015-01-01' TO NOW
         "#,
     ];
-    
+
     for (i, query) in example_queries.iter().enumerate() {
-        println!("   Query {}: {}", i + 1, query.lines().nth(1).unwrap_or("").trim());
+        println!(
+            "   Query {}: {}",
+            i + 1,
+            query.lines().nth(1).unwrap_or("").trim()
+        );
     }
 }
 
@@ -287,13 +297,13 @@ async fn demonstrate_graph_traversal() -> anyhow::Result<()> {
     println!("   🔍 Starting from 'paper_transformer_2017'");
     println!("   📊 Finding papers cited up to depth 2");
     println!("   🎯 Identified 15 related papers in citation network");
-    
+
     // In a real implementation, this would:
     // 1. Start from a seed entity
     // 2. Follow citation relationships
     // 3. Build a graph of related papers
     // 4. Return paths and connected components
-    
+
     Ok(())
 }
 
@@ -302,10 +312,10 @@ fn create_mock_storage_engine() -> Arc<dyn proximadb::storage::engines::UnifiedS
     // This is a placeholder for the actual storage engine
     // In production, this would be SST, VIPER, or another engine
     struct MockEngine;
-    
+
     // The actual implementation would be provided by the storage layer
     // This is just for demonstration purposes
-    
+
     panic!("Mock storage engine not fully implemented - use actual ProximaDB storage engines");
 }
 
@@ -323,17 +333,17 @@ impl SearchResult {
         let metadata = entity.typed_metadata.as_ref()?;
         let title_field = metadata.fields.get("title")?;
         let year_field = metadata.fields.get("year")?;
-        
+
         let title = match &title_field.value {
             Some(proximadb::proto::proximadb_v1::typed_field::Value::StringValue(s)) => s.clone(),
             _ => return None,
         };
-        
+
         let year = match &year_field.value {
             Some(proximadb::proto::proximadb_v1::typed_field::Value::IntValue(y)) => *y as i32,
             _ => return None,
         };
-        
+
         Some(SearchResult {
             entity_id: entity.id.clone(),
             score,

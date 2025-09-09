@@ -2,7 +2,7 @@
 //!
 //! Currently testing:
 //! - Basic vector operations performance
-//! 
+//!
 //! TODO: Re-enable additional benchmarks when modules are available:
 //! - Vector serialization (bytemuck vs bincode)
 //! - Compression algorithms (ZSTD, LZ4, raw)
@@ -11,8 +11,8 @@
 //! - SST vs VIPER engine performance
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use proximadb::proto::proximadb::{VectorRecord, MetadataItem};
 use proximadb::core::search::results::OptimizedSearchRecord;
+use proximadb::proto::proximadb::{MetadataItem, VectorRecord};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::sync::Arc;
@@ -68,23 +68,23 @@ fn create_optimized_record(id: &str, vector: Vec<f32>, score: f32) -> OptimizedS
 /// Benchmark OptimizedSearchRecord vs VectorRecord cloning
 fn bench_record_cloning(c: &mut Criterion) {
     let mut group = c.benchmark_group("record_cloning");
-    
+
     let vectors = generate_test_vectors(100, 512, 0.3);
-    
+
     // Create VectorRecords
     let vector_records: Vec<VectorRecord> = vectors
         .iter()
         .enumerate()
         .map(|(i, v)| create_vector_record(&format!("test_{}", i), v.clone()))
         .collect();
-    
+
     // Create OptimizedSearchRecords
     let optimized_records: Vec<OptimizedSearchRecord> = vectors
         .iter()
         .enumerate()
         .map(|(i, v)| create_optimized_record(&format!("test_{}", i), v.clone(), i as f32))
         .collect();
-    
+
     // Benchmark VectorRecord cloning (deep clone)
     group.throughput(Throughput::Elements(vector_records.len() as u64));
     group.bench_function("vector_record_clone", |b| {
@@ -96,7 +96,7 @@ fn bench_record_cloning(c: &mut Criterion) {
             clones
         });
     });
-    
+
     // Benchmark OptimizedSearchRecord cloning (Arc-based, O(1))
     group.throughput(Throughput::Elements(optimized_records.len() as u64));
     group.bench_function("optimized_record_clone", |b| {
@@ -108,17 +108,17 @@ fn bench_record_cloning(c: &mut Criterion) {
             clones
         });
     });
-    
+
     group.finish();
 }
 
 /// Benchmark memory sharing with Arc
 fn bench_arc_sharing(c: &mut Criterion) {
     let mut group = c.benchmark_group("arc_sharing");
-    
+
     let dimension = 1536; // OpenAI embedding size
     let vectors = generate_test_vectors(50, dimension, 0.0);
-    
+
     // Without Arc - each clone duplicates data
     let plain_vectors = vectors.clone();
     group.bench_function("without_arc_10_clones", |b| {
@@ -132,13 +132,10 @@ fn bench_arc_sharing(c: &mut Criterion) {
             all_clones
         });
     });
-    
+
     // With Arc - shared references
-    let arc_vectors: Vec<Arc<Vec<f32>>> = vectors
-        .into_iter()
-        .map(Arc::new)
-        .collect();
-    
+    let arc_vectors: Vec<Arc<Vec<f32>>> = vectors.into_iter().map(Arc::new).collect();
+
     group.bench_function("with_arc_10_clones", |b| {
         b.iter(|| {
             let mut all_clones = Vec::new();
@@ -150,16 +147,16 @@ fn bench_arc_sharing(c: &mut Criterion) {
             all_clones
         });
     });
-    
+
     group.finish();
 }
 
 /// Benchmark result aggregation patterns
 fn bench_result_aggregation(c: &mut Criterion) {
     let mut group = c.benchmark_group("result_aggregation");
-    
+
     let vectors = generate_test_vectors(500, 256, 0.2);
-    
+
     // Create search results
     let search_results: Vec<OptimizedSearchRecord> = vectors
         .iter()
@@ -168,7 +165,7 @@ fn bench_result_aggregation(c: &mut Criterion) {
             create_optimized_record(&format!("result_{}", i), v.clone(), (500 - i) as f32)
         })
         .collect();
-    
+
     // Benchmark sorting and top-k selection
     group.bench_function("top_100_selection", |b| {
         b.iter(|| {
@@ -178,7 +175,7 @@ fn bench_result_aggregation(c: &mut Criterion) {
             results
         });
     });
-    
+
     // Benchmark with pre-allocated capacity
     group.bench_function("top_100_preallocated", |b| {
         b.iter(|| {
@@ -189,7 +186,7 @@ fn bench_result_aggregation(c: &mut Criterion) {
             results
         });
     });
-    
+
     group.finish();
 }
 

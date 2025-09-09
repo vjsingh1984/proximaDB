@@ -509,6 +509,10 @@ impl GraphEngine for OrionGraphEngine {
     fn edge_count(&self) -> Result<usize> {
         Ok(self.memory_pool.edge_count())
     }
+
+    fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
+        Ok(self.memory_pool.nodes.iter().map(|entry| Arc::clone(entry.value())).collect())
+    }
 }
 
 impl Default for OrionGraphEngine {

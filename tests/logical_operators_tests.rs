@@ -11,7 +11,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use proximadb::core::search::{
-        DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate, DataFreshnessTier,
+        DataFreshnessTier, DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate,
     };
     use proximadb::core::{
         ComparisonOperator, FieldQuery, MetadataQuery, MetadataQueryBuilder, MetadataQueryEngine,

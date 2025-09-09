@@ -911,6 +911,70 @@ impl UnifiedHandlers {
         }
     }
 
+    /// Execute a hybrid vector-graph query
+    pub async fn execute_hybrid_query(
+        &self,
+        request: crate::proto::proximadb_v1::HybridSearchRequest,
+    ) -> Result<crate::proto::proximadb_v1::HybridSearchResponse> {
+        let start_time = std::time::Instant::now();
+        info!("Executing hybrid query with strategy: {:?}", request.combination_strategy);
+
+        let mut nodes: Vec<crate::graph::Node> = Vec::new();
+        let mut edges: Vec<crate::graph::Edge> = Vec::new();
+        let mut paths: Vec<crate::proto::proximadb_v1::GraphPath> = Vec::new();
+        let mut vector_results: Vec<crate::proto::proximadb::SearchVectorRecord> = Vec::new();
+
+        match request.combination_strategy() {
+            crate::proto::proximadb_v1::CombinationStrategy::CombinationStrategyVectorThenGraph => {
+                // 1. Perform vector search
+                let vector_search_response = self.handle_vector_search(request.vector_search_request.clone()).await?;
+                if let Some(results) = vector_search_response.results {
+                    vector_results.extend(results.results);
+
+                    // Extract node IDs from vector search results (assuming vector IDs map to graph node IDs)
+                    let start_node_ids: Vec<String> = vector_results.iter()
+                        .map(|rec| rec.id.clone())
+                        .collect();
+
+                    // 2. Perform graph traversal from these nodes
+                    if !start_node_ids.is_empty() {
+                        let graph_req = request.graph_traversal_request.clone();
+                        let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
+                            start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
+                            max_depth: graph_req.max_depth,
+                            edge_types: graph_req.edge_types,
+                            node_labels: graph_req.node_labels,
+                            filters: graph_req.node_filters, // Assuming node_filters in graph_query are PropertyFilter
+                            algorithm: graph_req.algorithm,
+                            limit: request.limit,
+                        };
+
+                        let traversal_response = self.graph_service.traverse(traversal_request).await?;
+                        nodes.extend(traversal_response.nodes);
+                        edges.extend(traversal_response.edges);
+                        paths.extend(traversal_response.paths);
+                    }
+                }
+            },
+            // TODO: Implement other combination strategies
+            _ => return Err(anyhow::anyhow!("Unsupported combination strategy")),
+        }
+
+        let elapsed_time = start_time.elapsed().as_micros() as u64;
+
+        Ok(crate::proto::proximadb_v1::HybridSearchResponse {
+            nodes,
+            edges,
+            paths,
+            stats: Some(crate::proto::proximadb_v1::HybridSearchStats {
+                vector_results_count: vector_results.len() as u32,
+                graph_traversal_count: nodes.len() as u32,
+                execution_time_microseconds: elapsed_time,
+            }),
+            vector_results,
+        })
+    }
+
     /// Handle create collection operation
     async fn handle_create_collection(
         &self,

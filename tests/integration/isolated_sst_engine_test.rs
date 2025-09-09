@@ -16,8 +16,8 @@ mod common {
 use common::unified_test_utils::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use proximadb::proto::proximadb::{StorageEngine, VectorRecord, MetadataItem, metadata_item};
-use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine, StorageQueryContext};
+use proximadb::proto::proximadb::{MetadataItem, StorageEngine, VectorRecord, metadata_item};
+use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
 use std::sync::Arc;
 
 /// Test SST engine basic vector insert, flush and search in isolated environment
@@ -310,7 +310,10 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
 
     println!("✅ COMPACTION COMPLETED:");
     println!("   - Success: {}", result.success);
-    println!("   - Entries processed: {}", result.entries_processed.unwrap_or(0));
+    println!(
+        "   - Entries processed: {}",
+        result.entries_processed.unwrap_or(0)
+    );
     println!("   - Input files: {}", result.input_files.unwrap_or(0));
     println!("   - Output files: {}", result.output_files.unwrap_or(0));
 
@@ -342,11 +345,15 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
             "✅ Compaction entry count validated: {} entries (expected: {})",
             processed_entries, expected_entries
         );
-    } else if result.entries_processed.unwrap_or(0) == 0 && result.input_files.unwrap_or(0) > 0 && result.output_files.unwrap_or(0) > 0 {
+    } else if result.entries_processed.unwrap_or(0) == 0
+        && result.input_files.unwrap_or(0) > 0
+        && result.output_files.unwrap_or(0) > 0
+    {
         // KNOWN BUG: SST compaction processes files but returns 0 entries_processed
         println!(
             "⚠️ KNOWN BUG: SST compaction processed {} input files -> {} output files",
-            result.input_files.unwrap_or(0), result.output_files.unwrap_or(0)
+            result.input_files.unwrap_or(0),
+            result.output_files.unwrap_or(0)
         );
         println!("   but entries_processed = 0 (should be {})", total_vectors);
         println!("   This is a bug in SST compaction entry counting logic.");
@@ -399,10 +406,7 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
             // Create unique vectors for this batch
             let vectors = (0..3)
                 .map(|i| VectorRecord {
-                    id: format!(
-                        "{}_concurrent_{}_{}",
-                        env_collection_id, batch_id, i
-                    ),
+                    id: format!("{}_concurrent_{}_{}", env_collection_id, batch_id, i),
                     vector: vec![
                         (batch_id * 10 + i) as f32,
                         (batch_id * 10 + i + 1) as f32,
@@ -410,11 +414,7 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                     ],
                     metadata: vec![MetadataItem {
                         key: "batch_id".to_string(),
-                        value: Some(
-                            metadata_item::Value::StringValue(
-                                batch_id.to_string(),
-                            ),
-                        ),
+                        value: Some(metadata_item::Value::StringValue(batch_id.to_string())),
                     }],
                     timestamp: chrono::Utc::now().timestamp() as u32,
                     updated_at: None,
@@ -555,10 +555,7 @@ async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
         );
 
         // Verify vector IDs match original data
-        let original_ids: HashSet<_> = original_vectors
-            .iter()
-            .map(|v| v.id.as_str())
-            .collect();
+        let original_ids: HashSet<_> = original_vectors.iter().map(|v| v.id.as_str()).collect();
 
         let found_ids: HashSet<_> = results.iter().map(|r| r.id.as_str()).collect();
 
@@ -624,7 +621,10 @@ async fn test_isolated_sst_multi_collection_data_isolation() -> Result<()> {
             result.entries_flushed.unwrap_or(0) > 0,
             "Should have flushed some entries"
         );
-        assert!(result.files_created.unwrap_or(0) > 0, "Should have created SST files");
+        assert!(
+            result.files_created.unwrap_or(0) > 0,
+            "Should have created SST files"
+        );
         debug!(
             "📁 Inserted data in collection {}: {} - Flushed {} entries, created {} files",
             i,
@@ -872,19 +872,11 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                     metadata: vec![
                         MetadataItem {
                             key: "batch".to_string(),
-                            value: Some(
-                                metadata_item::Value::NumberValue(
-                                    batch as f64,
-                                ),
-                            ),
+                            value: Some(metadata_item::Value::NumberValue(batch as f64)),
                         },
                         MetadataItem {
                             key: "id_mod_10".to_string(),
-                            value: Some(
-                                metadata_item::Value::NumberValue(
-                                    (global_id % 10) as f64,
-                                ),
-                            ),
+                            value: Some(metadata_item::Value::NumberValue((global_id % 10) as f64)),
                         },
                     ],
                     timestamp: chrono::Utc::now().timestamp() as u32,

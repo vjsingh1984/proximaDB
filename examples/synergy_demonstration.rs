@@ -32,9 +32,8 @@ async fn demonstrate_basic_usage() -> Result<()> {
 
         // Basic vector operations
         let total_elements = vectors.len() * vectors[0].len();
-        let avg_value: f32 = vectors.iter()
-            .flat_map(|v| v.iter())
-            .sum::<f32>() / total_elements as f32;
+        let avg_value: f32 =
+            vectors.iter().flat_map(|v| v.iter()).sum::<f32>() / total_elements as f32;
 
         println!("   Total elements: {}", total_elements);
         println!("   Average value: {:.3}", avg_value);
@@ -106,9 +105,7 @@ async fn demonstrate_synergy() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     demonstrate_synergy().await
 }

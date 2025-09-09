@@ -53,6 +53,7 @@
 
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, info, warn};
 
 use crate::api_handlers::UnifiedHandlers;
@@ -66,6 +67,8 @@ use crate::proto::proximadb_v1::{
     GetNodeRequest, GetEdgeRequest, CreateNodeRequest, CreateEdgeRequest,
     UpdateNodeRequest, UpdateEdgeRequest, DeleteNodeRequest, DeleteEdgeRequest,
     GetNeighborsRequest, GetStatsRequest,
+    ShortestPathRequest, ShortestPathResponse, UniqueConstraintRequest, UniqueConstraintResponse, TraversalChunk,
+    ConnectedComponentsResponse, Component, CycleCheckResponse,
 };
 
 /// gRPC implementation of GraphService
@@ -281,18 +284,31 @@ impl GraphService for GraphServiceImpl {
         &self,
         request: Request<NodeQuery>,
     ) -> Result<Response<BatchResponse>, Status> {
-        let query = request.into_inner();
+        let mut query = request.into_inner();
         debug!("gRPC QueryNodes request with labels: {:?}", query.labels);
+        // Continuation token parsing: format "offset:<n>"
+        if query.offset.is_none() {
+            if let Some(token) = &query.continuation_token {
+                if let Some(rest) = token.strip_prefix("offset:") {
+                    if let Ok(n) = rest.parse::<u32>() { query.offset = Some(n); }
+                }
+            }
+        }
 
-        match self.unified_handlers.graph_service.query_nodes(query) {
+        match self.unified_handlers.graph_service.query_nodes(query.clone()) {
             Ok(nodes) => {
                 info!("Successfully queried {} nodes via gRPC", nodes.len());
-                let response = BatchResponse {
+                let mut response = BatchResponse {
                     success: true,
                     nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
                     edges: vec![],
                     error_message: None,
+                    next_token: None,
                 };
+                if let Some(lim) = query.limit { if (response.nodes.len() as u32) == lim {
+                    let next_off = query.offset.unwrap_or(0).saturating_add(lim);
+                    response.next_token = Some(format!("offset:{}", next_off));
+                }}
                 Ok(Response::new(response))
             },
             Err(err) => {
@@ -307,18 +323,30 @@ impl GraphService for GraphServiceImpl {
         &self,
         request: Request<EdgeQuery>,
     ) -> Result<Response<BatchResponse>, Status> {
-        let query = request.into_inner();
+        let mut query = request.into_inner();
         debug!("gRPC QueryEdges request");
+        if query.offset.is_none() {
+            if let Some(token) = &query.continuation_token {
+                if let Some(rest) = token.strip_prefix("offset:") {
+                    if let Ok(n) = rest.parse::<u32>() { query.offset = Some(n); }
+                }
+            }
+        }
 
-        match self.unified_handlers.graph_service.query_edges(query) {
+        match self.unified_handlers.graph_service.query_edges(query.clone()) {
             Ok(edges) => {
                 info!("Successfully queried {} edges via gRPC", edges.len());
-                let response = BatchResponse {
+                let mut response = BatchResponse {
                     success: true,
                     nodes: vec![],
                     edges: edges.into_iter().map(|e| (*e).clone()).collect(),
                     error_message: None,
+                    next_token: None,
                 };
+                if let Some(lim) = query.limit { if (response.edges.len() as u32) == lim {
+                    let next_off = query.offset.unwrap_or(0).saturating_add(lim);
+                    response.next_token = Some(format!("offset:{}", next_off));
+                }}
                 Ok(Response::new(response))
             },
             Err(err) => {
@@ -372,6 +400,82 @@ impl GraphService for GraphServiceImpl {
                 error!("Failed to traverse graph via gRPC: {}", err);
                 Err(Status::internal(format!("Failed to traverse graph: {}", err)))
             }
+        }
+    }
+
+    /// Stream traversal in chunks
+    type StreamTraverseStream = ReceiverStream<Result<TraversalChunk, Status>>;
+    async fn stream_traverse(
+        &self,
+        request: Request<TraversalRequest>,
+    ) -> Result<Response<Self::StreamTraverseStream>, Status> {
+        let req = request.into_inner();
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let handlers = self.unified_handlers.clone();
+        tokio::spawn(async move {
+            match handlers.graph_service.traverse(req).await {
+                Ok(resp) => {
+                    let chunk_size = 1000usize;
+                    let mut idx = 0;
+                    let nodes = resp.nodes;
+                    let total = nodes.len();
+                    while idx < total {
+                        let end = (idx + chunk_size).min(total);
+                        let mut chunk = TraversalChunk {
+                            nodes: nodes[idx..end].to_vec(),
+                            edges: vec![],
+                            paths: vec![],
+                            stats: None,
+                            done: false,
+                        };
+                        if end == total {
+                            chunk.edges = resp.edges;
+                            chunk.paths = resp.paths;
+                            chunk.stats = resp.stats;
+                            chunk.done = true;
+                        }
+                        if tx.send(Ok(chunk)).await.is_err() { break; }
+                        idx = end;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(Status::internal(format!("StreamTraverse failed: {}", e)))).await;
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    /// Compute shortest path between nodes
+    async fn shortest_path(
+        &self,
+        request: Request<ShortestPathRequest>,
+    ) -> Result<Response<ShortestPathResponse>, Status> {
+        let req = request.into_inner();
+        debug!(
+            "gRPC ShortestPath request from {} to {}",
+            req.start_node_id, req.target_node_id
+        );
+
+        match self
+            .unified_handlers
+            .graph_service
+            .shortest_path(
+                &req.start_node_id,
+                &req.target_node_id,
+                req.max_depth,
+                if req.edge_types.is_empty() { None } else { Some(req.edge_types) },
+                req.algorithm(),
+                req.k,
+            )
+            .await
+        {
+            Ok(Some((path, total_weight))) => Ok(Response::new(ShortestPathResponse {
+                node_ids: path,
+                total_weight: Some(total_weight),
+            })),
+            Ok(None) => Err(Status::not_found("No path found".into())),
+            Err(e) => Err(Status::internal(format!("ShortestPath failed: {}", e))),
         }
     }
 
@@ -444,5 +548,62 @@ impl GraphService for GraphServiceImpl {
                 Err(Status::internal(format!("Failed to batch create edges: {}", err)))
             }
         }
+    }
+
+    /// Get connected components (weak)
+    async fn get_connected_components(
+        &self,
+        _request: Request<GetStatsRequest>,
+    ) -> Result<Response<ConnectedComponentsResponse>, Status> {
+        match self.unified_handlers.graph_service.connected_components().await {
+            Ok(comps) => {
+                let components = comps
+                    .into_iter()
+                    .map(|nodes| Component { node_ids: nodes })
+                    .collect();
+                Ok(Response::new(ConnectedComponentsResponse { components }))
+            }
+            Err(e) => Err(Status::internal(format!("GetConnectedComponents failed: {}", e))),
+        }
+    }
+
+    /// Check for directed cycles
+    async fn has_cycle(
+        &self,
+        _request: Request<GetStatsRequest>,
+    ) -> Result<Response<CycleCheckResponse>, Status> {
+        match self.unified_handlers.graph_service.has_cycle().await {
+            Ok(has) => Ok(Response::new(CycleCheckResponse { has_cycle: has })),
+            Err(e) => Err(Status::internal(format!("HasCycle failed: {}", e))),
+        }
+    }
+
+    /// Add unique constraint (label, property)
+    async fn add_unique_constraint(
+        &self,
+        request: Request<UniqueConstraintRequest>,
+    ) -> Result<Response<UniqueConstraintResponse>, Status> {
+        let req = request.into_inner();
+        match self
+            .unified_handlers
+            .graph_service
+            .add_unique_constraint(&req.label, &req.property)
+        {
+            Ok(()) => Ok(Response::new(UniqueConstraintResponse { success: true, error_message: None })),
+            Err(e) => Ok(Response::new(UniqueConstraintResponse { success: false, error_message: Some(e.to_string()) })),
+        }
+    }
+
+    /// Remove unique constraint (label, property)
+    async fn remove_unique_constraint(
+        &self,
+        request: Request<UniqueConstraintRequest>,
+    ) -> Result<Response<UniqueConstraintResponse>, Status> {
+        let req = request.into_inner();
+        self
+            .unified_handlers
+            .graph_service
+            .remove_unique_constraint(&req.label, &req.property);
+        Ok(Response::new(UniqueConstraintResponse { success: true, error_message: None }))
     }
 }

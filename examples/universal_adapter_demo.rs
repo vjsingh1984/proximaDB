@@ -4,10 +4,10 @@
 //! with all storage engines (PRISM, NOVA, SWIFT, VIPER, SST) and shows
 //! the PQ and INT8 optimized distance computations with progressive refinement.
 
+use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Instant;
-use crate::utils::uuid::Uuid;
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::hardware_capabilities;

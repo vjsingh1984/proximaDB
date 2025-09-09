@@ -20,6 +20,9 @@ use crate::proto::proximadb::{
     VectorSearchRequest, VectorOperationResponse, VectorBatchRequest,
     CollectionRequest, CollectionResponse, CollectionOperation,
 };
+use serde::{Deserialize, Serialize};
+use crate::query::explain::ExplainPlan;
+use crate::query::QueryEngine;
 
 /// Shared application state
 #[derive(Clone)]
@@ -288,6 +291,179 @@ pub async fn vector_search_with_metadata(
     }
 }
 
+/// SQL query request structure
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlQueryRequest {
+    /// SQL query string
+    pub query: String,
+    /// Optional parameters for parameterized queries
+    pub parameters: Option<Vec<serde_json::Value>>,
+    /// Optional collection to use as default context
+    pub collection: Option<String>,
+    /// Optional timeout in milliseconds
+    pub timeout_ms: Option<u64>,
+}
+
+/// SQL query response structure
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlQueryResponse {
+    /// Result rows as JSON objects
+    pub rows: Vec<serde_json::Value>,
+    /// Column metadata (name, type)
+    pub columns: Vec<SqlColumnInfo>,
+    /// Number of rows returned
+    pub row_count: usize,
+    /// Execution time in milliseconds
+    pub execution_time_ms: u64,
+    /// Request ID for tracing
+    pub request_id: String,
+}
+
+/// Column information in SQL results
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SqlColumnInfo {
+    /// Column name
+    pub name: String,
+    /// Column data type
+    pub data_type: String,
+}
+
+/// Execute SQL query handler
+///
+/// Supports vector similarity queries like:
+/// ```sql
+/// SELECT id, metadata, COSINE_DISTANCE(embedding, [0.1, 0.2, 0.3]) as score
+/// FROM my_collection 
+/// WHERE metadata.category = 'electronics'
+/// ORDER BY score ASC
+/// LIMIT 10
+/// ```
+pub async fn execute_sql(
+    State(state): State<AppState>,
+    Json(request): Json<SqlQueryRequest>,
+) -> ApiResult<JsonResponse<ProtoApiResponse<SqlQueryResponse>>> {
+    let start_time = std::time::Instant::now();
+    let request_id = Uuid::new_v4().to_string();
+    
+    info!(
+        "SQL query request {} with query: {}",
+        request_id,
+        request.query.chars().take(100).collect::<String>()
+    );
+    
+    // Validate request
+    if request.query.trim().is_empty() {
+        return Err(ApiError::InvalidArgument("SQL query cannot be empty".to_string()));
+    }
+
+    // Execute SQL query through unified handlers
+    match state
+        .unified_handlers
+        .execute_sql_query(
+            request.query,
+            request.parameters,
+            request.collection,
+        )
+        .await
+    {
+        Ok(sql_result) => {
+            let execution_time_ms = start_time.elapsed().as_millis() as u64;
+            
+            // Convert SqlQueryResult to our response format
+            let columns = sql_result
+                .columns
+                .into_iter()
+                .map(|(name, data_type)| SqlColumnInfo { name, data_type })
+                .collect();
+
+            let response = SqlQueryResponse {
+                rows: sql_result.rows,
+                columns,
+                row_count: sql_result.row_count,
+                execution_time_ms,
+                request_id: request_id.clone(),
+            };
+
+            let api_response = ProtoApiResponse::success(response)
+                .with_execution_time(execution_time_ms)
+                .with_request_id(&request_id);
+            
+            info!(
+                "SQL query {} completed in {}ms, returned {} rows",
+                request_id, execution_time_ms, sql_result.row_count
+            );
+
+            Ok(JsonResponse(api_response))
+        }
+        Err(e) => {
+            error!("SQL query {} failed: {}", request_id, e);
+            let api_response = ProtoApiResponse::error(ApiError::Internal(e.to_string()));
+            Ok(JsonResponse(api_response))
+        }
+    }
+}
+
+/// EXPLAIN query request structure  
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExplainQueryRequest {
+    /// SQL query string to explain
+    pub query: String,
+    /// Whether to include execution (ANALYZE)
+    pub analyze: Option<bool>,
+    /// Optional collection context
+    pub collection: Option<String>,
+}
+
+/// EXPLAIN query response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExplainQueryResponse {
+    /// The explain plan
+    pub plan: ExplainPlan,
+    /// Request ID for tracing
+    pub request_id: String,
+}
+
+/// EXPLAIN SQL query handler - shows query execution plan with vector and graph hints
+pub async fn explain_sql(
+    State(state): State<AppState>,
+    Json(request): Json<ExplainQueryRequest>,
+) -> ApiResult<JsonResponse<ProtoApiResponse<ExplainQueryResponse>>> {
+    let request_id = Uuid::new_v4().to_string();
+    
+    info!(
+        "EXPLAIN query request {} for query: {}",
+        request_id,
+        request.query.chars().take(100).collect::<String>()
+    );
+    
+    // Validate request
+    if request.query.trim().is_empty() {
+        return Err(ApiError::InvalidArgument("SQL query cannot be empty".to_string()));
+    }
+    
+    // Build a lightweight QueryEngine with vector service and generate a real plan with hints
+    let qe = QueryEngine::new_with_vector_service(
+        state.unified_handlers.vector_operations_service.clone(),
+    );
+    let plan = qe
+        .explain_sql(&request.query)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to explain SQL: {}", e)))?;
+    
+    let response = ExplainQueryResponse {
+        plan,
+        request_id: request_id.clone(),
+    };
+
+    let api_response = ProtoApiResponse::success(response)
+        .with_request_id(&request_id);
+    
+    info!("EXPLAIN query {} completed", request_id);
+    Ok(JsonResponse(api_response))
+}
+
+// Note: EXPLAIN now uses QueryEngine::explain_sql() for real plans/hints.
+
 /// Create router with all REST endpoints
 pub fn create_router(state: AppState) -> axum::Router {
     use axum::routing::{get, post, delete};
@@ -298,6 +474,10 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/api/v1/vectors/batch", post(vector_batch))
         .route("/api/v1/progressive/search/:collection_id", 
             post(crate::network::rest::progressive_search_handler::progressive_search_handler))
+        
+        // SQL query execution
+        .route("/api/v1/sql/execute", post(execute_sql))
+        .route("/api/v1/sql/explain", post(explain_sql))
         
         // Collection operations
         .route("/api/v1/collections", post(collection_operation))

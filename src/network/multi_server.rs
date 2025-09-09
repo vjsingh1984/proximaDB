@@ -396,6 +396,7 @@ pub struct SharedServices {
     pub graph_service: Arc<crate::graph::GraphService>,
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
+    pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
     // Removed circular dependency: storage field removed
 }
 
@@ -646,7 +647,19 @@ impl SharedServices {
 
         // Create GraphService for native graph database operations
         debug!("🔧 SharedServices::new - Creating GraphService for graph database operations...");
-        let graph_service = Arc::new(crate::graph::GraphService::new());
+        let mut graph_service_inst = crate::graph::GraphService::new();
+        // Create a simple file-backed metrics updater under data_root/metrics
+        let metrics_store = Arc::new(crate::metrics::store::MetricsPersistenceLayer::new(
+            crate::metrics::store::MetricsStoreConfig {
+                storage_path: format!("file://{}/metrics", storage_config.data_root),
+                ..Default::default()
+            },
+        ));
+        let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> =
+            Arc::new(crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()));
+        graph_service_inst.set_metrics_updater(metrics_updater.clone());
+        debug!("📈 GraphService metrics updater wired");
+        let graph_service = Arc::new(graph_service_inst);
         debug!("✅ SharedServices::new - GraphService created successfully");
 
         // Create unified handlers with VectorOperationsService and GraphService
@@ -669,9 +682,16 @@ impl SharedServices {
                 graph_service,
                 unified_handlers,
                 metrics_collector,
+                metrics_updater: Some(metrics_updater.clone()),
             },
             collection_service,
         ))
+    }
+
+    /// Optional metrics updater for wiring into services. Currently returns None
+    /// unless a metrics updater is injected in the future.
+    pub fn metrics_updater(&self) -> Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> {
+        self.metrics_updater.clone()
     }
 
     /// Recover vectors from write buffer after StorageEngine has started
@@ -954,3 +974,22 @@ pub struct ServerStatus {
     pub grpc_address: Option<SocketAddr>,
     pub tls_enabled: bool,
 }
+        // Background TTL sweeper for graph (runs every 60s)
+        {
+            let graph_service_bg = graph_service.clone();
+            let sweep_secs = self
+                .config
+                .api_config
+                .as_ref()
+                .map(|c| c.ttl_sweep_interval_seconds)
+                .unwrap_or(900);
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(sweep_secs));
+                loop {
+                    ticker.tick().await;
+                    if let Err(e) = graph_service_bg.sweep_expired().await {
+                        tracing::warn!("Graph TTL sweep failed: {}", e);
+                    }
+                }
+            });
+        }

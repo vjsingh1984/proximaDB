@@ -69,11 +69,7 @@ impl PersistentTestAssignments {
         }
 
         // Acquire semaphore for file access
-        let _permit = self
-            .file_semaphore
-            .acquire()
-            .await
-            .unwrap();
+        let _permit = self.file_semaphore.acquire().await.unwrap();
 
         // Double-check cache after acquiring lock
         {
@@ -168,11 +164,7 @@ impl PersistentTestAssignments {
         assignment: TestAssignmentData,
     ) -> Result<()> {
         // Acquire semaphore for file access
-        let _permit = self
-            .file_semaphore
-            .acquire()
-            .await
-            .unwrap();
+        let _permit = self.file_semaphore.acquire().await.unwrap();
 
         // Load assignments from disk
         let mut assignments = self.load_assignments_from_disk().await?;
@@ -193,11 +185,7 @@ impl PersistentTestAssignments {
     /// Remove assignment for a collection
     pub async fn remove_assignment(&self, collection_id: &str) -> Result<()> {
         // Acquire semaphore for file access
-        let _permit = self
-            .file_semaphore
-            .acquire()
-            .await
-            .unwrap();
+        let _permit = self.file_semaphore.acquire().await.unwrap();
 
         // Load assignments from disk
         let mut assignments = self.load_assignments_from_disk().await?;
@@ -219,11 +207,7 @@ impl PersistentTestAssignments {
     /// Clear all assignments (for test cleanup)
     pub async fn clear_all_assignments(&self) -> Result<()> {
         // Acquire semaphore for file access
-        let _permit = self
-            .file_semaphore
-            .acquire()
-            .await
-            .unwrap();
+        let _permit = self.file_semaphore.acquire().await.unwrap();
 
         // Clear disk storage and any temp files
         if self.assignment_file.exists() {

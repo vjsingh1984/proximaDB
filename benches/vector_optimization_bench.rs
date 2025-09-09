@@ -1,12 +1,12 @@
 //! Benchmark to measure the impact of vector optimization
-//! 
+//!
 //! This benchmark compares:
 //! 1. Original approach with Vec<f32> cloning
 //! 2. Optimized approach with Arc<Vec<f32>> sharing
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use std::sync::Arc;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Original search result (with cloning)
 #[derive(Clone)]
@@ -29,11 +29,11 @@ struct OptimizedSearchResult {
 /// Simulate creating search results from a batch of vectors
 fn bench_original_result_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("result_creation");
-    
+
     for dimension in [128, 512, 1536].iter() {
         let vector = vec![0.1_f32; *dimension];
         let metadata: HashMap<String, serde_json::Value> = HashMap::new();
-        
+
         group.bench_with_input(
             BenchmarkId::new("original", dimension),
             dimension,
@@ -49,7 +49,7 @@ fn bench_original_result_creation(c: &mut Criterion) {
                 });
             },
         );
-        
+
         let arc_vector = Arc::new(vector);
         group.bench_with_input(
             BenchmarkId::new("optimized", dimension),
@@ -67,20 +67,20 @@ fn bench_original_result_creation(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// Simulate batch processing of search results
 fn bench_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
-    
+
     for batch_size in [10, 100, 1000].iter() {
         let dimension = 512;
         let vectors: Vec<Vec<f32>> = (0..*batch_size)
             .map(|i| vec![i as f32 / 100.0; dimension])
             .collect();
-        
+
         group.bench_with_input(
             BenchmarkId::new("original", batch_size),
             batch_size,
@@ -100,12 +100,9 @@ fn bench_batch_processing(c: &mut Criterion) {
                 });
             },
         );
-        
-        let arc_vectors: Vec<Arc<Vec<f32>>> = vectors
-            .iter()
-            .map(|v| Arc::new(v.clone()))
-            .collect();
-        
+
+        let arc_vectors: Vec<Arc<Vec<f32>>> = vectors.iter().map(|v| Arc::new(v.clone())).collect();
+
         group.bench_with_input(
             BenchmarkId::new("optimized", batch_size),
             batch_size,
@@ -126,17 +123,17 @@ fn bench_batch_processing(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// Simulate result sharing across threads
 fn bench_result_sharing(c: &mut Criterion) {
     let mut group = c.benchmark_group("result_sharing");
-    
+
     let dimension = 1536; // OpenAI embedding size
     let vector = vec![0.1_f32; dimension];
-    
+
     group.bench_function("original_10_clones", |b| {
         b.iter(|| {
             let original = OriginalSearchResult {
@@ -145,15 +142,13 @@ fn bench_result_sharing(c: &mut Criterion) {
                 vector: Some(vector.clone()),
                 metadata: HashMap::new(),
             };
-            
+
             // Simulate sharing across 10 threads/contexts
-            let clones: Vec<_> = (0..10)
-                .map(|_| original.clone())
-                .collect();
+            let clones: Vec<_> = (0..10).map(|_| original.clone()).collect();
             black_box(clones);
         });
     });
-    
+
     let arc_vector = Arc::new(vector);
     group.bench_function("optimized_10_clones", |b| {
         b.iter(|| {
@@ -163,26 +158,24 @@ fn bench_result_sharing(c: &mut Criterion) {
                 vector: Some(Arc::clone(&arc_vector)),
                 metadata: HashMap::new(),
             };
-            
+
             // Simulate sharing across 10 threads/contexts
-            let clones: Vec<_> = (0..10)
-                .map(|_| optimized.clone())
-                .collect();
+            let clones: Vec<_> = (0..10).map(|_| optimized.clone()).collect();
             black_box(clones);
         });
     });
-    
+
     group.finish();
 }
 
 /// Measure memory allocation impact
 fn bench_memory_pressure(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_pressure");
-    
+
     // Simulate a large result set
     let num_results = 1000;
     let dimension = 512;
-    
+
     group.bench_function("original_memory", |b| {
         b.iter(|| {
             let mut results = Vec::with_capacity(num_results);
@@ -198,15 +191,16 @@ fn bench_memory_pressure(c: &mut Criterion) {
             black_box(results);
         });
     });
-    
+
     group.bench_function("optimized_memory", |b| {
         b.iter(|| {
             let mut results = Vec::with_capacity(num_results);
             // Pre-create Arc vectors (simulating a shared pool)
-            let vectors: Vec<Arc<Vec<f32>>> = (0..100) // Reuse 100 vectors
-                .map(|i| Arc::new(vec![i as f32 / 100.0; dimension]))
-                .collect();
-            
+            let vectors: Vec<Arc<Vec<f32>>> =
+                (0..100) // Reuse 100 vectors
+                    .map(|i| Arc::new(vec![i as f32 / 100.0; dimension]))
+                    .collect();
+
             for i in 0..num_results {
                 results.push(OptimizedSearchResult {
                     id: format!("id_{}", i),
@@ -218,7 +212,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
             black_box(results);
         });
     });
-    
+
     group.finish();
 }
 

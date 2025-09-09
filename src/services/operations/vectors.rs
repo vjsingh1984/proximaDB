@@ -108,6 +108,18 @@ use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryCa
 use crate::storage::engines::impls::sst::SstStorage;
 use std::time::SystemTime;
 
+/// Optional debug/explain hints for vector planning and pruning.
+#[derive(Debug, Clone, Default)]
+pub struct SearchPlanHints {
+    pub cache_hit: bool,
+    pub pruned_files: Option<usize>,
+    pub ef_search: Option<usize>,
+    pub nprobe: Option<usize>,
+    pub candidates: Option<usize>,
+    pub progressive_stages: Option<Vec<String>>, // e.g., ["binary", "int8", "pq", "full"]
+    pub recall_estimates: Option<Vec<f32>>,      // optional per-stage recall estimates
+}
+
 /// Updated Vector Operations Service using consolidated optimizer
 pub struct VectorOperationsService {
     /// Storage engine - using concrete type for now due to trait object safety
@@ -163,6 +175,23 @@ impl VectorOperationsService {
             axis_index_manager,
             collection_service,
         }
+    }
+
+    /// Return lightweight, default planning/pruning hints without executing search.
+    /// Useful for EXPLAIN without side-effects.
+    pub fn plan_hints_only(&self, config: Option<UnifiedSearchConfig>) -> SearchPlanHints {
+        let cfg = config.unwrap_or_default();
+        let mut hints = SearchPlanHints::default();
+        if cfg.progressive_search {
+            hints.progressive_stages = Some(vec![
+                "binary".into(),
+                "int8".into(),
+                "pq".into(),
+                "full".into(),
+            ]);
+        }
+        // Candidate estimate left None; engine-specific values would require deeper planning.
+        hints
     }
 
     /// Execute progressive quantization-aware search
@@ -250,6 +279,50 @@ impl VectorOperationsService {
             .await;
 
         Ok(results)
+    }
+
+    /// Like `unified_search`, but also returns lightweight planning/pruning hints for EXPLAIN.
+    pub async fn unified_search_with_hints(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<(Vec<crate::proto::proximadb::SearchResult>, SearchPlanHints)> {
+        // Reuse the same cache check to determine cache_hit
+        let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
+        let cache_key = QueryKey::new(
+            collection_id.to_string(),
+            &query_vector,
+            k as u32,
+            filter_str.as_deref(),
+        );
+        let mut hints = SearchPlanHints::default();
+        if let Some(cached) = self.query_cache.get_if_fresh(&cache_key, 300).await {
+            hints.cache_hit = true;
+            return Ok((cached, hints));
+        }
+
+        let cfg = config.clone().unwrap_or_default();
+        let progressive_enabled = cfg.progressive_search;
+        if progressive_enabled {
+            hints.progressive_stages = Some(vec![
+                "binary".into(),
+                "int8".into(),
+                "pq".into(),
+                "full".into(),
+            ]);
+        }
+
+        // Execute the search
+        let results = self
+            .unified_search(collection_id, query_vector, k, filter, config)
+            .await?;
+
+        // Populate minimal candidate estimate; refined values can be added later
+        hints.candidates = Some(k.saturating_mul(10));
+        Ok((results, hints))
     }
 
     /// Execute progressive search with multiple stages

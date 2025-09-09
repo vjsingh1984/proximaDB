@@ -138,9 +138,9 @@
 //! ```
 
 use clap::Parser;
-use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
-use proximadb::{ProximaDB};
+use proximadb::ProximaDB;
 use proximadb::core::ConfigLoader;
+use proximadb::core::hardware_capabilities::initialize_hardware_capabilities;
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
