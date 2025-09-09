@@ -129,6 +129,8 @@ Year 3: $1.55B ARR (15% SKS dominance) → IPO
 
 === Core Architecture: Unified Memory Model
 
+==== Arc-Based Zero-Copy Architecture
+
 [source,mermaid]
 ----
 graph TB
@@ -136,10 +138,10 @@ graph TB
         MP[Arc-Based Memory Pool]
         
         subgraph "Shared Data Structures"
-            E[Entity Metadata<br/>Arc<EntityHeader>]
-            V[Vector Embeddings<br/>Arc<Vec<f32>>]
-            G[Graph Relations<br/>Arc<CSR Format>]
-            P[Property Indexes<br/>Arc<BTreeMap>]
+            E["Entity Metadata<br/>Arc<EntityHeader>"]
+            V["Vector Embeddings<br/>Arc<Vec<f32>>"]
+            G["Graph Relations<br/>Arc<CSR Format>"]
+            P["Property Indexes<br/>Arc<BTreeMap>"]
         end
     end
     
@@ -156,6 +158,143 @@ graph TB
     HQ --> G
     
     style MP fill:#e1f5fe,stroke:#333,stroke-width:2px
+----
+
+==== Entity Storage Architecture
+
+[source,mermaid]
+----
+classDiagram
+    class Entity {
+        +String id
+        +String entity_type
+        +Map~String,Value~ typed_metadata
+        +Struct flexible_metadata
+        +List~EmbeddingVersion~ embeddings
+        +Provenance provenance
+        +TemporalInfo temporal
+    }
+    
+    class EmbeddingVersion {
+        +String model_id
+        +String modality
+        +List~float~ values
+        +Timestamp created_at
+        +Map~String,Value~ metadata
+    }
+    
+    class Provenance {
+        +String source_id
+        +String chunk_id
+        +int32 position
+        +float confidence
+        +List~String~ tags
+    }
+    
+    class TemporalInfo {
+        +Timestamp created_at
+        +Timestamp updated_at
+        +int32 version
+        +List~String~ evolution_tags
+    }
+    
+    Entity "1" --> "*" EmbeddingVersion
+    Entity "1" --> "1" Provenance
+    Entity "1" --> "1" TemporalInfo
+----
+
+==== SKS Query Pipeline
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Client
+    participant API
+    participant QueryPlanner
+    participant VectorEngine
+    participant GraphEngine
+    participant MemoryPool
+    participant ResultMerger
+    
+    Client->>API: Hybrid Query Request
+    API->>QueryPlanner: Parse & Analyze
+    QueryPlanner->>QueryPlanner: Cost Estimation
+    
+    alt Vector Component
+        QueryPlanner->>VectorEngine: SIMILAR operation
+        VectorEngine->>MemoryPool: Get Arc<Embeddings>
+        MemoryPool-->>VectorEngine: Arc refs (no copy)
+        VectorEngine-->>QueryPlanner: Vector Results
+    end
+    
+    alt Graph Component
+        QueryPlanner->>GraphEngine: FOLLOW operation
+        GraphEngine->>MemoryPool: Get Arc<Relations>
+        MemoryPool-->>GraphEngine: Arc refs (no copy)
+        GraphEngine-->>QueryPlanner: Graph Results
+    end
+    
+    QueryPlanner->>ResultMerger: Combine Results
+    ResultMerger->>ResultMerger: Apply ASSEMBLE
+    ResultMerger-->>API: Final Results
+    API-->>Client: Response
+----
+
+==== Data Flow Through SKS Layers
+
+[source,mermaid]
+----
+flowchart TB
+    subgraph "Input Layer"
+        D1[Documents]
+        D2[Structured Data]
+        D3[Graph Data]
+    end
+    
+    subgraph "Processing Layer"
+        C1[Chunking]
+        E1[Embedding]
+        R1[Relation Extraction]
+    end
+    
+    subgraph "Storage Layer"
+        ES[Entity Store<br/>SST Engine]
+        VS[Vector Store<br/>VIPER Engine]
+        GS[Graph Store<br/>HELIX Engine]
+    end
+    
+    subgraph "Query Layer"
+        SQL[SQL Extensions]
+        API[REST/gRPC]
+    end
+    
+    subgraph "Application Layer"
+        RAG[RAG Apps]
+        KG[Knowledge Graphs]
+        SA[Semantic Apps]
+    end
+    
+    D1 --> C1
+    D2 --> E1
+    D3 --> R1
+    
+    C1 --> ES
+    E1 --> VS
+    R1 --> GS
+    
+    ES -.->|Arc| SQL
+    VS -.->|Arc| SQL
+    GS -.->|Arc| SQL
+    
+    SQL --> API
+    
+    API --> RAG
+    API --> KG
+    API --> SA
+    
+    style ES fill:#e8f5e9
+    style VS fill:#e3f2fd
+    style GS fill:#fff3e0
 ----
 
 === Implementation Architecture
@@ -187,6 +326,96 @@ proximadb/
 └── tests/
     └── sks_integration.rs     # Integration tests
 ```
+
+==== Provenance Tracking System
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Source Documents"
+        S1[PDF Doc]
+        S2[Web Page]
+        S3[Database]
+    end
+    
+    subgraph "Chunking Process"
+        CH1[Chunk 1]
+        CH2[Chunk 2]
+        CH3[Chunk 3]
+    end
+    
+    subgraph "Vector Generation"
+        V1[Vector 1]
+        V2[Vector 2]
+        V3[Vector 3]
+    end
+    
+    subgraph "Entity Creation"
+        E1[Entity A]
+        E2[Entity B]
+    end
+    
+    subgraph "Provenance Registry"
+        PR[(Registry)]
+    end
+    
+    S1 --> CH1
+    S1 --> CH2
+    S2 --> CH3
+    
+    CH1 --> V1
+    CH2 --> V2
+    CH3 --> V3
+    
+    V1 --> E1
+    V2 --> E1
+    V3 --> E2
+    
+    E1 -.->|tracks| PR
+    E2 -.->|tracks| PR
+    
+    PR -.->|source_id| S1
+    PR -.->|source_id| S2
+    PR -.->|chunk_id| CH1
+    PR -.->|chunk_id| CH2
+    PR -.->|chunk_id| CH3
+----
+
+==== SQL Extension Operations
+
+[source,mermaid]
+----
+flowchart LR
+    subgraph "SIMILAR Operation"
+        SQ[Query Vector]
+        SI[Vector Index]
+        SR[Ranked Results]
+        SQ --> SI
+        SI --> SR
+    end
+    
+    subgraph "FOLLOW Operation"
+        FN[Start Node]
+        FT[Traversal]
+        FG[Subgraph]
+        FN --> FT
+        FT --> FG
+    end
+    
+    subgraph "ASSEMBLE Operation"
+        AC[Context Request]
+        AT[Temporal Sort]
+        AA[Assembled Context]
+        AC --> AT
+        AT --> AA
+    end
+    
+    subgraph "Combined Query"
+        SR --> CQ{Merge}
+        FG --> CQ
+        CQ --> AA
+    end
+----
 
 == Section 1: File Creation Order
 

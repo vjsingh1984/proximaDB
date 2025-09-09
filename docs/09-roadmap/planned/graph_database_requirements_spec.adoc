@@ -114,22 +114,173 @@ Year 3: Dominance - Category Leadership
 * **Intra-Process Performance:** All engines in single process, no network overhead
 * **Asynchronous & Concurrent:** Tokio-based async runtime with work-stealing
 
+=== Core Concepts Visualization
+
+==== CSR (Compressed Sparse Row) Format
+
+[source,mermaid]
+----
+graph TB
+    subgraph "CSR Data Structure"
+        subgraph "Node Array"
+            N0[Node 0]
+            N1[Node 1]
+            N2[Node 2]
+            N3[Node 3]
+        end
+        
+        subgraph "Edge Offsets"
+            O0[0]
+            O1[2]
+            O2[5]
+            O3[7]
+            O4[9]
+        end
+        
+        subgraph "Edge Targets"
+            T0[1]
+            T1[2]
+            T2[0]
+            T3[2]
+            T4[3]
+            T5[1]
+            T6[3]
+            T7[0]
+            T8[2]
+        end
+        
+        subgraph "Edge Properties"
+            P0["Arc<Edge>"]
+            P1["Arc<Edge>"]
+            P2["Arc<Edge>"]
+            P3["Arc<Edge>"]
+            P4["Arc<Edge>"]
+            P5["Arc<Edge>"]
+            P6["Arc<Edge>"]
+            P7["Arc<Edge>"]
+            P8["Arc<Edge>"]
+        end
+    end
+    
+    N0 --> O0
+    N1 --> O1
+    N2 --> O2
+    N3 --> O3
+    
+    O0 -.->|"edges[0..2]"|T0
+    O1 -.->|"edges[2..5]"|T2
+    O2 -.->|"edges[5..7]"|T5
+    O3 -.->|"edges[7..9]"|T7
+----
+
+==== Three-Mode Architecture Flow
+
+[source,mermaid]
+----
+flowchart LR
+    subgraph "Client Request"
+        R[Query Request]
+    end
+    
+    subgraph "Mode Router"
+        MR{Mode?}
+    end
+    
+    subgraph "Vector Mode"
+        VE[Vector Engine]
+        VI[HNSW Index]
+        VQ[Quantization]
+    end
+    
+    subgraph "Graph Mode"
+        GE[Graph Engine]
+        CSR[CSR Storage]
+        GT[Traversal]
+    end
+    
+    subgraph "Unified SKS Mode"
+        UE[Unified Engine]
+        MP[Memory Pool]
+        HQ[Hybrid Query]
+    end
+    
+    R --> MR
+    MR -->|vector-only| VE
+    MR -->|graph-only| GE
+    MR -->|unified| UE
+    
+    VE --> VI
+    VI --> VQ
+    
+    GE --> CSR
+    CSR --> GT
+    
+    UE --> MP
+    MP --> HQ
+    HQ -.->|Arc| VE
+    HQ -.->|Arc| GE
+----
+
+==== Memory Sharing Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "Unified Memory Pool"
+        subgraph "Arc-Based References"
+            A1["Arc<Node>"]
+            A2["Arc<Edge>"]
+            A3["Arc<Vec<f32>>"]
+            A4["Arc<Properties>"]
+        end
+    end
+    
+    subgraph "HELIX Engine"
+        CSR1[CSR Structure]
+        IDX1[Node Index]
+        TRAV[Traversal Cursor]
+    end
+    
+    subgraph "Vector Engine"
+        HNSW[HNSW Graph]
+        QUAN[Quantized Vectors]
+        DIST[Distance Compute]
+    end
+    
+    subgraph "Query Executor"
+        QE[Hybrid Query]
+        PLAN[Query Planner]
+        EXEC[Parallel Executor]
+    end
+    
+    CSR1 -.->|clone| A1
+    CSR1 -.->|clone| A2
+    HNSW -.->|clone| A3
+    QE -.->|clone| A1
+    QE -.->|clone| A3
+    
+    style A1 fill:#e1f5fe
+    style A2 fill:#e1f5fe
+    style A3 fill:#e1f5fe
+    style A4 fill:#e1f5fe
+----
+
 === Graph Storage Engines
 
 [cols="1,1,2,1", options="header"]
 |===
 | Engine | Type | Optimization | Status
-| **NEO** | In-Memory CSR | Real-time traversal, 1M+ edges/sec | Phase 1
-| **TITAN** | Distributed | Sharded graph, 1B+ nodes | Phase 2
-| **MERCURY** | Hybrid | Hot/cold tiering, cost-optimized | Phase 3
+| **HELIX** | In-Memory CSR | Real-time traversal, 1M+ edges/sec | Phase 1
+| **NEXUS** | Distributed | Sharded graph, 1B+ nodes | Phase 2
+| **FUSION** | Hybrid | Hot/cold tiering, cost-optimized | Phase 3
 |===
 
-==== NEO Engine: Compressed Sparse Row Format
+==== HELIX Engine: Compressed Sparse Row Format
 
 [source,rust]
 ----
 // Ultra-efficient CSR representation
-pub struct NeoGraphEngine {
+pub struct HelixGraphEngine {
     // Node storage
     nodes: Arc<DashMap<NodeId, Node>>,
     
@@ -152,6 +303,88 @@ pub struct NeoGraphEngine {
 // - O(degree) edge traversal  
 // - O(1) neighbor access
 // - Cache-friendly sequential access
+----
+
+==== Graph Query Pipeline
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant C as Client
+    participant R as REST/gRPC
+    participant S as GraphService
+    participant N as HELIX Engine
+    participant M as Memory Pool
+    participant I as Index
+    
+    C->>R: Query Request
+    R->>S: Parse & Validate
+    S->>S: Mode Check
+    
+    alt Graph Traversal
+        S->>N: BFS/DFS Request
+        N->>M: Get Node Arc
+        M-->>N: Arc<Node>
+        N->>I: Check Indexes
+        I-->>N: Filtered Nodes
+        N-->>S: Results
+    else Hybrid Query
+        S->>N: Graph Component
+        S->>V: Vector Component
+        par Parallel Execution
+            N->>M: Graph Data
+            V->>M: Vector Data
+        end
+        M-->>S: Combined Arc Refs
+        S-->>R: Merged Results
+    end
+    
+    R-->>C: Response
+----
+
+==== Progressive Search Integration
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Query Input"
+        Q[Query Vector]
+        F[Graph Filter]
+    end
+    
+    subgraph "Phase 1: Binary"
+        B[Binary Quantization]
+        BF[Bloom Filter]
+    end
+    
+    subgraph "Phase 2: INT8"
+        I8[INT8 Vectors]
+        CSR[CSR Traversal]
+    end
+    
+    subgraph "Phase 3: PQ"
+        PQ[Product Quantization]
+        GT[Graph Traversal]
+    end
+    
+    subgraph "Phase 4: Full"
+        FP[Full Precision]
+        RE[Reranking]
+    end
+    
+    Q --> B
+    F --> BF
+    B --> |95% pruned| I8
+    BF --> |filtered| CSR
+    I8 --> |top-k| PQ
+    CSR --> |neighbors| GT
+    PQ --> |candidates| FP
+    GT --> |subgraph| RE
+    
+    style B fill:#ffebee
+    style I8 fill:#fff3e0
+    style PQ fill:#f3e5f5
+    style FP fill:#e8f5e9
 ----
 
 == Phase 1: Core Graph Data Model & Storage Integration
@@ -198,6 +431,53 @@ pub struct NeoGraphEngine {
 
 == Phase 2: Graph Service & API Exposure
 
+=== API Request Flow
+
+[source,mermaid]
+----
+flowchart TD
+    subgraph "API Layer"
+        REST[REST Endpoint]
+        GRPC[gRPC Service]
+    end
+    
+    subgraph "Service Layer"
+        GS[GraphService]
+        VS[VectorService]
+        SS[SKSService]
+    end
+    
+    subgraph "Storage Layer"
+        HELIX[HELIX Engine]
+        VIPER[VIPER Engine]
+        SST[SST Engine]
+    end
+    
+    subgraph "Shared Resources"
+        MP[Memory Pool]
+        IDX[Indexes]
+        CACHE[Cache]
+    end
+    
+    REST --> GS
+    GRPC --> GS
+    
+    GS --> HELIX
+    GS --> MP
+    VS --> VIPER
+    VS --> MP
+    SS --> GS
+    SS --> VS
+    
+    HELIX --> IDX
+    VIPER --> IDX
+    SST --> CACHE
+    
+    MP -.->|Arc| HELIX
+    MP -.->|Arc| VIPER
+    MP -.->|Arc| SST
+----
+
 === Unified Memory Architecture
 
 [source,mermaid]
@@ -211,9 +491,9 @@ graph LR
     end
     
     subgraph "Graph Engines"
-        NEO[NEO<br/>In-Memory]
-        TITAN[TITAN<br/>Distributed]
-        MERCURY[MERCURY<br/>Hybrid]
+        HELIX[HELIX<br/>In-Memory]
+        NEXUS[NEXUS<br/>Distributed]
+        FUSION[FUSION<br/>Hybrid]
     end
     
     subgraph "Vector Engines"
@@ -222,8 +502,8 @@ graph LR
         RAPTOR[RAPTOR<br/>HNSW]
     end
     
-    NEO -.->|Arc::clone()| NM
-    NEO -.->|Arc::clone()| EM
+    HELIX -.->|Arc::clone()| NM
+    HELIX -.->|Arc::clone()| EM
     VIPER -.->|Arc::clone()| VE
     
     style NM fill:#e1f5fe
@@ -267,6 +547,57 @@ graph LR
     *   Use `curl` or `grpcurl` in tests to simulate client requests.
 
 == Phase 3: Graph Traversal & Query Optimization
+
+=== Traversal Algorithm Flow
+
+[source,mermaid]
+----
+flowchart TB
+    subgraph "BFS Traversal"
+        START[Start Node]
+        Q[Queue]
+        V[Visited BitVec]
+        
+        subgraph "Level Processing"
+            L1[Level 1: Direct Neighbors]
+            L2[Level 2: 2-hop]
+            L3[Level 3: 3-hop]
+        end
+    end
+    
+    subgraph "Parallel Processing"
+        W1[Worker 1]
+        W2[Worker 2]
+        W3[Worker 3]
+        WS[Work Stealing]
+    end
+    
+    subgraph "CSR Access"
+        OFF[Edge Offsets]
+        TGT[Edge Targets]
+        PROP[Edge Properties]
+    end
+    
+    START --> Q
+    Q --> L1
+    L1 -->|Parallel| W1
+    L1 -->|Parallel| W2
+    L1 -->|Parallel| W3
+    
+    W1 --> OFF
+    W2 --> OFF
+    W3 --> OFF
+    
+    OFF --> TGT
+    TGT --> PROP
+    
+    W1 -.->|steal| WS
+    W2 -.->|steal| WS
+    W3 -.->|steal| WS
+    
+    L1 --> L2
+    L2 --> L3
+----
 
 === High-Performance Traversal Algorithms
 
@@ -343,6 +674,55 @@ pub async fn parallel_bfs(
 
 == Phase 4: Advanced Indexing & Optimization
 
+=== Index Architecture
+
+[source,mermaid]
+----
+graph TB
+    subgraph "Index Types"
+        subgraph "Property Indexes"
+            BTI[B-Tree Index]
+            HM[HashMap Index]
+            BF[Bloom Filter]
+        end
+        
+        subgraph "Graph Indexes"
+            ADJ[Adjacency Index]
+            LBL[Label Index]
+            DEG[Degree Index]
+        end
+        
+        subgraph "Vector Indexes"
+            HNSW[HNSW Graph]
+            IVF[IVF Clusters]
+            PQ[PQ Codebook]
+        end
+    end
+    
+    subgraph "Query Planner"
+        QP[Cost-Based Planner]
+        SEL[Selectivity Estimator]
+        OPT[Index Selection]
+    end
+    
+    subgraph "Execution"
+        SCAN[Index Scan]
+        SEEK[Index Seek]
+        JOIN[Index Join]
+    end
+    
+    QP --> SEL
+    SEL --> OPT
+    
+    OPT --> BTI
+    OPT --> ADJ
+    OPT --> HNSW
+    
+    BTI --> SCAN
+    ADJ --> SEEK
+    HNSW --> JOIN
+----
+
 === Multi-Modal Indexing Strategy
 
 [source]
@@ -400,12 +780,48 @@ pub async fn parallel_bfs(
 
 == Implementation Phases for AI Agents
 
+=== Development Workflow
+
+[source,mermaid]
+----
+gantt
+    title Graph Database Implementation Timeline
+    dateFormat YYYY-MM-DD
+    section Phase 1 Foundation
+    Proto Definitions           :p1, 2024-01-01, 2d
+    CSR Storage Implementation  :p2, after p1, 3d
+    Basic CRUD Operations       :p3, after p2, 2d
+    Memory Pool Setup          :p4, after p3, 2d
+    Unit Tests                 :p5, after p4, 2d
+    
+    section Phase 2 API Layer
+    GraphService               :p6, after p5, 2d
+    REST Endpoints             :p7, after p6, 2d
+    gRPC Service              :p8, after p6, 2d
+    Mode Configuration        :p9, after p8, 1d
+    Integration Tests         :p10, after p9, 2d
+    
+    section Phase 3 Traversal
+    BFS DFS Algorithms        :p11, after p10, 3d
+    Pattern Matching          :p12, after p11, 2d
+    Vector Integration        :p13, after p12, 2d
+    Query Planner            :p14, after p13, 3d
+    Benchmarks               :p15, after p14, 2d
+    
+    section Phase 4 Production
+    Property Indexes         :p16, after p15, 2d
+    Label Indexes           :p17, after p16, 1d
+    Monitoring              :p18, after p17, 2d
+    Documentation           :p19, after p18, 2d
+    Performance Tests       :p20, after p19, 3d
+----
+
 === Phase 1: NEO Engine Foundation (Week 1-2)
 
 [cols="1,3,1", options="header"]
 |===
 | Task | Description | Status
-| Proto Schema | Define Node, Edge, Property messages | 🔲 TODO
+| Proto Schema | Define GraphNode, GraphEdge, Property messages | 🔲 TODO
 | CSR Storage | Implement compressed sparse row format | 🔲 TODO
 | Basic CRUD | Node/edge create, read, update, delete | 🔲 TODO
 | Memory Pool | Arc-based shared memory architecture | 🔲 TODO
@@ -457,13 +873,13 @@ pub async fn parallel_bfs(
 src/
 ├── graph/
 │   ├── engines/
-│   │   ├── neo/           # In-memory CSR engine
+│   │   ├── helix/         # In-memory CSR engine
 │   │   │   ├── mod.rs
 │   │   │   ├── storage.rs # CSR format implementation
 │   │   │   ├── traversal.rs
 │   │   │   └── index.rs
-│   │   ├── titan/         # Distributed engine (Phase 2)
-│   │   └── mercury/       # Hybrid engine (Phase 3)
+│   │   ├── nexus/         # Distributed engine (Phase 2)
+│   │   └── fusion/        # Hybrid engine (Phase 3)
 │   ├── service.rs         # GraphService implementation
 │   ├── traversal.rs       # Common traversal algorithms
 │   └── query/
@@ -553,7 +969,7 @@ impl GraphService {
 == Summary: The Path to $1B+ Valuation
 
 **Year 1:** Launch with dual-mode capability
-* Ship NEO engine for graph-only mode
+* Ship HELIX engine for graph-only mode
 * Maintain vector-only mode for existing customers
 * Capture initial market share in both segments
 
@@ -564,7 +980,7 @@ impl GraphService {
 
 **Year 3:** Dominate SKS category
 * Become de-facto standard for semantic applications
-* Expand to TITAN (distributed) and MERCURY (hybrid) engines
+* Expand to NEXUS (distributed) and FUSION (hybrid) engines
 * Reach $1.55B ARR → IPO
 
 **Strategic Moat:** Our intra-process architecture delivers 10x performance through zero network overhead and Arc-based memory sharing - a fundamental architectural advantage requiring complete system redesign to replicate.

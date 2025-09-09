@@ -1,0 +1,236 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "google/protobuf/timestamp.proto";
+import "proximadb/v1/entity.proto";
+
+// Core graph data model for ProximaDB's native graph database engine
+// Follows proto-first design with zero-copy serialization for maximum performance
+
+// Node represents a vertex in the graph with labels and properties
+message Node {
+  // Unique identifier for the node (UUID/ULID)
+  string id = 1;
+  
+  // List of labels/types for this node (e.g., ["Person", "Employee"])
+  repeated string labels = 2;
+  
+  // Properties as key-value pairs
+  map<string, PropertyValue> properties = 3;
+  
+  // Optional embedding vector for semantic search integration
+  optional VectorEmbedding embedding = 4;
+  
+  // Metadata
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+// Edge represents a directed relationship between two nodes
+message Edge {
+  // Unique identifier for the edge (UUID/ULID)
+  string id = 1;
+  
+  // Source node ID
+  string from_node_id = 2;
+  
+  // Target node ID  
+  string to_node_id = 3;
+  
+  // Edge type/relationship name (e.g., "KNOWS", "WORKS_FOR")
+  string edge_type = 4;
+  
+  // Properties as key-value pairs
+  map<string, PropertyValue> properties = 5;
+  
+  // Optional weight for weighted graphs
+  optional double weight = 6;
+  
+  // Metadata
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// PropertyValue supports various data types for flexible schema
+message PropertyValue {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bool bool_value = 4;
+    bytes bytes_value = 5;
+    PropertyArray array_value = 6;
+    PropertyObject object_value = 7;
+  }
+}
+
+// Array of property values
+message PropertyArray {
+  repeated PropertyValue values = 1;
+}
+
+// Nested object property
+message PropertyObject {
+  map<string, PropertyValue> fields = 1;
+}
+
+// Graph traversal request
+message TraversalRequest {
+  // Starting node ID
+  string start_node_id = 1;
+  
+  // Maximum depth to traverse
+  uint32 max_depth = 2;
+  
+  // Edge types to follow (empty = all types)
+  repeated string edge_types = 3;
+  
+  // Node label filter
+  repeated string node_labels = 4;
+  
+  // Property filters
+  repeated PropertyFilter filters = 5;
+  
+  // Traversal algorithm
+  TraversalAlgorithm algorithm = 6;
+  
+  // Maximum number of results
+  optional uint32 limit = 7;
+}
+
+// Property filter for graph queries
+message PropertyFilter {
+  string key = 1;
+  PropertyFilterOperator operator = 2;
+  PropertyValue value = 3;
+}
+
+// Supported property filter operators
+enum PropertyFilterOperator {
+  PROPERTY_FILTER_OPERATOR_UNSPECIFIED = 0;
+  PROPERTY_FILTER_OPERATOR_EQUALS = 1;
+  PROPERTY_FILTER_OPERATOR_NOT_EQUALS = 2;
+  PROPERTY_FILTER_OPERATOR_GREATER_THAN = 3;
+  PROPERTY_FILTER_OPERATOR_LESS_THAN = 4;
+  PROPERTY_FILTER_OPERATOR_GREATER_EQUAL = 5;
+  PROPERTY_FILTER_OPERATOR_LESS_EQUAL = 6;
+  PROPERTY_FILTER_OPERATOR_CONTAINS = 7;
+  PROPERTY_FILTER_OPERATOR_STARTS_WITH = 8;
+  PROPERTY_FILTER_OPERATOR_ENDS_WITH = 9;
+}
+
+// Traversal algorithms
+enum TraversalAlgorithm {
+  TRAVERSAL_ALGORITHM_UNSPECIFIED = 0;
+  TRAVERSAL_ALGORITHM_BFS = 1;
+  TRAVERSAL_ALGORITHM_DFS = 2;
+  TRAVERSAL_ALGORITHM_PARALLEL_BFS = 3;
+}
+
+// Graph traversal response
+message TraversalResponse {
+  // Visited nodes in traversal order
+  repeated Node nodes = 1;
+  
+  // Edges traversed
+  repeated Edge edges = 2;
+  
+  // Path information (node IDs in sequence)
+  repeated GraphPath paths = 3;
+  
+  // Statistics
+  TraversalStats stats = 4;
+}
+
+// Path through the graph
+message GraphPath {
+  repeated string node_ids = 1;
+  repeated string edge_ids = 2;
+  double total_weight = 3;
+  uint32 length = 4;
+}
+
+// Traversal statistics
+message TraversalStats {
+  uint32 nodes_visited = 1;
+  uint32 edges_traversed = 2;
+  uint32 max_depth_reached = 3;
+  uint64 execution_time_microseconds = 4;
+}
+
+// Node query request
+message NodeQuery {
+  // Node labels to match
+  repeated string labels = 1;
+  
+  // Property filters
+  repeated PropertyFilter filters = 2;
+  
+  // Limit results
+  optional uint32 limit = 3;
+  
+  // Skip/offset for pagination
+  optional uint32 offset = 4;
+}
+
+// Edge query request  
+message EdgeQuery {
+  // Source node ID filter
+  optional string from_node_id = 1;
+  
+  // Target node ID filter
+  optional string to_node_id = 2;
+  
+  // Edge types to match
+  repeated string edge_types = 3;
+  
+  // Property filters
+  repeated PropertyFilter filters = 4;
+  
+  // Limit results
+  optional uint32 limit = 5;
+  
+  // Skip/offset for pagination
+  optional uint32 offset = 6;
+}
+
+// Batch operations for high-performance ingestion
+message BatchNodeRequest {
+  repeated Node nodes = 1;
+}
+
+message BatchEdgeRequest {
+  repeated Edge edges = 1;
+}
+
+message BatchResponse {
+  uint32 created_count = 1;
+  uint32 updated_count = 2;
+  uint32 failed_count = 3;
+  repeated string failed_ids = 4;
+  repeated string error_messages = 5;
+}
+
+// Graph statistics and metadata
+message GraphStats {
+  uint64 total_nodes = 1;
+  uint64 total_edges = 2;
+  repeated LabelStats label_stats = 3;
+  repeated EdgeTypeStats edge_type_stats = 4;
+  uint64 total_properties = 5;
+  uint64 memory_usage_bytes = 6;
+  double average_degree = 7;
+  uint32 max_degree = 8;
+  uint32 connected_components = 9;
+}
+
+message LabelStats {
+  string label = 1;
+  uint64 count = 2;
+}
+
+message EdgeTypeStats {
+  string edge_type = 1;
+  uint64 count = 2;
+}

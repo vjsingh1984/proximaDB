@@ -99,6 +99,9 @@ pub mod core;
 /// Unified error handling for REST and gRPC APIs
 pub mod errors;
 
+/// Native graph database engine with CSR format and Arc-based memory sharing
+pub mod graph;
+
 // pub mod distributed;  // Temporarily disabled for single-node optimization
 
 /// Unified API handlers for REST and gRPC with proto-first zero-copy design

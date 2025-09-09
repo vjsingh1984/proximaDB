@@ -39,11 +39,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/entity.proto",
                 "proto/proximadb/v1/relations.proto",
                 "proto/proximadb/v1/context.proto",
+                "proto/proximadb/v1/graph.proto",
             ],
             &["proto"],
         )?;
     tracing::info!("✅ Protobuf compilation complete");
 
     debug!("cargo:rerun-if-changed=proto/proximadb.proto");
+    debug!("cargo:rerun-if-changed=proto/proximadb/v1/graph.proto");
     Ok(())
 }
