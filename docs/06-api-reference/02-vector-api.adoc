@@ -1,0 +1,66 @@
+ = Vector API (v1)
+ :toc:
+ :icons: font
+
+== Overview
+
+Vector operations expose engine functionality for batch upsert, search, and get. This API is versioned and uses v1 message types.
+
+REST base: `http://localhost:5678/api/v1`
+gRPC base: `localhost:5679`
+
+== REST
+
+=== Search
+
+[source,json]
+----
+POST /api/v1/search
+{
+  "collection_id": "docs",
+  "queries": [{"vector": [0.1,0.2,0.3]}],
+  "top_k": 10,
+  "include_fields": {"vector": false, "metadata": true}
+}
+----
+
+=== Batch
+
+[source,json]
+----
+POST /api/v1/vectors/batch
+{
+  "collection_id": "docs",
+  "vectors": [
+    {"id":"d1","vector":[0.1,0.2],"metadata":{"title":{"stringValue":"Doc1"}}}
+  ]
+}
+----
+
+== gRPC
+
+Service: `proximadb.v1.VectorService`
+
+RPCs:
+- `VectorBatch(VectorBatchRequest) returns (VectorOperationResponse)`
+- `VectorSearch(VectorSearchRequest) returns (VectorOperationResponse)`
+- `VectorGet(VectorGetRequest) returns (VectorOperationResponse)`
+
+Python stub example:
+[source,python]
+----
+import grpc
+from proximadb.v1 import vector_pb2_grpc, vector_types_pb2
+
+channel = grpc.insecure_channel('localhost:5679')
+stub = vector_pb2_grpc.VectorServiceStub(channel)
+req = vector_types_pb2.VectorSearchRequest(
+    collection_id='docs',
+    queries=[vector_types_pb2.SearchQuery(vector=[0.1,0.2,0.3])],
+    top_k=5
+)
+resp = stub.VectorSearch(req)
+for r in resp.results.results:
+    print(r.id, r.score)
+----
+
