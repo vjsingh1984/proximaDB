@@ -28,6 +28,7 @@
 use crate::core::error::{ProximaDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, NodeId};
+use std::collections::HashMap;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use std::collections::{VecDeque, HashSet};
 use std::sync::Arc;
@@ -473,7 +474,7 @@ pub async fn dijkstra_shortest_path(
     }
 
     let mut distances = HashMap::new();
-    let mut predecessors = HashMap::new();
+    let mut predecessors: HashMap<NodeId, NodeId> = HashMap::new();
     let mut heap = BinaryHeap::new();
 
     // Initialize distances

@@ -56,14 +56,16 @@
 
 pub mod engines;
 pub mod service;
-// TODO: Implement traversal module
-// pub mod traversal;
-// TODO: Implement query module  
-// pub mod query;
+pub mod query;
+pub mod hybrid;
+pub mod monitoring;
 
 // Re-export public types
 pub use engines::orion::OrionGraphEngine;
 pub use service::GraphService;
+pub use query::{QueryPlanner, PatternMatcher};
+pub use hybrid::HybridQueryEngine;
+pub use monitoring::GraphMonitor;
 
 // Export proto types for convenience
 pub use crate::proto::proximadb_v1::{
