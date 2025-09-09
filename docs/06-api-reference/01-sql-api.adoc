@@ -1,0 +1,66 @@
+ = SQL API
+ :toc:
+ :icons: font
+
+== Overview
+
+SQL endpoints provide a SQL-first interface over REST, plus EXPLAIN for orchestration plans and vector/graph hints.
+
+Base URL: `http://localhost:5678`
+
+== Execute
+
+- REST: `POST /api/v1/sql/execute`
+
+Request
+----
+{
+  "query": "SELECT id, metadata FROM my_collection ORDER BY COSINE_DISTANCE(vector, $1) LIMIT 5",
+  "parameters": [[0.1,0.2,0.3, ...]],
+  "collection": "my_collection"
+}
+----
+
+Response (truncated)
+----
+{
+  "success": true,
+  "data": {
+    "rows": [ { "id": "vec_1", "score": 0.92, ... }, ... ],
+    "row_count": 5
+  },
+  "error": null
+}
+----
+
+== EXPLAIN
+
+- REST: `POST /api/v1/sql/explain`
+
+Request
+----
+{
+  "query": "SELECT * FROM my_collection ORDER BY COSINE_DISTANCE(vector, $1) LIMIT 10",
+  "analyze": false
+}
+----
+
+Response (fields abridged)
+----
+{
+  "success": true,
+  "data": {
+    "plan": {
+      "orchestration_steps": ["Parse", "Orchestrate", ...],
+      "vector_hints": { "pruned_files": 12, "ef_search": 64, ... },
+      "graph_hints": { "traversal_algorithm": "BFS", ... }
+    },
+    "request_id": "..."
+  }
+}
+----
+
+== gRPC (planned)
+
+- `ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse)` defined in protobuf for wire‑efficient execution. Handler wiring follows after codegen.
+

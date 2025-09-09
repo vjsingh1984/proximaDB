@@ -16,8 +16,8 @@ This guide covers operational aspects of ProximaDB including deployment, monitor
 | link:deployment.adoc[Deployment]
 | Installation, configuration, and deployment strategies (ports: REST 5678, gRPC 5679)
 
-| link:../../02-getting-started/API.adoc[API Reference]
-| Health and metrics endpoints for basic monitoring
+| link:../../06-api-reference/README.adoc[API Reference]
+| Vector, Graph, and SQL endpoints; health and metrics
 
 | link:../../02-getting-started/CONFIGURATION.adoc[Configuration]
 | Server, storage, TLS, and hardware configuration
@@ -29,7 +29,7 @@ This guide covers operational aspects of ProximaDB including deployment, monitor
 
 . link:deployment.adoc[Deploy ProximaDB]
 . Configure ports, storage, TLS in link:../../02-getting-started/CONFIGURATION.adoc[Configuration]
-. Enable health/metrics endpoints from link:../../02-getting-started/API.adoc[API Reference]
+. Enable health/metrics endpoints from link:../../06-api-reference/README.adoc[API Reference]
 
 === Daily Operations
 

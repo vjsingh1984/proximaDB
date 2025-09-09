@@ -19,6 +19,9 @@ High-level documentation covering ProximaDB's capabilities, architecture, and pe
 | link:detailed-architecture.adoc[Detailed Architecture Overview]
 | High-level system architecture and design principles
 
+| link:features.adoc#_three_mode_platform[Three‑Mode Platform]
+| Vector‑only, Graph‑only, and Unified SKS overview
+
 | link:performance.adoc[Performance & Benchmarks]
 | Performance metrics, benchmarks, and comparisons
 |===

@@ -37,7 +37,7 @@ This guide provides comprehensive documentation for ProximaDB users, covering ev
 . Explore link:vector-operations.adoc#_searching_vectors[Search and Queries]
 
 === For Advanced Users
-. See link:../../02-getting-started/API.adoc[API Reference] for protocol details
+. See link:../../06-api-reference/README.adoc[API Reference] for protocol details
 . See link:../../06-architecture/system-design.adoc[System Design] for internals
 
 === For Operators
@@ -47,4 +47,4 @@ This guide provides comprehensive documentation for ProximaDB users, covering ev
 
 ---
 _For quick start, see link:../../02-getting-started/QUICKSTART.adoc[Quick Start Guide]_ +
-_For API details, see link:../../02-getting-started/API.adoc[API Reference]_
+_For API details, see link:../../06-api-reference/README.adoc[API Reference]_

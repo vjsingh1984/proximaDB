@@ -137,7 +137,7 @@ client.delete_collection("my_vectors")
 
 == REST API
 
-See link:API.adoc[API Reference] for current endpoints. Quick checks:
+See link:../06-api-reference/README.adoc[API Reference] for current endpoints. Quick checks:
 
 [source,bash]
 ----
@@ -312,7 +312,7 @@ tail -f /var/log/proximadb/server.log
 
 == Next Steps
 
-* link:../08-reference/API.adoc[API Reference] - Complete API documentation
+* link:../06-api-reference/README.adoc[API Reference] - Vector, Graph, and SQL APIs
 * link:../06-architecture/ARCHITECTURE.adoc[Architecture] - System design details
 * link:../03-user-guide/CONFIGURATION.adoc[Configuration] - Advanced configuration
 * link:../05-operations/BENCHMARKS.adoc[Benchmarks] - Performance metrics

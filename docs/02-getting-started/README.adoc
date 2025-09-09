@@ -16,8 +16,8 @@ Everything you need to get ProximaDB up and running in minutes.
 | link:CONFIGURATION.adoc[Configuration]
 | Configure server ports, storage, and hardware
 
-| link:API.adoc[API Reference]
-| REST and gRPC usage with examples
+| link:../06-api-reference/README.adoc[API Reference]
+| Vector, Graph, and SQL APIs
 
 | link:../03-user-guide/vector-operations.adoc[Vector Operations]
 | Insert, search, and manage vectors
