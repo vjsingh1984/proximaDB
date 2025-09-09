@@ -1,0 +1,569 @@
+= Graph Database Requirements Specification - ProximaDB Native Graph Engine
+:toc:
+:icons: font
+:source-highlighter: rouge
+
+This document provides a comprehensive implementation plan for ProximaDB's native graph database capabilities, positioning it as a three-mode platform that can dominate multiple markets through its unique intra-process architecture.
+
+== Executive Summary: Unlocking a New Market Category
+
+ProximaDB will become the industry's first **three-mode database platform**, capable of operating as:
+
+[cols="1,3,2", options="header"]
+|===
+| Mode | Description | Target Market Size
+| **Vector-Only** | High-performance vector search with 7-phase progressive optimization | $3B (2025)
+| **Graph-Only** | Native graph database with CSR format and parallel traversal | $5B (2025)
+| **SKS Unified** | Semantic Knowledge Store combining vector + graph capabilities | $7B (2027) - NEW CATEGORY
+|===
+
+=== Strategic Positioning
+
+[source,mermaid]
+----
+graph TB
+    subgraph "ProximaDB Platform"
+        V[Vector Engine<br/>VIPER/SST/RAPTOR]
+        G[Graph Engine<br/>NEO/TITAN/MERCURY]
+        S[SKS Layer<br/>Unified Memory]
+        
+        V -.->|Arc Sharing| S
+        G -.->|Arc Sharing| S
+    end
+    
+    subgraph "Market Opportunity"
+        M1[Vector Market<br/>$3B]
+        M2[Graph Market<br/>$5B]
+        M3[SKS Market<br/>$7B NEW]
+    end
+    
+    V --> M1
+    G --> M2
+    S --> M3
+    
+    style S fill:#f96,stroke:#333,stroke-width:4px
+    style M3 fill:#9f6,stroke:#333,stroke-width:4px
+----
+
+=== Performance Advantage: Intra-Process Architecture
+
+**10x Performance Through Zero Network Overhead:**
+
+[source]
+----
+Traditional Stack (Competitors):          ProximaDB Intra-Process:
+┌──────────────┐                          ┌─────────────────────────┐
+│ Application  │                          │     Application         │
+├──────────────┤                          ├─────────────────────────┤
+│   Network    │ ← 2-5ms latency          │   ProximaDB Platform    │
+├──────────────┤                          │  ┌─────────┬─────────┐ │
+│ Vector Store │                          │  │ Vector  │  Graph  │ │
+├──────────────┤                          │  │ Engine  │ Engine  │ │
+│   Network    │ ← 2-5ms latency          │  └────┬────┴────┬────┘ │
+├──────────────┤                          │       │ Arc     │       │
+│ Graph Store  │                          │  ┌────┴─────────┴────┐ │
+└──────────────┘                          │  │  Shared Memory   │ │
+                                          │  └──────────────────┘ │
+Total: 4-10ms overhead                    └─────────────────────────┘
+                                          Total: 0ms overhead
+----
+
+== Business Model & Market Strategy
+
+=== Pricing Tiers
+
+[cols="1,2,2,1", options="header"]
+|===
+| Tier | Features | Use Cases | Price/Month
+| **Starter** | 100K vectors OR nodes<br/>Single engine mode | Prototypes, POCs | $99
+| **Growth** | 10M vectors OR nodes<br/>Dual engine mode | Production apps | $999
+| **Scale** | 100M vectors + nodes<br/>All three modes | Enterprise search | $4,999
+| **Enterprise** | Unlimited<br/>Custom engines<br/>SLA | Mission-critical | Custom
+|===
+
+=== Revenue Projections
+
+[source]
+----
+Year 1: Capture 1% of each market
+  Vector:  $3B × 0.01 = $30M
+  Graph:   $5B × 0.01 = $50M
+  Total:   $80M ARR
+
+Year 2: Introduce SKS, capture 5% combined
+  Vector:  $3.5B × 0.03 = $105M
+  Graph:   $5.5B × 0.03 = $165M
+  SKS:     $2B × 0.05 = $100M (early adopters)
+  Total:   $370M ARR
+
+Year 3: Dominate SKS category
+  Vector:  $4B × 0.05 = $200M
+  Graph:   $6B × 0.05 = $300M
+  SKS:     $7B × 0.15 = $1.05B (category leader)
+  Total:   $1.55B ARR → IPO
+----
+
+== Technical Architecture
+
+=== Overall Implementation Strategy
+
+* **Modular Architecture:** Three independent engines that can operate standalone or unified
+* **Proto-First Design:** Zero-copy protobuf serialization throughout
+* **Arc-Based Memory:** Shared memory pool with Arc<T> for zero-copy between engines
+* **Intra-Process Performance:** All engines in single process, no network overhead
+* **Asynchronous & Concurrent:** Tokio-based async runtime with work-stealing
+
+=== Graph Storage Engines
+
+[cols="1,1,2,1", options="header"]
+|===
+| Engine | Type | Optimization | Status
+| **NEO** | In-Memory CSR | Real-time traversal, 1M+ edges/sec | Phase 1
+| **TITAN** | Distributed | Sharded graph, 1B+ nodes | Phase 2
+| **MERCURY** | Hybrid | Hot/cold tiering, cost-optimized | Phase 3
+|===
+
+==== NEO Engine: Compressed Sparse Row Format
+
+[source,rust]
+----
+// Ultra-efficient CSR representation
+pub struct NeoGraphEngine {
+    // Node storage
+    nodes: Arc<DashMap<NodeId, Node>>,
+    
+    // CSR format for edges (optimized for traversal)
+    edge_offsets: Vec<usize>,      // Node i's edges: [offsets[i]..offsets[i+1]]
+    edge_targets: Vec<NodeId>,     // Target nodes
+    edge_data: Vec<Arc<Edge>>,     // Edge properties (Arc for sharing)
+    
+    // Reverse index for incoming edges
+    reverse_offsets: Vec<usize>,
+    reverse_sources: Vec<NodeId>,
+    
+    // Property indexes
+    node_indexes: HashMap<String, BTreeMap<Value, HashSet<NodeId>>>,
+    edge_indexes: HashMap<String, BTreeMap<Value, HashSet<EdgeId>>>,
+}
+
+// Performance characteristics:
+// - O(1) node lookup
+// - O(degree) edge traversal  
+// - O(1) neighbor access
+// - Cache-friendly sequential access
+----
+
+== Phase 1: Core Graph Data Model & Storage Integration
+
+*   **Goal:** Establish the fundamental data structures for nodes, edges, and properties, and integrate their persistence with ProximaDB's `StorageEngine`.
+
+*   **Tasks:**
+
+    1.  **Define Core Protobuf Schemas:**
+        *   Create `proto/graph.proto` (or similar) to define `Node`, `Edge`, and `Property` messages.
+        *   `Node`: `id` (UUID/ULID), `labels` (list of strings), `properties` (map<string, Value>).
+        *   `Edge`: `id` (UUID/ULID), `from_node_id`, `to_node_id`, `type` (string), `properties` (map<string, Value>).
+        *   `Value`: A Protobuf `oneof` to support various property types (string, int64, float64, bool, bytes, etc.).
+        *   **Design Tradeoff:** Using a generic `map<string, Value>` for properties offers flexibility but might incur serialization/deserialization overhead compared to strongly typed schemas for known properties. This is a good starting point for schema-less properties.
+
+    2.  **Implement Rust Data Structures:**
+        *   Generate Rust structs from the Protobuf definitions using `prost` or similar.
+        *   Implement `From` and `Into` traits for conversion between Protobuf and internal Rust representations.
+
+    3.  **Storage Engine Integration (Key-Value Mapping):**
+        *   Determine how nodes and edges will be mapped to key-value pairs in the `StorageEngine`.
+        *   **Recommendation:**
+            *   Nodes: `nodes:<node_id>` -> `Node` protobuf bytes.
+            *   Edges: `edges:<edge_id>` -> `Edge` protobuf bytes.
+            *   Adjacency: `node_out_edges:<node_id>:<edge_type>:<edge_id>` -> empty/metadata.
+            *   Adjacency: `node_in_edges:<node_id>:<edge_type>:<edge_id>` -> empty/metadata.
+        *   **Design Tradeoff:** Storing adjacency lists separately allows for efficient traversal from a node. This is generally preferred over adjacency matrices for sparse graphs common in real-world scenarios.
+
+    4.  **Basic CRUD Operations (Storage Layer):**
+        *   In `src/storage/engine.rs` (or a new `src/storage/graph_store.rs`), implement:
+            *   `put_node(node: Node) -> Result<()>`
+            *   `get_node(node_id: Uuid) -> Result<Option<Node>>`
+            *   `delete_node(node_id: Uuid) -> Result<()>`
+            *   `put_edge(edge: Edge) -> Result<()>`
+            *   `get_edge(edge_id: Uuid) -> Result<Option<Edge>>`
+            *   `delete_edge(edge_id: Uuid) -> Result<()>`
+            *   `get_out_edges(node_id: Uuid, edge_type: Option<String>) -> Result<Vec<Edge>>`
+            *   `get_in_edges(node_id: Uuid, edge_type: Option<String>) -> Result<Vec<Edge>>`
+        *   Ensure these operations are atomic and leverage the existing WAL and memtable for durability and performance.
+
+*   **Verification:**
+    *   Write unit tests for all new data structures and storage layer CRUD operations.
+    *   Ensure data can be written, read, and deleted correctly.
+
+== Phase 2: Graph Service & API Exposure
+
+=== Unified Memory Architecture
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Shared Memory Pool (Arc-based)"
+        NM[Node Metadata]
+        EM[Edge Metadata]
+        VE[Vector Embeddings]
+        PI[Property Indexes]
+    end
+    
+    subgraph "Graph Engines"
+        NEO[NEO<br/>In-Memory]
+        TITAN[TITAN<br/>Distributed]
+        MERCURY[MERCURY<br/>Hybrid]
+    end
+    
+    subgraph "Vector Engines"
+        VIPER[VIPER<br/>Columnar]
+        SST[SST<br/>Row-based]
+        RAPTOR[RAPTOR<br/>HNSW]
+    end
+    
+    NEO -.->|Arc::clone()| NM
+    NEO -.->|Arc::clone()| EM
+    VIPER -.->|Arc::clone()| VE
+    
+    style NM fill:#e1f5fe
+    style EM fill:#e1f5fe
+    style VE fill:#e1f5fe
+    style PI fill:#e1f5fe
+----
+
+*   **Goal:** Expose the core graph operations through the `SharedServices` layer and integrate them into the existing REST and gRPC APIs.
+
+*   **Tasks:**
+
+    1.  **Create `GraphService`:**
+        *   In `src/services/graph_service.rs` (or similar), create a new service that encapsulates graph business logic.
+        *   This service will interact directly with the `StorageEngine` (or `GraphStore` from Phase 1).
+        *   Methods will mirror the storage layer CRUD but add validation and higher-level logic.
+
+    2.  **Integrate `GraphService` into `SharedServices`:**
+        *   Add `GraphService` as a component within `src/services/shared_services.rs`.
+
+    3.  **Extend REST API:**
+        *   Modify `src/api/rest/mod.rs` (or create `src/api/rest/graph.rs`) to add new endpoints:
+            *   `POST /nodes` (create node)
+            *   `GET /nodes/{id}` (get node)
+            *   `PUT /nodes/{id}` (update node)
+            *   `DELETE /nodes/{id}` (delete node)
+            *   `POST /edges` (create edge)
+            *   `GET /edges/{id}` (get edge)
+            *   `PUT /edges/{id}` (update edge)
+            *   `DELETE /edges/{id}` (delete edge)
+            *   `GET /nodes/{id}/out_edges` (get outgoing edges)
+            *   `GET /nodes/{id}/in_edges` (get incoming edges)
+        *   Map incoming JSON requests to internal Rust data structures and Protobuf.
+
+    4.  **Extend gRPC API:**
+        *   Update `proto/proximadb.proto` (or create a new `proto/graph_api.proto`) with new gRPC service definitions for graph operations.
+        *   Modify `src/api/grpc/mod.rs` (or create `src/api/grpc/graph.rs`) to implement the gRPC service handlers.
+
+*   **Verification:**
+    *   Write integration tests for both REST and gRPC endpoints to ensure they correctly interact with the `GraphService` and `StorageEngine`.
+    *   Use `curl` or `grpcurl` in tests to simulate client requests.
+
+== Phase 3: Graph Traversal & Query Optimization
+
+=== High-Performance Traversal Algorithms
+
+[source,rust]
+----
+// Optimized BFS with early termination and filtering
+pub async fn parallel_bfs(
+    &self,
+    start: NodeId,
+    max_depth: u32,
+    filter: Option<Box<dyn Fn(&Node) -> bool>>,
+    early_stop: Option<Box<dyn Fn(&[Node]) -> bool>>,
+) -> Result<Vec<Node>> {
+    // Use bit vector for visited tracking (cache-friendly)
+    let visited = Arc::new(BitVec::with_capacity(self.node_count()));
+    
+    // Parallel frontier processing with work-stealing
+    let (tx, rx) = mpsc::channel(1000);
+    
+    // Process levels in parallel
+    for depth in 0..max_depth {
+        let frontier = self.process_frontier_parallel(
+            frontier,
+            &visited,
+            filter.as_ref(),
+        ).await?;
+        
+        if let Some(ref stop) = early_stop {
+            if stop(&frontier) {
+                break;
+            }
+        }
+    }
+}
+----
+
+=== Query Language Extensions
+
+[cols="1,3", options="header"]
+|===
+| Query Type | ProximaDB SQL Extension Syntax
+| Pattern Match | `SELECT * FROM nodes WHERE FOLLOW('KNOWS', 2) FROM person_123`
+| Vector Search | `SELECT * FROM entities WHERE SIMILAR(embedding, $query_vec, 0.5)`
+| Hybrid Query | `SELECT * FROM docs WHERE SIMILAR(embedding, $vec, 0.8) AND FOLLOW('CITES', 1)`
+| Context Assembly | `SELECT ASSEMBLE(3, 'temporal') FROM chunks WHERE entity_id = $id`
+| Evolution Tracking | `SELECT TRACK EVOLUTION FROM entity WHERE id = $id OVER TIME`
+|===
+
+*   **Goal:** Implement fundamental graph traversal capabilities and a basic programmatic query interface.
+
+*   **Tasks:**
+
+    1.  **Implement Graph Traversal Algorithms:**
+        *   In `src/graph/traversal.rs` (or similar), implement:
+            *   `bfs(start_node_id: Uuid, max_depth: Option<u32>) -> Result<Vec<Node>>`
+            *   `dfs(start_node_id: Uuid, max_depth: Option<u32>) -> Result<Vec<Node>>`
+        *   These functions will use the `GraphService` to fetch nodes and edges.
+        *   **Design Tradeoff:** Iterative BFS/DFS is generally preferred over recursive for large graphs to avoid stack overflow.
+
+    2.  **Basic Query API (Programmatic):**
+        *   Extend `GraphService` with methods like:
+            *   `find_nodes_by_label(label: String) -> Result<Vec<Node>>` (requires indexing in Phase 4 for efficiency)
+            *   `find_nodes_by_property(key: String, value: Value) -> Result<Vec<Node>>` (requires indexing in Phase 4)
+            *   `get_neighbors(node_id: Uuid, edge_type: Option<String>) -> Result<Vec<Node>>`
+
+    3.  **Expose Traversal via API:**
+        *   Add REST and gRPC endpoints for BFS/DFS traversal, returning lists of visited nodes/edges.
+            *   `GET /nodes/{id}/traverse/bfs`
+            *   `GET /nodes/{id}/traverse/dfs`
+
+*   **Verification:**
+    *   Write unit tests for BFS/DFS algorithms with various graph structures (e.g., linear, star, disconnected).
+    *   Write integration tests for the new API endpoints.
+
+== Phase 4: Advanced Indexing & Optimization
+
+=== Multi-Modal Indexing Strategy
+
+[source]
+----
+┌─────────────────────────────────────────┐
+│          Unified Index Manager          │
+├─────────────────────────────────────────┤
+│                                         │
+│  ┌──────────┐  ┌──────────┐  ┌────────┐│
+│  │  B-Tree  │  │   HNSW   │  │  CSR   ││
+│  │ (Props)  │  │ (Vectors)│  │(Graph) ││
+│  └──────────┘  └──────────┘  └────────┘│
+│                                         │
+│  ┌──────────────────────────────────┐  │
+│  │     Adaptive Index Selection     │  │
+│  │   (Cost-based query planning)    │  │
+│  └──────────────────────────────────┘  │
+└─────────────────────────────────────────┘
+----
+
+=== Performance Optimizations
+
+[cols="1,2,1", options="header"]
+|===
+| Optimization | Description | Impact
+| **CSR Format** | Compressed sparse row for edges | 60% memory reduction
+| **Bit Vectors** | Visited tracking in traversals | 8x faster than HashSet
+| **Arc Sharing** | Zero-copy between engines | 50-70% memory savings
+| **SIMD Labels** | Vectorized label matching | 4x faster filtering
+| **Parallel BFS** | Work-stealing traversal | 3x speedup on 8 cores
+|===
+
+*   **Goal:** Improve query performance through indexing and optimize storage for common graph patterns.
+
+*   **Tasks:**
+
+    1.  **Property Indexing:**
+        *   Extend the `StorageEngine` to support secondary indexes on node and edge properties.
+        *   **Recommendation:** Use a separate key-value store for indexes: `index:<property_key>:<property_value>:<entity_id>` -> empty.
+        *   Implement index creation, update, and deletion when nodes/edges are modified.
+        *   **Design Tradeoff:** Maintaining indexes adds write overhead but significantly speeds up read queries based on properties. Consider which properties are indexed by default or allow user-defined indexes.
+
+    2.  **Label Indexing:**
+        *   Implement an index for node labels: `label:<label_name>:<node_id>` -> empty.
+
+    3.  **Query Optimization:**
+        *   Modify `find_nodes_by_label` and `find_nodes_by_property` in `GraphService` to utilize the new indexes.
+
+    4.  **Storage Optimization (Future Consideration):**
+        *   Investigate techniques like graph partitioning or specialized SSTable formats for graph data if performance becomes a bottleneck for very large graphs. (This is a more advanced topic for later phases).
+
+*   **Verification:**
+    *   Benchmark queries with and without indexing to demonstrate performance improvements.
+    *   Ensure index consistency after updates and deletions.
+
+== Implementation Phases for AI Agents
+
+=== Phase 1: NEO Engine Foundation (Week 1-2)
+
+[cols="1,3,1", options="header"]
+|===
+| Task | Description | Status
+| Proto Schema | Define Node, Edge, Property messages | 🔲 TODO
+| CSR Storage | Implement compressed sparse row format | 🔲 TODO
+| Basic CRUD | Node/edge create, read, update, delete | 🔲 TODO
+| Memory Pool | Arc-based shared memory architecture | 🔲 TODO
+| Unit Tests | 100% coverage for core operations | 🔲 TODO
+|===
+
+=== Phase 2: API Integration (Week 3)
+
+[cols="1,3,1", options="header"]
+|===
+| Task | Description | Status
+| GraphService | Business logic layer | 🔲 TODO
+| REST API | Graph endpoints in existing server | 🔲 TODO
+| gRPC API | Graph service definitions | 🔲 TODO
+| Mode Config | Vector-only, graph-only, unified modes | 🔲 TODO
+| Integration Tests | End-to-end API testing | 🔲 TODO
+|===
+
+=== Phase 3: Traversal & Query (Week 4)
+
+[cols="1,3,1", options="header"]
+|===
+| Task | Description | Status
+| BFS/DFS | Parallel traversal algorithms | 🔲 TODO
+| Pattern Match | Cypher-like query support | 🔲 TODO
+| Vector Integration | Hybrid vector-graph queries | 🔲 TODO
+| Query Planner | Cost-based optimization | 🔲 TODO
+| Benchmarks | Performance validation | 🔲 TODO
+|===
+
+=== Phase 4: Production Readiness (Week 5-6)
+
+[cols="1,3,1", options="header"]
+|===
+| Task | Description | Status
+| Property Index | B-tree indexes for properties | 🔲 TODO
+| Label Index | Efficient label-based queries | 🔲 TODO
+| Monitoring | Metrics and observability | 🔲 TODO
+| Documentation | API docs and examples | 🔲 TODO
+| Performance | 1M+ edges/sec traversal | 🔲 TODO
+|===
+
+== Development Guidelines for AI Agents
+
+=== Code Organization
+
+[source]
+----
+src/
+├── graph/
+│   ├── engines/
+│   │   ├── neo/           # In-memory CSR engine
+│   │   │   ├── mod.rs
+│   │   │   ├── storage.rs # CSR format implementation
+│   │   │   ├── traversal.rs
+│   │   │   └── index.rs
+│   │   ├── titan/         # Distributed engine (Phase 2)
+│   │   └── mercury/       # Hybrid engine (Phase 3)
+│   ├── service.rs         # GraphService implementation
+│   ├── traversal.rs       # Common traversal algorithms
+│   └── query/
+│       ├── parser.rs      # Query parsing
+│       ├── planner.rs     # Query planning
+│       └── executor.rs    # Query execution
+├── api/
+│   ├── rest/
+│   │   └── graph.rs       # REST endpoints
+│   └── grpc/
+│       └── graph.rs       # gRPC service
+└── proto/
+    └── graph.proto        # Graph protobuf definitions
+----
+
+=== Critical Implementation Notes
+
+**1. Always Use Arc for Shared Data:**
+[source,rust]
+----
+// ✅ CORRECT: Use Arc for zero-copy sharing
+pub struct Node {
+    pub id: NodeId,
+    pub labels: Arc<Vec<String>>,      // Shared across engines
+    pub properties: Arc<PropertyMap>,   // No cloning needed
+    pub embedding: Option<Arc<Vec<f32>>>, // Shared with vector engine
+}
+
+// ❌ WRONG: Don't clone data
+pub struct Node {
+    pub properties: PropertyMap,  // Will be cloned everywhere
+}
+----
+
+**2. Maintain Mode Separation:**
+[source,rust]
+----
+pub enum OperationMode {
+    VectorOnly,   // Graph operations return errors
+    GraphOnly,    // Vector operations return errors  
+    Unified,      // Both operations available
+}
+
+impl GraphService {
+    pub fn new(mode: OperationMode) -> Self {
+        match mode {
+            OperationMode::GraphOnly | OperationMode::Unified => {
+                // Initialize graph engine
+            }
+            OperationMode::VectorOnly => {
+                // Graph operations will fail gracefully
+            }
+        }
+    }
+}
+----
+
+**3. Performance Requirements:**
+* Traversal: 1M+ edges/second
+* Node lookup: < 1μs
+* Property index: < 10μs
+* Memory overhead: < 100 bytes/node
+* Arc clone: ~8 bytes (pointer copy)
+
+**4. Testing Strategy:**
+* Unit tests for each component
+* Integration tests for API endpoints
+* Benchmark tests for performance validation
+* Property-based tests for correctness
+* Stress tests for large graphs (1M+ nodes)
+
+== Unique Technical Advantages
+
+[cols="1,3,2", options="header"]
+|===
+| Feature | ProximaDB Innovation | Impact
+| **Intra-Process Architecture** | All engines in single process with Arc memory sharing | < 1μs latency vs milliseconds
+| **Zero-Copy Operations** | Direct memory references between vector and graph engines | 50-70% memory reduction
+| **Progressive Search** | 7-phase optimization from binary to full precision | 95% search space reduction
+| **Unified Query Engine** | Single SQL-based language with SIMILAR, FOLLOW, ASSEMBLE | Simplified development
+| **Hardware Acceleration** | Automatic SIMD/GPU detection and optimization | 13.5M-20.8M ops/sec (128D)
+| **CSR Graph Format** | Compressed sparse row with cache-friendly access | 60% memory reduction
+| **Single Binary Deploy** | No external dependencies or complex orchestration | 10x faster deployment
+| **Modular Modes** | Runtime switching between vector/graph/unified | Flexible resource usage
+|===
+
+== Summary: The Path to $1B+ Valuation
+
+**Year 1:** Launch with dual-mode capability
+* Ship NEO engine for graph-only mode
+* Maintain vector-only mode for existing customers
+* Capture initial market share in both segments
+
+**Year 2:** Introduce unified SKS mode
+* Launch marketing campaign for new category
+* Partner with AI/ML platforms
+* Achieve $370M ARR
+
+**Year 3:** Dominate SKS category
+* Become de-facto standard for semantic applications
+* Expand to TITAN (distributed) and MERCURY (hybrid) engines
+* Reach $1.55B ARR → IPO
+
+**Moat:** Intra-process architecture with 10x performance advantage that competitors cannot match without complete rewrite.
