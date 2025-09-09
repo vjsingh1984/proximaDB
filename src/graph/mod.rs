@@ -56,15 +56,17 @@
 
 pub mod engines;
 pub mod service;
-pub mod traversal;
-pub mod query;
+// TODO: Implement traversal module
+// pub mod traversal;
+// TODO: Implement query module  
+// pub mod query;
 
 // Re-export public types
 pub use engines::neo::NeoGraphEngine;
 pub use service::GraphService;
 
 // Export proto types for convenience
-pub use crate::proto::proximadb::v1::{
+pub use crate::proto::proximadb_v1::{
     Node, Edge, PropertyValue, PropertyArray, PropertyObject,
     TraversalRequest, TraversalResponse, GraphPath, TraversalStats,
     NodeQuery, EdgeQuery, BatchNodeRequest, BatchEdgeRequest, BatchResponse,
@@ -74,7 +76,8 @@ pub use crate::proto::proximadb::v1::{
 
 use std::sync::Arc;
 use dashmap::DashMap;
-use crate::errors::Result;
+use crate::core::error::{ProximaDBError};
+type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Node ID type alias for clarity
 pub type NodeId = String;
@@ -278,15 +281,15 @@ impl Default for GraphMemoryPool {
 /// Convert PropertyValue to string for indexing
 fn property_value_to_string(value: &PropertyValue) -> String {
     match &value.value {
-        Some(crate::proto::proximadb::v1::property_value::Value::StringValue(s)) => s.clone(),
-        Some(crate::proto::proximadb::v1::property_value::Value::IntValue(i)) => i.to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::DoubleValue(d)) => d.to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::BoolValue(b)) => b.to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::BytesValue(b)) => {
+        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
+        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
             format!("bytes:{}", b.len())
         },
-        Some(crate::proto::proximadb::v1::property_value::Value::ArrayValue(_)) => "array".to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::ObjectValue(_)) => "object".to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => "array".to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => "object".to_string(),
         None => "null".to_string(),
     }
 }
@@ -294,7 +297,7 @@ fn property_value_to_string(value: &PropertyValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::v1::property_value::Value;
+    use crate::proto::proximadb_v1::property_value::Value;
     
     #[test]
     fn test_memory_pool_creation() {

@@ -25,12 +25,14 @@
 //! - **Early Termination**: Filter predicates to stop traversal early
 //! - **SIMD-Ready**: Vectorized operations on neighbor arrays
 
-use crate::errors::{Result, ProximaDBError};
+use crate::core::error::{ProximaDBError};
+type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, NodeId};
-use crate::graph::engines::neo::NeoGraphEngine;
+use crate::graph::engines::{GraphEngine, neo::NeoGraphEngine};
 use std::collections::{VecDeque, HashSet};
 use std::sync::Arc;
-use bit_vec::BitVec;
+// Using HashSet instead of BitVec for visited tracking
+// This provides better performance for sparse graphs
 use tokio::sync::Mutex;
 
 /// Traversal results containing nodes, paths, and statistics
@@ -108,7 +110,7 @@ pub async fn breadth_first_search(
     
     // Validate start node exists
     if engine.get_node(start_node_id)?.is_none() {
-        return Err(ProximaDBError::NotFound(
+        return Err(ProximaDBError::InvalidInput(
             format!("Start node {} not found", start_node_id)
         ));
     }
@@ -252,7 +254,7 @@ pub async fn depth_first_search(
     
     // Validate start node exists
     if engine.get_node(start_node_id)?.is_none() {
-        return Err(ProximaDBError::NotFound(
+        return Err(ProximaDBError::InvalidInput(
             format!("Start node {} not found", start_node_id)
         ));
     }
@@ -435,7 +437,7 @@ mod tests {
     use super::*;
     use crate::graph::engines::neo::NeoGraphEngine;
     use crate::graph::{Node, Edge, PropertyValue};
-    use crate::proto::proximadb::v1::property_value::Value;
+    use crate::proto::proximadb_v1::property_value::Value;
     
     #[tokio::test]
     async fn test_bfs_basic() {

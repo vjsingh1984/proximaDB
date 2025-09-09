@@ -26,7 +26,8 @@
 //! - **Composite Indexes**: Multi-property indexes for complex queries
 //! - **Full-Text Indexes**: Text search on string properties (future)
 
-use crate::errors::{Result, ProximaDBError};
+use crate::core::error::{ProximaDBError};
+type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, Edge, NodeId, EdgeId, PropertyValue};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -511,15 +512,15 @@ impl Default for IndexManager {
 /// Convert PropertyValue to string for indexing
 fn property_value_to_string(value: &PropertyValue) -> String {
     match &value.value {
-        Some(crate::proto::proximadb::v1::property_value::Value::StringValue(s)) => s.clone(),
-        Some(crate::proto::proximadb::v1::property_value::Value::IntValue(i)) => i.to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::DoubleValue(d)) => d.to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::BoolValue(b)) => b.to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::BytesValue(b)) => {
+        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
+        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
             format!("bytes:{}", b.len())
         },
-        Some(crate::proto::proximadb::v1::property_value::Value::ArrayValue(_)) => "array".to_string(),
-        Some(crate::proto::proximadb::v1::property_value::Value::ObjectValue(_)) => "object".to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => "array".to_string(),
+        Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => "object".to_string(),
         None => "null".to_string(),
     }
 }
@@ -527,7 +528,7 @@ fn property_value_to_string(value: &PropertyValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::v1::property_value::Value;
+    use crate::proto::proximadb_v1::property_value::Value;
     
     #[test]
     fn test_property_index() {

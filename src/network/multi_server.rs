@@ -393,6 +393,7 @@ impl MultiServerConfig {
 pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
     pub vector_operations_service: Arc<VectorOperationsService>,
+    pub graph_service: Arc<crate::graph::GraphService>,
     pub unified_handlers: Arc<UnifiedHandlers>,
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     // Removed circular dependency: storage field removed
@@ -643,6 +644,11 @@ impl SharedServices {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
 
+        // Create GraphService for native graph database operations
+        debug!("🔧 SharedServices::new - Creating GraphService for graph database operations...");
+        let graph_service = Arc::new(crate::graph::GraphService::new());
+        debug!("✅ SharedServices::new - GraphService created successfully");
+
         // Create unified handlers with VectorOperationsService
         let unified_handlers = Arc::new(UnifiedHandlers::new(
             collection_service.clone(),
@@ -657,6 +663,7 @@ impl SharedServices {
             Self {
                 collection_service: collection_service.clone(),
                 vector_operations_service,
+                graph_service,
                 unified_handlers,
                 metrics_collector,
             },

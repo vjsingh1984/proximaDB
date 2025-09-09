@@ -59,7 +59,8 @@ pub mod storage;
 pub mod traversal;
 pub mod index;
 
-use crate::errors::{Result, ProximaDBError};
+use crate::core::error::{ProximaDBError};
+type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, Edge, NodeId, EdgeId, GraphMemoryPool};
 use crate::graph::engines::GraphEngine;
 use std::sync::Arc;
@@ -519,7 +520,7 @@ impl Default for NeoGraphEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::v1::property_value::Value;
+    use crate::proto::proximadb_v1::property_value::Value;
     use crate::graph::PropertyValue;
     
     #[tokio::test]

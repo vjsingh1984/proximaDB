@@ -28,7 +28,8 @@ pub mod neo;
 // pub mod titan;   // Distributed graph engine
 // pub mod mercury; // Hybrid hot/cold tiering
 
-use crate::errors::Result;
+use crate::core::error::{ProximaDBError};
+type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, Edge, NodeId, EdgeId};
 use std::sync::Arc;
 

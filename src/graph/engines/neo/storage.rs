@@ -46,7 +46,8 @@
 //! - **SIMD Ready**: Can vectorize operations on target arrays
 //! - **Parallel Safe**: Multiple threads can read simultaneously
 
-use crate::errors::{Result, ProximaDBError};
+use crate::core::error::{ProximaDBError};
+type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::EdgeId;
 use std::collections::HashMap;
 

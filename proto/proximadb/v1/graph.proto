@@ -4,6 +4,7 @@ package proximadb.v1;
 
 import "google/protobuf/timestamp.proto";
 import "proximadb/v1/entity.proto";
+import "proximadb/v1/relations.proto";
 
 // Core graph data model for ProximaDB's native graph database engine
 // Follows proto-first design with zero-copy serialization for maximum performance
@@ -20,7 +21,7 @@ message Node {
   map<string, PropertyValue> properties = 3;
   
   // Optional embedding vector for semantic search integration
-  optional VectorEmbedding embedding = 4;
+  optional EmbeddingVersion embedding = 4;
   
   // Metadata
   google.protobuf.Timestamp created_at = 5;
@@ -143,13 +144,7 @@ message TraversalResponse {
   TraversalStats stats = 4;
 }
 
-// Path through the graph
-message GraphPath {
-  repeated string node_ids = 1;
-  repeated string edge_ids = 2;
-  double total_weight = 3;
-  uint32 length = 4;
-}
+// NOTE: GraphPath is defined in relations.proto and imported above
 
 // Traversal statistics
 message TraversalStats {

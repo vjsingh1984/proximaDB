@@ -2078,3 +2078,385 @@ pub mod context_service_server {
         const NAME: &'static str = "proximadb.v1.ContextService";
     }
 }
+/// Node represents a vertex in the graph with labels and properties
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Node {
+    /// Unique identifier for the node (UUID/ULID)
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// List of labels/types for this node (e.g., \["Person", "Employee"\])
+    #[prost(string, repeated, tag = "2")]
+    pub labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Properties as key-value pairs
+    #[prost(map = "string, message", tag = "3")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertyValue,
+    >,
+    /// Optional embedding vector for semantic search integration
+    #[prost(message, optional, tag = "4")]
+    pub embedding: ::core::option::Option<EmbeddingVersion>,
+    /// Metadata
+    #[prost(message, optional, tag = "5")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "6")]
+    pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// Edge represents a directed relationship between two nodes
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Edge {
+    /// Unique identifier for the edge (UUID/ULID)
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    /// Source node ID
+    #[prost(string, tag = "2")]
+    pub from_node_id: ::prost::alloc::string::String,
+    /// Target node ID
+    #[prost(string, tag = "3")]
+    pub to_node_id: ::prost::alloc::string::String,
+    /// Edge type/relationship name (e.g., "KNOWS", "WORKS_FOR")
+    #[prost(string, tag = "4")]
+    pub edge_type: ::prost::alloc::string::String,
+    /// Properties as key-value pairs
+    #[prost(map = "string, message", tag = "5")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertyValue,
+    >,
+    /// Optional weight for weighted graphs
+    #[prost(double, optional, tag = "6")]
+    pub weight: ::core::option::Option<f64>,
+    /// Metadata
+    #[prost(message, optional, tag = "7")]
+    pub created_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag = "8")]
+    pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+/// PropertyValue supports various data types for flexible schema
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PropertyValue {
+    #[prost(oneof = "property_value::Value", tags = "1, 2, 3, 4, 5, 6, 7")]
+    pub value: ::core::option::Option<property_value::Value>,
+}
+/// Nested message and enum types in `PropertyValue`.
+pub mod property_value {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(string, tag = "1")]
+        StringValue(::prost::alloc::string::String),
+        #[prost(int64, tag = "2")]
+        IntValue(i64),
+        #[prost(double, tag = "3")]
+        DoubleValue(f64),
+        #[prost(bool, tag = "4")]
+        BoolValue(bool),
+        #[prost(bytes, tag = "5")]
+        BytesValue(::prost::alloc::vec::Vec<u8>),
+        #[prost(message, tag = "6")]
+        ArrayValue(super::PropertyArray),
+        #[prost(message, tag = "7")]
+        ObjectValue(super::PropertyObject),
+    }
+}
+/// Array of property values
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PropertyArray {
+    #[prost(message, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<PropertyValue>,
+}
+/// Nested object property
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PropertyObject {
+    #[prost(map = "string, message", tag = "1")]
+    pub fields: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertyValue,
+    >,
+}
+/// Graph traversal request
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TraversalRequest {
+    /// Starting node ID
+    #[prost(string, tag = "1")]
+    pub start_node_id: ::prost::alloc::string::String,
+    /// Maximum depth to traverse
+    #[prost(uint32, tag = "2")]
+    pub max_depth: u32,
+    /// Edge types to follow (empty = all types)
+    #[prost(string, repeated, tag = "3")]
+    pub edge_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Node label filter
+    #[prost(string, repeated, tag = "4")]
+    pub node_labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Property filters
+    #[prost(message, repeated, tag = "5")]
+    pub filters: ::prost::alloc::vec::Vec<PropertyFilter>,
+    /// Traversal algorithm
+    #[prost(enumeration = "TraversalAlgorithm", tag = "6")]
+    pub algorithm: i32,
+    /// Maximum number of results
+    #[prost(uint32, optional, tag = "7")]
+    pub limit: ::core::option::Option<u32>,
+}
+/// Property filter for graph queries
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PropertyFilter {
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(enumeration = "PropertyFilterOperator", tag = "2")]
+    pub operator: i32,
+    #[prost(message, optional, tag = "3")]
+    pub value: ::core::option::Option<PropertyValue>,
+}
+/// Graph traversal response
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TraversalResponse {
+    /// Visited nodes in traversal order
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: ::prost::alloc::vec::Vec<Node>,
+    /// Edges traversed
+    #[prost(message, repeated, tag = "2")]
+    pub edges: ::prost::alloc::vec::Vec<Edge>,
+    /// Path information (node IDs in sequence)
+    #[prost(message, repeated, tag = "3")]
+    pub paths: ::prost::alloc::vec::Vec<GraphPath>,
+    /// Statistics
+    #[prost(message, optional, tag = "4")]
+    pub stats: ::core::option::Option<TraversalStats>,
+}
+/// Traversal statistics
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TraversalStats {
+    #[prost(uint32, tag = "1")]
+    pub nodes_visited: u32,
+    #[prost(uint32, tag = "2")]
+    pub edges_traversed: u32,
+    #[prost(uint32, tag = "3")]
+    pub max_depth_reached: u32,
+    #[prost(uint64, tag = "4")]
+    pub execution_time_microseconds: u64,
+}
+/// Node query request
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NodeQuery {
+    /// Node labels to match
+    #[prost(string, repeated, tag = "1")]
+    pub labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Property filters
+    #[prost(message, repeated, tag = "2")]
+    pub filters: ::prost::alloc::vec::Vec<PropertyFilter>,
+    /// Limit results
+    #[prost(uint32, optional, tag = "3")]
+    pub limit: ::core::option::Option<u32>,
+    /// Skip/offset for pagination
+    #[prost(uint32, optional, tag = "4")]
+    pub offset: ::core::option::Option<u32>,
+}
+/// Edge query request
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EdgeQuery {
+    /// Source node ID filter
+    #[prost(string, optional, tag = "1")]
+    pub from_node_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Target node ID filter
+    #[prost(string, optional, tag = "2")]
+    pub to_node_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Edge types to match
+    #[prost(string, repeated, tag = "3")]
+    pub edge_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Property filters
+    #[prost(message, repeated, tag = "4")]
+    pub filters: ::prost::alloc::vec::Vec<PropertyFilter>,
+    /// Limit results
+    #[prost(uint32, optional, tag = "5")]
+    pub limit: ::core::option::Option<u32>,
+    /// Skip/offset for pagination
+    #[prost(uint32, optional, tag = "6")]
+    pub offset: ::core::option::Option<u32>,
+}
+/// Batch operations for high-performance ingestion
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchNodeRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: ::prost::alloc::vec::Vec<Node>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchEdgeRequest {
+    #[prost(message, repeated, tag = "1")]
+    pub edges: ::prost::alloc::vec::Vec<Edge>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct BatchResponse {
+    #[prost(uint32, tag = "1")]
+    pub created_count: u32,
+    #[prost(uint32, tag = "2")]
+    pub updated_count: u32,
+    #[prost(uint32, tag = "3")]
+    pub failed_count: u32,
+    #[prost(string, repeated, tag = "4")]
+    pub failed_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "5")]
+    pub error_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Graph statistics and metadata
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphStats {
+    #[prost(uint64, tag = "1")]
+    pub total_nodes: u64,
+    #[prost(uint64, tag = "2")]
+    pub total_edges: u64,
+    #[prost(message, repeated, tag = "3")]
+    pub label_stats: ::prost::alloc::vec::Vec<LabelStats>,
+    #[prost(message, repeated, tag = "4")]
+    pub edge_type_stats: ::prost::alloc::vec::Vec<EdgeTypeStats>,
+    #[prost(uint64, tag = "5")]
+    pub total_properties: u64,
+    #[prost(uint64, tag = "6")]
+    pub memory_usage_bytes: u64,
+    #[prost(double, tag = "7")]
+    pub average_degree: f64,
+    #[prost(uint32, tag = "8")]
+    pub max_degree: u32,
+    #[prost(uint32, tag = "9")]
+    pub connected_components: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LabelStats {
+    #[prost(string, tag = "1")]
+    pub label: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub count: u64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EdgeTypeStats {
+    #[prost(string, tag = "1")]
+    pub edge_type: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub count: u64,
+}
+/// Supported property filter operators
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PropertyFilterOperator {
+    Unspecified = 0,
+    Equals = 1,
+    NotEquals = 2,
+    GreaterThan = 3,
+    LessThan = 4,
+    GreaterEqual = 5,
+    LessEqual = 6,
+    Contains = 7,
+    StartsWith = 8,
+    EndsWith = 9,
+}
+impl PropertyFilterOperator {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            PropertyFilterOperator::Unspecified => "PROPERTY_FILTER_OPERATOR_UNSPECIFIED",
+            PropertyFilterOperator::Equals => "PROPERTY_FILTER_OPERATOR_EQUALS",
+            PropertyFilterOperator::NotEquals => "PROPERTY_FILTER_OPERATOR_NOT_EQUALS",
+            PropertyFilterOperator::GreaterThan => {
+                "PROPERTY_FILTER_OPERATOR_GREATER_THAN"
+            }
+            PropertyFilterOperator::LessThan => "PROPERTY_FILTER_OPERATOR_LESS_THAN",
+            PropertyFilterOperator::GreaterEqual => {
+                "PROPERTY_FILTER_OPERATOR_GREATER_EQUAL"
+            }
+            PropertyFilterOperator::LessEqual => "PROPERTY_FILTER_OPERATOR_LESS_EQUAL",
+            PropertyFilterOperator::Contains => "PROPERTY_FILTER_OPERATOR_CONTAINS",
+            PropertyFilterOperator::StartsWith => "PROPERTY_FILTER_OPERATOR_STARTS_WITH",
+            PropertyFilterOperator::EndsWith => "PROPERTY_FILTER_OPERATOR_ENDS_WITH",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PROPERTY_FILTER_OPERATOR_UNSPECIFIED" => Some(Self::Unspecified),
+            "PROPERTY_FILTER_OPERATOR_EQUALS" => Some(Self::Equals),
+            "PROPERTY_FILTER_OPERATOR_NOT_EQUALS" => Some(Self::NotEquals),
+            "PROPERTY_FILTER_OPERATOR_GREATER_THAN" => Some(Self::GreaterThan),
+            "PROPERTY_FILTER_OPERATOR_LESS_THAN" => Some(Self::LessThan),
+            "PROPERTY_FILTER_OPERATOR_GREATER_EQUAL" => Some(Self::GreaterEqual),
+            "PROPERTY_FILTER_OPERATOR_LESS_EQUAL" => Some(Self::LessEqual),
+            "PROPERTY_FILTER_OPERATOR_CONTAINS" => Some(Self::Contains),
+            "PROPERTY_FILTER_OPERATOR_STARTS_WITH" => Some(Self::StartsWith),
+            "PROPERTY_FILTER_OPERATOR_ENDS_WITH" => Some(Self::EndsWith),
+            _ => None,
+        }
+    }
+}
+/// Traversal algorithms
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum TraversalAlgorithm {
+    Unspecified = 0,
+    Bfs = 1,
+    Dfs = 2,
+    ParallelBfs = 3,
+}
+impl TraversalAlgorithm {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            TraversalAlgorithm::Unspecified => "TRAVERSAL_ALGORITHM_UNSPECIFIED",
+            TraversalAlgorithm::Bfs => "TRAVERSAL_ALGORITHM_BFS",
+            TraversalAlgorithm::Dfs => "TRAVERSAL_ALGORITHM_DFS",
+            TraversalAlgorithm::ParallelBfs => "TRAVERSAL_ALGORITHM_PARALLEL_BFS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TRAVERSAL_ALGORITHM_UNSPECIFIED" => Some(Self::Unspecified),
+            "TRAVERSAL_ALGORITHM_BFS" => Some(Self::Bfs),
+            "TRAVERSAL_ALGORITHM_DFS" => Some(Self::Dfs),
+            "TRAVERSAL_ALGORITHM_PARALLEL_BFS" => Some(Self::ParallelBfs),
+            _ => None,
+        }
+    }
+}
