@@ -22,15 +22,20 @@
 - REST base: `http://localhost:5678`
 - gRPC base: `localhost:5679`
 
-SQL
+=== Vector + Collections
+
+- REST
+  - `POST /api/v1/collections` (create), `GET /api/v1/collections` (list), `DELETE /api/v1/collections/:id`
+  - `POST /api/v1/search` (vector search), `POST /api/v1/vectors/batch` (batch upsert)
+- gRPC
+  - Service `proximadb.ProximaDB` → `CollectionOperation`, `VectorBatch`, `VectorSearch`, `VectorGet`
+
+=== Graph
+
+- REST: `/v1/graph/*` — nodes, edges, `traverse`, `shortest_path`, `stats`, constraints
+- gRPC: Service `proximadb.v1.GraphService` — CRUD, traversal, streaming, analysis
+
+=== SQL
+
 - REST: `POST /api/v1/sql/execute`, `POST /api/v1/sql/explain`
-- gRPC: ExecuteSql planned (proto defined)
-
-Graph
-- REST: `/v1/graph/*` (nodes, edges, traverse, shortest_path, stats, constraints)
-- gRPC: `proximadb.v1.GraphService`
-
-Vector/Collections
-- REST: `/api/v1/*`
-- gRPC: `proximadb.ProximaDB`
-
+- gRPC: `ExecuteSql` defined in protobuf (handler wiring staged)

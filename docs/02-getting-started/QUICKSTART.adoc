@@ -83,6 +83,39 @@ curl -X POST http://localhost:5678/v1/graph/traverse \
 
 == Python Client Example
 
+== One‑File Graph Demo (REST)
+
+Save as `graph_demo.sh`, then `bash graph_demo.sh` (server on :5678):
+
+[source,bash]
+----
+#!/usr/bin/env bash
+set -euo pipefail
+BASE="http://localhost:5678"
+
+echo "Creating nodes..."
+curl -s -X POST "$BASE/v1/graph/nodes" -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"u1","labels":["User"],"properties":{"name":{"stringValue":"Alice"}}}}' >/dev/null
+curl -s -X POST "$BASE/v1/graph/nodes" -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"u2","labels":["User"],"properties":{"name":{"stringValue":"Bob"}}}}' >/dev/null
+curl -s -X POST "$BASE/v1/graph/nodes" -H 'Content-Type: application/json' \
+  -d '{"node":{"id":"u3","labels":["User"],"properties":{"name":{"stringValue":"Cara"}}}}' >/dev/null
+
+echo "Creating edges..."
+curl -s -X POST "$BASE/v1/graph/edges" -H 'Content-Type: application/json' \
+  -d '{"edge":{"id":"e1","from_node_id":"u1","to_node_id":"u2","edge_type":"FOLLOWS"}}' >/dev/null
+curl -s -X POST "$BASE/v1/graph/edges" -H 'Content-Type: application/json' \
+  -d '{"edge":{"id":"e2","from_node_id":"u2","to_node_id":"u3","edge_type":"FOLLOWS"}}' >/dev/null
+
+echo "BFS traversal from u1 (depth 2)..."
+curl -s -X POST "$BASE/v1/graph/traverse" -H 'Content-Type: application/json' \
+  -d '{"start_node_id":"u1","max_depth":2,"algorithm":"BFS"}' | jq '.stats,.nodes|length'
+
+echo "Shortest path u1 -> u3 (Dijkstra)..."
+curl -s -X POST "$BASE/v1/graph/shortest_path" -H 'Content-Type: application/json' \
+  -d '{"start_node_id":"u1","target_node_id":"u3","algorithm":"DIJKSTRA"}' | jq
+----
+
 === Install Client
 
 [source,bash]

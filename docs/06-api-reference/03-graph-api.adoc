@@ -208,10 +208,6 @@ Response:
 === REST — Add/Remove Unique Constraint
 
 ----
-
-== Hybrid (SKS)
-
-- Proto includes `ExecuteHybridQuery(HybridSearchRequest)`; server handler is staging. Compose vector + graph today (two calls).
 curl -X POST http://localhost:5678/v1/graph/constraints/unique \
   -H 'Content-Type: application/json' \
   -d '{"label":"Person","property":"email"}'
@@ -219,6 +215,32 @@ curl -X POST http://localhost:5678/v1/graph/constraints/unique \
 curl -X DELETE http://localhost:5678/v1/graph/constraints/unique \
   -H 'Content-Type: application/json' \
   -d '{"label":"Person","property":"email"}'
+----
+
+== Hybrid (SKS)
+
+- Proto includes `ExecuteHybridQuery(HybridSearchRequest)`; server handler is staging. Compose vector + graph today (two calls).
+
+== gRPC Node CRUD (grpcurl)
+
+CreateNode:
+----
+grpcurl -d '{
+  "node": {"id":"n1","labels":["Person"],
+           "properties":{"name":{"stringValue":"Ada"}}}
+}' -plaintext localhost:5679 proximadb.v1.GraphService/CreateNode
+----
+
+GetNode:
+----
+grpcurl -d '{"node_id":"n1"}' \
+  -plaintext localhost:5679 proximadb.v1.GraphService/GetNode
+----
+
+DeleteNode:
+----
+grpcurl -d '{"node_id":"n1"}' \
+  -plaintext localhost:5679 proximadb.v1.GraphService/DeleteNode
 ----
 
 === gRPC — Add Unique Constraint
