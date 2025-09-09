@@ -227,6 +227,19 @@ impl From<&crate::proto::proximadb::MetadataItem> for MetadataValue {
     }
 }
 
+/// Convert from v1 protobuf SqlValue (used in v1 vector types)
+impl From<&crate::proto::proximadb_v1::SqlValue> for MetadataValue {
+    fn from(item: &crate::proto::proximadb_v1::SqlValue) -> Self {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        match &item.value {
+            Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
+            Some(Value::NumberValue(n)) => MetadataValue::Number(*n),
+            Some(Value::BoolValue(b)) => MetadataValue::Bool(*b),
+            None => MetadataValue::Null,
+        }
+    }
+}
+
 /// Convert to protobuf MetadataItem
 impl From<(&String, &MetadataValue)> for crate::proto::proximadb::MetadataItem {
     fn from((key, value): (&String, &MetadataValue)) -> Self {
@@ -243,6 +256,20 @@ impl From<(&String, &MetadataValue)> for crate::proto::proximadb::MetadataItem {
             key: key.clone(),
             value: proto_value,
         }
+    }
+}
+
+/// Convert to v1 protobuf MetadataItem (vector types)
+impl From<(&String, &MetadataValue)> for crate::proto::proximadb_v1::MetadataItem {
+    fn from((key, value): (&String, &MetadataValue)) -> Self {
+        use crate::proto::proximadb_v1::metadata_item::Value;
+        let proto_value = match value {
+            MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
+            MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
+            MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
+            MetadataValue::Null => None,
+        };
+        crate::proto::proximadb_v1::MetadataItem { key: key.clone(), value: proto_value }
     }
 }
 
