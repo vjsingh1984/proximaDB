@@ -260,7 +260,7 @@ flowchart TB
     subgraph "Storage Layer"
         ES[Entity Store<br/>SST Engine]
         VS[Vector Store<br/>VIPER Engine]
-        GS[Graph Store<br/>ATLAS Engine]
+        GS[Graph Store<br/>ORION Engine]
     end
     
     subgraph "Query Layer"
