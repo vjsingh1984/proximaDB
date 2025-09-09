@@ -159,12 +159,12 @@
   <!-- Full tagline with emphasis on key features -->
   <text x="85" y="58" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
         font-size="9" fill="#64748b" font-weight="500">
-    DISTRIBUTED VECTOR DATABASE PLATFORM
+    VECTOR • GRAPH • SKS PLATFORM
   </text>
   
   <!-- Sub-tagline highlighting unique features -->
   <text x="85" y="70" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
         font-size="7" fill="#94a3b8" font-weight="400">
-    Multi-Engine • Storage Optimized • Built from Ground Up
+    REST • gRPC • SQL APIs • Hybrid Vector+Graph
   </text>
 </svg>

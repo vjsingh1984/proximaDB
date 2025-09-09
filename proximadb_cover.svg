@@ -180,36 +180,36 @@
     <!-- Primary tagline -->
     <text y="30" text-anchor="middle" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
           font-size="28" font-weight="400" fill="#94a3b8">
-      DISTRIBUTED VECTOR DATABASE PLATFORM
+      VECTOR • GRAPH • SKS PLATFORM
     </text>
     
     <!-- Feature highlights -->
     <text y="70" text-anchor="middle" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif" 
           font-size="20" font-weight="300" fill="#64748b">
-      Multi-Engine Architecture • Storage Optimized • Built from Ground Up
+      Multi-Engine Storage • Native Graph • Hybrid Semantic Knowledge Store
     </text>
     
     <!-- Key metrics -->
     <g transform="translate(-200, 120)" font-family="'Inter', 'Segoe UI', -apple-system, sans-serif">
-      <!-- Performance -->
+      <!-- APIs -->
       <g transform="translate(0, 0)">
-        <rect x="-5" y="-20" width="120" height="40" rx="8" fill="url(#proximaGradient)" opacity="0.1"/>
-        <text x="55" y="0" text-anchor="middle" font-size="14" fill="#10b981" font-weight="600">2.5x Faster</text>
-        <text x="55" y="15" text-anchor="middle" font-size="10" fill="#64748b">Search Performance</text>
+        <rect x="-5" y="-20" width="160" height="40" rx="8" fill="url(#proximaGradient)" opacity="0.1"/>
+        <text x="75" y="0" text-anchor="middle" font-size="14" fill="#10b981" font-weight="600">REST • gRPC • SQL</text>
+        <text x="75" y="15" text-anchor="middle" font-size="10" fill="#64748b">Unified APIs</text>
       </g>
       
-      <!-- Storage -->
+      <!-- Hybrid -->
       <g transform="translate(140, 0)">
-        <rect x="-5" y="-20" width="120" height="40" rx="8" fill="url(#proximaGradient)" opacity="0.1"/>
-        <text x="55" y="0" text-anchor="middle" font-size="14" fill="#06b6d4" font-weight="600">45% Less</text>
-        <text x="55" y="15" text-anchor="middle" font-size="10" fill="#64748b">Memory Usage</text>
+        <rect x="-5" y="-20" width="160" height="40" rx="8" fill="url(#proximaGradient)" opacity="0.1"/>
+        <text x="75" y="0" text-anchor="middle" font-size="14" fill="#06b6d4" font-weight="600">Hybrid Vector + Graph</text>
+        <text x="75" y="15" text-anchor="middle" font-size="10" fill="#64748b">SKS Unified</text>
       </g>
       
       <!-- Engines -->
       <g transform="translate(280, 0)">
-        <rect x="-5" y="-20" width="120" height="40" rx="8" fill="url(#proximaGradient)" opacity="0.1"/>
-        <text x="55" y="0" text-anchor="middle" font-size="14" fill="#a855f7" font-weight="600">7 Engines</text>
-        <text x="55" y="15" text-anchor="middle" font-size="10" fill="#64748b">Specialized Storage</text>
+        <rect x="-5" y="-20" width="160" height="40" rx="8" fill="url(#proximaGradient)" opacity="0.1"/>
+        <text x="75" y="0" text-anchor="middle" font-size="14" fill="#a855f7" font-weight="600">Vector • Graph Engines</text>
+        <text x="75" y="15" text-anchor="middle" font-size="10" fill="#64748b">ORION • PULSAR • QUASAR</text>
       </g>
     </g>
   </g>

@@ -1,0 +1,22 @@
+<svg width="140" height="40" viewBox="0 0 140 40" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="orionGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+    <filter id="soft">
+      <feGaussianBlur stdDeviation="1"/>
+    </filter>
+  </defs>
+  <rect x="0" y="0" width="140" height="40" rx="8" fill="#0b1220" opacity="0.0"/>
+  <g transform="translate(12,20)">
+    <!-- Orbit circle -->
+    <circle r="12" fill="#052e26"/>
+    <circle r="10" fill="#0b5446" opacity="0.2" filter="url(#soft)"/>
+    <circle r="6" fill="url(#orionGrad)"/>
+    <!-- Node + orbit -->
+    <circle cx="10" cy="-8" r="2" fill="#34d399"/>
+    <path d="M 0 -6 A 10 10 0 1 0 0 6" fill="none" stroke="#34d399" stroke-width="1" opacity="0.6"/>
+  </g>
+  <text x="46" y="25" font-family="Inter, Segoe UI, sans-serif" font-size="16" font-weight="700" fill="url(#orionGrad)">ORION</text>
+</svg>

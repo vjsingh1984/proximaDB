@@ -1,0 +1,21 @@
+<svg width="140" height="40" viewBox="0 0 140 40" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="pulsarGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="1"/>
+    </filter>
+  </defs>
+  <rect x="0" y="0" width="140" height="40" rx="8" fill="#0b1220" opacity="0.0"/>
+  <g transform="translate(12,20)">
+   <!-- Pulsar burst -->
+   <circle r="12" fill="#0b0f2a"/>
+   <circle r="9" fill="#1e1b4b" opacity="0.4" filter="url(#softGlow)"/>
+   <path d="M -8 0 L 8 0" stroke="url(#pulsarGrad)" stroke-width="2"/>
+   <path d="M 0 -8 L 0 8" stroke="url(#pulsarGrad)" stroke-width="2"/>
+   <circle r="3" fill="url(#pulsarGrad)"/>
+  </g>
+  <text x="46" y="25" font-family="Inter, Segoe UI, sans-serif" font-size="16" font-weight="700" fill="url(#pulsarGrad)">PULSAR</text>
+</svg>
