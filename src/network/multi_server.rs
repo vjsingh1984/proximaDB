@@ -649,11 +649,14 @@ impl SharedServices {
         let graph_service = Arc::new(crate::graph::GraphService::new());
         debug!("✅ SharedServices::new - GraphService created successfully");
 
-        // Create unified handlers with VectorOperationsService
-        let unified_handlers = Arc::new(UnifiedHandlers::new(
+        // Create unified handlers with VectorOperationsService and GraphService
+        let mut unified_handlers_instance = UnifiedHandlers::new(
             collection_service.clone(),
             vector_operations_service.clone(),
-        ));
+        );
+        // Replace the auto-created GraphService with our shared one
+        unified_handlers_instance.graph_service = graph_service.clone();
+        let unified_handlers = Arc::new(unified_handlers_instance);
 
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"

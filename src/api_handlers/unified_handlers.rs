@@ -74,6 +74,8 @@ pub struct UnifiedHandlers {
     pub collection_service: Arc<CollectionService>,
     /// Optimized vector service with eliminated registry overhead
     pub vector_operations_service: Arc<VectorOperationsService>,
+    /// Native graph service for graph database operations
+    pub graph_service: Arc<crate::graph::GraphService>,
     /// Metrics query service for collection statistics and optimization hints
     pub metrics_query_service: Option<Arc<MetricsQueryService>>,
 }
@@ -92,6 +94,7 @@ impl UnifiedHandlers {
         Self {
             collection_service,
             vector_operations_service,
+            graph_service: Arc::new(crate::graph::GraphService::new()),
             metrics_query_service: None,
         }
     }
@@ -105,6 +108,7 @@ impl UnifiedHandlers {
         Self {
             collection_service,
             vector_operations_service,
+            graph_service: Arc::new(crate::graph::GraphService::new()),
             metrics_query_service: Some(metrics_query_service),
         }
     }

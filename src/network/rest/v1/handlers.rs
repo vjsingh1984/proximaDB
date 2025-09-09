@@ -311,6 +311,9 @@ pub fn create_router(state: AppState) -> axum::Router {
         // With metadata endpoints
         .route("/api/v1/search/with_metadata", post(vector_search_with_metadata))
         
+        // Graph database endpoints
+        .nest("/api/v1/graph", crate::network::rest::v1::graph::create_graph_router())
+        
         .with_state(state)
 }
 

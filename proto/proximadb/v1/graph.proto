@@ -200,11 +200,16 @@ message BatchEdgeRequest {
 }
 
 message BatchResponse {
-  uint32 created_count = 1;
-  uint32 updated_count = 2;
-  uint32 failed_count = 3;
-  repeated string failed_ids = 4;
-  repeated string error_messages = 5;
+  bool success = 1;
+  repeated Node nodes = 2;
+  repeated Edge edges = 3;
+  optional string error_message = 4;
+  // Legacy fields for backward compatibility
+  optional uint32 created_count = 5;
+  optional uint32 updated_count = 6;
+  optional uint32 failed_count = 7;
+  repeated string failed_ids = 8;
+  repeated string error_messages = 9;
 }
 
 // Graph statistics and metadata
@@ -228,4 +233,75 @@ message LabelStats {
 message EdgeTypeStats {
   string edge_type = 1;
   uint64 count = 2;
+}
+
+// Additional request messages for gRPC service
+
+message CreateNodeRequest {
+  Node node = 1;
+}
+
+message GetNodeRequest {
+  string node_id = 1;
+}
+
+message UpdateNodeRequest {
+  Node node = 1;
+}
+
+message DeleteNodeRequest {
+  string node_id = 1;
+}
+
+message CreateEdgeRequest {
+  Edge edge = 1;
+}
+
+message GetEdgeRequest {
+  string edge_id = 1;
+}
+
+message UpdateEdgeRequest {
+  Edge edge = 1;
+}
+
+message DeleteEdgeRequest {
+  string edge_id = 1;
+}
+
+message GetNeighborsRequest {
+  string node_id = 1;
+  optional string edge_type = 2;
+}
+
+message GetStatsRequest {
+  // Empty request for getting graph statistics
+}
+
+// Service definition for graph operations
+service GraphService {
+    // Node operations
+    rpc CreateNode(CreateNodeRequest) returns (Node);
+    rpc GetNode(GetNodeRequest) returns (Node);
+    rpc UpdateNode(UpdateNodeRequest) returns (Node);
+    rpc DeleteNode(DeleteNodeRequest) returns (Node);
+    
+    // Edge operations
+    rpc CreateEdge(CreateEdgeRequest) returns (Edge);
+    rpc GetEdge(GetEdgeRequest) returns (Edge);
+    rpc UpdateEdge(UpdateEdgeRequest) returns (Edge);
+    rpc DeleteEdge(DeleteEdgeRequest) returns (Edge);
+    
+    // Query operations
+    rpc QueryNodes(NodeQuery) returns (BatchResponse);
+    rpc QueryEdges(EdgeQuery) returns (BatchResponse);
+    
+    // Graph operations
+    rpc GetNeighbors(GetNeighborsRequest) returns (BatchResponse);
+    rpc TraverseGraph(TraversalRequest) returns (TraversalResponse);
+    rpc GetGraphStats(GetStatsRequest) returns (GraphStats);
+    
+    // Batch operations
+    rpc BatchCreateNodes(BatchNodeRequest) returns (BatchResponse);
+    rpc BatchCreateEdges(BatchEdgeRequest) returns (BatchResponse);
 }

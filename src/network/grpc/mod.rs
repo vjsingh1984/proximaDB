@@ -7,8 +7,11 @@
 
 pub mod v1;
 pub mod entity_service;
+pub mod graph_service;
 
 // Re-export the service from v1
 pub use v1::service::ProximaDbGrpcService;
 // Re-export the entity service for SKS
 pub use entity_service::EntityServiceImpl;
+// Re-export the graph service
+pub use graph_service::GraphServiceImpl;
