@@ -24,7 +24,7 @@ ProximaDB will become the industry's first **three-mode database platform**, cap
 graph TB
     subgraph "ProximaDB Platform"
         V[Vector Engine<br/>VIPER/SST/RAPTOR]
-        G[Graph Engine<br/>NEO/TITAN/MERCURY]
+        G[Graph Engine<br/>ATLAS/COSMOS/QUANTUM]
         S[SKS Layer<br/>Unified Memory]
         
         V -.->|Arc Sharing| S
@@ -235,7 +235,7 @@ graph TB
         end
     end
     
-    subgraph "HELIX Engine"
+    subgraph "ATLAS Engine"
         CSR1[CSR Structure]
         IDX1[Node Index]
         TRAV[Traversal Cursor]
@@ -270,17 +270,17 @@ graph TB
 [cols="1,1,2,1", options="header"]
 |===
 | Engine | Type | Optimization | Status
-| **HELIX** | In-Memory CSR | Real-time traversal, 1M+ edges/sec | Phase 1
-| **NEXUS** | Distributed | Sharded graph, 1B+ nodes | Phase 2
-| **FUSION** | Hybrid | Hot/cold tiering, cost-optimized | Phase 3
+| **ATLAS** | In-Memory CSR | Real-time traversal, 1M+ edges/sec | Phase 1
+| **COSMOS** | Distributed | Sharded graph, 1B+ nodes | Phase 2
+| **QUANTUM** | Hybrid | Hot/cold tiering, cost-optimized | Phase 3
 |===
 
-==== HELIX Engine: Compressed Sparse Row Format
+==== ATLAS Engine: Compressed Sparse Row Format
 
 [source,rust]
 ----
 // Ultra-efficient CSR representation
-pub struct HelixGraphEngine {
+pub struct AtlasGraphEngine {
     // Node storage
     nodes: Arc<DashMap<NodeId, Node>>,
     
@@ -313,7 +313,7 @@ sequenceDiagram
     participant C as Client
     participant R as REST/gRPC
     participant S as GraphService
-    participant N as HELIX Engine
+    participant N as ATLAS Engine
     participant M as Memory Pool
     participant I as Index
     
@@ -448,7 +448,7 @@ flowchart TD
     end
     
     subgraph "Storage Layer"
-        HELIX[HELIX Engine]
+        ATLAS[ATLAS Engine]
         VIPER[VIPER Engine]
         SST[SST Engine]
     end
@@ -462,18 +462,18 @@ flowchart TD
     REST --> GS
     GRPC --> GS
     
-    GS --> HELIX
+    GS --> ATLAS
     GS --> MP
     VS --> VIPER
     VS --> MP
     SS --> GS
     SS --> VS
     
-    HELIX --> IDX
+    ATLAS --> IDX
     VIPER --> IDX
     SST --> CACHE
     
-    MP -.->|Arc| HELIX
+    MP -.->|Arc| ATLAS
     MP -.->|Arc| VIPER
     MP -.->|Arc| SST
 ----
@@ -491,9 +491,9 @@ graph LR
     end
     
     subgraph "Graph Engines"
-        HELIX[HELIX<br/>In-Memory]
-        NEXUS[NEXUS<br/>Distributed]
-        FUSION[FUSION<br/>Hybrid]
+        ATLAS[ATLAS<br/>In-Memory]
+        COSMOS[COSMOS<br/>Distributed]
+        QUANTUM[QUANTUM<br/>Hybrid]
     end
     
     subgraph "Vector Engines"
@@ -502,8 +502,8 @@ graph LR
         RAPTOR[RAPTOR<br/>HNSW]
     end
     
-    HELIX -.->|Arc::clone()| NM
-    HELIX -.->|Arc::clone()| EM
+    ATLAS -.->|Arc::clone()| NM
+    ATLAS -.->|Arc::clone()| EM
     VIPER -.->|Arc::clone()| VE
     
     style NM fill:#e1f5fe
@@ -873,13 +873,13 @@ gantt
 src/
 ├── graph/
 │   ├── engines/
-│   │   ├── helix/         # In-memory CSR engine
+│   │   ├── atlas/         # In-memory CSR engine
 │   │   │   ├── mod.rs
 │   │   │   ├── storage.rs # CSR format implementation
 │   │   │   ├── traversal.rs
 │   │   │   └── index.rs
-│   │   ├── nexus/         # Distributed engine (Phase 2)
-│   │   └── fusion/        # Hybrid engine (Phase 3)
+│   │   ├── cosmos/        # Distributed engine (Phase 2)
+│   │   └── quantum/       # Hybrid engine (Phase 3)
 │   ├── service.rs         # GraphService implementation
 │   ├── traversal.rs       # Common traversal algorithms
 │   └── query/
@@ -969,7 +969,7 @@ impl GraphService {
 == Summary: The Path to $1B+ Valuation
 
 **Year 1:** Launch with dual-mode capability
-* Ship HELIX engine for graph-only mode
+* Ship ATLAS engine for graph-only mode
 * Maintain vector-only mode for existing customers
 * Capture initial market share in both segments
 
@@ -980,7 +980,7 @@ impl GraphService {
 
 **Year 3:** Dominate SKS category
 * Become de-facto standard for semantic applications
-* Expand to NEXUS (distributed) and FUSION (hybrid) engines
+* Expand to COSMOS (distributed) and QUANTUM (hybrid) engines
 * Reach $1.55B ARR → IPO
 
 **Strategic Moat:** Our intra-process architecture delivers 10x performance through zero network overhead and Arc-based memory sharing - a fundamental architectural advantage requiring complete system redesign to replicate.
