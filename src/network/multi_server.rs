@@ -824,13 +824,6 @@ impl MultiServer {
         if self.config.grpc_config.enable_grpc {
             info!("🔗 Starting gRPC Server on port 5679");
 
-            // Create thin gRPC handler with shared services
-            let grpc_handler =
-                crate::network::grpc::v1::service::ProximaDbGrpcService::new_with_services(
-                    services.clone(),
-                )
-                .await;
-
             // Create gRPC server builder
             let mut server_builder = tonic::transport::Server::builder();
 

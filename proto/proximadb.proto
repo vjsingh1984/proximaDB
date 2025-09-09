@@ -11,22 +11,9 @@ import "google/protobuf/struct.proto";
 // - Collection operations: Single unified endpoint for all metadata operations
 // ============================================================================
 
-service ProximaDB {
-  // Collection management - single unified endpoint for flexibility
-  rpc CollectionOperation(CollectionRequest) returns (CollectionResponse);
-  
-  // Vector operations - optimized batch operations
-  rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);         // Unified batch: insert/upsert/delete
-  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);       // Search via gRPC
-  rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);             // Get single vector by ID
-  
-  // SQL execution - minimal, wire-efficient response
-  rpc ExecuteSql(ExecuteSqlRequest) returns (ExecuteSqlResponse);
-  
-  // Health and monitoring
-  rpc Health(HealthRequest) returns (HealthResponse);
-  rpc GetMetrics(MetricsRequest) returns (MetricsResponse);
-}
+// Service definitions moved to versioned namespace:
+// - proximadb.v1.VectorService in proto/proximadb/v1/vector.proto
+// - proximadb.v1.SqlService in proto/proximadb/v1/sql.proto
 
 // ============================================================================
 // ENUMS - Aligned with Avro schema

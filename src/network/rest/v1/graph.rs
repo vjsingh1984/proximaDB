@@ -30,26 +30,26 @@
 //! ## Endpoint Overview
 //!
 //! ```text
-//! POST   /v1/graph/nodes           - Create node
-//! GET    /v1/graph/nodes/{id}      - Get node by ID
-//! PUT    /v1/graph/nodes/{id}      - Update node  
-//! DELETE /v1/graph/nodes/{id}      - Delete node
-//! POST   /v1/graph/edges           - Create edge
-//! GET    /v1/graph/edges/{id}      - Get edge by ID
-//! PUT    /v1/graph/edges/{id}      - Update edge
-//! DELETE /v1/graph/edges/{id}      - Delete edge
-//! GET    /v1/graph/nodes/{id}/neighbors - Get node neighbors
-//! POST   /v1/graph/traverse        - Graph traversal
-//! POST   /v1/graph/shortest_path   - Dijkstra shortest path
-//! POST   /v1/graph/constraints/unique   - Add unique constraint
-//! DELETE /v1/graph/constraints/unique   - Remove unique constraint
-//! GET    /v1/graph/components       - Connected components (weak)
-//! GET    /v1/graph/cycles           - Detect directed cycles
-//! GET    /v1/graph/stats           - Graph statistics
-//! POST   /v1/graph/nodes/batch     - Batch create nodes
-//! POST   /v1/graph/edges/batch     - Batch create edges
-//! POST   /v1/graph/query/nodes     - Query nodes
-//! POST   /v1/graph/query/edges     - Query edges
+//! POST   /api/v1/graph/nodes           - Create node
+//! GET    /api/v1/graph/nodes/{id}      - Get node by ID
+//! PUT    /api/v1/graph/nodes/{id}      - Update node  
+//! DELETE /api/v1/graph/nodes/{id}      - Delete node
+//! POST   /api/v1/graph/edges           - Create edge
+//! GET    /api/v1/graph/edges/{id}      - Get edge by ID
+//! PUT    /api/v1/graph/edges/{id}      - Update edge
+//! DELETE /api/v1/graph/edges/{id}      - Delete edge
+//! GET    /api/v1/graph/nodes/{id}/neighbors - Get node neighbors
+//! POST   /api/v1/graph/traverse        - Graph traversal
+//! POST   /api/v1/graph/shortest_path   - Dijkstra shortest path
+//! POST   /api/v1/graph/constraints/unique   - Add unique constraint
+//! DELETE /api/v1/graph/constraints/unique   - Remove unique constraint
+//! GET    /api/v1/graph/components       - Connected components (weak)
+//! GET    /api/v1/graph/cycles           - Detect directed cycles
+//! GET    /api/v1/graph/stats           - Graph statistics
+//! POST   /api/v1/graph/nodes/batch     - Batch create nodes
+//! POST   /api/v1/graph/edges/batch     - Batch create edges
+//! POST   /api/v1/graph/query/nodes     - Query nodes
+//! POST   /api/v1/graph/query/edges     - Query edges
 //! ```
 //!
 //! ## Request/Response Format
