@@ -45,6 +45,38 @@ ProximaDB is not just another vector database. It's a comprehensive platform for
 *   **Lower Latency & Cost:** A unified system means lower operational overhead and faster query performance compared to multi-system stacks.
 *   **Simplified Operations:** A single data plane to operate and secure across multiple clouds.
 
+== Cross-Collection Retrieval (Docs + Media)
+
+[source,sql]
+----
+-- Search in two collections (docs + media), then follow graph
+WITH candidates AS (
+  SELECT id AS item_id, 'docs' AS source, _similarity
+  FROM docs
+  WHERE SIMILAR(embedding, $query_vec, 'cosine')
+    AND department = $dept
+  LIMIT 20
+
+  UNION ALL
+
+  SELECT id AS item_id, 'media' AS source, _similarity
+  FROM media
+  WHERE SIMILAR(embedding, $query_vec, 'cosine')
+    AND media_type IN ('image','video')
+  LIMIT 20
+)
+SELECT g.title, g.url, g.owner, c.source
+FROM candidates c
+JOIN FOLLOW(c.item_id, 'references', 2) AS g ON g.seed_id = c.item_id
+ORDER BY _similarity DESC
+LIMIT 10;
+----
+
+Notes:
+
+* The engine applies hybrid fusion (e.g., RRF/Adaptive) over multi‑collection candidates.
+* Graph expansion adds authority and context; apply temporal/provenance filters as needed.
+
 == Example Conceptual SQL
 
 [source,sql]
