@@ -152,9 +152,9 @@ impl GraphService {
             }
         }
         let result = match algorithm.unwrap_or(
-            crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmDijkstra,
+            crate::proto::proximadb_v1::ShortestPathAlgorithm::SHORTEST_PATH_ALGORITHM_DIJKSTRA,
         ) {
-            crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmAstar => {
+            crate::proto::proximadb_v1::ShortestPathAlgorithm::SHORTEST_PATH_ALGORITHM_ASTAR => {
                 astar_shortest_path(&self.engine, start_node_id, target_node_id, config).await
             }
             _ => dijkstra_shortest_path(&self.engine, start_node_id, target_node_id, config).await,
@@ -218,7 +218,7 @@ impl GraphService {
         }
         // Enforce unique constraints per label/property
         self.enforce_unique_constraints_on_node(&node)?;
-        let node_arc = self.engine.insert_node(node);
+        let node_arc = self.engine.insert_node(node)?;
         // Register unique keys
         self.register_node_in_unique_constraints(&node_arc);
         Ok(node_arc)
@@ -244,7 +244,7 @@ impl GraphService {
         }
         // Enforce unique constraints before update
         self.enforce_unique_constraints_on_node(&node)?;
-        let node_arc = self.engine.update_node(node);
+        let node_arc = self.engine.update_node(node)?;
         // Update unique key registry
         self.register_node_in_unique_constraints(&node_arc);
         Ok(node_arc)
@@ -309,10 +309,10 @@ impl GraphService {
             )));
         }
 
-        let edge_arc = self.engine.insert_edge(edge);
+        let edge_arc = self.engine.insert_edge(edge)?;
         // Update edge stats
         self.stats_edges.fetch_add(1, Ordering::Relaxed);
-        *self.edge_type_counts.entry(edge_arc.edge_type.clone()).or_insert(0) += 1;
+        self.edge_type_counts.entry(edge_arc.edge_type.clone()).or_insert_with(|| AtomicU64::new(0)).fetch_add(1, Ordering::Relaxed);
         Ok(edge_arc)
     }
 
@@ -336,8 +336,8 @@ impl GraphService {
         for eid in edge_ids.into_iter() {
             if let Some(edge) = self.engine.delete_edge(&eid)? {
                 self.stats_edges.fetch_sub(1, Ordering::Relaxed);
-                if let Some(mut v) = self.edge_type_counts.get_mut(&edge.edge_type) {
-                    let cnt = *v; *v = cnt.saturating_sub(1);
+                if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
+                    v.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
@@ -352,7 +352,7 @@ impl GraphService {
     /// Add a unique constraint for a label/property. Scans existing nodes to build index.
     pub fn add_unique_constraint(&self, label: &str, property: &str) -> Result<()> {
         let key = (label.to_string(), property.to_string());
-        let mut map = DashMap::new();
+        let mut map: DashMap<String, String> = DashMap::new();
         // Build from existing nodes
         for entry in self.memory_pool.nodes.iter() {
             let node = entry.value();
@@ -383,7 +383,9 @@ impl GraphService {
     fn enforce_unique_constraints_on_node(&self, node: &Node) -> Result<()> {
         // For each label/property under constraint, ensure no duplicate value exists
         for label in &node.labels {
-            for ((clabel, cprop), map) in self.memory_pool.unique_constraints.iter() {
+            for entry in self.memory_pool.unique_constraints.iter() {
+                let (clabel, cprop) = entry.key();
+                let map = entry.value();
                 if clabel == label {
                     if let Some(val) = node.properties.get(&cprop) {
                         let k = Self::index_key_for_value_internal(val);
@@ -405,7 +407,9 @@ impl GraphService {
     fn register_node_in_unique_constraints(&self, node: &Arc<Node>) {
         for label in &node.labels {
             let label = label.clone();
-            for ((clabel, cprop), map) in self.memory_pool.unique_constraints.iter() {
+            for entry in self.memory_pool.unique_constraints.iter() {
+                let (clabel, cprop) = entry.key();
+                let map = entry.value();
                 if *clabel == label {
                     if let Some(val) = node.properties.get(&cprop) {
                         let k = Self::index_key_for_value_internal(val);
@@ -419,7 +423,9 @@ impl GraphService {
     fn unregister_node_from_unique_constraints(&self, node: &Arc<Node>) {
         for label in &node.labels {
             let label = label.clone();
-            for ((clabel, cprop), map) in self.memory_pool.unique_constraints.iter() {
+            for entry in self.memory_pool.unique_constraints.iter() {
+                let (clabel, cprop) = entry.key();
+                let map = entry.value();
                 if *clabel == label {
                     if let Some(val) = node.properties.get(&cprop) {
                         let k = Self::index_key_for_value_internal(val);
@@ -468,8 +474,8 @@ impl GraphService {
         let deleted = self.engine.delete_edge(id)?;
         if let Some(ref edge) = deleted {
             self.stats_edges.fetch_sub(1, Ordering::Relaxed);
-            if let Some(mut v) = self.edge_type_counts.get_mut(&edge.edge_type) {
-                let cnt = *v; *v = cnt.saturating_sub(1);
+            if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
+                v.fetch_sub(1, Ordering::Relaxed);
             }
         }
         Ok(deleted)
@@ -504,10 +510,10 @@ impl GraphService {
         for filter in &query.filters {
             use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
             match filter.operator {
-                Op::PropertyFilterOperatorEquals => {
+                Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
                     // Look up index for this property
                     if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key) {
-                        let key = Self::index_key_for_value_internal(&filter.value);
+                        let key = Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -524,8 +530,8 @@ impl GraphService {
                         continue;
                     }
                 }
-                Op::PropertyFilterOperatorStartsWith => {
-                    if let Some(prefix) = extract_string_from_value(&filter.value) {
+                Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => {
+                    if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap()) {
                         if let Some(map_lock) = self.memory_pool.node_property_str_ordered.get(&filter.key) {
                             let map = map_lock.read().unwrap();
                             let mut matched: HashSet<NodeId> = HashSet::new();
@@ -536,27 +542,34 @@ impl GraphService {
                         }
                     }
                 }
-                Op::PropertyFilterOperatorGreaterThan
-                | Op::PropertyFilterOperatorGreaterEqual
-                | Op::PropertyFilterOperatorLessThan
-                | Op::PropertyFilterOperatorLessEqual => {
-                    if let Some(num) = extract_number_from_value(&filter.value) {
+                Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN
+                | Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL
+                | Op::PROPERTY_FILTER_OPERATOR_LESS_THAN
+                | Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
+                    if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap()) {
                         if let Some(map_lock) = self.memory_pool.node_property_num_indexes.get(&filter.key) {
                             let map = map_lock.read().unwrap();
                             let mut matched: HashSet<NodeId> = HashSet::new();
-                            use std::ops::Bound::{Excluded, Included, Unbounded};
                             match filter.operator {
-                                Op::PropertyFilterOperatorGreaterThan => {
-                                    for (_k, ids) in map.range((Excluded(num), Unbounded)) { matched.extend(ids.iter().cloned()); }
+                                Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
+                                    for (k, ids) in map.iter() {
+                                        if *k > num { matched.extend(ids.iter().cloned()); }
+                                    }
                                 }
-                                Op::PropertyFilterOperatorGreaterEqual => {
-                                    for (_k, ids) in map.range((Included(num), Unbounded)) { matched.extend(ids.iter().cloned()); }
+                                Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
+                                    for (k, ids) in map.iter() {
+                                        if *k >= num { matched.extend(ids.iter().cloned()); }
+                                    }
                                 }
-                                Op::PropertyFilterOperatorLessThan => {
-                                    for (_k, ids) in map.range((Unbounded, Excluded(num))) { matched.extend(ids.iter().cloned()); }
+                                Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
+                                    for (k, ids) in map.iter() {
+                                        if *k < num { matched.extend(ids.iter().cloned()); }
+                                    }
                                 }
-                                Op::PropertyFilterOperatorLessEqual => {
-                                    for (_k, ids) in map.range((Unbounded, Included(num))) { matched.extend(ids.iter().cloned()); }
+                                Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
+                                    for (k, ids) in map.iter() {
+                                        if *k <= num { matched.extend(ids.iter().cloned()); }
+                                    }
                                 }
                                 _ => {}
                             }
@@ -565,19 +578,19 @@ impl GraphService {
                     } else if let Some(map_lock) = self.memory_pool.node_property_str_ordered.get(&filter.key) {
                         let map = map_lock.read().unwrap();
                         let mut matched: HashSet<NodeId> = HashSet::new();
-                        let s = extract_string_from_value(&filter.value).unwrap_or("");
+                        let s = extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
                         use std::ops::Bound::{Excluded, Included, Unbounded};
                         match filter.operator {
-                            Op::PropertyFilterOperatorGreaterThan => {
+                            Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
                                 for (_k, ids) in map.range((Excluded(s.to_string()), Unbounded)) { matched.extend(ids.iter().cloned()); }
                             }
-                            Op::PropertyFilterOperatorGreaterEqual => {
+                            Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
                                 for (_k, ids) in map.range((Included(s.to_string()), Unbounded)) { matched.extend(ids.iter().cloned()); }
                             }
-                            Op::PropertyFilterOperatorLessThan => {
+                            Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
                                 for (_k, ids) in map.range((Unbounded, Excluded(s.to_string()))) { matched.extend(ids.iter().cloned()); }
                             }
-                            Op::PropertyFilterOperatorLessEqual => {
+                            Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
                                 for (_k, ids) in map.range((Unbounded, Included(s.to_string()))) { matched.extend(ids.iter().cloned()); }
                             }
                             _ => {}
@@ -600,18 +613,18 @@ impl GraphService {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
                     let pass = match filter.operator {
-                        Op::PropertyFilterOperatorEquals => {
-                            match prop_val_opt { Some(v) => v.value == filter.value.value, None => false }
+                        Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
+                            match prop_val_opt { Some(v) => v.value == filter.value.as_ref().unwrap().value, None => false }
                         }
-                        Op::PropertyFilterOperatorNotEquals => {
-                            match prop_val_opt { Some(v) => v.value != filter.value.value, None => true }
+                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => {
+                            match prop_val_opt { Some(v) => v.value != filter.value.as_ref().unwrap().value, None => true }
                         }
-                        Op::PropertyFilterOperatorGreaterThan => cmp_prop_gt(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorGreaterEqual => cmp_prop_ge(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorLessThan => cmp_prop_lt(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorLessEqual => cmp_prop_le(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorStartsWith => prop_starts_with(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorContains => prop_contains(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => cmp_prop_gt(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => cmp_prop_ge(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => cmp_prop_lt(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => cmp_prop_le(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => prop_starts_with(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => prop_contains(prop_val_opt, &filter.value),
                         _ => false,
                     };
                     if !pass { continue 'outer; }
@@ -660,17 +673,17 @@ impl GraphService {
             for filter in &query.filters {
                 // Only handle equality and range/prefix on stringified keys
                 match filter.operator {
-                    Op::PropertyFilterOperatorEquals => {
+                    Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
                         if let Some(index_map) = self.memory_pool.edge_property_indexes.get(&filter.key) {
-                            let key = Self::index_key_for_value_internal(&filter.value);
+                            let key = Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
                             if let Some(ids) = index_map.get(&key) {
                                 let set: std::collections::HashSet<EdgeId> = ids.iter().cloned().collect();
                                 candidate_ids = Some(match candidate_ids { None => set, Some(prev) => prev.intersection(&set).cloned().collect() });
                             } else { candidate_ids = Some(std::collections::HashSet::new()); }
                         }
                     }
-                    Op::PropertyFilterOperatorStartsWith => {
-                        if let Some(prefix) = extract_string_from_value(&filter.value) {
+                    Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => {
+                        if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap()) {
                             if let Some(map_lock) = self.memory_pool.edge_property_str_ordered.get(&filter.key) {
                                 let map = map_lock.read().unwrap();
                                 let mut matched = std::collections::HashSet::new();
@@ -681,24 +694,32 @@ impl GraphService {
                             }
                         }
                     }
-                    Op::PropertyFilterOperatorGreaterThan | Op::PropertyFilterOperatorGreaterEqual | Op::PropertyFilterOperatorLessThan | Op::PropertyFilterOperatorLessEqual => {
+                    Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN | Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL | Op::PROPERTY_FILTER_OPERATOR_LESS_THAN | Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
                         // Prefer numeric range if value numeric, else fallback to string ordered
-                        if let Some(num) = extract_number_from_value(&filter.value) {
+                        if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap()) {
                             if let Some(map_lock) = self.memory_pool.edge_property_num_indexes.get(&filter.key) {
                                 let map = map_lock.read().unwrap();
                                 let mut matched = std::collections::HashSet::new();
                                 match filter.operator {
-                                    Op::PropertyFilterOperatorGreaterThan => {
-                                        for (_k, ids) in map.range((std::ops::Bound::Excluded(num), std::ops::Bound::Unbounded)) { matched.extend(ids.iter().cloned()); }
+                                    Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
+                                        for (k, ids) in map.iter() {
+                                            if *k > num { matched.extend(ids.iter().cloned()); }
+                                        }
                                     }
-                                    Op::PropertyFilterOperatorGreaterEqual => {
-                                        for (_k, ids) in map.range((std::ops::Bound::Included(num), std::ops::Bound::Unbounded)) { matched.extend(ids.iter().cloned()); }
+                                    Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
+                                        for (k, ids) in map.iter() {
+                                            if *k >= num { matched.extend(ids.iter().cloned()); }
+                                        }
                                     }
-                                    Op::PropertyFilterOperatorLessThan => {
-                                        for (_k, ids) in map.range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(num))) { matched.extend(ids.iter().cloned()); }
+                                    Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
+                                        for (k, ids) in map.iter() {
+                                            if *k < num { matched.extend(ids.iter().cloned()); }
+                                        }
                                     }
-                                    Op::PropertyFilterOperatorLessEqual => {
-                                        for (_k, ids) in map.range((std::ops::Bound::Unbounded, std::ops::Bound::Included(num))) { matched.extend(ids.iter().cloned()); }
+                                    Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
+                                        for (k, ids) in map.iter() {
+                                            if *k <= num { matched.extend(ids.iter().cloned()); }
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -707,18 +728,18 @@ impl GraphService {
                         } else if let Some(map_lock) = self.memory_pool.edge_property_str_ordered.get(&filter.key) {
                             let map = map_lock.read().unwrap();
                             let mut matched = std::collections::HashSet::new();
-                            let s = extract_string_from_value(&filter.value).unwrap_or("");
+                            let s = extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
                             match filter.operator {
-                                Op::PropertyFilterOperatorGreaterThan => {
+                                Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
                                     for (_k, ids) in map.range((std::ops::Bound::Excluded(s.to_string()), std::ops::Bound::Unbounded)) { matched.extend(ids.iter().cloned()); }
                                 }
-                                Op::PropertyFilterOperatorGreaterEqual => {
+                                Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
                                     for (_k, ids) in map.range((std::ops::Bound::Included(s.to_string()), std::ops::Bound::Unbounded)) { matched.extend(ids.iter().cloned()); }
                                 }
-                                Op::PropertyFilterOperatorLessThan => {
+                                Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
                                     for (_k, ids) in map.range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(s.to_string()))) { matched.extend(ids.iter().cloned()); }
                                 }
-                                Op::PropertyFilterOperatorLessEqual => {
+                                Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
                                     for (_k, ids) in map.range((std::ops::Bound::Unbounded, std::ops::Bound::Included(s.to_string()))) { matched.extend(ids.iter().cloned()); }
                                 }
                                 _ => {}
@@ -755,18 +776,18 @@ impl GraphService {
                 for filter in &query.filters {
                     let prop_val_opt = edge.properties.get(&filter.key);
                     let pass = match filter.operator {
-                        Op::PropertyFilterOperatorEquals => {
-                            match prop_val_opt { Some(v) => v.value == filter.value.value, None => false }
+                        Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
+                            match prop_val_opt { Some(v) => v.value == filter.value.as_ref().unwrap().value, None => false }
                         }
-                        Op::PropertyFilterOperatorNotEquals => {
-                            match prop_val_opt { Some(v) => v.value != filter.value.value, None => true }
+                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => {
+                            match prop_val_opt { Some(v) => v.value != filter.value.as_ref().unwrap().value, None => true }
                         }
-                        Op::PropertyFilterOperatorGreaterThan => cmp_prop_gt(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorGreaterEqual => cmp_prop_ge(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorLessThan => cmp_prop_lt(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorLessEqual => cmp_prop_le(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorStartsWith => prop_starts_with(prop_val_opt, &filter.value),
-                        Op::PropertyFilterOperatorContains => prop_contains(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => cmp_prop_gt(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => cmp_prop_ge(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => cmp_prop_lt(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => cmp_prop_le(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => prop_starts_with(prop_val_opt, &filter.value),
+                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => prop_contains(prop_val_opt, &filter.value),
                         _ => false,
                     };
                     if !pass { return false; }

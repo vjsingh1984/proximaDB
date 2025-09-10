@@ -313,13 +313,13 @@ impl StorageEngineAdapter for PRISMAdapter {
             vectors.push(VectorRecord {
                 id: id.to_string(),
                 vector: vec![0.0; 128], // Placeholder vector
-                metadata: vec![],       // Empty metadata items
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),       // Empty metadata items
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 source: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: vec![],
             });
         }
 
@@ -518,13 +518,13 @@ impl StorageEngineAdapter for NOVAAdapter {
             vectors.push(VectorRecord {
                 id: id.to_string(),
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
-                metadata: vec![],       // Empty metadata items
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),       // Empty metadata items
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 source: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: vec![],
             });
         }
 
@@ -697,13 +697,13 @@ macro_rules! create_simple_adapter {
                     vectors.push(VectorRecord {
                         id: id.to_string(),
                         vector: vec![0.0; 128],
-                        metadata: vec![], // Empty metadata
+                        metadata: std::collections::HashMap::new(), // Empty metadata
                         version: Some(1),
-                        timestamp: chrono::Utc::now().timestamp() as u32,
-                        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        updated_at: Some(chrono::Utc::now().timestamp()),
                         expires_at: None,
                         source: None,
-                        quantized_vector: None,
+                        quantized_vector: vec![],
                     });
                 }
                 Ok(vectors)

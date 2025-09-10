@@ -25,7 +25,7 @@
 //! - **Plan Caching**: Cache query plans for repeated queries
 //! - **Statistics Integration**: Use real-time statistics for accurate cost estimates
 
-use crate::core::error::ProximaDBError;
+use crate::core::error::{ProximaDBError, VectorDBError};
 use crate::utils::Uuid;
 use crate::graph::{NodeId, EdgeId, GraphMemoryPool};
 use super::{QueryResult, QueryContext, QueryStats};
@@ -73,6 +73,8 @@ pub struct CostModel {
     pub memory_cost_factor: f64,
     /// Cache hit benefit factor
     pub cache_hit_benefit: f64,
+    /// CPU cost per operation
+    pub cpu_cost: f64,
 }
 
 /// Optimization flags
@@ -305,6 +307,7 @@ impl Default for CostModel {
             index_scan_cost: 0.1,
             memory_cost_factor: 0.001,
             cache_hit_benefit: 0.5,
+            cpu_cost: 0.1,
         }
     }
 }
@@ -365,7 +368,7 @@ impl QueryPlanner {
     /// Update graph statistics
     pub fn update_statistics(&self, memory_pool: &Arc<GraphMemoryPool>) -> QueryResult<()> {
         let mut stats = self.stats.write().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire stats write lock")
+            VectorDBError::Internal("Failed to acquire stats write lock".to_string())
         })?;
         
         // Update basic counts
@@ -397,7 +400,9 @@ impl QueryPlanner {
         stats.property_selectivity.clear();
         stats.index_stats.clear();
 
-        for (prop_name, prop_index) in memory_pool.node_property_indexes.iter() {
+        for entry in memory_pool.node_property_indexes.iter() {
+            let prop_name = entry.key().clone();
+            let prop_index = entry.value();
             stats.property_selectivity.insert(prop_name.clone(), prop_index.stats.unique_values as u64);
             stats.index_stats.insert(
                 format!("node_prop_{}", prop_name),
@@ -414,7 +419,9 @@ impl QueryPlanner {
             );
         }
 
-        for (prop_name, prop_index) in memory_pool.edge_property_indexes.iter() {
+        for entry in memory_pool.edge_property_indexes.iter() {
+            let prop_name = entry.key().clone();
+            let prop_index = entry.value();
             stats.property_selectivity.insert(prop_name.clone(), prop_index.stats.unique_values as u64);
             stats.index_stats.insert(
                 format!("edge_prop_{}", prop_name),
@@ -458,7 +465,7 @@ impl QueryPlanner {
             "traverse_dfs" => self.plan_traversal_query(parameters, TraversalAlgorithm::DFS)?,
             "shortest_path" => self.plan_shortest_path_query(parameters)?,
             "pattern_match" => self.plan_pattern_match_query(parameters)?,
-            _ => return Err(ProximaDBError::invalid_argument(&format!(
+            _ => return Err(VectorDBError::InvalidInput(format!(
                 "Unknown query type: {}", query_type
             ))),
         };
@@ -476,10 +483,10 @@ impl QueryPlanner {
     ) -> QueryResult<QueryPlan> {
         let label = parameters.get("label")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ProximaDBError::invalid_argument("Missing 'label' parameter"))?;
+            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'label' parameter".to_string()))?;
         
         let stats = self.stats.read().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire stats read lock")
+            VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
         
         // Estimate selectivity
@@ -539,13 +546,13 @@ impl QueryPlanner {
     ) -> QueryResult<QueryPlan> {
         let property_name = parameters.get("property_name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ProximaDBError::invalid_argument("Missing 'property_name' parameter"))?;
+            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'property_name' parameter".to_string()))?;
         
         let property_value = parameters.get("property_value")
-            .ok_or_else(|| ProximaDBError::invalid_argument("Missing 'property_value' parameter"))?;
+            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'property_value' parameter".to_string()))?;
         
         let stats = self.stats.read().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire stats read lock")
+            VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
         
         // Estimate selectivity based on property statistics
@@ -612,7 +619,7 @@ impl QueryPlanner {
     ) -> QueryResult<QueryPlan> {
         let start_node = parameters.get("start_node")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ProximaDBError::invalid_argument("Missing 'start_node' parameter"))?;
+            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'start_node' parameter".to_string()))?;
         
         let max_depth = parameters.get("max_depth")
             .and_then(|v| v.as_u64())
@@ -622,7 +629,7 @@ impl QueryPlanner {
             .and_then(|v| v.as_str());
         
         let stats = self.stats.read().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire stats read lock")
+            VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
         
         // Estimate traversal cost based on graph statistics
@@ -705,7 +712,7 @@ impl QueryPlanner {
         pattern: &CompiledPattern,
     ) -> QueryResult<QueryPlan> {
         let stats = self.stats.read().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire stats read lock")
+            VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
 
         let mut best_plan: Option<QueryPlan> = None;
@@ -871,7 +878,7 @@ impl QueryPlanner {
         }
         } // End of the for loop
 
-        best_plan.ok_or_else(|| ProximaDBError::invalid_argument("Could not generate a plan for the given pattern"))
+        best_plan.ok_or_else(|| VectorDBError::InvalidInput("Could not generate a plan for the given pattern".to_string()))
     }
     
     /// Plan a pattern matching query (simplified for now)
@@ -882,7 +889,7 @@ impl QueryPlanner {
         // For now, assume the 'pattern' parameter contains the Cypher-like string
         let pattern_str = parameters.get("pattern")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ProximaDBError::invalid_argument("Missing 'pattern' parameter for pattern match query"))?;
+            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'pattern' parameter for pattern match query".to_string()))?;
 
         // Use the QueryParser to parse the pattern string into a CompiledPattern
         let parser = super::parser::QueryParser::new(); // Assuming parser is in super::parser
@@ -919,7 +926,7 @@ impl QueryPlanner {
     /// Get cached plan if available and not expired
     fn get_cached_plan(&self, cache_key: &str) -> QueryResult<Option<QueryPlan>> {
         let cache = self.plan_cache.read().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire plan cache read lock")
+            VectorDBError::Internal("Failed to acquire plan cache read lock".to_string())
         })?;
         
         if let Some(cached) = cache.get(cache_key) {
@@ -935,7 +942,7 @@ impl QueryPlanner {
     /// Cache a query plan
     fn cache_plan(&self, cache_key: String, plan: &QueryPlan) -> QueryResult<()> {
         let mut cache = self.plan_cache.write().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire plan cache write lock")
+            VectorDBError::Internal("Failed to acquire plan cache write lock".to_string())
         })?;
         
         // Remove expired plans if cache is full
@@ -977,7 +984,7 @@ impl QueryPlanner {
     /// Get query planner statistics
     pub fn get_statistics(&self) -> QueryResult<GraphStatistics> {
         let stats = self.stats.read().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire stats read lock")
+            VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
         
         Ok(stats.clone())
@@ -986,7 +993,7 @@ impl QueryPlanner {
     /// Clear plan cache
     pub fn clear_cache(&self) -> QueryResult<()> {
         let mut cache = self.plan_cache.write().map_err(|_| {
-            ProximaDBError::internal("Failed to acquire plan cache write lock")
+            VectorDBError::Internal("Failed to acquire plan cache write lock".to_string())
         })?;
         
         cache.clear();

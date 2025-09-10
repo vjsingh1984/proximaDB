@@ -583,7 +583,7 @@ impl AdvancedSearchOptimizer {
                     // Convert v1 metadata map to TypedMetadata
                     let mut metadata_map = std::collections::HashMap::new();
                     for (k, v) in record.metadata.into_iter() {
-                        let typed_value = match v.value {
+                        let typed_value = match v.1 {
                             Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) =>
                                 MetadataValue::String(Arc::from(s.as_str())),
                             Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) =>
@@ -621,15 +621,15 @@ impl AdvancedSearchOptimizer {
                     // Convert proto metadata to TypedMetadata
                     let mut metadata_map = std::collections::HashMap::new();
                     for item in &record.metadata {
-                        if let Some(value) = &item.value {
+                        if let Some(value) = &item.1 {
                             use crate::proto::proximadb_v1::metadata_item;
                             let typed_value = match value {
                                 metadata_item::Value::StringValue(s) =>
                                     MetadataValue::String(Arc::from(s.as_str())),
-                                metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
-                                metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                                metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
+                                metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
                             };
-                            metadata_map.insert(item.key.clone(), typed_value);
+                            metadata_map.insert(item.0.clone(), typed_value);
                         }
                     }
                     let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
@@ -680,17 +680,21 @@ impl AdvancedSearchOptimizer {
                     similarity: r.similarity,
                     vector: r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default(),
                     metadata: std::collections::HashMap::new(), // Would convert metadata
-                    version: r.version.map(|v| v as i64),
-                    timestamp: r.timestamp as i64,
+                    version: r.version,
+                    timestamp: r.timestamp,
                     source: r.source.clone(),
                     expanded_context: r.expanded_context.iter().map(|sc| {
                         match &sc.data {
-                            Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => url.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
                             None => "[Empty Content]".to_string(),
                         }
                     }).collect(),
+                    semantic_similarity: r.similarity,
+                    quantization_info: None,
+                    engine_stats: std::collections::HashMap::new(),
+                    index_path: None,
                 })
                 .collect(),
             total_found: results.len() as i64,
@@ -977,14 +981,14 @@ impl AdvancedSearchOptimizer {
             // Convert record metadata to TypedMetadata
             let mut metadata_map = std::collections::HashMap::new();
             for item in &record.metadata {
-                if let Some(value) = &item.value {
+                if let Some(value) = &item.1 {
                     use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
                         metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
-                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
-                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
+                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
                     };
-                    metadata_map.insert(item.key.clone(), typed_value);
+                    metadata_map.insert(item.0.clone(), typed_value);
                 }
             }
             

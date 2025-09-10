@@ -189,7 +189,7 @@ impl IndexNodeCache {
                         let entry_data = bincode::serialize(&entry)?;
 
                         let node = IndexNode {
-                            id: entry_item.clone(),
+                            id: entry_key.clone(),
                             level: 1, // Individual entries are level 1
                             children: vec![],
                             data: entry_data,

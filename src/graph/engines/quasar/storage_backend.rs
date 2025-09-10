@@ -19,7 +19,7 @@
 //! Implements cold storage backends for QUASAR's hybrid tiering system.
 //! Supports multiple storage formats: SST, Parquet, and JSON.
 
-use crate::core::error::ProximaDBError;
+use crate::core::error::{ProximaDBError, VectorDBError, StorageError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, Edge, NodeId, EdgeId};
 use super::ColdStorageBackend as BackendType;
@@ -111,7 +111,7 @@ impl ColdStorageBackend {
     pub async fn new(backend_type: BackendType, storage_path: &Path) -> Result<Self> {
         // Create storage directory if it doesn't exist
         fs::create_dir_all(storage_path).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         let backend = Self {
             backend_type,
@@ -384,13 +384,13 @@ impl ColdStorageBackend {
     async fn write_node_json(&self, node: &StorableNode) -> Result<StorageLocation> {
         let file_path = self.storage_path.join("nodes").join(format!("{}.json", node.id));
         fs::create_dir_all(file_path.parent().unwrap()).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         let json_data = serde_json::to_string_pretty(node)
-            .map_err(|e| ProximaDBError::SerializationError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))?;
         
         fs::write(&file_path, json_data.as_bytes()).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         Ok(StorageLocation {
             file_path: file_path.strip_prefix(&self.storage_path).unwrap().to_path_buf(),
@@ -403,13 +403,13 @@ impl ColdStorageBackend {
     async fn write_edge_json(&self, edge: &StorableEdge) -> Result<StorageLocation> {
         let file_path = self.storage_path.join("edges").join(format!("{}.json", edge.id));
         fs::create_dir_all(file_path.parent().unwrap()).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         let json_data = serde_json::to_string_pretty(edge)
-            .map_err(|e| ProximaDBError::SerializationError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))?;
         
         fs::write(&file_path, json_data.as_bytes()).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         Ok(StorageLocation {
             file_path: file_path.strip_prefix(&self.storage_path).unwrap().to_path_buf(),
@@ -422,19 +422,19 @@ impl ColdStorageBackend {
     async fn read_node_json(&self, location: &StorageLocation) -> Result<StorableNode> {
         let file_path = self.storage_path.join(&location.file_path);
         let json_data = fs::read_to_string(&file_path).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         serde_json::from_str(&json_data)
-            .map_err(|e| ProximaDBError::SerializationError(e.to_string()))
+            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))
     }
     
     async fn read_edge_json(&self, location: &StorageLocation) -> Result<StorableEdge> {
         let file_path = self.storage_path.join(&location.file_path);
         let json_data = fs::read_to_string(&file_path).await
-            .map_err(|e| ProximaDBError::IOError(e.to_string()))?;
+            .map_err(|e| VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
         
         serde_json::from_str(&json_data)
-            .map_err(|e| ProximaDBError::SerializationError(e.to_string()))
+            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))
     }
     
     /// SST storage implementation (placeholder)

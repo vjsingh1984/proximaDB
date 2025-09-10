@@ -1819,7 +1819,7 @@ impl Compaction {
                                 if let Some(metadata_array) = value.as_array() {
                                     let struct_builder = list_builder.values();
                                     for (key, value) in metadata_array {
-                                        if let Some(obj) = item.as_object() {
+                                        if let Some(obj) = value.as_object() {
                                             if let (Some(key), Some(val)) =
                                                 (obj.get("key"), obj.get("value"))
                                             {

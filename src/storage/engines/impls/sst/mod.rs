@@ -395,12 +395,12 @@ impl SstEntry {
             record: VectorRecord {
                 id: id,
                 vector: vec![], // Empty vector for tombstone
-                metadata: vec![],
-                timestamp: chrono::Utc::now().timestamp() as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: chrono::Utc::now().timestamp(),
                 updated_at: None,
                 expires_at: Some(0), // Expired immediately
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None, // No source for tombstone
             },
             sst_meta: SstMetadata {
@@ -1267,11 +1267,11 @@ mod block_utils {
                 id,
                 vector,
                 timestamp,
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None, // No source information available from legacy format
             });
         }
@@ -1319,7 +1319,7 @@ mod block_utils {
 
             // Process metadata
             for item in &record.metadata {
-                let col_name = item.key.clone();
+                let col_name = item.0.clone();
                 metadata_columns.insert(col_name.clone(), ());
 
                 // Get or create column stats
@@ -1337,7 +1337,7 @@ mod block_utils {
                     });
 
                 // Convert to JSON value for min/max tracking
-                let value = match &item.value {
+                let value = match &item.1 {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
@@ -3385,7 +3385,7 @@ impl SstStorage {
                         vector_record
                             .metadata
                             .iter()
-                            .map(|m| format!("{}={:?}", m.key, m.value))
+                            .map(|m| format!("{}={:?}", m.0, m.1))
                             .collect::<Vec<_>>()
                     );
                 }
@@ -3394,7 +3394,7 @@ impl SstStorage {
                 let mut vector_record = vector_record.clone();
 
                 // Store sequence number in version field for SST ordering
-                vector_record.version = Some((sequence_start + global_index as u64) as u32);
+                vector_record.version = Some(sequence_start + global_index as u64);
 
                 filtered_records.push(vector_record);
                 chunk_matches += 1;
@@ -4013,7 +4013,7 @@ impl SstStorage {
                 index, record.id
             );
             let mut vector_record = record.clone();
-            vector_record.version = Some((sequence_start + index as u64) as u32);
+            vector_record.version = Some(sequence_start + index as u64);
             sorted_records.push(vector_record);
         }
 
@@ -4057,8 +4057,13 @@ impl SstStorage {
 
             // Add metadata values - already have MetadataItem
             for metadata_item in &record.metadata {
+                // Convert HashMap entry to MetadataItem
+                let proto_metadata_item = crate::proto::proximadb_v1::MetadataItem {
+                    key: metadata_item.0.clone(),
+                    value: Some(metadata_item.1.clone()),
+                };
                 metadata_builder
-                    .add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                    .add_metadata_item(metadata_item.0.clone(), proto_metadata_item);
             }
         }
 
@@ -4116,7 +4121,7 @@ impl SstStorage {
             std::collections::HashMap::new();
         for vector in &sorted_vectors {
             for metadata_item in &vector.metadata {
-                *key_frequency.entry(metadata_item.key.clone()).or_insert(0) += 1;
+                *key_frequency.entry(metadata_item.0.clone()).or_insert(0) += 1;
             }
         }
 
@@ -4131,8 +4136,20 @@ impl SstStorage {
             // Primary sort: most common metadata key
             if let Some(ref sort_key) = primary_sort_key {
                 // Convert metadata to comparable format
-                let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a.metadata);
-                let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b.metadata);
+                let a_metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = a.metadata.iter()
+                    .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
+                        key: k.clone(),
+                        value: Some(v.clone()),
+                    })
+                    .collect();
+                let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a_metadata_items);
+                let b_metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = b.metadata.iter()
+                    .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
+                        key: k.clone(),
+                        value: Some(v.clone()),
+                    })
+                    .collect();
+                let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b_metadata_items);
 
                 let a_value = a_map.get(sort_key).and_then(|v| v.as_str());
                 let b_value = b_map.get(sort_key).and_then(|v| v.as_str());
@@ -4157,8 +4174,13 @@ impl SstStorage {
             let distinct_values: std::collections::HashSet<String> = sorted_vectors
                 .iter()
                 .filter_map(|v| {
-                    let metadata_map =
-                        crate::core::proto_metadata_helper::proto_metadata_to_json(&v.metadata);
+                    let v_metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = v.metadata.iter()
+                        .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
+                            key: k.clone(),
+                            value: Some(v.clone()),
+                        })
+                        .collect();
+                    let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&v_metadata_items);
                     metadata_map
                         .get(sort_key)
                         .and_then(|val| val.as_str())

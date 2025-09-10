@@ -204,8 +204,8 @@ impl IndexConfig {
             use_simd: h.use_simd,
             memory_limit_mb: h.memory_limit_mb as usize,
             lazy_loading: h.lazy_loading,
-            prune_connections: h.prune_connections as usize,
-            level_multiplier: h.level_multiplier,
+            prune_connections: 0, // Default value - field not in proto
+            level_multiplier: 1.0, // Default value - field not in proto
         });
 
         let ivf_config = proto.ivf_config.as_ref().map(|i| IvfConfig {
@@ -239,9 +239,9 @@ impl IndexConfig {
             hnsw_config,
             ivf_config,
             lsh_config,
-            build_concurrency: proto.build_concurrency.map(|c| c as usize),
-            memory_limit_mb: proto.memory_limit_mb.map(|m| m as u64),
-            checkpoint_interval_ms: proto.checkpoint_interval_ms.map(|i| i as u64),
+            build_concurrency: Some(proto.build_concurrency as usize),
+            memory_limit_mb: Some(proto.memory_limit_mb as u64),
+            checkpoint_interval_ms: Some(proto.checkpoint_interval_ms as u64),
         })
     }
 
@@ -265,8 +265,7 @@ impl IndexConfig {
                 use_simd: h.use_simd,
                 memory_limit_mb: h.memory_limit_mb as u32,
                 lazy_loading: h.lazy_loading,
-                prune_connections: h.prune_connections as u32,
-                level_multiplier: h.level_multiplier,
+                // prune_connections and level_multiplier not in proto definition
             });
 
         let ivf_config = self
@@ -310,6 +309,8 @@ impl IndexConfig {
                     },
                 },
             },
+            parameters: std::collections::HashMap::new(), // Empty parameters map
+            enabled: true, // Index enabled by default
             update_mode,
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as u32),
             async_update_batch_size: self.async_update_batch_size.map(|b| b as u32),
@@ -320,15 +321,15 @@ impl IndexConfig {
             pq_config: None,   // PQ config is algorithm-specific, set when PQ algorithm is selected
             annoy_config: None, // Annoy config is algorithm-specific, set when ANNOY algorithm is selected
             lsh_config,
-            build_concurrency: self.build_concurrency.map(|x| x as u32),
-            memory_limit_mb: self.memory_limit_mb.map(|x| x as u32),
-            checkpoint_interval_ms: self.checkpoint_interval_ms.map(|x| x as u32),
+            build_concurrency: self.build_concurrency.map(|x| x as u32).unwrap_or(1),
+            memory_limit_mb: self.memory_limit_mb.map(|x| x as u32).unwrap_or(512),
+            checkpoint_interval_ms: self.checkpoint_interval_ms.map(|x| x as u32).unwrap_or(30000),
             is_primary: true,            // Default to primary index
             use_cases: vec![],           // Default empty use cases
-            selectivity_threshold: None, // Default no selectivity threshold
-            use_quantization: None,      // Default: inherit from collection config
+            selectivity_threshold: 0.0, // Default no selectivity threshold
+            use_quantization: false,     // Default: no quantization
             quantization_override: None, // Default: no override
-            queue_representation: None,  // Default: auto-detect from queue
+            queue_representation: "auto".to_string(), // Default: auto-detect from queue
         }
     }
 
@@ -842,12 +843,7 @@ impl IndexConfig {
                         if user_hnsw.memory_limit_mb != 0 {
                             smart_hnsw.memory_limit_mb = user_hnsw.memory_limit_mb as usize;
                         }
-                        if user_hnsw.prune_connections != 0 {
-                            smart_hnsw.prune_connections = user_hnsw.prune_connections as usize;
-                        }
-                        if user_hnsw.level_multiplier != 0.0 {
-                            smart_hnsw.level_multiplier = user_hnsw.level_multiplier;
-                        }
+                        // prune_connections and level_multiplier are not in proto - use smart defaults
 
                         // Boolean fields: use user value if explicitly set, otherwise keep smart default
                         smart_hnsw.adaptive_parameters = user_hnsw.adaptive_parameters;

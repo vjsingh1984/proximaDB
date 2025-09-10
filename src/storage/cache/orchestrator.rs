@@ -361,8 +361,8 @@ impl AccessPatternTracker {
                 .value()
                 .iter()
                 .take(limit)
-                .filter(|(key, value)| item.correlation_score > 0.3)
-                .map(|(key, value)| (key.clone(), item.cache_type.clone()))
+                .filter(|(key, value)| value.correlation_score > 0.3)
+                .map(|(key, value)| (key.clone(), value.cache_type.clone()))
                 .collect()
         } else {
             Vec::new()
