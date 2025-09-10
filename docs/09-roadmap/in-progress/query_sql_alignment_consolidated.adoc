@@ -1,6 +1,6 @@
-= ProximaDB Unified Query Layer Implementation Guide
-:toc:
-:status: in-progress
+ = ProximaDB Unified Query Layer Implementation Guide
+ :toc:
+ :status: in-progress
 
 == 🎯 Mission: SQL Frontend as Single Source of Truth
 
@@ -8,30 +8,26 @@
 
 **Key Decision**: sql_frontend becomes authoritative; sql_engine deprecated after migration.
 
-== 📊 Current State (Verified 2025-09-10)
+== Current State (Verified 2025-09-10)
 
-**✅ Implemented:**
-- REST/gRPC SQL endpoints with typed `SqlRow/SqlValue` responses
-- `sql_frontend/parser.rs` with sqlparser-rs (comprehensive SQL support)
-- VOS integration with progressive search (20M+ ops/sec verified)
-- HashMap metadata structure (10x faster than Vec<MetadataItem>)
+Implemented:
+- REST SQL endpoints (`/api/v1/sql/execute`, `/api/v1/sql/explain`) returning typed rows
+- `sql_frontend/{parser,lowering}.rs` with sqlparser-rs integration
+- Unified execution: `query/execution/{mod,planner,executor}.rs` used by `execute_sql_frontend`
+- HashMap-based metadata filtering in the execution path
 
-**✅ COMPLETED (2025-09-10):**
-- ✅ AST lowering (`lowering.rs`) - 522 lines, comprehensive SQL support with HashMap optimization
-- ✅ Execution engine (`query/execution/`) - 54KB unified engine replacing sql_engine
-- ✅ Enhanced SKS functions - SIMILAR/FOLLOW/ASSEMBLE with execution integration
-- ✅ UnifiedHandlers integration - `execute_sql_frontend()` method (80 lines)
-- ✅ TDD test framework - Performance validation and integration tests
-- ✅ Performance optimization - HashMap metadata filtering delivering 10x improvement
-- ✅ Advanced fusion algorithms - RRF and Adaptive Semantic Fusion implemented
+Completed:
+- AST lowering foundation (`lowering.rs`): SELECT/WHERE/ORDER BY/LIMIT, HashMap-friendly filter lowering
+- Unified execution engine integrated via `UnifiedHandlers::execute_sql_frontend`
+- Hybrid fusion algorithms available (RRF, Adaptive) in executor
 
-**🔄 In Progress:**
-- Compilation validation and final integration testing
-- Performance benchmarking of HashMap vs Vec<MetadataItem> filtering
+In Progress:
+- JOIN/GROUP BY/HAVING support in lowering
+- Parameter binding with type safety; streaming/pagination
+- SKS function parsing/validation (SIMILAR/FOLLOW/ASSEMBLE) beyond placeholders
+- Benchmarks comparing HashMap vs linear scans
 
-**🔲 TODO:**
-- Parameter binding with type safety (advanced features)
-- Streaming and pagination support
+TODO:
 - Model registry integration for embedding validation
 
 == 🗺️ Implementation Roadmap
@@ -39,10 +35,10 @@
 [cols="1,2,1,2",options="header"]
 |===
 | Priority | Component | Status | Implementation Focus
-| **P1** | AST Lowering | ✅ COMPLETED | `sql_frontend/lowering.rs` - Full implementation with TDD tests
-| **P2** | Execution Engine | ✅ COMPLETED | `query/execution/{mod,planner,executor}.rs` - Unified engine
-| **P3** | SKS Functions | ✅ COMPLETED | Enhanced with SIMILAR/FOLLOW/ASSEMBLE + tests
-| **P4** | Integration | ✅ COMPLETED | `execute_sql_frontend()` method in UnifiedHandlers
+| **P1** | AST Lowering | ✅ Core landed | `sql_frontend/lowering.rs` - SELECT/WHERE/ORDER BY/LIMIT; JOIN/GROUP BY pending
+| **P2** | Execution Engine | ✅ Integrated | `query/execution/{mod,planner,executor}.rs` - vector/graph/hybrid
+| **P3** | SKS Functions | 🔄 Partial | Parse placeholders; validation/execution wiring pending
+| **P4** | Integration | ✅ Done | `execute_sql_frontend()` in UnifiedHandlers
 |===
 
 == 🔧 Implementation Guide for Agents

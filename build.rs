@@ -36,7 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
             &[
-                "proto/proximadb.proto", // LEGACY – keeping until v1 schema complete
                 "proto/proximadb/v1/entity.proto",
                 "proto/proximadb/v1/relations.proto",
                 "proto/proximadb/v1/context.proto",
@@ -52,7 +51,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     tracing::info!("✅ Protobuf compilation complete");
 
-    debug!("cargo:rerun-if-changed=proto/proximadb.proto"); // TODO: remove once v1 schema complete
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/graph.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/vector.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/types.proto");

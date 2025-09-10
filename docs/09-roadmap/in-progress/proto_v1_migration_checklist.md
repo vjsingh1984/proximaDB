@@ -1,14 +1,13 @@
-# Proto v1 Migration Checklist - MIGRATION COMPLETE ✅
+# Proto v1 Migration Checklist — Current Status
 
-This checklist tracks the completed cutover from legacy `proximadb` proto to `proximadb.v1` across code, APIs, and build.
+This checklist tracks the cutover from legacy `proximadb` proto to `proximadb.v1` across code, APIs, and build.
 
-## Status Summary (FINAL - 2025-09-10)
-- ✅ **MIGRATION COMPLETE**: Comprehensive v1 migration with performance optimization achieved
-- ✅ **API Layer**: 100% v1-only for Vector, Graph, Collections, and SQL services  
-- ✅ **HashMap Architecture**: Fundamental performance improvement (10x metadata filtering)
-- ✅ **Enhanced v1 Schema**: All required types added for production compatibility
-- ✅ **Zero Legacy References**: Complete elimination of legacy proto usage
-- ✅ **Performance Validated**: HashMap optimization delivering measurable improvements
+## Status Summary (2025-09-10)
+- ✅ API paths use v1 types across vector/graph/collections/SQL
+- ✅ HashMap-based metadata structures adopted
+- ✅ v1 schema expanded (e.g., quantization, collection types)
+- ⚠ Legacy proto still compiled in `build.rs`; `src/proto/proximadb.rs` exists
+- 🔄 Performance work tracked separately; avoid unverified claims here
 
 ## Action Items
 1) Services (vectors) ✅ COMPLETED
@@ -24,7 +23,7 @@ This checklist tracks the completed cutover from legacy `proximadb` proto to `pr
 - [ ] Implement v1 filter conversion (pending v1 filter schema)
 
 3) Collections ✅ PARTIALLY COMPLETED  
-- [ ] Migrate `services/collection/manager.rs` to v1 `Collection*` types (pending v1 schema parity)
+- [x] Migrate `services/collection/manager.rs` to v1 `Collection*` types
 - [x] Convert Collections over gRPC to return v1 via converters
 
 4) Cache ✅ COMPLETED
@@ -44,18 +43,14 @@ This checklist tracks the completed cutover from legacy `proximadb` proto to `pr
 - [x] Migrate src/network/grpc/collection_service.rs to v1 types
 - [x] Migrate src/network/multi_server.rs to v1 types
 
-7) Remaining Tasks (approx; see metrics below)
-- [ ] Migrate storage layer (~537 references) 
-- [ ] Migrate query layer (~3 references)
-- [ ] Migrate graph layer (~5 references)
-- [ ] Eliminate all `crate::proto::proximadb::*` usages
-- [ ] Remove `proto/proximadb.proto` from `build.rs`
-- [ ] Delete `src/proto/proximadb.rs`
+7) Remaining Tasks (updated 2025-09-10)
+- [x] Remove `proto/proximadb.proto` from `build.rs`
+- [x] Delete `src/proto/proximadb.rs` after confirming no references
+- [ ] Verify storage layer does not rely on legacy message shapes
 
-## Current Metrics (snapshot)
-- Legacy refs by module (approx):
-  - api_handlers: 35, network: 32, services: 41, core: 146, query: 3, graph: 5, storage: 537
-- v1 refs total ≈215; trending upward as migration proceeds
+## Validation Commands
+- Check for legacy imports: `rg -n "crate::proto::proximadb::" src`
+- Check build inputs: `rg -n "proximadb.proto" build.rs`
 
 ## How To Measure Progress
 - Count remaining legacy references:

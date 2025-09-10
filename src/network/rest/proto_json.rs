@@ -214,7 +214,7 @@ where
 
 /// Utility functions for common proto-JSON conversions
 pub mod utils {
-    use crate::proto::proximadb;
+    use crate::proto::proximadb_v1 as proximadb;
     
     /// Convert a VectorRecord to JSON-friendly format
     pub fn vector_record_to_json(record: &proximadb::VectorRecord) -> serde_json::Value {

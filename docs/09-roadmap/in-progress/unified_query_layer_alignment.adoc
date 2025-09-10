@@ -3,7 +3,7 @@
  :toc:
  :icons: font
 :source-highlighter: rouge
-:status: in-progress
+:status: superseded
 
 == Goal
 

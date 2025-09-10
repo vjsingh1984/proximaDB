@@ -5,21 +5,19 @@
 :source-highlighter: rouge
 :status: in-progress
 
-== Implementation Status (UPDATED: 2025-09-10) ✅ PRODUCTION READY
+== Implementation Status (Updated: 2025-09-10)
 
-**✅ COMPLETED - SKS Platform Fully Operational:**
-- ✅ **EntityService**: Complete gRPC (`entity_service.rs`) and REST (`entities.rs`) implementation
-- ✅ **Graph Engine**: ORION production engine with 1,205 lines in `graph/service.rs`
-- ✅ **Hybrid Intelligence**: Advanced fusion algorithms with RRF and Adaptive Semantic Fusion
-- ✅ **SQL Extensions**: SIMILAR/FOLLOW/ASSEMBLE functions implemented with execution integration
-- ✅ **Unified Query Layer**: Complete sql_frontend integration with HashMap optimization
-- ✅ **Performance Optimization**: 10x metadata filtering improvement through HashMap architecture
+Overall: In progress
 
-**🎯 EXCEEDED SPECIFICATIONS:**
-- **Advanced Fusion**: Research-grade algorithms (RRF, ASF) implemented beyond basic requirements
-- **Performance**: HashMap optimization delivers measurable 10x improvement
-- **Integration**: Complete sql_frontend integration enabling SQL interface for SKS
-- **Test Coverage**: Comprehensive TDD framework with performance validation
+Implemented:
+- gRPC EntityService and REST handlers present (see `src/network/grpc/entity_service.rs`, `src/network/rest/v1/entities.rs`)
+- Graph service and hybrid fusion strategies (RRF, adaptive) available
+- SQL frontend integrated; SKS functions recognized at parse layer
+
+Gaps:
+- EntityStore persistence and embedding fetch are scaffolded with TODOs (`src/storage/entity_store.rs`)
+- No text→embedding conversion; temporal filters not implemented
+- Limited tests for SKS flows; pagination/streaming not wired
 
 == Executive Summary: Creating the SKS Market Category
 
@@ -55,7 +53,9 @@ graph TB
     style M3 fill:#9f6,stroke:#333,stroke-width:4px
 ----
 
-=== Performance Advantage: Intra-Process Architecture
+=== Performance Notes
+
+Current code paths are intra-process; specific latency/throughput targets should be validated with benchmarks before publication.
 
 [cols="1,2,1,1", options="header"]
 |===
@@ -103,15 +103,15 @@ Year 3: $1.55B ARR (15% SKS dominance) → IPO
 
 === Implementation Phases
 
-==== Phase 1: SKS Foundation (Weeks 1-2)
+==== Phase 1: SKS Foundation
 [cols="1,3,1", options="header"]
 |===
 | Task | Description | Status
 | Entity Proto | Define Entity, EmbeddingVersion messages | ✅ DONE
 | Relations Proto | Define Relation, GraphTraversal messages | ✅ DONE
-| Entity Store | Arc-based entity storage with embeddings | ✅ DONE
-| Relations Store | Graph relationships with BFS/DFS | ⏳ IN PROGRESS
-| Provenance | Lineage tracking system | ✅ DONE
+| Entity Store | Arc-based entity storage with embeddings | 🔄 PARTIAL
+| Relations Store | Graph relationships with BFS/DFS | 🔄 PARTIAL
+| Provenance | Lineage tracking system | 🔲 TODO
 |===
 
 ==== Phase 2: Unified Memory Architecture (Week 3)
@@ -124,14 +124,14 @@ Year 3: $1.55B ARR (15% SKS dominance) → IPO
 | Memory Metrics | Track sharing efficiency | 🔲 TODO
 |===
 
-==== Phase 3: Query Integration (Week 4)
+==== Phase 3: Query Integration
 [cols="1,3,1", options="header"]
 |===
 | Task | Description | Status
-| SQL Extensions | SIMILAR, FOLLOW, ASSEMBLE operators | ✅ DONE
-| Hybrid Queries | Vector + graph in single query | 🔲 TODO
-| Query Planner | Cost-based optimization | 🔲 TODO
-| Executor | Parallel execution stages | 🔲 TODO
+| SQL Extensions | SIMILAR, FOLLOW, ASSEMBLE operators | 🔄 PARTIAL
+| Hybrid Queries | Vector + graph in single query | 🔄 PARTIAL
+| Query Planner | Cost-based optimization | 🔄 PARTIAL
+| Executor | Parallel execution stages | 🔄 PARTIAL
 |===
 
 ==== Phase 4: Production Features (Weeks 5-6)

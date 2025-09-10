@@ -9,9 +9,10 @@ This roadmap highlights near‑term engineering work and longer‑term themes. I
 
 == In Progress
 
-* Search orchestration integration (AXIS + storage engines)
-* Progressive search implementation (complete end‑to‑end path)
-* REST/Proto alignment and endpoint consistency
+* SQL frontend + unified execution integration (vector/graph/hybrid)
+* Proto v1 migration finalization (remove legacy build artifacts)
+* SKS (entities) service build‑out (persistence, tests)
+* REST/gRPC parity and endpoint consistency
 * Test hygiene (feature‑gated perf/integration tests)
 
 == Planned
@@ -22,6 +23,10 @@ This roadmap highlights near‑term engineering work and longer‑term themes. I
 * Expanded monitoring/metrics (Prometheus, alerts)
 * Cloud backend hardening (S3/Azure/GCS validation + CI tests)
 * Client tooling (SDK packaging + examples)
+
+== Notes
+
+Status across specs reflects current code reality. See `ROADMAP_STATUS_RECONCILIATION_2025-09-10.md` for a concise summary of what is complete vs. pending.
 
 == Links
 

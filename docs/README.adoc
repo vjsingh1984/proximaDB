@@ -1,0 +1,28 @@
+= ProximaDB Documentation
+:toc:
+:toclevels: 2
+
+== Navigation
+
+- 01 Overview: `docs/01-overview/` (introduction, use cases, features)
+- 02 Getting Started: `docs/02-getting-started/` (quickstart, demos)
+- 03 User Guide: `docs/03-user-guide/` (configuration, operations)
+- 04 Storage Engines: `docs/04-storage-engines/` (design and status)
+- 05 Operations: `docs/05-operations/` (deploy, monitor, troubleshoot)
+- 06 Architecture: `docs/06-architecture/` (system design)
+- 06 API Reference: `docs/06-api-reference/` (SQL, vector, graph, collections)
+- 07 Development: `docs/07-development/` (building, contributing, testing)
+- 08 Reference: `docs/08-reference/API.adoc` (consolidated REST/gRPC for vectors/collections)
+- 09 Roadmap: `docs/09-roadmap/` (plans, status, reconciliation)
+
+== Conventions
+
+- Prefer 06 API Reference for endpoints; 08 Reference hosts consolidated vector/collection details referenced by 06.
+- Roadmap statuses are reconciled against code; see `09-roadmap/ROADMAP_STATUS_RECONCILIATION_2025-09-10.md`.
+- Some root-level reports (e.g., optimization summaries) are historical snapshots; treat as reference/appendix.
+
+== How to Contribute to Docs
+
+- Keep pages concise and task-oriented; avoid marketing claims without measured data.
+- Cross-link files using relative paths; update section indexes (`README.adoc`) when adding new pages.
+- Reflect real code behavior; include file paths or commands where helpful.
