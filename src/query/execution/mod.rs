@@ -173,7 +173,10 @@ pub enum ExecutionOperation {
     /// Join scaffolding (not yet implemented)
     Join {
         kind: JoinKind,
-        on: String, // serialized expression for now
+        left_key: String,
+        right_key: String,
+        left_alias: String,
+        right_alias: String,
     },
 }
 

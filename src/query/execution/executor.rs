@@ -404,11 +404,41 @@ impl QueryExecutor {
             out.push(QueryRow { fields, similarity_score: None, graph_distance: None, provenance: None });
         }
 
-        // HAVING filter (simple numeric comparisons only supported via FilterExpression conversion later)
-        // For now, skip HAVING until FilterExpression supports aggregates.
+        // HAVING filter (simple numeric comparisons over aggregate row fields)
+        if let Some(h) = having {
+            out.retain(|r| self.eval_having(r, h));
+        }
 
         *rows = out;
         Ok(())
+    }
+
+    fn eval_having(&self, row: &QueryRow, filter: &FilterExpression) -> bool {
+        use crate::core::search::ComparisonOperator as Op;
+        match filter {
+            FilterExpression::Comparison { field, operator, value } => {
+                let lv = row.fields.get(field).cloned().unwrap_or(serde_json::Value::Null);
+                match operator {
+                    Op::Equals => lv == *value,
+                    Op::NotEquals => lv != *value,
+                    Op::GreaterThan | Op::GreaterThanOrEqual | Op::LessThan | Op::LessThanOrEqual => {
+                        let ln = lv.as_f64().unwrap_or(f64::NAN);
+                        let rn = value.as_f64().unwrap_or(f64::NAN);
+                        match operator {
+                            Op::GreaterThan => ln > rn,
+                            Op::GreaterThanOrEqual => ln >= rn,
+                            Op::LessThan => ln < rn,
+                            Op::LessThanOrEqual => ln <= rn,
+                            _ => false
+                        }
+                    }
+                    Op::In | Op::NotIn | Op::Contains | Op::StartsWith | Op::EndsWith | Op::Like => false,
+                }
+            }
+            FilterExpression::And(lhs, rhs) => self.eval_having(row, lhs) && self.eval_having(row, rhs),
+            FilterExpression::Or(lhs, rhs) => self.eval_having(row, lhs) || self.eval_having(row, rhs),
+            _ => true,
+        }
     }
 
     /// Execute graph traversal with ORION engine

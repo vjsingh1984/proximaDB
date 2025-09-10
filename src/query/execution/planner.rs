@@ -90,10 +90,13 @@ impl ExecutionPlanner {
         // Add Join scaffolding ops, if present
         let mut operations = operations;
         if !select.joins.is_empty() {
+            // Use first FROM as left side
+            let left_alias = select.from.get(0).and_then(|t| t.alias.clone()).unwrap_or_else(|| "l".to_string());
             for j in &select.joins {
                 let kind = match j.kind { crate::query::ast::JoinKind::Inner => crate::query::execution::JoinKind::Inner, crate::query::ast::JoinKind::Left => crate::query::execution::JoinKind::Left };
-                let on_str = j.on.as_ref().map(|e| format!("{:?}", e)).unwrap_or_else(|| "<none>".to_string());
-                operations.push(ExecutionOperation::Join { kind, on: on_str });
+                let (lk, rk) = if let Some(on) = &j.on { self.extract_join_keys(on).unwrap_or(("".into(), "".into())) } else { ("".into(), "".into()) };
+                let right_alias = j.right.alias.clone().unwrap_or_else(|| "r".to_string());
+                operations.push(ExecutionOperation::Join { kind, left_key: lk, right_key: rk, left_alias: left_alias.clone(), right_alias });
             }
         }
 
@@ -407,6 +410,17 @@ impl ExecutionPlanner {
         }
     }
 
+    fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> {
+        if let Expr::Binary { left, op, right } = expr {
+            if matches!(op, BinaryOp::Eq) {
+                if let (Some(l), Some(r)) = (self.expr_to_identifier(left), self.expr_to_identifier(right)) {
+                    return Some((l, r));
+                }
+            }
+        }
+        None
+    }
+
     fn extract_aggregates(&self, projection: &Vec<Expr>) -> Vec<crate::query::execution::AggregateSpec> {
         use crate::query::execution::{AggregateSpec, AggregateFunc};
         let mut out = Vec::new();
@@ -453,7 +467,6 @@ impl ExecutionPlanner {
                     crate::query::ast::Literal::Null => Ok(serde_json::Value::Null),
                 }
             },
-            }
             Expr::Param(ph) => {
                 if let Some(n) = ph.strip_prefix('$') {
                     let idx = n.parse::<usize>().map_err(|_| anyhow!("Invalid parameter placeholder: {}", ph))?;
