@@ -1,69 +1,119 @@
-= ProximaDB: A Unified Vector + Graph + Knowledge Platform for Enterprise RAG
-:imagesdir: images
+= ProximaDB: The Unified Vector + Graph + Knowledge Platform for Enterprise RAG
+:imagesdir: .
 :toc: macro
 
 toc::[]
 
 [.lead]
-ProximaDB unifies vector search, graph traversal, and a semantic knowledge store (SKS) in one accelerated, serverless, multicloud database—so teams ship accurate, explainable AI features without stitching multiple systems.
+Stop stitching together multiple databases for your AI applications. ProximaDB unifies vector search, graph traversal, and a semantic knowledge store (SKS) in one accelerated, serverless, multicloud database. Ship accurate, explainable AI features faster and more reliably.
 
 image::enterprise_rag_flow.svg[Enterprise RAG Flow,align="center",width=960]
 
-== Why ProximaDB
+== The ProximaDB Difference: Unified Intelligence
 
-* Unified intelligence: vector similarity + graph traversal + SKS in one engine.
-* SQL-first: query vectors, metadata, and relationships using familiar SQL with extensions for hybrid intelligence.
-* Accelerated performance: progressive search, SIMD optimizations, and smart pruning reduce latency and cost.
-* Operationally simple: serverless deployment patterns, multicloud portability, and built‑in observability.
+ProximaDB is not just another vector database. It's a comprehensive platform for building enterprise-grade AI applications.
+
+*   **Unified Engine:** Go beyond simple vector similarity. ProximaDB combines vector search with graph traversal and a Semantic Knowledge Store (SKS) in a single, high-performance engine.
+*   **SQL-First Approach:** Leverage your existing skills. Query vectors, metadata, and relationships using familiar SQL, supercharged with extensions for hybrid intelligence.
+*   **Accelerated Performance:** Don't compromise on speed. ProximaDB is built in Rust and features progressive search, SIMD optimizations, and smart pruning to reduce latency and cost.
+*   **Operational Simplicity:** Deploy anywhere, effortlessly. ProximaDB offers serverless deployment patterns, multicloud portability, and built-in observability for easy management.
 
 == Key Capabilities
 
-* Vector search at scale with advanced filtering and hybrid fusion (e.g., Reciprocal Rank Fusion).
-* Native graph analytics: paths, neighborhoods, constraints, and streaming traversals.
-* Semantic Knowledge Store: entities, provenance, and temporal context for trustworthy answers.
-* One API surface: REST and gRPC (SqlService/ExecuteSql) with typed results.
+*   **Vector Search at Scale:** Advanced filtering, hybrid fusion (e.g., Reciprocal Rank Fusion), and pluggable storage backends.
+*   **Native Graph Analytics:** Perform complex graph operations like pathfinding, neighborhood analysis, and streaming traversals.
+*   **Semantic Knowledge Store:** Enrich your data with entities, provenance, and temporal context for more trustworthy and accurate answers.
+*   **One API Surface:** Interact with ProximaDB through a unified API supporting REST and gRPC with typed results.
 
 == Spotlight Use Case: Enterprise RAG You Can Trust
-Challenge: A global services company must answer internal questions from 100k+ documents across product, support, and policy repositories. Pure vector search returns plausible but incomplete answers; classic knowledge graphs are accurate but too slow to maintain and query at scale.
 
-Solution with ProximaDB:
-. Ingest documents as entities (SKS) with embeddings and rich metadata (department, version, effective dates).
-. Capture relationships (dependencies, ownership, policy lineage) in the native graph engine.
-. Serve questions via a single SQL query that:
-.. Finds semantically similar passages (vector similarity),
-.. Follows graph edges to authoritative sources and owners,
-.. Applies temporal/provenance filters to ensure currency,
-.. Fuses results and returns a compact, cited context window.
+**Challenge:** A global services company needs to answer internal questions from over 100,000 documents across various departments. Pure vector search returns plausible but often incomplete or inaccurate answers. Traditional knowledge graphs are too slow to build and maintain at this scale.
 
-Outcome:
+**Solution with ProximaDB:**
 
-* Higher answer accuracy and explainability (answers cite sources and owners).
-* Lower latency and cost versus multi‑system stacks.
-* One data plane to operate and secure across clouds.
+1.  **Ingest & Enrich:** Documents are ingested as entities into the Semantic Knowledge Store (SKS) with embeddings and rich metadata (e.g., department, version, effective dates).
+2.  **Connect the Dots:** Relationships between documents (e.g., dependencies, ownership, policy lineage) are captured in the native graph engine.
+3.  **Query with Confidence:** A single SQL query is all it takes to:
+    *   Find semantically similar passages using vector search.
+    *   Traverse the graph to discover authoritative sources and owners.
+    *   Apply temporal and provenance filters to ensure the information is current and reliable.
+    *   Fuse the results into a compact, cited context window.
 
-== Example (Conceptual SQL)
+**Outcome:**
+
+*   **Higher Accuracy & Explainability:** Answers are not just accurate, they're also explainable, with clear citations to sources and owners.
+*   **Lower Latency & Cost:** A unified system means lower operational overhead and faster query performance compared to multi-system stacks.
+*   **Simplified Operations:** A single data plane to operate and secure across multiple clouds.
+
+== Example Conceptual SQL
+
 [source,sql]
 ----
-SELECT passage, source_url, owner
-FROM docs
-WHERE SIMILAR(embedding, $query_vec, 'cosine')
-  AND FOLLOW(doc_id, 'references', 2)
-  AND temporal.valid_from <= NOW()
-ORDER BY _similarity DESC
+SELECT
+    passage,
+    source_url,
+    owner
+FROM
+    docs
+WHERE
+    SIMILAR(embedding, $query_vec, 'cosine')
+AND
+    FOLLOW(doc_id, 'references', 2)
+AND
+    temporal.valid_from <= NOW()
+ORDER BY
+    _similarity DESC
 LIMIT 8;
 ----
 
-// Architecture overview is provided above as SVG for maximum compatibility in code hosts.
+== Architecture Overview
 
-== Architecture (Mermaid Overview)
 [source,mermaid]
 ----
-flowchart LR
-  A[Ingestion\nDocs → Embeddings\nMetadata] --> B[SKS\nEntities + Provenance]
-  B --> C[Graph\nReferences, Ownership]
-  D[SQL (SqlService)\nSIMILAR + FOLLOW] --> E[Vector Ops]
-  D --> F[Graph Service]
-  E --> G[Fusion\nRRF/Adaptive]
-  F --> G
-  G --> H[Answer + Citations\nOwner, Timestamp]
+graph TD
+    subgraph " "
+        direction LR
+        subgraph "Data Ingestion & Enrichment"
+            direction TB
+            A[fa:fa-file-alt Documents & Metadata] --> B{Embed & Extract};
+            B --> C[fa:fa-database SKS<br>Entities, Provenance, Temporal];
+            B --> D[fa:fa-project-diagram Graph<br>Relationships, Dependencies];
+        end
+
+        subgraph "Unified Query Layer"
+            direction TB
+            E[fa:fa-code SQL Query<br>SIMILAR + FOLLOW] --> F{ProximaDB Engine};
+        end
+
+        subgraph "Core Services"
+            direction TB
+            F --> G[fa:fa-search Vector Ops<br>Similarity, Filtering];
+            F --> H[fa:fa-stream Graph Service<br>Traversal, Pathfinding];
+        end
+
+        subgraph "Results"
+            direction TB
+            I[fa:fa-magic Fusion<br>RRF, Adaptive Ranking] --> J[fa:fa-check-circle Answer & Citations<br>Source, Owner, Timestamp];
+        end
+    end
+
+    C --> F;
+    D --> F;
+    G --> I;
+    H --> I;
+
+    style A fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style B fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style C fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style D fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style E fill:#e6f7ff,stroke:#007bff,stroke-width:2px
+    style F fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style G fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style H fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style I fill:#f9f9f9,stroke:#333,stroke-width:2px
+    style J fill:#e6ffed,stroke:#28a745,stroke-width:2px
 ----
+== Get Started
+
+* Quickstart: link:../../02-getting-started/QUICKSTART.adoc[Run locally in minutes]
+* API Reference: link:../../06-api-reference/README.adoc[Explore REST/gRPC endpoints]
