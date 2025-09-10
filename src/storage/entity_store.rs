@@ -71,7 +71,7 @@ pub trait EntityStore: Send + Sync {
 }
 
 /// Entity header containing metadata, provenance, and temporal info
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EntityHeader {
     pub typed_metadata: Option<TypedMetadata>,
     pub flexible_metadata: Option<FlexibleMetadata>,
