@@ -67,6 +67,12 @@ impl QueryExecutor {
                     // Apply projection transformations
                     self.apply_projections(&mut all_rows, columns, transformations);
                 },
+                ExecutionOperation::Aggregate { group_keys, aggs, having } => {
+                    self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
+                }
+                ExecutionOperation::Join { .. } => {
+                    return Err(anyhow!("JOIN execution is not implemented yet"));
+                }
                 _ => {
                     return Err(anyhow!("Unsupported operation in vector plan: {:?}", operation));
                 }
@@ -74,10 +80,11 @@ impl QueryExecutor {
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
+        let total_found = all_rows.len();
 
         Ok(QueryResult {
             rows: all_rows,
-            total_found: all_rows.len(),
+            total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
             cache_hits: performance_metrics.cache_hit_ratio as usize,
@@ -113,6 +120,12 @@ impl QueryExecutor {
                 ExecutionOperation::Project { columns, transformations } => {
                     self.apply_projections(&mut all_rows, columns, transformations);
                 },
+                ExecutionOperation::Aggregate { group_keys, aggs, having } => {
+                    self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
+                }
+                ExecutionOperation::Join { .. } => {
+                    return Err(anyhow!("JOIN execution is not implemented yet"));
+                }
                 _ => {
                     return Err(anyhow!("Unsupported operation in graph plan: {:?}", operation));
                 }
@@ -120,10 +133,11 @@ impl QueryExecutor {
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
+        let total_found = all_rows.len();
 
         Ok(QueryResult {
             rows: all_rows,
-            total_found: all_rows.len(),
+            total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
             cache_hits: 0, // TODO: Implement graph caching
@@ -154,6 +168,15 @@ impl QueryExecutor {
                 ExecutionOperation::Fusion { strategy, weights } => {
                     fusion_strategy = Some((strategy.clone(), weights.clone()));
                 },
+                ExecutionOperation::Aggregate { group_keys, aggs, having } => {
+                    // Apply aggregation after fusion below
+                    // Defer: store to apply post-fusion
+                    // For simplicity, aggregate only after fusion
+                    // We'll process after we compute fused_results
+                }
+                ExecutionOperation::Join { .. } => {
+                    return Err(anyhow!("JOIN execution is not implemented yet"));
+                }
                 _ => {} // Handle other operations
             }
         }
@@ -169,15 +192,25 @@ impl QueryExecutor {
         };
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
+        let total_found = fused_results.len();
 
-        Ok(QueryResult {
+        let mut result = QueryResult {
             rows: fused_results,
-            total_found: fused_results.len(),
+            total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
             cache_hits: performance_metrics.cache_hit_ratio as usize,
             performance_metrics,
-        })
+        };
+
+        // Post-fusion aggregate if requested
+        for op in &plan.operations {
+            if let ExecutionOperation::Aggregate { group_keys, aggs, having } = op {
+                self.apply_aggregate(&mut result.rows, group_keys, aggs, having)?;
+            }
+        }
+
+        Ok(result)
     }
 
     /// Execute vector search with VOS integration and HashMap filtering
@@ -201,15 +234,14 @@ impl QueryExecutor {
             progressive_search: true, // Enable 7-phase progressive optimization
             include_vectors: false,   // Don't return vectors unless explicitly requested
             include_metadata: true,   // Include metadata for filtering
-            hardware_acceleration: true, // Enable SIMD/GPU acceleration
-            cache_results: true,      // Enable intelligent caching
+            scenario: Some("query_execution".to_string()),
         };
 
         // Execute with VOS - this will use HashMap metadata filtering internally
         let vos_results = if let Some(vector) = query_vector {
             self.vector_service.unified_search_v1(
                 collection_id,
-                vector,
+                vector.clone(),
                 top_k,
                 filters.cloned(),
                 Some(search_config),
@@ -241,6 +273,55 @@ impl QueryExecutor {
         Ok(rows)
     }
 
+    fn apply_aggregate(
+        &self,
+        rows: &mut Vec<QueryRow>,
+        group_keys: &Vec<String>,
+        aggs: &Vec<crate::query::execution::AggregateSpec>,
+        having: &Option<crate::core::search::FilterExpression>,
+    ) -> Result<()> {
+        use std::collections::HashMap;
+        let mut groups: HashMap<Vec<String>, Vec<&QueryRow>> = HashMap::new();
+        for row in rows.iter() {
+            let key: Vec<String> = group_keys.iter().map(|k| match row.fields.get(k) {
+                Some(serde_json::Value::String(s)) => s.clone(),
+                Some(serde_json::Value::Number(n)) => n.to_string(),
+                Some(serde_json::Value::Bool(b)) => b.to_string(),
+                Some(other) => other.to_string(),
+                None => "".to_string(),
+            }).collect();
+            groups.entry(key).or_default().push(row);
+        }
+
+        let mut out: Vec<QueryRow> = Vec::new();
+        for (key, grp) in groups {
+            let mut fields = HashMap::new();
+            // Put group keys back
+            for (i, k) in group_keys.iter().enumerate() {
+                fields.insert(k.clone(), serde_json::Value::String(key[i].clone()));
+            }
+            // Compute aggregates
+            for agg in aggs {
+                let vals: Vec<f64> = grp.iter().filter_map(|r| r.fields.get(&agg.field)).filter_map(|v| v.as_f64()).collect();
+                let v = match agg.func {
+                    crate::query::execution::AggregateFunc::Count => serde_json::json!(grp.len() as u64),
+                    crate::query::execution::AggregateFunc::Sum => serde_json::json!(vals.iter().copied().sum::<f64>()),
+                    crate::query::execution::AggregateFunc::Avg => serde_json::json!(if vals.is_empty() {0.0} else { vals.iter().copied().sum::<f64>() / (vals.len() as f64) }),
+                    crate::query::execution::AggregateFunc::Min => serde_json::json!(vals.iter().cloned().fold(f64::INFINITY, f64::min)),
+                    crate::query::execution::AggregateFunc::Max => serde_json::json!(vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
+                };
+                fields.insert(agg.alias.clone(), v);
+            }
+            out.push(QueryRow { fields, similarity_score: None, graph_distance: None, provenance: None });
+        }
+
+        // HAVING filter (simple numeric comparisons only supported via FilterExpression conversion later)
+        // For now, skip HAVING until FilterExpression supports aggregates.
+
+        *rows = out;
+        Ok(())
+    }
+
     /// Execute graph traversal with ORION engine
     async fn execute_graph_traversal_operation(
         &self,
@@ -254,7 +335,7 @@ impl QueryExecutor {
         // Use BFS/DFS algorithms with CSR storage for optimal performance
         
         let traversal_config = crate::graph::engines::orion::traversal::TraversalConfig {
-            max_depth: Some(max_depth as usize),
+            max_depth: Some(*max_depth as usize),
             max_nodes: Some(1000), // Default limit
             edge_types: if edge_types.is_empty() { None } else { Some(edge_types.to_vec()) },
             node_filter: None, // TODO: Convert filters to node filter
@@ -446,6 +527,21 @@ impl QueryExecutor {
                     },
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
+                        serde_json::Value::String(base64::encode(b))
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        serde_json::Value::Null
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        serde_json::Value::String("[Array]".to_string()) // Simplified for now
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        serde_json::Value::String("[Object]".to_string()) // Simplified for now
                     },
                     None => serde_json::Value::Null,
                 };

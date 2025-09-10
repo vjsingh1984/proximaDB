@@ -218,6 +218,14 @@ impl ExecutionPlanner {
             _ => return Err(anyhow!("Execution strategy not yet implemented: {:?}", strategy)),
         }
 
+        // Aggregate (GROUP BY / HAVING)
+        if !select.group_by.is_empty() {
+            let group_keys = select.group_by.iter().filter_map(|e| self.expr_to_identifier(e)).collect::<Vec<_>>();
+            let aggs = self.extract_aggregates(&select.projection);
+            let having = self.convert_where_to_filter(&select.having)?; // reuse filter converter
+            operations.push(ExecutionOperation::Aggregate { group_keys, aggs, having });
+        }
+
         // Add projection operation for result formatting
         operations.push(ExecutionOperation::Project {
             columns: self.extract_projection_columns(select),
@@ -324,6 +332,34 @@ impl ExecutionPlanner {
             },
             _ => Err(anyhow!("Unsupported field expression: {:?}", expr)),
         }
+    }
+
+    fn expr_to_identifier(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(s) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn extract_aggregates(&self, projection: &Vec<Expr>) -> Vec<crate::query::execution::AggregateSpec> {
+        use crate::query::execution::{AggregateSpec, AggregateFunc};
+        let mut out = Vec::new();
+        for expr in projection {
+            if let Expr::AggCall { name, args } = expr {
+                let alias = name.to_uppercase();
+                let field = args.get(0).and_then(|e| self.expr_to_identifier(e)).unwrap_or("*".to_string());
+                let func = match alias.as_str() {
+                    s if s.contains("COUNT") => AggregateFunc::Count,
+                    s if s.contains("SUM") => AggregateFunc::Sum,
+                    s if s.contains("AVG") => AggregateFunc::Avg,
+                    s if s.contains("MIN") => AggregateFunc::Min,
+                    s if s.contains("MAX") => AggregateFunc::Max,
+                    _ => AggregateFunc::Count,
+                };
+                out.push(AggregateSpec { alias: alias.clone(), func, field });
+            }
+        }
+        out
     }
 
     /// Convert AST binary operator to FilterExpression comparison operator

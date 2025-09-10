@@ -146,6 +146,17 @@ pub enum ExecutionOperation {
         columns: Vec<String>,
         transformations: Vec<ProjectionTransform>,
     },
+    /// Aggregate + Having for GROUP BY
+    Aggregate {
+        group_keys: Vec<String>,
+        aggs: Vec<AggregateSpec>,
+        having: Option<FilterExpression>,
+    },
+    /// Join scaffolding (not yet implemented)
+    Join {
+        kind: JoinKind,
+        on: String, // serialized expression for now
+    },
 }
 
 impl ExecutionOperation {
@@ -164,6 +175,12 @@ impl ExecutionOperation {
             ExecutionOperation::Project { columns, .. } => {
                 format!("Project (columns: {})", columns.len())
             },
+            ExecutionOperation::Aggregate { group_keys, aggs, .. } => {
+                format!("Aggregate (groups: {}, aggs: {})", group_keys.len(), aggs.len())
+            }
+            ExecutionOperation::Join { kind, .. } => {
+                format!("Join ({:?})", kind)
+            }
         }
     }
 }
@@ -190,6 +207,29 @@ pub enum ProjectionTransform {
     SimilarityScore,
     /// Format timestamp
     FormatTimestamp,
+}
+
+/// Aggregate specification
+#[derive(Debug, Clone)]
+pub struct AggregateSpec {
+    pub alias: String,
+    pub func: AggregateFunc,
+    pub field: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum AggregateFunc {
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone)]
+pub enum JoinKind {
+    Inner,
+    Left,
 }
 
 /// Query execution result
