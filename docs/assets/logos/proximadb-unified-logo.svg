@@ -24,49 +24,54 @@
     </filter>
   </defs>
 
-  <!-- Logo Symbol: Unified Intelligence Hub -->
+  <!-- Logo Symbol: 2x2 Quadrant Grid (Cloud, Graph, Vector, SKS) with central DB, outline-only -->
   <g transform="translate(60, 60)">
-    <!-- Central hub representing unified platform -->
-    <circle cx="0" cy="0" r="25" fill="url(#logoGradient)" filter="url(#logoGlow)"/>
-    
-    <!-- Vector search rays emanating from center (representing speed/processing) -->
-    <g stroke="url(#logoGradient)" stroke-width="3" opacity="0.8">
-      <line x1="0" y1="-35" x2="0" y2="-45" stroke-linecap="round"/>
-      <line x1="25" y1="-18" x2="32" y2="-23" stroke-linecap="round"/>
-      <line x1="25" y1="18" x2="32" y2="23" stroke-linecap="round"/>
-      <line x1="0" y1="35" x2="0" y2="45" stroke-linecap="round"/>
-      <line x1="-25" y1="18" x2="-32" y2="23" stroke-linecap="round"/>
-      <line x1="-25" y1="-18" x2="-32" y2="-23" stroke-linecap="round"/>
+    <!-- Enclosing ring -->
+    <circle cx="0" cy="0" r="32" fill="none" stroke="url(#logoGradient)" stroke-width="3" filter="url(#logoGlow)"/>
+
+    <!-- Q1 Cloud (top-left) -->
+    <g transform="translate(-12,-12)">
+      <path d="M -7,2 Q -7,-3 -4,-3 Q -2,-5 2,-3 Q 5,-5 7,-2 Q 8,0 7,2 Q 5,3 2,3 L -5,3 Q -7,3 -7,2 Z"
+            fill="none" stroke="#0ea5e9" stroke-width="1.6"/>
     </g>
-    
-    <!-- Graph nodes around the hub (representing connectivity) -->
-    <g fill="#ffffff" opacity="0.9">
-      <circle cx="0" cy="-40" r="4"/> <!-- Top -->
-      <circle cx="35" cy="-20" r="4"/> <!-- Top right -->
-      <circle cx="35" cy="20" r="4"/>  <!-- Bottom right -->
-      <circle cx="0" cy="40" r="4"/>   <!-- Bottom -->
-      <circle cx="-35" cy="20" r="4"/> <!-- Bottom left -->
-      <circle cx="-35" cy="-20" r="4"/><!-- Top left -->
+
+    <!-- Q2 Graph (top-right) -->
+    <g transform="translate(12,-12)" fill="none" stroke="#ef4444" stroke-width="1.6">
+      <circle cx="-5" cy="-3" r="2.2"/>
+      <circle cx="5" cy="-3" r="2.2"/>
+      <circle cx="0" cy="5" r="2.2"/>
+      <line x1="-5" y1="-3" x2="5" y2="-3"/>
+      <line x1="-5" y1="-3" x2="0" y2="5"/>
+      <line x1="5" y1="-3" x2="0" y2="5"/>
     </g>
-    
-    <!-- Connection lines (representing graph relationships and data flow) -->
-    <g stroke="#ffffff" stroke-width="2" opacity="0.6">
-      <line x1="0" y1="-25" x2="0" y2="-36"/>
-      <line x1="18" y1="-13" x2="31" y2="-16"/>
-      <line x1="18" y1="13" x2="31" y2="16"/>
-      <line x1="0" y1="25" x2="0" y2="36"/>
-      <line x1="-18" y1="13" x2="-31" y2="16"/>
-      <line x1="-18" y1="-13" x2="-31" y2="-16"/>
+
+    <!-- Q3 Vector (bottom-left) as quiver -->
+    <g transform="translate(-12,12)" fill="none" stroke="#059669" stroke-width="1.8">
+      <line x1="-5" y1="5" x2="5" y2="-5" stroke-linecap="round"/>
+      <line x1="5" y1="-5" x2="1" y2="-5"/>
+      <line x1="5" y1="-5" x2="5" y2="-1"/>
+      <line x1="-5" y1="5" x2="3" y2="2" stroke-linecap="round"/>
+      <line x1="3" y1="2" x2="-1" y2="2"/>
+      <line x1="3" y1="2" x2="3" y2="6"/>
+      <line x1="-5" y1="5" x2="0" y2="-5" stroke-linecap="round"/>
+      <line x1="0" y1="-5" x2="-4" y2="-5"/>
+      <line x1="0" y1="-5" x2="0" y2="-1"/>
     </g>
-    
-    <!-- Central multimodal icon -->
-    <g fill="white">
-      <!-- Simplified representation of different data types -->
-      <rect x="-6" y="-8" width="4" height="6" rx="1"/> <!-- Text/Doc -->
-      <rect x="-1" y="-8" width="6" height="6" rx="1" fill="none" stroke="white" stroke-width="1"/> <!-- Image -->
-      <polygon points="2,-5 2,1 7,-2" fill="white"/> <!-- Video play -->
-      <circle cx="0" cy="5" r="3" fill="none" stroke="white" stroke-width="1"/> <!-- Audio wave -->
-      <path d="M -2,5 Q 0,2 2,5" fill="none" stroke="white" stroke-width="1"/>
+
+    <!-- Q4 SKS (bottom-right) as knowledge page with checkmark -->
+    <g transform="translate(12,12)" fill="none" stroke="#7c3aed" stroke-width="1.6">
+      <rect x="-6" y="-8" width="12" height="16" rx="1.6"/>
+      <line x1="6" y1="-8" x2="3" y2="-5"/>
+      <line x1="3" y1="-5" x2="6" y2="-5"/>
+      <line x1="-3" y1="1" x2="-1" y2="3"/>
+      <line x1="-1" y1="3" x2="3" y2="-1"/>
+    </g>
+
+    <!-- Center DB cylinder -->
+    <g transform="translate(0,0)" fill="none" stroke="#1e40af" stroke-width="1.6">
+      <ellipse cx="0" cy="-3" rx="6" ry="2.2"/>
+      <rect x="-6" y="-3" width="12" height="8"/>
+      <ellipse cx="0" cy="5" rx="6" ry="2.2"/>
     </g>
   </g>
 

@@ -60,17 +60,17 @@
     <text x="0" y="85" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="white">Text • Image • Video</text>
     <!-- Removed ops/sec text to reduce clutter/overlap -->
     
-    <!-- Multimodal icons -->
-    <!-- Shift icons down to avoid overlapping the VECTOR label -->
-    <g fill="white" opacity="0.8" transform="translate(0,14)">
-      <!-- Text icon -->
-      <rect x="-25" y="55" width="12" height="8" rx="1"/>
-      <rect x="-25" y="65" width="8" height="2" rx="1"/>
-      <!-- Image icon -->
-      <rect x="-8" y="55" width="16" height="12" rx="2" fill="none" stroke="white" stroke-width="1"/>
-      <circle cx="-3" cy="60" r="2"/>
-      <!-- Video/play icon -->
-      <polygon points="10,55 10,67 20,61" fill="white"/>
+    <!-- Vector quiver (outline) for clarity inside the vector circle -->
+    <g fill="none" stroke="white" stroke-width="2" opacity="0.9">
+      <line x1="-20" y1="110" x2="15" y2="75" stroke-linecap="round"/>
+      <line x1="15" y1="75" x2="7" y2="75"/>
+      <line x1="15" y1="75" x2="15" y2="83"/>
+      <line x1="-20" y1="110" x2="8" y2="95" stroke-linecap="round"/>
+      <line x1="8" y1="95" x2="1" y2="95"/>
+      <line x1="8" y1="95" x2="8" y2="102"/>
+      <line x1="-20" y1="110" x2="-2" y2="75" stroke-linecap="round"/>
+      <line x1="-2" y1="75" x2="-9" y2="75"/>
+      <line x1="-2" y1="75" x2="-2" y2="83"/>
     </g>
   </g>
 
@@ -100,10 +100,13 @@
     <text x="0" y="75" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="white">SKS</text>
     <text x="0" y="90" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="white">Hybrid AI</text>
     
-    <!-- Brain/knowledge representation -->
-    <g stroke="white" stroke-width="2" fill="none" opacity="0.7">
-      <path d="M -20,70 Q 0,50 20,70 Q 15,90 0,85 Q -15,90 -20,70"/>
-      <circle cx="0" cy="75" r="2" fill="white"/>
+    <!-- SKS knowledge page with accuracy check (outline) -->
+    <g fill="none" stroke="white" stroke-width="2" opacity="0.9">
+      <rect x="-18" y="60" width="36" height="40" rx="4"/>
+      <line x1="18" y1="60" x2="10" y2="68"/>
+      <line x1="10" y1="68" x2="18" y2="68"/>
+      <line x1="-6" y1="86" x2="-1" y2="91"/>
+      <line x1="-1" y1="91" x2="8" y2="80"/>
     </g>
   </g>
 
