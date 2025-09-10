@@ -31,22 +31,22 @@
 
     <!-- Q1 Cloud (top-left) -->
     <g transform="translate(-12,-12)">
-      <path d="M -7,2 Q -7,-3 -4,-3 Q -2,-5 2,-3 Q 5,-5 7,-2 Q 8,0 7,2 Q 5,3 2,3 L -5,3 Q -7,3 -7,2 Z"
-            fill="none" stroke="#0ea5e9" stroke-width="1.6"/>
+      <path d="M -6,2 Q -6,-3 -4,-3 Q -2,-4 2,-3 Q 4,-4 6,-2 Q 7,0 6,2 Q 4,3 2,3 L -4,3 Q -6,3 -6,2 Z"
+            fill="none" stroke="#0ea5e9" stroke-width="1.4"/>
     </g>
 
     <!-- Q2 Graph (top-right) -->
-    <g transform="translate(12,-12)" fill="none" stroke="#ef4444" stroke-width="1.6">
-      <circle cx="-5" cy="-3" r="2.2"/>
-      <circle cx="5" cy="-3" r="2.2"/>
-      <circle cx="0" cy="5" r="2.2"/>
+    <g transform="translate(12,-12)" fill="none" stroke="#ef4444" stroke-width="1.4">
+      <circle cx="-5" cy="-3" r="2.0"/>
+      <circle cx="5" cy="-3" r="2.0"/>
+      <circle cx="0" cy="5" r="2.0"/>
       <line x1="-5" y1="-3" x2="5" y2="-3"/>
       <line x1="-5" y1="-3" x2="0" y2="5"/>
       <line x1="5" y1="-3" x2="0" y2="5"/>
     </g>
 
     <!-- Q3 Vector (bottom-left) as quiver -->
-    <g transform="translate(-12,12)" fill="none" stroke="#059669" stroke-width="1.8">
+    <g transform="translate(-12,12)" fill="none" stroke="#059669" stroke-width="1.4">
       <line x1="-5" y1="5" x2="5" y2="-5" stroke-linecap="round"/>
       <line x1="5" y1="-5" x2="1" y2="-5"/>
       <line x1="5" y1="-5" x2="5" y2="-1"/>
@@ -59,8 +59,8 @@
     </g>
 
     <!-- Q4 SKS (bottom-right) as knowledge page with checkmark -->
-    <g transform="translate(12,12)" fill="none" stroke="#7c3aed" stroke-width="1.6">
-      <rect x="-6" y="-8" width="12" height="16" rx="1.6"/>
+    <g transform="translate(12,12)" fill="none" stroke="#7c3aed" stroke-width="1.4">
+      <rect x="-6" y="-8" width="12" height="16" rx="1.4"/>
       <line x1="6" y1="-8" x2="3" y2="-5"/>
       <line x1="3" y1="-5" x2="6" y2="-5"/>
       <line x1="-3" y1="1" x2="-1" y2="3"/>
@@ -68,10 +68,10 @@
     </g>
 
     <!-- Center DB cylinder -->
-    <g transform="translate(0,0)" fill="none" stroke="#1e40af" stroke-width="1.6">
-      <ellipse cx="0" cy="-3" rx="6" ry="2.2"/>
-      <rect x="-6" y="-3" width="12" height="8"/>
-      <ellipse cx="0" cy="5" rx="6" ry="2.2"/>
+    <g transform="translate(0,0)" fill="none" stroke="#1e40af" stroke-width="1.4">
+      <ellipse cx="0" cy="-3" rx="5" ry="2.0"/>
+      <rect x="-5" y="-3" width="10" height="8"/>
+      <ellipse cx="0" cy="5" rx="5" ry="2.0"/>
     </g>
   </g>
 

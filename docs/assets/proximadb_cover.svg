@@ -62,7 +62,7 @@
     <!-- Removed ops/sec text to reduce clutter/overlap -->
     
     <!-- Vector quiver (outline) for clarity inside the vector circle -->
-    <g fill="none" stroke="white" stroke-width="2" opacity="0.9">
+    <g fill="none" stroke="white" stroke-width="1.6" opacity="0.9">
       <line x1="-20" y1="90" x2="15" y2="55" stroke-linecap="round"/>
       <line x1="15" y1="55" x2="7" y2="55"/>
       <line x1="15" y1="55" x2="15" y2="63"/>
