@@ -31,39 +31,46 @@
 
   <!-- Ingestion -->
   <rect x="60" y="90" width="220" height="120" rx="10" ry="10" style="fill:url(#panelGrad); stroke:#1f2937; stroke-width:2;"/>
-  <text x="170" y="120" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Ingestion</text>
-  <text x="80" y="145" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Documents → Embeddings</text>
-  <text x="80" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Metadata (dept, version, dates)</text>
-  <text x="80" y="195" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Entities &amp; relations extracted</text>
-  <!-- doc icon -->
-  <rect x="240" y="102" width="30" height="40" fill="#f3f4f6" stroke="#9ca3af" rx="4"/>
-  <polyline points="270,102 260,112 270,112" fill="none" stroke="#9ca3af"/>
+  <!-- Vibrant document icon centered at top -->
+  <rect x="155" y="105" width="30" height="40" fill="#ff6b35" stroke="#e55a2b" stroke-width="2" rx="4"/>
+  <polyline points="185,105 175,115 185,115" fill="none" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="170" cy="120" r="3" fill="#ffffff"/>
+  <!-- Title and text below icon -->
+  <text x="170" y="155" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Ingestion</text>
+  <text x="80" y="175" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Documents → Embeddings</text>
+  <text x="80" y="190" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Metadata (dept, version, dates)</text>
+  <text x="80" y="205" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Entities &amp; relations extracted</text>
 
   <!-- SKS Entities -->
   <rect x="340" y="90" width="230" height="120" rx="10" ry="10" style="fill:url(#panelGradPurple); stroke:#6b21a8; stroke-width:2;"/>
-  <text x="455" y="120" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Semantic Knowledge Store (SKS)</text>
-  <text x="360" y="145" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Entities with embeddings</text>
-  <text x="360" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Provenance &amp; temporal info</text>
-  <text x="360" y="195" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Typed &amp; flexible metadata</text>
-  <!-- cylinder -->
-  <ellipse cx="555" cy="115" rx="18" ry="6" fill="#f3f4f6" stroke="#9ca3af"/>
-  <rect x="537" y="115" width="36" height="24" fill="#f3f4f6" stroke="#9ca3af"/>
-  <ellipse cx="555" cy="139" rx="18" ry="6" fill="#f3f4f6" stroke="#9ca3af"/>
+  <!-- Vibrant cylinder database icon centered at top -->
+  <ellipse cx="455" cy="110" rx="20" ry="8" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/>
+  <rect x="435" y="110" width="40" height="28" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/>
+  <ellipse cx="455" cy="138" rx="20" ry="8" fill="#a78bfa" stroke="#7c3aed" stroke-width="2"/>
+  <circle cx="445" cy="120" r="2" fill="#ffffff"/>
+  <circle cx="455" cy="125" r="2" fill="#ffffff"/>
+  <circle cx="465" cy="120" r="2" fill="#ffffff"/>
+  <!-- Title and text below icon -->
+  <text x="455" y="160" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Semantic Knowledge Store (SKS)</text>
+  <text x="360" y="180" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Entities with embeddings</text>
+  <text x="360" y="195" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Provenance &amp; temporal info</text>
+  <text x="360" y="210" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Typed &amp; flexible metadata</text>
 
   <!-- Graph -->
   <rect x="650" y="90" width="220" height="120" rx="10" ry="10" style="fill:url(#panelGradBlue); stroke:#1d4ed8; stroke-width:2;"/>
-  <text x="760" y="120" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Graph Relationships</text>
-  <text x="670" y="145" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• References, ownership, dependencies</text>
-  <text x="670" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Constraints &amp; traversal</text>
-  <!-- graph nodes -->
-  <g>
-    <circle cx="855" cy="120" r="5"/>
-    <circle cx="885" cy="135" r="5"/>
-    <circle cx="845" cy="152" r="5"/>
-  </g>
-  <line x1="855" y1="120" x2="885" y2="135" style="stroke:#0ea5e9; stroke-width:2;"/>
-  <line x1="855" y1="120" x2="845" y2="152" style="stroke:#0ea5e9; stroke-width:2;"/>
-  <line x1="845" y1="152" x2="885" y2="135" style="stroke:#0ea5e9; stroke-width:2;"/>
+  <!-- Vibrant graph network icon centered at top -->
+  <circle cx="750" cy="115" r="6" fill="#0ea5e9" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="775" cy="110" r="6" fill="#38bdf8" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="770" cy="135" r="6" fill="#06b6d4" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="740" cy="130" r="6" fill="#22d3ee" stroke="#0284c7" stroke-width="2"/>
+  <line x1="750" y1="115" x2="775" y2="110" style="stroke:#ffffff; stroke-width:3;"/>
+  <line x1="750" y1="115" x2="740" y2="130" style="stroke:#ffffff; stroke-width:3;"/>
+  <line x1="775" y1="110" x2="770" y2="135" style="stroke:#ffffff; stroke-width:3;"/>
+  <line x1="740" y1="130" x2="770" y2="135" style="stroke:#ffffff; stroke-width:3;"/>
+  <!-- Title and text below icon -->
+  <text x="760" y="160" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Graph Relationships</text>
+  <text x="670" y="180" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• References, ownership, dependencies</text>
+  <text x="670" y="195" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Constraints &amp; traversal</text>
 
   <!-- Arrows top row -->
   <line x1="280" y1="150" x2="335" y2="150" style="stroke:#1f2937; stroke-width:2;"/>
