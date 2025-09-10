@@ -43,11 +43,17 @@ impl ExecutionPlanner {
     pub fn create_plan(&self, query: &Query) -> Result<ExecutionPlan> {
         match query {
             Query::Select(select) => self.plan_select(select),
+            Query::With { .. } => Err(anyhow!("WITH/CTE queries are not implemented yet")),
+            Query::Set { .. } => Err(anyhow!("Set operations (UNION/INTERSECT/EXCEPT) are not implemented yet")),
         }
     }
 
     /// Plan SELECT query with intelligent strategy detection
     fn plan_select(&self, select: &Select) -> Result<ExecutionPlan> {
+        // Explicitly fail fast on unsupported features
+        if !select.joins.is_empty() {
+            return Err(anyhow!("JOIN is not implemented yet in the unified planner"));
+        }
         // Analyze query characteristics to determine optimal strategy
         let query_analysis = self.analyze_query(select)?;
         

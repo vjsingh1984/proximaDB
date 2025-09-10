@@ -3,6 +3,18 @@
 #[derive(Debug, Clone)]
 pub enum Query {
     Select(Select),
+    /// WITH ctes AS (...) SELECT ...
+    With {
+        ctes: Vec<Cte>,
+        query: Box<Query>,
+    },
+    /// Set operations like UNION/INTERSECT/EXCEPT
+    Set {
+        left: Box<Query>,
+        op: SetOp,
+        all: bool,
+        right: Box<Query>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +28,19 @@ pub struct Select {
     pub order_by: Vec<OrderByExpr>,
     pub limit: Option<u64>,
     pub offset: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Cte {
+    pub name: String,
+    pub query: Box<Query>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SetOp {
+    Union,
+    Intersect,
+    Except,
 }
 
 #[derive(Debug, Clone)]
@@ -77,4 +102,3 @@ pub enum BinaryOp {
     Like,
     Add, Sub, Mul, Div,
 }
-

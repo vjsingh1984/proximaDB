@@ -5,13 +5,13 @@ use sqlparser::ast::{
     Statement, Query as SqlQuery, Select as SqlSelect, SelectItem, TableFactor, 
     TableWithJoins, Join as SqlJoin, JoinOperator, JoinConstraint, Expr as SqlExpr, 
     BinaryOperator, UnaryOperator, Value, OrderByExpr as SqlOrderByExpr, 
-    Function, FunctionArg, FunctionArgExpr
+    Function, FunctionArg, FunctionArgExpr, SetExpr, SetOperator as SqlSetOperator, With as SqlWith, Cte as SqlCte
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 use crate::query::ast::{
-    Query, Select, TableRef, Join, JoinKind, Expr, Literal, UnaryOp, BinaryOp, OrderByExpr
+    Query, Select, TableRef, Join, JoinKind, Expr, Literal, UnaryOp, BinaryOp, OrderByExpr, Cte, SetOp
 };
 
 pub struct SqlFrontendParser {
@@ -52,12 +52,61 @@ impl SqlFrontendParser {
     }
 
     fn convert_query(&self, query: &SqlQuery) -> Result<Query> {
-        match &*query.body {
-            sqlparser::ast::SetExpr::Select(select) => {
-                Ok(Query::Select(self.convert_select(select, query)?))
-            },
-            _ => Err(anyhow!("Only simple SELECT statements are currently supported")),
+        // Handle WITH (CTE)
+        if let Some(with) = &query.with {
+            let ctes = self.convert_with(with)?;
+            let inner = self.convert_query_no_with(query)?; // convert body
+            return Ok(Query::With { ctes, query: Box::new(inner) });
         }
+        self.convert_query_no_with(query)
+    }
+
+    /// Convert query without handling WITH (handled by caller)
+    fn convert_query_no_with(&self, query: &SqlQuery) -> Result<Query> {
+        match &*query.body {
+            SetExpr::Select(select) => Ok(Query::Select(self.convert_select(select, query)?)),
+            SetExpr::SetOperation { left, op, right } => {
+                let (set_op, all) = match op { 
+                    SqlSetOperator::Union { all } => (SetOp::Union, *all),
+                    SqlSetOperator::Intersect { all } => (SetOp::Intersect, *all),
+                    SqlSetOperator::Except { all } => (SetOp::Except, *all),
+                };
+                let left_q = self.convert_setexpr(left)?;
+                let right_q = self.convert_setexpr(right)?;
+                Ok(Query::Set { left: Box::new(left_q), op: set_op, all, right: Box::new(right_q) })
+            }
+            other => Err(anyhow!("Unsupported query body: {:?}", other)),
+        }
+    }
+
+    fn convert_setexpr(&self, expr: &SetExpr) -> Result<Query> {
+        match expr {
+            SetExpr::Select(sel) => {
+                // Minimal wrapper Query for nested select
+                Ok(Query::Select(self.convert_select(sel, &SqlQuery { with: None, body: Box::new(SetExpr::Select(sel.clone())), order_by: vec![], limit: None, offset: None, fetch: None })?))
+            }
+            SetExpr::SetOperation { left, op, right } => {
+                let (set_op, all) = match op { 
+                    SqlSetOperator::Union { all } => (SetOp::Union, *all),
+                    SqlSetOperator::Intersect { all } => (SetOp::Intersect, *all),
+                    SqlSetOperator::Except { all } => (SetOp::Except, *all),
+                };
+                let left_q = self.convert_setexpr(left)?;
+                let right_q = self.convert_setexpr(right)?;
+                Ok(Query::Set { left: Box::new(left_q), op: set_op, all, right: Box::new(right_q) })
+            }
+            _ => Err(anyhow!("Unsupported set expression: {:?}", expr)),
+        }
+    }
+
+    fn convert_with(&self, with: &SqlWith) -> Result<Vec<Cte>> {
+        let mut ctes = Vec::new();
+        for SqlCte { alias, query, .. } in &with.cte_tables {
+            let name = alias.name.value.clone();
+            let q = self.convert_query(query)?;
+            ctes.push(Cte { name, query: Box::new(q) });
+        }
+        Ok(ctes)
     }
 
     fn convert_select(&self, select: &SqlSelect, query: &SqlQuery) -> Result<Select> {
@@ -342,4 +391,3 @@ impl Default for SqlFrontendParser {
         Self::new()
     }
 }
-
