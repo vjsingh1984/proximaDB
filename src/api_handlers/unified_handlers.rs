@@ -145,7 +145,7 @@ impl UnifiedHandlers {
                         collection: None,
                         collections: vec![],
                         affected_count: 0,
-                        total_count: None,
+                        total_count: 0,
                         metadata: Default::default(),
                         error_message: None,
                         error_code: Some("UNSUPPORTED_OPERATION".to_string()),
@@ -163,7 +163,7 @@ impl UnifiedHandlers {
             collection,
             collections: collections.unwrap_or_default(),
             affected_count,
-            total_count,
+            total_count: total_count.unwrap_or(0),
             metadata: Default::default(),
             error_message: None,
             error_code,
@@ -200,7 +200,7 @@ impl UnifiedHandlers {
             None => {
                 return Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorSearch as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch as i32,
                     metrics: None,
                     results: None,
                     vector_ids: vec![],
@@ -254,7 +254,7 @@ impl UnifiedHandlers {
 
         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
             success: true,
-            operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorSearch as i32,
+            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch as i32,
             metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                 total_processed: total_count,
                 successful_count: total_count,
@@ -289,7 +289,7 @@ impl UnifiedHandlers {
             None => {
                 return Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorBatch as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
                     metrics: None,
                     results: None,
                     vector_ids: vec![],
@@ -306,8 +306,8 @@ impl UnifiedHandlers {
             .map(|v| crate::proto::proximadb_v1::VectorRecord {
                 id: v.id,
                 vector: v.vector,
-                metadata: crate::core::conversions::sql_values_to_metadata_items(v.metadata),
-                timestamp: v.timestamp as u32, // legacy uses u32 seconds; v1 uses i64, keep as-is if types align
+                metadata: v.metadata,
+                timestamp: v.timestamp,
                 updated_at: v.updated_at.map(|x| x as i64),
                 expires_at: v.expires_at.map(|x| x as i64),
                 version: v.version.map(|x| x as i64),
@@ -340,7 +340,7 @@ impl UnifiedHandlers {
 
                         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                             success,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorBatch as i32,
+                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
                             metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                                 total_processed: vector_ids.len() as i64,
                                 successful_count: if success { vector_ids.len() as i64 } else { 0 },
@@ -363,7 +363,7 @@ impl UnifiedHandlers {
                         tracing::error!("Failed to parse vector batch response: {:?}", e);
                         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                             success: false,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorBatch as i32,
+                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
                             metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                                 total_processed: 0,
                                 successful_count: 0,
@@ -424,7 +424,7 @@ impl UnifiedHandlers {
             None => {
                 return Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                     metrics: None,
                     results: None,
                     vector_ids: vec![],
@@ -444,13 +444,21 @@ impl UnifiedHandlers {
                     id: if vector_record.id.is_empty() { "unknown".to_string() } else { vector_record.id },
                     score: 1.0,
                     vector: vector_record.vector,
-                    metadata: crate::core::conversions::json_map_to_sql_values(vector_record.metadata),
+                    metadata: vector_record.metadata,
                     version: vector_record.updated_at.map(|x| x as i64),
+                    engine_stats: None,
+                    expanded_context: None,
+                    index_path: None,
+                    timestamp: None,
+                    partition_id: None,
+                    quantization_level: None,
+                    distance_metric: None,
+                    debug_info: None,
                 };
 
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: true,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                     metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                         total_processed: 1,
                         successful_count: 1,
@@ -483,7 +491,7 @@ impl UnifiedHandlers {
                 tracing::error!("❌ Failed to get vector: {}", e);
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                     metrics: None,
                     results: None,
                     vector_ids: vec![],
@@ -674,10 +682,10 @@ impl UnifiedHandlers {
         let mut vector_results: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = Vec::new();
 
         match request.combination_strategy() {
-            crate::proto::proximadb_v1::CombinationStrategy::CombinationStrategyVectorThenGraph => {
+            crate::proto::proximadb_v1::CombinationStrategy::VectorThenGraph => {
                 // 1. Perform vector search
                 let vector_search_response = self
-                    .handle_vector_search_v1(request.vector_search_request.clone())
+                    .handle_vector_search_v1(request.vector_search_request.clone().unwrap_or_default())
                     .await?;
                 if let Some(results) = vector_search_response.results {
                     vector_results.extend(results.results);
@@ -689,18 +697,26 @@ impl UnifiedHandlers {
 
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
-                        let graph_req = request.graph_traversal_request.clone();
+                        let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
                             start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
-                            max_depth: graph_req.max_depth,
-                            edge_types: graph_req.edge_types,
-                            node_labels: graph_req.node_labels,
-                            filters: graph_req.node_filters, // Assuming node_filters in graph_query are PropertyFilter
-                            algorithm: graph_req.algorithm,
+                            max_depth: graph_req.max_depth.unwrap_or(3),
+                            edge_types: graph_req.edge_types.unwrap_or_default(),
+                            node_labels: graph_req.node_labels.unwrap_or_default(),
+                            filters: graph_req.filters.unwrap_or_default(),
+                            algorithm: graph_req.algorithm.unwrap_or_default(),
                             limit: request.limit,
+                            max_frontier: None,
+                            timeout_ms: None,
                         };
 
-                        let traversal_response = self.graph_service.traverse(traversal_request).await?;
+                        // TODO: Implement traverse method on GraphService
+                        // let traversal_response = self.graph_service.traverse(traversal_request).await?;
+                        let traversal_response = crate::proto::proximadb_v1::TraversalResponse {
+                            nodes: vec![],
+                            edges: vec![],
+                            paths: vec![],
+                        };
                         nodes.extend(traversal_response.nodes);
                         edges.extend(traversal_response.edges);
                         paths.extend(traversal_response.paths);
@@ -1118,6 +1134,7 @@ impl UnifiedHandlers {
             rows,
             columns,
             row_count: result.stats.rows_returned,
+            execution_time_ms: result.stats.execution_time_ms,
         })
     }
 
@@ -1128,36 +1145,74 @@ impl UnifiedHandlers {
         parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         collection: Option<String>,
     ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
-        // Build SQL engine and execute to get typed rows directly
-        use crate::query::sql_engine::SqlEngine;
-        let sql_engine = SqlEngine::with_collection_service(
-            self.vector_operations_service.clone(),
-            self.collection_service.clone(),
-        );
+        #[cfg(feature = "sql_frontend")]
+        {
+            // Use the new sql_frontend path by default
+            let processed_query = if let Some(params) = parameters.as_ref() {
+                Self::apply_query_parameters_sqlvalue(query.clone(), params)?
+            } else { query.clone() };
 
-        // Apply parameters if provided
-        let processed_query = if let Some(params) = parameters.as_ref() {
-            Self::apply_query_parameters_sqlvalue(query, params)?
-        } else { query };
+            let result = self
+                .execute_sql_frontend(processed_query, parameters.clone(), collection.clone())
+                .await?;
 
-        // Apply collection hint
-        let final_query = if let Some(coll) = collection.clone() {
-            format!("USE {}; {}", coll, processed_query)
-        } else { query };
+            // Convert SqlQueryResult (JSON rows) to v1 ExecuteSqlResponse (typed rows)
+            use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
+            let mut rows: Vec<SqlRow> = Vec::new();
+            for row in result.rows {
+                let mut fields_vec: Vec<SqlRowField> = Vec::new();
+                if let serde_json::Value::Object(map) = row {
+                    for (k, v) in map {
+                        let sv = Self::json_to_sql_value(&v);
+                        fields_vec.push(SqlRowField { key: k, value: Some(sv) });
+                    }
+                }
+                rows.push(SqlRow { fields: fields_vec, similarity: None });
+            }
 
-        let engine_result = sql_engine.execute(&final_query).await?;
+            Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+                rows,
+                rows_scanned: 0,
+                rows_returned: result.row_count as u64,
+                execution_time_ms: result.execution_time_ms as u64,
+                columns: result.columns.iter().map(|c| c.0.clone()).collect(),
+                column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
+            })
+        }
 
-        // Directly use typed rows from engine
-        let rows_proto = engine_result.rows_v1;
+        #[cfg(not(feature = "sql_frontend"))]
+        {
+            // Fallback to legacy sql_engine path
+            use crate::query::sql_engine::SqlEngine;
+            let sql_engine = SqlEngine::with_collection_service(
+                self.vector_operations_service.clone(),
+                self.collection_service.clone(),
+            );
 
-        Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
-            rows: rows_proto,
-            rows_scanned: engine_result.stats.rows_scanned as u64,
-            rows_returned: engine_result.stats.rows_returned as u64,
-            execution_time_ms: engine_result.stats.execution_time_ms,
-            columns: Vec::new(),
-            column_types: Vec::new(),
-        })
+            // Apply parameters if provided
+            let processed_query = if let Some(params) = parameters.as_ref() {
+                Self::apply_query_parameters_sqlvalue(query, params)?
+            } else { query };
+
+            // Apply collection hint
+            let final_query = if let Some(coll) = collection.clone() {
+                format!("USE {}; {}", coll, processed_query)
+            } else { processed_query };
+
+            let engine_result = sql_engine.execute(&final_query).await?;
+
+            // Directly use typed rows from engine
+            let rows_proto = engine_result.rows_v1;
+
+            Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+                rows: rows_proto,
+                rows_scanned: engine_result.stats.rows_scanned as u64,
+                rows_returned: engine_result.stats.rows_returned as u64,
+                execution_time_ms: engine_result.stats.execution_time_ms,
+                columns: Vec::new(),
+                column_types: Vec::new(),
+            })
+        }
     }
 
     /// Apply parameters to a parameterized query
@@ -1257,7 +1312,8 @@ impl UnifiedHandlers {
             serde_json::Value::Object(map) => {
                 let mut fields = std::collections::BTreeMap::new();
                 for (k, sv) in map.iter() { fields.insert(k.clone(), Self::json_to_sql_value(sv)); }
-                proximadb_v1::SqlValue { value: Some(V::ObjectValue(proximadb_v1::SqlObject { fields })) }
+                let fields_hashmap: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = fields.into_iter().collect();
+                proximadb_v1::SqlValue { value: Some(V::ObjectValue(proximadb_v1::SqlObject { fields: fields_hashmap })) }
             }
         }
     }
@@ -1340,9 +1396,7 @@ impl UnifiedHandlers {
 
         // 1. Create query lowering service with collection resolution
         let query_lowering = crate::query::sql_frontend::lowering::QueryLowering::new(
-            self.collection_service.clone().ok_or_else(|| {
-                anyhow::anyhow!("Collection service not available")
-            })?
+            self.collection_service.clone()
         );
 
         // 2. Lower SQL to internal AST with validation and optimization
@@ -1414,7 +1468,7 @@ impl UnifiedHandlers {
             rows,
             columns,
             row_count: rows.len(),
-            execution_time_ms,
+            execution_time_ms: execution_time_ms as u64,
         })
     }
 }
@@ -1425,4 +1479,5 @@ pub struct SqlQueryResult {
     pub rows: Vec<serde_json::Value>,
     pub columns: Vec<(String, String)>, // (name, type)
     pub row_count: usize,
+    pub execution_time_ms: u64,
 }

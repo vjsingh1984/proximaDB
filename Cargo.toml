@@ -203,7 +203,7 @@ reqwest = { version = "0.11", features = ["json"] }
 env_logger = "0.10"
 
 [features]
-default = []  # Minimal features for testing and ARM64 Ubuntu compatibility
+default = ["sql_frontend"]  # Use sql_frontend path by default; fallback to legacy sql_engine when disabled
 distributed = []
 standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
@@ -217,6 +217,9 @@ gcp = ["dep:google-cloud-storage"]
 comprehensive_tests = []
 perf_tests = []
 cloud-full = ["aws", "azure", "gcp"]
+
+# SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
+sql_frontend = []
 
 # Hardware acceleration features
 gpu = []  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
