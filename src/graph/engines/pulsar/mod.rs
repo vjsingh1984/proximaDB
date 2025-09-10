@@ -201,7 +201,7 @@ impl PulsarGraphEngine {
         
         self.shards.get(&shard_id)
             .map(|entry| Arc::clone(&entry))
-            .ok_or_else(|| ProximaDBError::InternalError(
+            .ok_or_else(|| ProximaDBError::Internal(
                 format!("Shard {} not found", shard_id)
             ))
     }
@@ -235,7 +235,7 @@ impl PulsarGraphEngine {
                 if let Some(shard) = replica_shards.first() {
                     operation(shard.as_ref())
                 } else {
-                    Err(ProximaDBError::InternalError("No replicas available".to_string()))
+                    Err(ProximaDBError::Internal("No replicas available".to_string()))
                 }
             },
             ConsistencyLevel::Quorum => {
@@ -255,7 +255,7 @@ impl PulsarGraphEngine {
                     }
                 }
                 
-                Err(ProximaDBError::InternalError(
+                Err(ProximaDBError::Internal(
                     format!("Quorum not reached: {}/{} required", successes, required_success)
                 ))
             },
@@ -268,7 +268,7 @@ impl PulsarGraphEngine {
                     last_result = Some(result);
                 }
                 
-                last_result.ok_or_else(|| ProximaDBError::InternalError(
+                last_result.ok_or_else(|| ProximaDBError::Internal(
                     "No results from any replica".to_string()
                 ))
             }

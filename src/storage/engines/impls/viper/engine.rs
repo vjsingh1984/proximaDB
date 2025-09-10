@@ -892,12 +892,12 @@ impl ViperEngine {
                         let record = VectorRecord {
                             id: vector_id.to_string(),
                             vector,
-                            metadata,
-                            timestamp: timestamp as u32,
-                            updated_at: Some(updated_at as u32),
-                            expires_at: expires_at.map(|v| v as u32),
-                            version: Some(version as u32),
-                            quantized_vector: None,
+                            metadata: metadata_map,
+                            timestamp: timestamp as i64,
+                            updated_at: Some(updated_at as i64),
+                            expires_at: expires_at.map(|v| v as i64),
+                            version: Some(version as i64),
+                            quantized_vector: vec![],
                             source: None,
                         };
                         // Check if this is a better match than what we have
@@ -1120,21 +1120,38 @@ impl ViperEngine {
                 let metadata_json = r.metadata.to_json_map();
                 crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
-                    vector,
-                    metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata_json),
                     score: r.score as f64,
-                    similarity: r.similarity,
+                    vector,
+                    metadata: {
+                        let mut map = std::collections::HashMap::new();
+                        for (k, v) in metadata_json {
+                            map.insert(k, crate::proto::proximadb_v1::SqlValue {
+                                value: Some(match v {
+                                    serde_json::Value::String(s) => crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
+                                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                    _ => crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string()),
+                                })
+                            });
+                        }
+                        map
+                    },
                     version: None,
+                    similarity: r.similarity,
                     timestamp: None,
                     source: r.source,
                     expanded_context: r.expanded_context.iter().map(|sc| {
                         match &sc.data {
-                            Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => url.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
                             None => "[Empty Content]".to_string(),
                         }
                     }).collect(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: std::collections::HashMap::new(),
+                    index_path: None,
                 }
             })
             .collect();
@@ -1840,12 +1857,14 @@ impl UnifiedStorageEngine for ViperEngine {
         let all_results: Vec<OptimizedSearchRecord> = search_results
             .into_iter()
             .map(|r| {
-                let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|(key, value)| {
-                    let value = match value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
-                        None => serde_json::Value::Null,
+                let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|(key, sql_value)| {
+                    let value = match sql_value.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(b),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(i)),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => serde_json::Value::String(base64::encode(b)),
+                        _ => serde_json::Value::Null,
                     };
                     (key, value)
                 }).collect();
@@ -1859,11 +1878,11 @@ impl UnifiedStorageEngine for ViperEngine {
                 }
                 
                 if let (Some(version), Some(timestamp)) = (r.version, r.timestamp) {
-                    record = record.with_version_info(version, timestamp);
+                    record = record.with_version_info(version as u32, timestamp as u32);
                 }
                 
                 if let Some(source) = r.source {
-                    record = record.with_source(source);
+                    record = record.with_source(source.unwrap_or_default());
                 }
                 
                 record

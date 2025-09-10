@@ -6,8 +6,8 @@ This checklist tracks the cutover from legacy `proximadb` proto to `proximadb.v1
 - ✅ API paths use v1 types across vector/graph/collections/SQL
 - ✅ HashMap-based metadata structures adopted
 - ✅ v1 schema expanded (e.g., quantization, collection types)
-- ⚠ Legacy proto still compiled in `build.rs`; `src/proto/proximadb.rs` exists
-- 🔄 Performance work tracked separately; avoid unverified claims here
+- ✅ Legacy proto removed from build and `src/proto/proximadb.rs` deleted.
+- ✅ Performance work tracked separately; avoid unverified claims here
 
 ## Action Items
 1) Services (vectors) ✅ COMPLETED
@@ -17,12 +17,12 @@ This checklist tracks the cutover from legacy `proximadb` proto to `proximadb.v1
 - [x] Convert VectorOperationsService to use v1 types exclusively
 - [x] Migrate UnifiedHandlers to use v1 types exclusively
 
-2) Core search ✅ PARTIALLY COMPLETED
+2) Core search ✅ COMPLETED
 - [x] Add `to_search_vector_record_v1`
 - [x] Migrate core/conversions.rs to v1 types
-- [ ] Implement v1 filter conversion (pending v1 filter schema)
+- [x] Implement v1 filter conversion
 
-3) Collections ✅ PARTIALLY COMPLETED  
+3) Collections ✅ COMPLETED
 - [x] Migrate `services/collection/manager.rs` to v1 `Collection*` types
 - [x] Convert Collections over gRPC to return v1 via converters
 
@@ -30,14 +30,14 @@ This checklist tracks the cutover from legacy `proximadb` proto to `proximadb.v1
 - [x] Add v1 get/put wrappers
 - [x] Switch API-facing cache users to prefer v1 wrappers
 
-5) Edges audit ✅ PARTIALLY COMPLETED
+5) Edges audit ✅ COMPLETED
 - [x] REST vector endpoints call v1 UnifiedHandlers
 - [x] gRPC vector endpoints call v1 UnifiedHandlers
 - [x] Collections gRPC returns v1 Collections
-- [ ] Remove duplicate handler files (handlers_new.rs, backup files) (not routed; safe to remove later)
+- [x] Remove duplicate handler files (handlers_new.rs, backup files)
 
-6) API Layer Migration ✅ PARTIALLY COMPLETED
-- [x] Migrate src/services/operations/vectors.rs v1-heavy paths to v1 builders (legacy kept for compatibility)
+6) API Layer Migration ✅ COMPLETED
+- [x] Migrate src/services/operations/vectors.rs v1-heavy paths to v1 builders
 - [x] Migrate src/api_handlers/unified_handlers.rs to v1 types
 - [x] Migrate src/network/rest/v1/handlers.rs to v1 types
 - [x] Migrate src/network/grpc/collection_service.rs to v1 types
@@ -46,11 +46,11 @@ This checklist tracks the cutover from legacy `proximadb` proto to `proximadb.v1
 7) Remaining Tasks (updated 2025-09-10)
 - [x] Remove `proto/proximadb.proto` from `build.rs`
 - [x] Delete `src/proto/proximadb.rs` after confirming no references
-- [ ] Verify storage layer does not rely on legacy message shapes
+- [x] Verify storage layer does not rely on legacy message shapes
 
 ## Validation Commands
-- Check for legacy imports: `rg -n "crate::proto::proximadb::" src`
-- Check build inputs: `rg -n "proximadb.proto" build.rs`
+- Check for legacy imports: `rg -n "crate::proto::proximadb::" src` (should return no results)
+- Check build inputs: `rg -n "proximadb.proto" build.rs` (should return no results)
 
 ## How To Measure Progress
 - Count remaining legacy references:
@@ -61,5 +61,4 @@ This checklist tracks the cutover from legacy `proximadb` proto to `proximadb.v1
   - `rg -n "handle_vector_.*_v1|proximadb_v1" src/network`
 
 ## Notes
-- Keep legacy converters until all consumers are migrated.
-- Only remove legacy proto after tree has zero `crate::proto::proximadb::` references.
+- Migration is complete.

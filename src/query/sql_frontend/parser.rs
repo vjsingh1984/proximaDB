@@ -305,36 +305,86 @@ impl SqlFrontendParser {
                         "SIMILAR" => {
                             // Expected: SIMILAR(field, query, metric?, threshold?)
                             if args.len() < 2 {
-                                return Err(anyhow!("SIMILAR requires at least 2 arguments"));
+                                return Err(anyhow!("SIMILAR(field, query, metric?, threshold?) requires at least 2 arguments"));
                             }
+
+                            // Validate field identifier
                             let field = match &args[0] {
                                 Expr::Identifier(s) => s.clone(),
-                                other => format!("{}", match other { _ => "expr" }),
+                                Expr::FuncCall { .. } | Expr::AggCall { .. } => {
+                                    return Err(anyhow!("SIMILAR: first argument must be a column identifier (e.g., embedding)"));
+                                }
+                                _ => {
+                                    return Err(anyhow!("SIMILAR: unsupported first argument; expected identifier (e.g., embedding)"));
+                                }
                             };
+
+                            // Validate query expression is present (allow literal/param/identifier)
                             let query_expr = Box::new(args[1].clone());
+                            if matches!(args[1], Expr::Literal(Literal::Null)) {
+                                return Err(anyhow!("SIMILAR: query argument cannot be NULL"));
+                            }
+
+                            // Optional metric validation
                             let metric = if args.len() >= 3 {
-                                if let Expr::Literal(Literal::String(s)) = &args[2] { Some(s.clone()) } else { None }
+                                match &args[2] {
+                                    Expr::Literal(Literal::String(s)) => {
+                                        let m = s.to_lowercase();
+                                        match m.as_str() {
+                                            "cosine" | "dot" | "euclidean" => Some(m),
+                                            _ => return Err(anyhow!("SIMILAR: unsupported metric '{}'. Use 'cosine', 'dot', or 'euclidean'", s)),
+                                        }
+                                    }
+                                    _ => return Err(anyhow!("SIMILAR: metric must be a string literal (e.g., 'cosine')")),
+                                }
                             } else { None };
+
+                            // Optional threshold validation
                             let threshold = if args.len() >= 4 {
-                                if let Expr::Literal(Literal::Number(n)) = &args[3] { Some(*n) } else { None }
+                                match &args[3] {
+                                    Expr::Literal(Literal::Number(n)) => {
+                                        if *n < 0.0 { return Err(anyhow!("SIMILAR: threshold must be ≥ 0")); }
+                                        Some(*n)
+                                    }
+                                    _ => return Err(anyhow!("SIMILAR: threshold must be numeric (e.g., 0.75)")),
+                                }
                             } else { None };
+
+                            // Extra arguments guard
+                            if args.len() > 4 {
+                                return Err(anyhow!("SIMILAR: too many arguments; expected up to 4"));
+                            }
+
                             Ok(Expr::SksSimilar { field, query: query_expr, metric, threshold })
                         }
                         "FOLLOW" => {
                             // Expected: FOLLOW(start, edge_type, max_depth)
-                            if args.len() < 3 {
-                                return Err(anyhow!("FOLLOW requires 3 arguments"));
+                            if args.len() != 3 {
+                                return Err(anyhow!("FOLLOW(start, edge, max_depth) requires exactly 3 arguments"));
                             }
-                            let start = Box::new(args[0].clone());
+
+                            // start node id (string or identifier)
+                            let start = match &args[0] {
+                                Expr::Literal(Literal::String(_)) | Expr::Identifier(_) => Box::new(args[0].clone()),
+                                _ => return Err(anyhow!("FOLLOW: start must be an identifier or string literal (node id)")),
+                            };
+
+                            // edge type (string or identifier)
                             let edge = match &args[1] {
                                 Expr::Literal(Literal::String(s)) => s.clone(),
                                 Expr::Identifier(s) => s.clone(),
-                                _ => "edge".to_string(),
+                                _ => return Err(anyhow!("FOLLOW: edge must be a string literal or identifier (edge type)")),
                             };
+
+                            // depth must be positive integer
                             let max_depth = match &args[2] {
-                                Expr::Literal(Literal::Number(n)) => (*n as u32),
-                                _ => 2u32,
+                                Expr::Literal(Literal::Number(n)) => {
+                                    if *n < 1.0 { return Err(anyhow!("FOLLOW: max_depth must be ≥ 1")); }
+                                    *n as u32
+                                }
+                                _ => return Err(anyhow!("FOLLOW: max_depth must be a number (e.g., 2)")),
                             };
+
                             Ok(Expr::SksFollow { start, edge, max_depth })
                         }
                         _ => Ok(Expr::FuncCall { name, args }),

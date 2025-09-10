@@ -583,7 +583,7 @@ impl AdvancedSearchOptimizer {
                     // Convert v1 metadata map to TypedMetadata
                     let mut metadata_map = std::collections::HashMap::new();
                     for (k, v) in record.metadata.into_iter() {
-                        let typed_value = match v.1 {
+                        let typed_value = match &v.value {
                             Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) =>
                                 MetadataValue::String(Arc::from(s.as_str())),
                             Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) =>
@@ -597,7 +597,8 @@ impl AdvancedSearchOptimizer {
                     let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                         .add_vector(record.vector.clone())
                         .with_metadata(TypedMetadata::from_map(metadata_map));
-                    if let Some(v) = record.version { rec = rec.with_version(v); }
+                    // TODO: Implement with_version method if needed
+                    // if let Some(v) = record.version { rec = rec.with_version(v); }
                     converted_results.push(rec);
                 }
             }
@@ -621,13 +622,13 @@ impl AdvancedSearchOptimizer {
                     // Convert proto metadata to TypedMetadata
                     let mut metadata_map = std::collections::HashMap::new();
                     for item in &record.metadata {
-                        if let Some(value) = &item.1 {
+                        if let Some(value) = &item.value {
                             use crate::proto::proximadb_v1::metadata_item;
                             let typed_value = match value {
                                 metadata_item::Value::StringValue(s) =>
                                     MetadataValue::String(Arc::from(s.as_str())),
-                                metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
-                                metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
+                                metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
+                                metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
                             };
                             metadata_map.insert(item.0.clone(), typed_value);
                         }
@@ -680,9 +681,9 @@ impl AdvancedSearchOptimizer {
                     similarity: r.similarity,
                     vector: r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default(),
                     metadata: std::collections::HashMap::new(), // Would convert metadata
-                    version: r.version,
-                    timestamp: r.timestamp,
-                    source: r.source.clone(),
+                    version: r.version.map(|v| v as i64),
+                    timestamp: r.timestamp.map(|t| t as i64),
+                    source: None, // TODO: Convert SourceContent to Option<String> when needed
                     expanded_context: r.expanded_context.iter().map(|sc| {
                         match &sc.data {
                             Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
@@ -980,15 +981,16 @@ impl AdvancedSearchOptimizer {
 
             // Convert record metadata to TypedMetadata
             let mut metadata_map = std::collections::HashMap::new();
-            for item in &record.metadata {
-                if let Some(value) = &item.1 {
-                    use crate::proto::proximadb_v1::metadata_item;
+            for (key, item) in record.metadata {
+                if let Some(value) = item.value {
+                    use crate::proto::proximadb_v1::sql_value;
                     let typed_value = match value {
-                        metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
-                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
-                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
+                        sql_value::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+                        sql_value::Value::NumberValue(f) => MetadataValue::Number(f),
+                        sql_value::Value::BoolValue(b) => MetadataValue::Bool(b),
+                        _ => continue, // Skip other types
                     };
-                    metadata_map.insert(item.0.clone(), typed_value);
+                    metadata_map.insert(key, typed_value);
                 }
             }
             
@@ -1000,7 +1002,7 @@ impl AdvancedSearchOptimizer {
                 .with_similarity(dist_result.normalized_score)
                 .add_vector(record.vector.clone())
                 .with_metadata(TypedMetadata::from_map(metadata_map))
-                .with_version_info(record.version.unwrap_or(0), record.timestamp)
+                .with_version_info(record.version.unwrap_or(0) as u32, record.timestamp as u32)
             );
         }
 

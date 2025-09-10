@@ -9,23 +9,14 @@ This document outlines the technical debt and planned refactoring efforts for Pr
 
 == Status Snapshot (Reviewed: 2025-09-10)
 
-- Done: Many unused imports/vars removed; clippy is enforced (deny warnings) via `make clippy`; protobuf enum conversions migrating to `try_from`.
-- In Progress: API consolidation around UnifiedHandlers; SQL path consolidation; zero-copy data path extension across graph/HELIX.
-- Next: Sweep for deprecated extern calls, complete `try_from` migration, and add CI checks for unused code and unreachable patterns.
+- Done: Many unused imports/vars removed; clippy is enforced (deny warnings) via `make clippy`; protobuf enum conversions migrated to `try_from`; API consolidation around UnifiedHandlers; SQL path consolidation.
+- In Progress: Zero-copy data path extension across graph/HELIX.
+- Next: Sweep for deprecated extern calls, and add CI checks for unused code and unreachable patterns.
 
 === Identified Technical Debt
 
 This section lists known technical debt items that have been identified and are being addressed:
 
-*   *Unused Imports and Variables*: Numerous instances of unused `use` statements and local variables across the codebase. These contribute to code clutter and can sometimes indicate dead code. Examples include:
-    *   `std::sync::Arc`
-    *   `std::io::Write`, `std::io::Read`, `tokio::io::AsyncReadExt`
-    *   `std::hash::Hash`
-    *   `crate::storage::persistence::filesystem::FileSystem`
-    *   `arrow_array::Array`
-    *   `crate::storage::common::compaction_utils::FlushHandler`
-    *   `crate::core::metadata_types::{MetadataValue, TypedMetadata}`
-    *   Various local variables such as `remainder`, `prod_lo`, `category`, `stats`, `level`, `column_name`, `endpoint`, `params`, `acc`, `logic`, `algorithm`, `collection_id`, `strategy`, ``config`, `top_k`, `pq_bits`, `key`, `binary`, `subvector_dim`, `quantized_vector`, `entry`.
 *   *Deprecated Function Usage*: Reliance on deprecated functions from external libraries, such as `parquet::file::footer::parse_metadata`. This can lead to compatibility issues with newer versions of libraries.
 *   *Unreachable Patterns*: Existence of unreachable `match` patterns, indicating redundant or logically flawed code paths (e.g., in `src/compute/quantization/unified.rs`).
 *   *Unnecessary Mutable Variables*: Variables declared as mutable (`mut`) but whose values are never changed after initialization. This can lead to confusion and unnecessary overhead.

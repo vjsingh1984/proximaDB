@@ -1057,7 +1057,7 @@ impl StorageQuantizationEngine {
         let mut total = 0;
 
         // Estimate codebook memory
-        for entry in self.codebooks.iter() {
+        for _entry in self.codebooks.iter() {
             // Rough estimate: 100KB per codebook
             total += 100_000;
         }

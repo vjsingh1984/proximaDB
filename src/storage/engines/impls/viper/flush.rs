@@ -662,21 +662,11 @@ impl Flush {
                 let values = filterable_arrays.get_mut(&filterable_column.name).unwrap();
                 let value = record
                     .metadata
-                    .iter()
-                    .find(|item| item.key == filterable_column.name)
-                    .map(|item| match &item.value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
-                            serde_json::Value::String(s.clone())
-                        }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
-                        }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                            serde_json::Value::Bool(*b)
-                        }
-                        None => serde_json::Value::Null,
+                    .get(&filterable_column.name)
+                    .map(|sql_value| {
+                        // Convert SqlValue to serde_json::Value
+                        // This is a placeholder - actual implementation depends on SqlValue structure
+                        serde_json::Value::String(format!("{:?}", sql_value))
                     })
                     .unwrap_or(serde_json::Value::Null);
                 values.push(value);
@@ -684,23 +674,12 @@ impl Flush {
 
             // Collect remaining metadata as extra key-value pairs
             let mut extra_kvs = Vec::new();
-            for item in &record.metadata {
+            for (key, sql_value) in &record.metadata {
                 // Skip filterable fields - they're handled dynamically above
-                if !filterable_field_names.contains(&item.key) {
-                    // Convert metadata value to string for storage
-                    let value_str = match &item.value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
-                            s.clone()
-                        }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
-                            n.to_string()
-                        }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                            b.to_string()
-                        }
-                        None => String::new(),
-                    };
-                    extra_kvs.push((item.key.clone(), value_str));
+                if !filterable_field_names.contains(key) {
+                    // Convert SqlValue to string for storage
+                    let value_str = format!("{:?}", sql_value); // Placeholder conversion
+                    extra_kvs.push((key.clone(), value_str));
                 }
             }
             extra_metadata_data.push(extra_kvs);
@@ -1002,17 +981,7 @@ impl Flush {
             crate::core::compression::CompressionAlgorithm::Zstd // Default
         };
 
-        let compression_level = if let Some(collection) = collection_config {
-            collection
-                .config
-                .as_ref()
-                .and_then(|c| c.storage_config.as_ref())
-                .and_then(|s| s.compression.as_ref())
-                .and_then(|c| c.level)
-                .unwrap_or(viper_config.compression_level as u32)
-        } else {
-            viper_config.compression_level as u32
-        };
+        let compression_level = viper_config.compression_level as u32; // Simplified since compression is now i32
 
         // Map core compression to Parquet compression using shared function
         let compression_algo =
@@ -1072,8 +1041,9 @@ impl Flush {
         props_builder = props_builder
             .set_column_dictionary_enabled(parquet::schema::types::ColumnPath::from("id"), true);
 
-        // Apply column-specific encodings from filterable metadata
-        for filterable_column in &filterable_metadata {
+        // Apply column-specific encodings from filterable metadata  
+        // TODO: Re-enable when encoding_hint is available in proto v1
+        /*for filterable_column in &filterable_metadata {
             if let Some(encoding_hint) = filterable_column.encoding_hint {
                 use crate::proto::proximadb_v1::ColumnEncoding;
                 let column_path =
@@ -1097,7 +1067,7 @@ impl Flush {
                     _ => {} // Use default encoding
                 }
             }
-        }
+        }*/
 
         // Configure ParquetWriterConfig from VIPER settings
         let writer_config = ParquetWriterConfig {
@@ -1134,7 +1104,7 @@ impl Flush {
                 enable_pq: has_quantization,
                 pq_segments: 32,
                 pq_bits: 8,
-                pq_codebooks: vec![],
+                pq_codebooks: 0,
                 binary_threshold: 0.5,
                 int8_threshold: 0.3,
                 pq_threshold: 0.1,

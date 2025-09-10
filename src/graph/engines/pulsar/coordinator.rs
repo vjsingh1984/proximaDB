@@ -119,7 +119,7 @@ impl QueryCoordinator {
         max_depth: u32,
     ) -> Result<Vec<Arc<Node>>> {
         let _permit = self.query_semaphore.acquire().await
-            .map_err(|e| ProximaDBError::InternalError(e.to_string()))?;
+            .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
         
         let query_id = self.generate_query_id().await;
         let mut context = TraversalContext {
@@ -164,7 +164,7 @@ impl QueryCoordinator {
             // Get the node from its shard
             if let Some(shard) = self.shards.get(&shard_id) {
                 // Get the actual node
-                if let Ok(Some(node)) = shard.get_node(&current_node_id) {
+                if let Some(node) = shard.get_node(&current_node_id)? {
                     result_nodes.push(node);
                     
                     // Get neighbors if we haven't reached max depth
@@ -223,14 +223,15 @@ impl QueryCoordinator {
         
         if let Some(primary_shard) = self.shards.get(&primary_shard_id) {
             // Get outgoing edges
-            if let Ok(outgoing_edges) = primary_shard.get_outgoing_edges(node_id, edge_type) {
+            let outgoing_edges = primary_shard.get_outgoing_edges(node_id, edge_type)?;
+            if !outgoing_edges.is_empty() {
                 for edge in outgoing_edges {
                     // The target node might be in a different shard
                     let target_shard_id = self.get_shard_for_node(&edge.to_node_id).await?;
                     context.shards_involved.insert(target_shard_id);
                     
                     if let Some(target_shard) = self.shards.get(&target_shard_id) {
-                        if let Ok(Some(target_node)) = target_shard.get_node(&edge.to_node_id) {
+                        if let Some(target_node) = target_shard.get_node(&edge.to_node_id)? {
                             all_neighbors.push(target_node);
                         }
                     }
@@ -250,12 +251,13 @@ impl QueryCoordinator {
             }
             
             // Check for incoming edges to our node
-            if let Ok(incoming_edges) = shard.get_incoming_edges(node_id, edge_type) {
+            let incoming_edges = shard.get_incoming_edges(node_id, edge_type)?;
+            if !incoming_edges.is_empty() {
                 context.shards_involved.insert(shard_id);
                 
                 for edge in incoming_edges {
                     // The source node is in this shard
-                    if let Ok(Some(source_node)) = shard.get_node(&edge.from_node_id) {
+                    if let Some(source_node) = shard.get_node(&edge.from_node_id)? {
                         all_neighbors.push(source_node);
                     }
                 }
@@ -272,7 +274,7 @@ impl QueryCoordinator {
         max_depth: u32,
     ) -> Result<DistributedTraversalResult> {
         let _permit = self.query_semaphore.acquire().await
-            .map_err(|e| ProximaDBError::InternalError(e.to_string()))?;
+            .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
         
         let query_id = self.generate_query_id().await;
         let mut context = TraversalContext {
@@ -332,7 +334,7 @@ impl QueryCoordinator {
         context.shards_involved.insert(shard_id);
         
         if let Some(shard) = self.shards.get(&shard_id) {
-            if let Ok(Some(node)) = shard.get_node(node_id) {
+            if let Some(node) = shard.get_node(node_id)? {
                 result_nodes.push(node);
                 
                 // Get neighbors and recurse
@@ -379,7 +381,7 @@ impl QueryCoordinator {
         max_depth: u32,
     ) -> Result<Option<Vec<NodeId>>> {
         let _permit = self.query_semaphore.acquire().await
-            .map_err(|e| ProximaDBError::InternalError(e.to_string()))?;
+            .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
         
         let mut context = TraversalContext {
             visited: HashSet::new(),

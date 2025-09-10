@@ -494,7 +494,8 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
-            if let Some(quantized) = &record.quantized_vector {
+            if !record.quantized_vector.is_empty() {
+                let quantized = &record.quantized_vector;
                 // Convert bytes to i8 and compute distance
                 let record_int8: Vec<i8> = quantized.iter().map(|&b| b as i8).collect();
 
@@ -534,7 +535,8 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
-            if let Some(quantized) = &record.quantized_vector {
+            if !record.quantized_vector.is_empty() {
+                let quantized = &record.quantized_vector;
                 // Compute PQ distance
                 let score = self.compute_pq_distance(query, quantized, pq_bits);
                 candidates.push(StageCandidate {

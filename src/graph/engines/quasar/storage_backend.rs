@@ -60,6 +60,7 @@ pub struct StorageLocation {
 
 /// Storage statistics
 #[derive(Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct StorageStats {
     pub nodes_stored: u64,
     pub edges_stored: u64,

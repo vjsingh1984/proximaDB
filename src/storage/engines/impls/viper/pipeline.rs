@@ -2992,12 +2992,30 @@ impl CompactionEngine {
             let record = VectorRecord {
                 id: format!("vec_{:06}", i),
                 vector: vec![0.1 * i as f32; 768], // Simulate 768-dim vectors
-                metadata: proto_metadata_helper::json_metadata_to_proto(&metadata),
-                timestamp: timestamp as u32,
-                updated_at: Some(timestamp as u32),
+                metadata: {
+                    let mut map = std::collections::HashMap::new();
+                    for (k, v) in metadata {
+                        let sql_value = match v {
+                            serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s))
+                            },
+                            serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)))
+                            },
+                            serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b))
+                            },
+                            _ => crate::proto::proximadb_v1::SqlValue { value: None },
+                        };
+                        map.insert(k, sql_value);
+                    }
+                    map
+                },
+                timestamp: timestamp as i64,
+                updated_at: Some(timestamp as i64),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             };
             records.push(record);

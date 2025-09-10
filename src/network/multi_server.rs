@@ -590,19 +590,19 @@ impl SharedServices {
                         // Product Quantization specific settings
                         pq_segments: 8,
                         pq_bits: 8,
-                        pq_codebooks: vec![],
+                        pq_codebooks: 0,
                         // Thresholds for progressive search
                         binary_threshold: 0.3,
                         int8_threshold: 0.1,
                         pq_threshold: 0.05,
                     }),
                     storage_config: None, // VersionedCollectionMetadata doesn't have storage_assignment field
-                    primary_index: None,
-                    auto_index_selection: Some(false),
+                    primary_index: String::new(),
+                    auto_index_selection: false,
                     description: None,
                     tags: vec![],
                     owner: None,
-                    embedding_models: None, // No embedding models for imported collections
+                    embedding_models: vec![], // No embedding models for imported collections
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {
@@ -655,10 +655,10 @@ impl SharedServices {
         let metrics_config = MetricsConfig {
             enabled: true,
             collection_partitions: 16,
-            storage_path: format!("file://{}/metrics", storage_config.data_root),
+            storage_path: format!("file://{}/metrics", &storage_config.metadata_url.replace("file://", "")),
             flush_interval_seconds: 60,
-            max_pending_updates: 10000,
-            compression_enabled: true,
+            // max_pending_updates: 10000, // Field removed from MetricsConfig
+            // compression_enabled: true, // Field removed from MetricsConfig
         };
         let metrics_store = Arc::new(crate::metrics::store::MetricsPersistenceLayer::new(
             filesystem_factory,
@@ -833,7 +833,7 @@ impl MultiServer {
         if self.config.grpc_config.enable_grpc {
             info!("🔗 Starting gRPC Server on port 5679");
 
-            // Create gRPC server builder
+            // Create gRPC server builder with services
             let mut server_builder = tonic::transport::Server::builder();
 
             // Add versioned VectorService (v1)
@@ -847,7 +847,6 @@ impl MultiServer {
                     .accept_compressed(CompressionEncoding::Gzip)
                     .send_compressed(CompressionEncoding::Gzip);
             }
-            server_builder = server_builder.add_service(vector_service);
 
             // Add versioned SqlService (v1)
             let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
@@ -860,7 +859,6 @@ impl MultiServer {
                     .accept_compressed(CompressionEncoding::Gzip)
                     .send_compressed(CompressionEncoding::Gzip);
             }
-            server_builder = server_builder.add_service(sql_service);
 
             // Add versioned CollectionService (v1)
             let col_service_impl = crate::network::grpc::collection_service::CollectionServiceImpl::new(
@@ -873,33 +871,36 @@ impl MultiServer {
                     .accept_compressed(CompressionEncoding::Gzip)
                     .send_compressed(CompressionEncoding::Gzip);
             }
-            server_builder = server_builder.add_service(col_service);
 
             // Add GraphService for native graph database operations
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
             let graph_service = crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(graph_service_impl);
-            server_builder = server_builder.add_service(graph_service);
             debug!("✅ Added GraphService to gRPC server");
+
+            // Build server with all services
+            server_builder = server_builder
+                .add_service(vector_service)
+                .add_service(sql_service)
+                .add_service(col_service)
+                .add_service(graph_service);
 
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service");
-                let file_descriptor_data = include_bytes!("../proto/proximadb_descriptor.bin");
-                server_builder = server_builder.add_service(
-                    tonic_reflection::server::Builder::configure()
-                        .register_encoded_file_descriptor_set(file_descriptor_data)
-                        .build()?,
-                );
+                // TODO: Add reflection service when descriptor binary is available
+                // let file_descriptor_data = include_bytes!("../proto/proximadb_descriptor.bin");
+                // server_builder = server_builder.add_service(
+                //     tonic_reflection::server::Builder::configure()
+                //         .register_encoded_file_descriptor_set(file_descriptor_data)
+                //         .build()?,
+                // );
             }
 
             let grpc_bind_addr = self.config.grpc_bind_address();
 
             let grpc_handle = tokio::spawn(async move {
                 if let Err(e) = server_builder
-                    .serve_with_shutdown(grpc_bind_addr, async {
-                        tokio::signal::ctrl_c().await.ok();
-                        debug!("gRPC server graceful shutdown signal received");
-                    })
+                    .serve(grpc_bind_addr)
                     .await
                 {
                     tracing::error!("gRPC server error: {}", e);

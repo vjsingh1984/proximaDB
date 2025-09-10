@@ -142,7 +142,6 @@ impl CollectionService {
         // Ensure storage_config exists and set compression within it
         if enriched_config.storage_config.is_none() {
             enriched_config.storage_config = Some(crate::proto::proximadb_v1::StorageConfig {
-                enable_all_optimizations: Some(true), // All optimizations on by default
                 ..Default::default()
             });
         }
@@ -150,10 +149,12 @@ impl CollectionService {
         // Resolve compression within storage_config
         if let Some(ref mut storage_cfg) = enriched_config.storage_config {
             let resolved_compression = self.resolve_compression_config(
-                storage_cfg.compression.as_ref(),
+                None, // No existing compression config to resolve from
                 config.storage_engine,
             );
-            storage_cfg.compression = resolved_compression;
+            if let Some(compression_config) = resolved_compression {
+                storage_cfg.compression = compression_config.algorithm;
+            }
         }
 
         // Add default quantization configuration if not provided
@@ -196,7 +197,7 @@ impl CollectionService {
                         // Product Quantization specific settings
                         pq_segments: 8,
                         pq_bits: 8,
-                        pq_codebooks: vec![],
+                        pq_codebooks: 0,
                         // Thresholds for progressive search
                         binary_threshold: 0.3,
                         int8_threshold: 0.1,
@@ -209,7 +210,8 @@ impl CollectionService {
         // Validate compression algorithm is supported by the storage engine
         // SDK defines compression config in collection metadata and it drives datablock compression
         if let Some(ref storage_cfg) = enriched_config.storage_config {
-            if let Some(ref compression) = storage_cfg.compression {
+            // storage_cfg.compression is i32 in proto v1, check if it's set
+            if storage_cfg.compression != 0 {
                 use crate::proto::proximadb_v1::CompressionAlgorithm;
                 use crate::storage::engine_capabilities::EngineCapabilities;
 
@@ -217,7 +219,7 @@ impl CollectionService {
                 let engine = EngineCapabilities::engine_from_int(config.storage_engine);
 
                 // Try to convert compression algorithm from i32
-                if let Ok(algorithm) = CompressionAlgorithm::try_from(compression.algorithm) {
+                if let Ok(algorithm) = CompressionAlgorithm::try_from(storage_cfg.compression) {
                     if !EngineCapabilities::is_compression_supported(engine, algorithm) {
                         let engine_name = EngineCapabilities::get_engine_name(engine);
                         let unsupported =
@@ -234,7 +236,7 @@ impl CollectionService {
                     return Ok(CollectionServiceResponse::error(
                         format!(
                             "INVALID_COMPRESSION: Invalid compression algorithm: {}",
-                            compression.algorithm
+                            storage_cfg.compression
                         ),
                         start_time.elapsed().as_micros() as i64,
                     ));
@@ -298,9 +300,9 @@ impl CollectionService {
 
         // Get storage location - use provided or pick randomly from config
         let base_location = if let Some(ref storage_config) = enriched_config.storage_config {
-            if let Some(ref location) = storage_config.storage_location {
+            if !storage_config.storage_path.is_empty() {
                 // User provided storage location
-                location.clone()
+                storage_config.storage_path.clone()
             } else {
                 // Pick randomly from configured locations
                 use rand::seq::SliceRandom;
@@ -340,6 +342,10 @@ impl CollectionService {
             created_at: now,
             updated_at: now,
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: base_location.clone(),
+                backup_paths: vec![], 
+                engine: config.storage_engine,
+                engine_config: std::collections::HashMap::new(),
                 base_location: base_location.clone(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
@@ -496,7 +502,7 @@ impl CollectionService {
             .config
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let indexing_algorithm = match config.primary_index.as_deref() {
+        let indexing_algorithm = match config.primary_index.as_ref().map(|s| s.as_str()) {
             Some("hnsw") => crate::core::IndexingAlgorithm::Hnsw,
             Some("ivf") => crate::core::IndexingAlgorithm::Ivf,
             Some("pq") => crate::core::IndexingAlgorithm::Pq,
@@ -995,7 +1001,7 @@ impl CollectionService {
             }
             // Set compression in storage_config
             if let Some(ref mut storage_config) = config.storage_config {
-                storage_config.compression = Some(compression.clone());
+                storage_config.compression = compression.algorithm;
             }
         }
 

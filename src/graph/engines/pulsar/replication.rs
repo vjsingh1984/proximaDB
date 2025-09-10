@@ -22,7 +22,7 @@
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Node, Edge, NodeId, EdgeId};
-use crate::graph::engines::orion::OrionGraphEngine;
+use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use dashmap::DashMap;
@@ -241,7 +241,7 @@ impl ReplicationManager {
         
         // Wait for all replications to complete
         for task in tasks {
-            task.await.map_err(|e| ProximaDBError::InternalError(e.to_string()))??;
+            task.await.map_err(|e| ProximaDBError::Internal(e.to_string()))??;
         }
         
         Ok(())
@@ -305,7 +305,7 @@ impl ReplicationManager {
         let (result, _index, remaining) = futures::future::select_all(tasks).await;
         
         // Check if the first completed task succeeded
-        result.map_err(|e| ProximaDBError::InternalError(e.to_string()))??;
+        result.map_err(|e| ProximaDBError::Internal(e.to_string()))??;
         
         // Let remaining tasks complete in background
         for task in remaining {

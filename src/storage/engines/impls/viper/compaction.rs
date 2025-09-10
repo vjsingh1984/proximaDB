@@ -861,25 +861,25 @@ impl Compaction {
                             // Create temporary VectorRecord instances for comparison
                             let existing_vector_record = VectorRecord {
                                 id: id_str.clone(),
-                                version: Some(existing_record.version as u32),
-                                timestamp: existing_record.timestamp.unwrap_or(0) as u32,
+                                version: existing_record.version,
+                                timestamp: existing_record.timestamp.unwrap_or(0),
                                 vector: vec![],
-                                metadata: vec![],
+                                metadata: std::collections::HashMap::new(),
                                 updated_at: existing_record.timestamp.map(|t| t as i64),
                                 expires_at: None,
-                                quantized_vector: None,
+                                quantized_vector: vec![],
                                 source: None,
                             };
 
                             let current_vector_record = VectorRecord {
                                 id: id_str.clone(),
-                                version: Some(record_version.unwrap_or(0) as u32),
-                                timestamp: record_timestamp.flatten().unwrap_or(0) as u32,
+                                version: record_version.unwrap_or(0),
+                                timestamp: record_timestamp.flatten().unwrap_or(0),
                                 vector: vec![],
-                                metadata: vec![],
+                                metadata: std::collections::HashMap::new(),
                                 updated_at: record_timestamp.flatten().map(|t| t as i64),
                                 expires_at: None,
-                                quantized_vector: None,
+                                quantized_vector: vec![],
                                 source: None,
                             };
 
@@ -1124,16 +1124,16 @@ impl Compaction {
                 let compression_algorithm = if let Some(ref collection) = collection_config {
                     if let Some(ref config) = collection.config {
                         if let Some(ref storage_config) = config.storage_config {
-                            if let Some(ref compression) = storage_config.compression {
+                            if storage_config.compression != 0 {
                                 use crate::proto::proximadb_v1::CompressionAlgorithm;
 
                                 debug!(
-                                    "   ✅ Found compression config: algorithm={}, level={:?}",
-                                    compression.algorithm, compression.level
+                                    "   ✅ Found compression config: algorithm={}",
+                                    storage_config.compression
                                 );
 
                                 // Convert proto compression to core compression algorithm
-                                match CompressionAlgorithm::try_from(compression.algorithm) {
+                                match CompressionAlgorithm::try_from(storage_config.compression) {
                                     Ok(CompressionAlgorithm::CompressionZstd) => {
                                         crate::core::compression::CompressionAlgorithm::Zstd
                                     }
@@ -1210,7 +1210,7 @@ impl Compaction {
                         enable_pq: has_quantization,
                         pq_segments: 32,
                         pq_bits: 8,
-                        pq_codebooks: vec![],
+                        pq_codebooks: 0,
                         binary_threshold: 0.5,
                         int8_threshold: 0.3,
                         pq_threshold: 0.1,
@@ -1257,20 +1257,13 @@ impl Compaction {
                             })
                             .unwrap_or_default();
 
-                        // Convert metadata
-                        let metadata = record
+                        // Convert metadata to HashMap<String, SqlValue>
+                        let metadata: std::collections::HashMap<String, crate::storage::engines::impls::viper::FilterValue> = record
                             .row_data
                             .iter()
                             .filter(|(k, _)| *k != "vector")
                             .map(|(k, v)| {
-                                let mut item = crate::proto::proximadb_v1::MetadataItem::default();
-                                item.key = k.clone();
-                                item.value = Some(
-                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                        v.to_string(),
-                                    ),
-                                );
-                                item
+                                (k.clone(), crate::storage::engines::impls::viper::FilterValue::String(v.to_string()))
                             })
                             .collect();
 
@@ -1278,12 +1271,12 @@ impl Compaction {
                             id: record.id.clone().unwrap_or_default(),
                             vector,
                             metadata,
-                            version: Some(record.version as u32),
+                            version: record.version,
                             updated_at: record.timestamp.map(|t| t as i64),
                             expires_at: None,
-                            quantized_vector: None,
+                            quantized_vector: vec![],
                             source: None,
-                            timestamp: record.timestamp.unwrap_or(0) as u32,
+                            timestamp: record.timestamp.unwrap_or(0),
                         })
                     })
                     .collect();
@@ -1818,7 +1811,7 @@ impl Compaction {
                             for value in values {
                                 if let Some(metadata_array) = value.as_array() {
                                     let struct_builder = list_builder.values();
-                                    for (key, value) in metadata_array {
+                                    for value in metadata_array {
                                         if let Some(obj) = value.as_object() {
                                             if let (Some(key), Some(val)) =
                                                 (obj.get("key"), obj.get("value"))

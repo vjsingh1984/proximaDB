@@ -332,7 +332,7 @@ impl SstCompactor {
             for record in records {
                 stats.records_read += 1;
                 heap.push(Reverse(MergeEntry {
-                    timestamp: record.timestamp,
+                    timestamp: record.timestamp.unwrap_or(0) as u32,
                     record,
                     file_index: file_idx,
                 }));
@@ -371,7 +371,7 @@ impl SstCompactor {
             let current_time = chrono::Utc::now().timestamp() as u32;
             let has_tombstone = versions.iter().any(|r| {
                 r.expires_at
-                    .map_or(false, |exp| exp > 0 && exp < current_time)
+                    .map_or(false, |exp| exp > 0 && exp < current_time as i64)
             });
             if has_tombstone {
                 debug!("Skipping tombstoned record: {}", id);
@@ -383,7 +383,7 @@ impl SstCompactor {
             // Track if this ID has expired versions
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < now));
+                .any(|r| r.expires_at.map_or(false, |exp| exp < now as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -409,7 +409,7 @@ impl SstCompactor {
             let mut last_valid: Option<VectorRecord> = None;
 
             for record in versions {
-                let version = Self::normalize_version(record.version);
+                let version = Self::normalize_version(record.version.map(|v| v as u32));
 
                 if version == expected_version {
                     // This version is continuous
@@ -428,7 +428,7 @@ impl SstCompactor {
 
             // Add the highest continuous version to output
             if let Some(record) = last_valid {
-                let selected_version = Self::normalize_version(record.version);
+                let selected_version = Self::normalize_version(record.version.map(|v| v as u32));
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)
                 if selected_version > 1 || has_multiple_versions {
@@ -553,7 +553,7 @@ impl SstCompactor {
             let current_time = chrono::Utc::now().timestamp() as u32;
             let has_tombstone = versions.iter().any(|r| {
                 r.expires_at
-                    .map_or(false, |exp| exp > 0 && exp < current_time)
+                    .map_or(false, |exp| exp > 0 && exp < current_time as i64)
             });
             if has_tombstone {
                 debug!("Skipping tombstoned record: {}", id);
@@ -565,7 +565,7 @@ impl SstCompactor {
             // Track if this ID has expired versions
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.map_or(false, |exp| exp < now));
+                .any(|r| r.expires_at.map_or(false, |exp| exp < now as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -591,7 +591,7 @@ impl SstCompactor {
             let mut last_valid: Option<VectorRecord> = None;
 
             for record in versions {
-                let version = Self::normalize_version(record.version);
+                let version = Self::normalize_version(record.version.map(|v| v as u32));
 
                 if version == expected_version {
                     // This version is continuous
@@ -610,7 +610,7 @@ impl SstCompactor {
 
             // Add the highest continuous version to output
             if let Some(record) = last_valid {
-                let selected_version = Self::normalize_version(record.version);
+                let selected_version = Self::normalize_version(record.version.map(|v| v as u32));
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)
                 if selected_version > 1 || has_multiple_versions {

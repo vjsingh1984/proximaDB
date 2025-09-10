@@ -115,8 +115,7 @@ impl SksExecutor {
             progressive_search: similar.progressive,
             include_vectors: false,
             include_metadata: true, // Enable HashMap metadata access
-            hardware_acceleration: true,
-            cache_results: true,
+            scenario: Some("sks_similar".to_string()),
         };
 
         let vos_results = self.vector_service.unified_search_v1(
@@ -163,7 +162,7 @@ impl SksExecutor {
 
         // 2. Configure traversal with ORION engine
         let traversal_config = crate::graph::engines::orion::traversal::TraversalConfig {
-            max_depth: Some(follow.max_depth),
+            max_depth: Some(follow.max_depth as usize),
             max_nodes: Some(1000), // Default limit
             edge_types: Some(vec![follow.relation_type.clone()]),
             node_filter: None, // TODO: Convert filters
@@ -213,7 +212,7 @@ impl SksExecutor {
         }
 
         // 2. Apply assembly strategy (temporal, semantic, relevance-based)
-        match &assemble.strategy {
+        match assemble.assembly_strategy.as_deref().unwrap_or("default") {
             AssemblyStrategy::TemporalOrdering => {
                 // TODO: Sort by temporal relevance
             },
@@ -302,6 +301,21 @@ impl SksExecutor {
                     },
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
+                        serde_json::Value::String(base64::encode(b))
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        serde_json::Value::Null
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        serde_json::Value::String("[Array]".to_string())
+                    },
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        serde_json::Value::String("[Object]".to_string())
                     },
                     None => return None,
                 };

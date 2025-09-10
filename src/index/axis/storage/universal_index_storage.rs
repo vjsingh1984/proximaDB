@@ -317,15 +317,15 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     crate::proto::proximadb_v1::VectorRecord {
                         id: id.to_string(),
                         vector: vec![], // Empty vector for index data
-                        metadata: vec![],
+                        metadata: std::collections::HashMap::new(),
                         timestamp: std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
-                            .as_secs() as u32,
+                            .as_secs() as i64,
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: None,
+                        quantized_vector: vec![],
                         source: None,
                     },
                 );
@@ -502,20 +502,23 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let record = crate::proto::proximadb_v1::VectorRecord {
                     id: id.to_string(),
                     vector: vec![], // Empty vector since we're storing serialized data
-                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                        key: "serialized_data".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            base64_encode(&value),
-                        )),
-                    }],
+                    metadata: {
+                        let mut map = std::collections::HashMap::new();
+                        map.insert("serialized_data".to_string(), crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                base64_encode(&value)
+                            ))
+                        });
+                        map
+                    },
                     timestamp: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
-                        .as_secs() as u32,
+                        .as_secs() as i64,
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized_vector: None,
+                    quantized_vector: vec![],
                     source: None,
                 };
                 records.insert(id.to_string(), record);

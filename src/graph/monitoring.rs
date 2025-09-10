@@ -436,7 +436,7 @@ impl GraphMonitor {
                 operation: operation.to_string(),
                 duration,
                 success,
-                metadata,
+                metadata: metadata.clone(),
             };
             
             if let Err(_) = sender.send(event) {
@@ -492,23 +492,23 @@ impl GraphMonitor {
     /// Get current metrics snapshot
     pub fn get_metrics_snapshot(&self) -> Result<MetricsSnapshot, ProximaDBError> {
         let operation_counts = self.metrics_collector.operation_counts.read()
-            .map_err(|_| ProximaDBError::internal("Failed to read operation counts"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read operation counts"))?
             .clone();
         
         let error_counts = self.metrics_collector.error_counts.read()
-            .map_err(|_| ProximaDBError::internal("Failed to read error counts"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read error counts"))?
             .clone();
         
         let resource_metrics = self.metrics_collector.resource_metrics.read()
-            .map_err(|_| ProximaDBError::internal("Failed to read resource metrics"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read resource metrics"))?
             .clone();
         
         let business_metrics = self.metrics_collector.business_metrics.read()
-            .map_err(|_| ProximaDBError::internal("Failed to read business metrics"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read business metrics"))?
             .clone();
         
         let cache_metrics = self.metrics_collector.cache_metrics.read()
-            .map_err(|_| ProximaDBError::internal("Failed to read cache metrics"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read cache metrics"))?
             .clone();
         
         Ok(MetricsSnapshot {
@@ -608,21 +608,21 @@ impl GraphMonitor {
                 // Update operation counts
                 {
                     let mut counts = collector.operation_counts.write()
-                        .map_err(|_| ProximaDBError::internal("Failed to write operation counts"))?;
+                        .map_err(|_| ProximaDBError::Internal("Failed to write operation counts"))?;
                     *counts.entry(operation.clone()).or_insert(0) += 1;
                 }
                 
                 // Update error counts if failed
                 if !success {
                     let mut error_counts = collector.error_counts.write()
-                        .map_err(|_| ProximaDBError::internal("Failed to write error counts"))?;
+                        .map_err(|_| ProximaDBError::Internal("Failed to write error counts"))?;
                     *error_counts.entry(operation.clone()).or_insert(0) += 1;
                 }
                 
                 // Update latency histogram
                 {
                     let mut histograms = collector.latency_histograms.write()
-                        .map_err(|_| ProximaDBError::internal("Failed to write latency histograms"))?;
+                        .map_err(|_| ProximaDBError::Internal("Failed to write latency histograms"))?;
                     
                     let histogram = histograms.entry(operation).or_insert_with(|| {
                         LatencyHistogram::new()
@@ -634,13 +634,13 @@ impl GraphMonitor {
             
             MetricEvent::ResourceUpdate(metrics) => {
                 let mut resource_metrics = collector.resource_metrics.write()
-                    .map_err(|_| ProximaDBError::internal("Failed to write resource metrics"))?;
+                    .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics"))?;
                 *resource_metrics = metrics;
             }
             
             MetricEvent::CacheEvent { cache_type, hit } => {
                 let mut cache_metrics = collector.cache_metrics.write()
-                    .map_err(|_| ProximaDBError::internal("Failed to write cache metrics"))?;
+                    .map_err(|_| ProximaDBError::Internal("Failed to write cache metrics"))?;
                 
                 match cache_type.as_str() {
                     "plan" => {
@@ -685,7 +685,7 @@ impl GraphMonitor {
             
             MetricEvent::BusinessUpdate(metrics) => {
                 let mut business_metrics = collector.business_metrics.write()
-                    .map_err(|_| ProximaDBError::internal("Failed to write business metrics"))?;
+                    .map_err(|_| ProximaDBError::Internal("Failed to write business metrics"))?;
                 *business_metrics = metrics;
             }
         }
@@ -714,7 +714,7 @@ impl GraphMonitor {
         };
         
         let mut resource_metrics = collector.resource_metrics.write()
-            .map_err(|_| ProximaDBError::internal("Failed to write resource metrics"))?;
+            .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics"))?;
         *resource_metrics = metrics;
         
         Ok(())
