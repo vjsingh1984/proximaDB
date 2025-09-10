@@ -40,16 +40,18 @@
             fill="none" stroke="#0ea5e9" stroke-width="1.4" opacity="1"/>
     </g>
 
-    <!-- Q2: Graph (top-right) outline only -->
+    <!-- Q2: Graph (top-right) vibrant network -->
     <g transform="translate(14,-14)">
-      <g fill="none" stroke="#ef4444" stroke-width="1.4" opacity="1">
-        <circle cx="-6" cy="-4" r="2.0"/>
-        <circle cx="6" cy="-4" r="2.0"/>
-        <circle cx="0" cy="6" r="2.0"/>
-        <line x1="-6" y1="-4" x2="6" y2="-4"/>
-        <line x1="-6" y1="-4" x2="0" y2="6"/>
-        <line x1="6" y1="-4" x2="0" y2="6"/>
-      </g>
+      <!-- Vibrant graph network nodes -->
+      <circle cx="-4" cy="-4" r="2.5" fill="#0ea5e9" stroke="#0284c7" stroke-width="1"/>
+      <circle cx="4" cy="-6" r="2.5" fill="#38bdf8" stroke="#0284c7" stroke-width="1"/>
+      <circle cx="2" cy="4" r="2.5" fill="#06b6d4" stroke="#0284c7" stroke-width="1"/>
+      <circle cx="-6" cy="2" r="2.5" fill="#22d3ee" stroke="#0284c7" stroke-width="1"/>
+      <!-- Connecting lines -->
+      <line x1="-4" y1="-4" x2="4" y2="-6" style="stroke:#ffffff; stroke-width:2; opacity:0.9"/>
+      <line x1="-4" y1="-4" x2="-6" y2="2" style="stroke:#ffffff; stroke-width:2; opacity:0.9"/>
+      <line x1="4" y1="-6" x2="2" y2="4" style="stroke:#ffffff; stroke-width:2; opacity:0.9"/>
+      <line x1="-6" y1="2" x2="2" y2="4" style="stroke:#ffffff; stroke-width:2; opacity:0.9"/>
     </g>
 
     <!-- Q3: Vector (bottom-left) as quiver of 3 arrows (outline only) -->

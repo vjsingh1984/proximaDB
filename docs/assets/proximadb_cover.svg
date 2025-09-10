@@ -82,17 +82,18 @@
     <text x="0" y="132" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="white">GRAPH</text>
     <!-- Removed production readiness and engine name text per request -->
     
-    <!-- Graph nodes and connections -->
-    <!-- Shift graph nodes down to avoid overlapping the GRAPH label -->
-    <g fill="none" stroke="white" stroke-width="1.6" opacity="0.9" transform="translate(0,12)">
-      <circle cx="-15" cy="65" r="3"/>
-      <circle cx="15" cy="65" r="3"/>
-      <circle cx="-10" cy="95" r="3"/>
-      <circle cx="10" cy="95" r="3"/>
-      <line x1="-15" y1="65" x2="15" y2="65"/>
-      <line x1="-15" y1="65" x2="-10" y2="95"/>
-      <line x1="15" y1="65" x2="10" y2="95"/>
-      <line x1="-10" y1="95" x2="10" y2="95"/>
+    <!-- Vibrant graph network nodes and connections -->
+    <g transform="translate(0, 82)">
+      <!-- Multi-colored nodes -->
+      <circle cx="-12" cy="-8" r="4" fill="#0ea5e9" stroke="#0284c7" stroke-width="1"/>
+      <circle cx="12" cy="-8" r="4" fill="#38bdf8" stroke="#0284c7" stroke-width="1"/>
+      <circle cx="8" cy="8" r="4" fill="#06b6d4" stroke="#0284c7" stroke-width="1"/>
+      <circle cx="-16" cy="8" r="4" fill="#22d3ee" stroke="#0284c7" stroke-width="1"/>
+      <!-- White connecting lines -->
+      <line x1="-12" y1="-8" x2="12" y2="-8" style="stroke:#ffffff; stroke-width:2.5; opacity:0.9"/>
+      <line x1="-12" y1="-8" x2="-16" y2="8" style="stroke:#ffffff; stroke-width:2.5; opacity:0.9"/>
+      <line x1="12" y1="-8" x2="8" y2="8" style="stroke:#ffffff; stroke-width:2.5; opacity:0.9"/>
+      <line x1="-16" y1="8" x2="8" y2="8" style="stroke:#ffffff; stroke-width:2.5; opacity:0.9"/>
     </g>
   </g>
 

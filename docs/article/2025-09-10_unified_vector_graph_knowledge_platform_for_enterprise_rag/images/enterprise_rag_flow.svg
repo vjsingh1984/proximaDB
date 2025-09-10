@@ -43,13 +43,17 @@
 
   <!-- SKS Entities -->
   <rect x="340" y="90" width="230" height="120" rx="10" ry="10" style="fill:url(#panelGradPurple); stroke:#6b21a8; stroke-width:2;"/>
-  <!-- Vibrant cylinder database icon centered at top -->
-  <ellipse cx="455" cy="110" rx="20" ry="8" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/>
-  <rect x="435" y="110" width="40" height="28" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/>
-  <ellipse cx="455" cy="138" rx="20" ry="8" fill="#a78bfa" stroke="#7c3aed" stroke-width="2"/>
-  <circle cx="445" cy="120" r="2" fill="#ffffff"/>
-  <circle cx="455" cy="125" r="2" fill="#ffffff"/>
-  <circle cx="465" cy="120" r="2" fill="#ffffff"/>
+  <!-- Vibrant SKS knowledge page icon centered at top -->
+  <g transform="translate(455, 125)">
+    <!-- Page outline -->
+    <rect x="-12" y="-16" width="24" height="32" rx="3.2" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/>
+    <!-- Folded corner -->
+    <polygon points="12,-16 6,-10 12,-10" fill="#a78bfa" stroke="#7c3aed" stroke-width="2"/>
+    <line x1="6" y1="-10" x2="12" y2="-10" stroke="#7c3aed" stroke-width="2"/>
+    <!-- Accuracy checkmark -->
+    <line x1="-6" y1="4" x2="-2" y2="8" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-2" y1="8" x2="6" y2="0" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  </g>
   <!-- Title and text below icon -->
   <text x="455" y="160" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Semantic Knowledge Store (SKS)</text>
   <text x="360" y="180" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Entities with embeddings</text>
