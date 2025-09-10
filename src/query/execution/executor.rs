@@ -226,7 +226,22 @@ impl QueryExecutor {
 
         // Apply join or fusion if we have both vector and graph results
         let fused_results = if let Some((kind, left_key, right_key)) = join_request {
-            self.join_rows(&vector_results, &graph_results, &left_key, &right_key, &kind)?
+            // Heuristic: only perform hybrid join if keys appear id-like or present on both sides
+            let has_left = vector_results.iter().any(|r| r.fields.contains_key(&left_key));
+            let has_right = graph_results.iter().any(|r| r.fields.contains_key(&right_key));
+            let id_like = left_key.ends_with(".id") || left_key == "id" || right_key.ends_with(".id") || right_key == "id";
+            if has_left && has_right && id_like {
+                self.join_rows(&vector_results, &graph_results, &left_key, &right_key, &kind)?
+            } else {
+                // Fall back to fusion when equality join does not make sense for vector rows
+                if let Some((strategy, weights)) = &fusion_strategy {
+                    self.apply_fusion_algorithm(&vector_results, &graph_results, strategy, weights)?
+                } else {
+                    let mut combined = vector_results;
+                    combined.extend(graph_results);
+                    combined
+                }
+            }
         } else if let Some((strategy, weights)) = fusion_strategy {
             self.apply_fusion_algorithm(&vector_results, &graph_results, &strategy, &weights)?
         } else {
