@@ -35,13 +35,13 @@
       <line x1="-20" y1="2" x2="-24" y2="2"/>
       <line x1="-20" y1="2" x2="-20" y2="6"/>
     </g>
-    <!-- Q4 sks page+check -->
+    <!-- Q4 sks page+check (shrunk to avoid ring overlap) -->
     <g class="ink">
-      <rect x="14" y="14" width="12" height="16" rx="1.4"/>
-      <line x1="26" y1="14" x2="23" y2="17"/>
-      <line x1="23" y1="17" x2="26" y2="17"/>
-      <line x1="17" y1="26" x2="19" y2="28"/>
-      <line x1="19" y1="28" x2="23" y2="24"/>
+      <rect x="12" y="12" width="10" height="13" rx="1.2"/>
+      <line x1="22" y1="12" x2="19" y2="15"/>
+      <line x1="19" y1="15" x2="22" y2="15"/>
+      <line x1="15" y1="23" x2="17" y2="25"/>
+      <line x1="17" y1="25" x2="21" y2="21"/>
     </g>
     <!-- Center DB -->
     <g class="ink">
@@ -56,4 +56,3 @@
   <text x="252" y="42" class="text" style="font-size:26px; font-weight:300;">DB</text>
   <text x="140" y="60" class="text" style="font-size:10px; font-weight:500; fill:#334155;">Unified Intelligence Platform</text>
 </svg>
-
