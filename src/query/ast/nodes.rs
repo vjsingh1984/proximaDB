@@ -19,7 +19,7 @@ pub enum Query {
 
 #[derive(Debug, Clone)]
 pub struct Select {
-    pub projection: Vec<Expr>,
+    pub projection: Vec<ProjectionItem>,
     pub from: Vec<TableRef>,
     pub joins: Vec<Join>,
     pub selection: Option<Expr>,
@@ -28,6 +28,12 @@ pub struct Select {
     pub order_by: Vec<OrderByExpr>,
     pub limit: Option<u64>,
     pub offset: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectionItem {
+    pub expr: Expr,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone)]

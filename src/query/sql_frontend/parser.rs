@@ -11,7 +11,7 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 use crate::query::ast::{
-    Query, Select, TableRef, Join, JoinKind, Expr, Literal, UnaryOp, BinaryOp, OrderByExpr, Cte, SetOp
+    Query, Select, TableRef, Join, JoinKind, Expr, Literal, UnaryOp, BinaryOp, OrderByExpr, Cte, SetOp, ProjectionItem
 };
 
 pub struct SqlFrontendParser {
@@ -112,8 +112,8 @@ impl SqlFrontendParser {
     fn convert_select(&self, select: &SqlSelect, query: &SqlQuery) -> Result<Select> {
         // Convert projection
         let projection = select.projection.iter()
-            .map(|item| self.convert_select_item(item))
-            .collect::<Result<Vec<_>>>()?;
+            .map(|item| self.convert_select_item_with_alias(item))
+            .collect::<Result<Vec<ProjectionItem>>>()?;
 
         // Convert FROM clause
         let from = select.from.iter()
@@ -183,15 +183,13 @@ impl SqlFrontendParser {
         })
     }
 
-    fn convert_select_item(&self, item: &SelectItem) -> Result<Expr> {
+    fn convert_select_item_with_alias(&self, item: &SelectItem) -> Result<ProjectionItem> {
         match item {
-            SelectItem::UnnamedExpr(expr) => self.convert_expr(expr),
+            SelectItem::UnnamedExpr(expr) => Ok(ProjectionItem { expr: self.convert_expr(expr)?, alias: None }),
             SelectItem::ExprWithAlias { expr, alias } => {
-                // For now, treat aliased expressions as the underlying expression
-                // TODO: Support aliases in the AST
-                self.convert_expr(expr)
+                Ok(ProjectionItem { expr: self.convert_expr(expr)?, alias: Some(alias.value.clone()) })
             },
-            SelectItem::Wildcard(_) => Ok(Expr::Identifier("*".to_string())),
+            SelectItem::Wildcard(_) => Ok(ProjectionItem { expr: Expr::Identifier("*".to_string()), alias: None }),
             _ => Err(anyhow!("Unsupported select item: {:?}", item)),
         }
     }
