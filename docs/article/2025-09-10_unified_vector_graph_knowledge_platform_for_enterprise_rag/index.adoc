@@ -1,6 +1,7 @@
 = ProximaDB: A Unified Vector + Graph + Knowledge Platform for Enterprise RAG
+:imagesdir: images
 
-image::../assets/diagrams/enterprise_rag_flow.svg[Enterprise RAG Flow,align="center",width=100%]
+image::enterprise_rag_flow.svg[Enterprise RAG Flow,align="center",width=960]
 
 Modern AI apps need more than fast vector search. They need context, relationships, and trustworthy results. ProximaDB unifies vectors, graphs, and a semantic knowledge store (SKS) in one accelerated, serverless, multicloud database—so teams ship accurate, explainable AI features without stitching multiple systems.
 
@@ -62,4 +63,3 @@ flowchart LR
   F --> G
   G --> H[Answer + Citations\nOwner, Timestamp]
 ----
-
