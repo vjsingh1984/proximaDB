@@ -58,10 +58,11 @@
     <circle cx="0" cy="80" r="60" fill="url(#vectorGradient)" filter="url(#glow)" opacity="0.9"/>
     <text x="0" y="70" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="white">VECTOR</text>
     <text x="0" y="85" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="white">Text • Image • Video</text>
-    <text x="0" y="98" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="white">20M+ ops/sec</text>
+    <!-- Removed ops/sec text to reduce clutter/overlap -->
     
     <!-- Multimodal icons -->
-    <g fill="white" opacity="0.8">
+    <!-- Shift icons down to avoid overlapping the VECTOR label -->
+    <g fill="white" opacity="0.8" transform="translate(0,14)">
       <!-- Text icon -->
       <rect x="-25" y="55" width="12" height="8" rx="1"/>
       <rect x="-25" y="65" width="8" height="2" rx="1"/>
@@ -77,11 +78,11 @@
     <!-- Graph Network Circle -->
     <circle cx="0" cy="80" r="60" fill="url(#graphGradient)" filter="url(#glow)" opacity="0.9"/>
     <text x="0" y="70" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="white">GRAPH</text>
-    <text x="0" y="85" font-family="Arial, sans-serif" font-size="10" text-anchor="middle" fill="white">ORION Production Ready</text>
-    <text x="0" y="98" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="white">Native Engine</text>
+    <!-- Removed production readiness and engine name text per request -->
     
     <!-- Graph nodes and connections -->
-    <g fill="white" opacity="0.8">
+    <!-- Shift graph nodes down to avoid overlapping the GRAPH label -->
+    <g fill="white" opacity="0.8" transform="translate(0,12)">
       <circle cx="-15" cy="65" r="3"/>
       <circle cx="15" cy="65" r="3"/>
       <circle cx="-10" cy="95" r="3"/>
