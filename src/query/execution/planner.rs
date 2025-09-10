@@ -18,6 +18,7 @@ pub struct ExecutionPlanner {
     vector_service: Arc<VectorOperationsService>,
     graph_service: Arc<GraphService>,
     cost_model: CostModel,
+    params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>, // for decoding $1 vectors when not substituted
 }
 
 impl ExecutionPlanner {
@@ -30,7 +31,18 @@ impl ExecutionPlanner {
             vector_service,
             graph_service,
             cost_model: CostModel::new(),
+            params: None,
         }
+    }
+
+    pub fn with_params(
+        vector_service: Arc<VectorOperationsService>,
+        graph_service: Arc<GraphService>,
+        params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
+    ) -> Self {
+        let mut p = Self::new(vector_service, graph_service);
+        p.params = params;
+        p
     }
 
     /// Generate optimized execution plan from internal AST
@@ -311,8 +323,37 @@ impl ExecutionPlanner {
                 }
                 None
             }
-            // Parameter (defer to binder)
-            Expr::Param(_) => None,
+            // Parameter (decode from planner params: $1, $2, ...)
+            Expr::Param(ph) => {
+                // Expect $<n>
+                if let Some(n) = ph.strip_prefix('$') {
+                    if let Ok(idx) = n.parse::<usize>() {
+                        let pos = idx.saturating_sub(1);
+                        if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
+                            return self.sql_value_to_vec(pv);
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn sql_value_to_vec(&self, v: &crate::proto::proximadb_v1::SqlValue) -> Option<Vec<f32>> {
+        use crate::proto::proximadb_v1::sql_value::Value as V;
+        match v.value.as_ref()? {
+            V::ArrayValue(arr) => {
+                let mut out = Vec::new();
+                for sv in &arr.values {
+                    match sv.value.as_ref()? {
+                        V::NumberValue(n) => out.push(*n as f32),
+                        V::Int64Value(i) => out.push((*i) as f32),
+                        _ => return None,
+                    }
+                }
+                Some(out)
+            }
             _ => None,
         }
     }

@@ -265,7 +265,12 @@ impl SqlFrontendParser {
         match expr {
             SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
             
-            SqlExpr::Value(value) => Ok(Expr::Literal(self.convert_value(value)?)),
+            SqlExpr::Value(value) => {
+                match value {
+                    Value::Placeholder(ph) => Ok(Expr::Param(ph.clone())),
+                    _ => Ok(Expr::Literal(self.convert_value(value)?)),
+                }
+            },
             
             SqlExpr::BinaryOp { left, op, right } => {
                 let left_expr = Box::new(self.convert_expr(left)?);

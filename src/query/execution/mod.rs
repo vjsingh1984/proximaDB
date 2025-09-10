@@ -52,6 +52,24 @@ impl QueryEngine {
         }
     }
 
+    /// Create query engine with planner parameters (e.g., bound SQL params)
+    pub fn new_with_params(
+        vector_service: Arc<VectorOperationsService>,
+        graph_service: Arc<GraphService>,
+        params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
+    ) -> Self {
+        let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
+            vector_service.clone(),
+            graph_service.clone(),
+            params,
+        );
+        let executor = crate::query::execution::executor::QueryExecutor::new(
+            vector_service.clone(),
+            graph_service.clone(),
+        );
+        Self { vector_service, graph_service, planner, executor }
+    }
+
     /// Execute query from internal AST (post-lowering from sql_frontend)
     /// 
     /// This is the main entry point that replaces sql_engine execution,
