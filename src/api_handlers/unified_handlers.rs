@@ -1148,12 +1148,9 @@ impl UnifiedHandlers {
         #[cfg(feature = "sql_frontend")]
         {
             // Use the new sql_frontend path by default
-            let processed_query = if let Some(params) = parameters.as_ref() {
-                Self::apply_query_parameters_sqlvalue(query.clone(), params)?
-            } else { query.clone() };
-
+            // Do not perform string substitution; pass params along for the frontend to bind
             let result = self
-                .execute_sql_frontend(processed_query, parameters.clone(), collection.clone())
+                .execute_sql_frontend(query.clone(), parameters.clone(), collection.clone())
                 .await?;
 
             // Convert SqlQueryResult (JSON rows) to v1 ExecuteSqlResponse (typed rows)

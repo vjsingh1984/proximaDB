@@ -453,7 +453,38 @@ impl ExecutionPlanner {
                     crate::query::ast::Literal::Null => Ok(serde_json::Value::Null),
                 }
             },
+            }
+            Expr::Param(ph) => {
+                if let Some(n) = ph.strip_prefix('$') {
+                    let idx = n.parse::<usize>().map_err(|_| anyhow!("Invalid parameter placeholder: {}", ph))?;
+                    let pos = idx.saturating_sub(1);
+                    if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
+                        return Ok(self.sql_value_to_json(pv));
+                    }
+                    Err(anyhow!("Parameter {} is missing", ph))
+                } else {
+                    Err(anyhow!("Unsupported parameter placeholder: {}", ph))
+                }
+            }
             _ => Err(anyhow!("Unsupported filter value expression: {:?}", expr)),
+        }
+    }
+
+    fn sql_value_to_json(&self, v: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+        use crate::proto::proximadb_v1::sql_value::Value as V;
+        match v.value.as_ref() {
+            Some(V::StringValue(s)) => serde_json::Value::String(s.clone()),
+            Some(V::NumberValue(n)) => serde_json::json!(*n),
+            Some(V::BoolValue(b)) => serde_json::json!(*b),
+            Some(V::Int64Value(i)) => serde_json::json!(*i),
+            Some(V::BytesValue(b)) => serde_json::Value::Array(b.iter().map(|x| serde_json::json!(*x)).collect()),
+            Some(V::ArrayValue(arr)) => serde_json::Value::Array(arr.values.iter().map(|sv| self.sql_value_to_json(sv)).collect()),
+            Some(V::ObjectValue(obj)) => {
+                let mut map = serde_json::Map::new();
+                for (k, sv) in &obj.fields { map.insert(k.clone(), self.sql_value_to_json(sv)); }
+                serde_json::Value::Object(map)
+            }
+            Some(V::NullValue(_)) | None => serde_json::Value::Null,
         }
     }
 
