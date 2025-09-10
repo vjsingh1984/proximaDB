@@ -50,6 +50,8 @@ ORDER BY _similarity DESC
 LIMIT 8;
 ----
 
+// Architecture overview is provided above as SVG for maximum compatibility in code hosts.
+
 == Architecture (Mermaid Overview)
 [source,mermaid]
 ----
@@ -62,4 +64,3 @@ flowchart LR
   F --> G
   G --> H[Answer + Citations\nOwner, Timestamp]
 ----
-
