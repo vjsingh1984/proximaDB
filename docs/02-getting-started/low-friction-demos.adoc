@@ -1,0 +1,35 @@
+== Low‑Friction Demos
+
+=== Vector Search (REST)
+1) Start server: `make server-start`
+2) Insert vectors:
+----
+curl -X POST :5678/api/v1/vectors/batch -H 'content-type: application/json' \
+  -d '{"collection_id":"demo","vectors":[{"id":"a","vector":[0.1,0.2],"metadata":{"title":{"stringValue":"Alpha"}}},{"id":"b","vector":[0.2,0.3],"metadata":{"title":{"stringValue":"Beta"}}}]}'
+----
+3) Search:
+----
+curl -X POST :5678/api/v1/search -H 'content-type: application/json' \
+  -d '{"collection_id":"demo","queries":[{"vector":[0.1,0.2]}],"top_k":3}'
+----
+
+=== Graph Quickstart (REST)
+1) Create nodes/edge:
+----
+curl -X POST :5678/api/v1/graph/nodes -H 'content-type: application/json' \
+  -d '{"id":"n1","labels":["User"],"properties":{"name":{"string_value":"Alice"}}}'
+curl -X POST :5678/api/v1/graph/nodes -H 'content-type: application/json' \
+  -d '{"id":"n2","labels":["User"],"properties":{"name":{"string_value":"Bob"}}}'
+curl -X POST :5678/api/v1/graph/edges -H 'content-type: application/json' \
+  -d '{"id":"e1","from_node_id":"n1","to_node_id":"n2","edge_type":"KNOWS"}'
+----
+2) Shortest path:
+----
+curl -X POST :5678/api/v1/graph/shortest_path -H 'content-type: application/json' \
+  -d '{"start_node_id":"n1","target_node_id":"n2"}'
+----
+
+=== Hybrid (SKS) Pattern
+- Search vector → take top‑k anchors → traverse graph neighborhoods → present ranked paths with sources.
+- See link:../03-user-guide/hybrid-queries.adoc[Hybrid Queries].
+

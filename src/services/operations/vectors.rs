@@ -41,7 +41,7 @@ use crate::compute::quantization::types::{
 };
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::query::unified_query_optimizer::{
     ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType, UnifiedExecutionPlan,
     UnifiedQueryContext, UnifiedQueryOptimizer,
@@ -209,7 +209,7 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         let config = config.clone();
 
         // Create cache key for unified result caching
@@ -281,6 +281,124 @@ impl VectorOperationsService {
         Ok(results)
     }
 
+    /// Unified search that returns v1 proto results at the source
+    pub async fn unified_search_v1(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        let config = config.clone();
+
+        // Reuse the same cache key as legacy and convert on hit
+        let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
+        let cache_key = QueryKey::new(
+            collection_id.to_string(),
+            &query_vector,
+            k as u32,
+            filter_str.as_deref(),
+        );
+        if let Some(cached_v1) = self
+            .query_cache
+            .get_if_fresh_v1(&cache_key, 300)
+            .await
+        {
+            return Ok(cached_v1);
+        }
+
+        let progressive_enabled = config
+            .as_ref()
+            .map(|c| c.progressive_search)
+            .unwrap_or(false);
+        info!(
+            "🔍 Starting unified search (v1) for collection {} (progressive: {})",
+            collection_id, progressive_enabled
+        );
+
+        // Get collection configuration
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let search_params = crate::query::unified_query_optimizer::SearchParameters::default();
+        let optimization_goal = config
+            .as_ref()
+            .map(|c| c.optimization_goal.clone())
+            .unwrap_or_default();
+
+        let query_vector_clone = query_vector.clone();
+        let query_vectors = vec![query_vector_clone];
+        let context = UnifiedQueryContext {
+            collection: collection.clone(),
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal,
+            available_files: Vec::new(),
+            total_vectors: 0,
+            total_columns: 0,
+            query_vectors: Some(&query_vectors),
+        };
+
+        // Optimize and execute
+        let execution_plan = self.query_optimizer.optimize_query(context).await?;
+        let optimized_results = self
+            .execute_unified_plan(collection_id, execution_plan, query_vector, k, filter)
+            .await?;
+
+        // Build v1 results from the optimized records
+        let v1_results = vec![self.optimized_results_to_proto_v1(
+            optimized_results,
+            collection_id,
+            true,
+        )];
+
+        // Cache v1 (via legacy conversion) for reuse
+        self.query_cache
+            .cache_with_dependencies_v1(cache_key, v1_results.clone(), Vec::new())
+            .await;
+
+        Ok(v1_results)
+    }
+
+    /// Native variant: returns optimized native records for internal callers.
+    /// Callers at API boundaries should use v1 adapters.
+    pub async fn unified_search_native(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        let config = config.clone();
+
+        // Plan context
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let search_params = crate::query::unified_query_optimizer::SearchParameters::default();
+        let optimization_goal = config
+            .as_ref()
+            .map(|c| c.optimization_goal.clone())
+            .unwrap_or_default();
+
+        let query_vectors = vec![query_vector.clone()];
+        let context = UnifiedQueryContext {
+            collection: collection.clone(),
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal,
+            available_files: Vec::new(),
+            total_vectors: 0,
+            total_columns: 0,
+            query_vectors: Some(&query_vectors),
+        };
+
+        let execution_plan = self.query_optimizer.optimize_query(context).await?;
+        let optimized_results = self
+            .execute_unified_plan(collection_id, execution_plan, query_vector, k, filter)
+            .await?;
+
+        Ok(optimized_results)
+    }
+
     /// Domain-friendly wrapper for unified search
     pub async fn unified_search_domain(
         &self,
@@ -290,40 +408,30 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::core::service_types::DomainSearchResult>> {
-        let legacy = self
-            .unified_search(collection_id, query_vector, k, filter, config)
+        let natives = self
+            .unified_search_native(collection_id, query_vector, k, filter, config)
             .await?;
-        let mut out = Vec::with_capacity(legacy.len());
-        for res in legacy {
-            let mut hits = Vec::with_capacity(res.results.len());
-            for rec in res.results {
-                // Convert proto MetadataItem vec into JSON map (best-effort)
-                let mut meta = std::collections::HashMap::new();
-                for item in rec.metadata {
-                    let key = item.key;
-                    let val = match item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::json!(n),
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
-                        None => serde_json::Value::Null,
-                    };
-                    meta.insert(key, val);
-                }
-                hits.push(crate::core::service_types::SearchHit {
-                    id: rec.id,
-                    score: rec.score as f32,
-                    vector: rec.vector,
-                    metadata: meta,
-                    version: rec.version,
-                });
-            }
-            out.push(crate::core::service_types::DomainSearchResult {
-                results: hits,
-                total_found: res.total_found,
-                collection_id: res.collection_id,
+        // Group into a single DomainSearchResult (consistent with previous behavior)
+        let mut hits = Vec::with_capacity(natives.len());
+        for rec in natives {
+            let meta_json = rec.metadata.to_json_map();
+            hits.push(crate::core::service_types::SearchHit {
+                id: rec.id,
+                score: rec.score as f32,
+                vector: rec
+                    .vector
+                    .as_ref()
+                    .map(|arc| (**arc).clone())
+                    .unwrap_or_default(),
+                metadata: meta_json,
+                version: rec.version,
             });
         }
-        Ok(out)
+        Ok(vec![crate::core::service_types::DomainSearchResult {
+            results: hits,
+            total_found: hits.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }])
     }
 
     /// Like `unified_search`, but also returns lightweight planning/pruning hints for EXPLAIN.
@@ -334,7 +442,7 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
-    ) -> Result<(Vec<crate::proto::proximadb::SearchResult>, SearchPlanHints)> {
+    ) -> Result<(Vec<crate::proto::proximadb_v1::SearchResult>, SearchPlanHints)> {
         // Reuse the same cache check to determine cache_hit
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
         let cache_key = QueryKey::new(
@@ -378,7 +486,7 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: UnifiedSearchConfig,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         debug!(
             "🔍 Executing progressive search for collection {}",
             collection_id
@@ -427,7 +535,7 @@ impl VectorOperationsService {
         top_k: usize,
         filter: Option<FilterExpression>,
         optimization_goal: OptimizationGoal,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         debug!(
             "🔍 Executing unified search+filter query for collection {}",
             collection_id
@@ -503,26 +611,62 @@ impl VectorOperationsService {
             .execute_unified_plan(collection_id, execution_plan, query_vector, top_k, filter)
             .await?;
 
-        // Convert OptimizedSearchRecord to proto SearchResult at API boundary
-        let proto_results = vec![self.optimized_results_to_proto(
+        // Prefer v1 build/cache even though this method returns legacy
+        let v1_results = vec![self.optimized_results_to_proto_v1(
             optimized_results,
             collection_id,
             true, // include_vectors
-            true, // include_source
         )];
 
-        // Cache the results for future queries
-        let cached_result = CachedQueryResult {
-            results: proto_results.clone(),
-            cached_at: SystemTime::now(),
-            file_dependencies: Vec::new(), // TODO: Track file dependencies for invalidation
-        };
+        // Cache v1 results directly
         self.query_cache
-            .put_with_hooks(cache_key, cached_result)
+            .cache_with_dependencies_v1(cache_key, v1_results.clone(), Vec::new())
             .await;
-        debug!("💾 Cached query results for collection {}", collection_id);
+        debug!("💾 Cached v1 query results for collection {}", collection_id);
 
-        Ok(proto_results)
+        // Return v1 results directly - no conversion needed
+        Ok(v1_results)
+    }
+
+    /// Like `unified_search_with_hints`, but returns v1 SearchResult.
+    pub async fn unified_search_with_hints_v1(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<(Vec<crate::proto::proximadb_v1::SearchResult>, SearchPlanHints)> {
+        // Determine cache key and cache_hit similarly
+        let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
+        let cache_key = QueryKey::new(
+            collection_id.to_string(),
+            &query_vector,
+            k as u32,
+            filter_str.as_deref(),
+        );
+        let mut hints = SearchPlanHints::default();
+        if let Some(cached) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
+            hints.cache_hit = true;
+            return Ok((cached, hints));
+        }
+
+        let cfg = config.clone().unwrap_or_default();
+        let progressive_enabled = cfg.progressive_search;
+        if progressive_enabled {
+            hints.progressive_stages = Some(vec![
+                "binary".into(),
+                "int8".into(),
+                "pq".into(),
+                "full".into(),
+            ]);
+        }
+
+        // Run v1 unified search
+        let results = self
+            .unified_search_v1(collection_id, query_vector, k, filter, config)
+            .await?;
+        Ok((results, hints))
     }
 
     /// Execute unified plan - NEW capability for combined operations
@@ -743,9 +887,9 @@ impl VectorOperationsService {
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
         let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => crate::proto::proximadb::DistanceMetric::try_from(cfg.distance_metric)
-                .unwrap_or(crate::proto::proximadb::DistanceMetric::Cosine),
-            None => crate::proto::proximadb::DistanceMetric::Cosine,
+            Some(cfg) => crate::proto::proximadb_v1::DistanceMetric::try_from(cfg.distance_metric)
+                .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine),
+            None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
         };
 
         // Stage 1: Search WAL/memtable for unflushed vectors
@@ -1464,14 +1608,14 @@ impl VectorOperationsService {
     pub async fn get_unflushed_vectors(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         // Get vectors from WAL that haven't been flushed to storage
         let wal_entries = self.wal_manager.read_entries(collection_id, 0, None).await?;
         
         // Convert WAL entries to VectorRecord proto format
         let unflushed_vectors = wal_entries
             .into_iter()
-            .map(|entry| crate::proto::proximadb::VectorRecord {
+            .map(|entry| crate::proto::proximadb_v1::VectorRecord {
                 id: entry.id,
                 vector: entry.vector,
                 metadata: entry.metadata,
@@ -1487,17 +1631,41 @@ impl VectorOperationsService {
         Ok(unflushed_vectors)
     }
 
+    /// Get unflushed vectors and return v1 VectorRecord
+    pub async fn get_unflushed_vectors_v1(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
+        let legacy = self.get_unflushed_vectors(collection_id).await?;
+        Ok(legacy
+            .into_iter()
+            // Vectors are already v1, no conversion needed
+            .collect())
+    }
+
     /// Debug method to list unflushed vectors
     pub async fn debug_list_all_unflushed_vectors(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         // Get all unflushed vectors from WAL
         // TODO: Implement list_unflushed_vectors in WAL manager
         let unflushed = Vec::new();
 
         // Already in proto format
         Ok(unflushed)
+    }
+
+    /// Debug list of unflushed vectors (v1)
+    pub async fn debug_list_all_unflushed_vectors_v1(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
+        let legacy = self.debug_list_all_unflushed_vectors(collection_id).await?;
+        Ok(legacy
+            .into_iter()
+            // Vectors are already v1, no conversion needed
+            .collect())
     }
 
     /// Helper method to convert InternalSearchResult to proto SearchResult
@@ -1509,8 +1677,8 @@ impl VectorOperationsService {
         include_vectors: bool,
         include_metadata: bool,
         include_source: bool,
-    ) -> crate::proto::proximadb::SearchResult {
-        let search_vector_records: Vec<crate::proto::proximadb::SearchVectorRecord> =
+    ) -> crate::proto::proximadb_v1::SearchResult {
+        let search_vector_records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> =
             internal_results
                 .iter()
                 .map(|result| {
@@ -1522,8 +1690,27 @@ impl VectorOperationsService {
                 })
                 .collect();
 
-        crate::proto::proximadb::SearchResult {
+        crate::proto::proximadb_v1::SearchResult {
             results: search_vector_records,
+            total_found: internal_results.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }
+    }
+
+    /// v1: Convert InternalSearchResult to proximadb_v1::SearchResult
+    fn convert_to_proto_search_result_v1(
+        &self,
+        internal_results: Vec<crate::core::search::InternalSearchResult>,
+        collection_id: &str,
+        include_vectors: bool,
+        include_metadata: bool,
+    ) -> crate::proto::proximadb_v1::SearchResult {
+        let records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = internal_results
+            .iter()
+            .map(|result| result.to_search_vector_record_v1(include_vectors, include_metadata))
+            .collect();
+        crate::proto::proximadb_v1::SearchResult {
+            results: records,
             total_found: internal_results.len() as i64,
             collection_id: Some(collection_id.to_string()),
         }
@@ -1541,15 +1728,15 @@ impl VectorOperationsService {
         result: &crate::core::search::results::OptimizedSearchRecord,
         include_vector: bool,
         include_source: bool,
-    ) -> crate::proto::proximadb::SearchVectorRecord {
-        use crate::proto::proximadb::{SearchVectorRecord, MetadataItem};
+    ) -> crate::proto::proximadb_v1::SearchVectorRecord {
+        use crate::proto::proximadb_v1::{SearchVectorRecord, MetadataItem};
         
         // Convert TypedMetadata to proto MetadataItems
         let metadata_items: Vec<MetadataItem> = result.metadata.as_map()
             .iter()
             .map(|(key, value)| {
                 use crate::core::metadata_types::MetadataValue;
-                use crate::proto::proximadb::metadata_item::Value;
+                use crate::proto::proximadb_v1::metadata_item::Value;
                 
                 let proto_value = match value {
                     MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
@@ -1597,7 +1784,7 @@ impl VectorOperationsService {
         collection_id: &str,
         include_vector: bool,
         include_source: bool,
-    ) -> crate::proto::proximadb::SearchResult {
+    ) -> crate::proto::proximadb_v1::SearchResult {
         let search_vector_records: Vec<_> = results
             .iter()
             .enumerate()
@@ -1610,7 +1797,80 @@ impl VectorOperationsService {
             })
             .collect();
         
-        crate::proto::proximadb::SearchResult {
+        crate::proto::proximadb_v1::SearchResult {
+            results: search_vector_records,
+            total_found: results.len() as i64,
+            collection_id: Some(collection_id.to_string()),
+        }
+    }
+
+    /// Convert OptimizedSearchRecord to v1 proto SearchVectorRecord
+    fn optimized_to_proto_v1(
+        &self,
+        result: &crate::core::search::results::OptimizedSearchRecord,
+        include_vector: bool,
+    ) -> crate::proto::proximadb_v1::SearchVectorRecord {
+        // Map TypedMetadata to v1 SqlValue map
+        let mut metadata: std::collections::HashMap<
+            String,
+            crate::proto::proximadb_v1::SqlValue,
+        > = std::collections::HashMap::new();
+
+        for (key, value) in result.metadata.as_map().iter() {
+            use crate::core::metadata_types::MetadataValue;
+            let sql_value = match value {
+                MetadataValue::String(s) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(
+                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            s.to_string(),
+                        ),
+                    ),
+                },
+                MetadataValue::Number(n) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(
+                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(*n),
+                    ),
+                },
+                MetadataValue::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
+                    ),
+                },
+                MetadataValue::Null => crate::proto::proximadb_v1::SqlValue { value: None },
+            };
+            metadata.insert(key.clone(), sql_value);
+        }
+
+        crate::proto::proximadb_v1::SearchVectorRecord {
+            id: result.id.clone(),
+            vector: if include_vector {
+                result
+                    .vector
+                    .as_ref()
+                    .map(|arc| (**arc).clone())
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            },
+            metadata,
+            score: result.score,
+            version: result.version,
+        }
+    }
+
+    /// Convert a vector of OptimizedSearchRecords to v1 proto SearchResult
+    pub fn optimized_results_to_proto_v1(
+        &self,
+        results: Vec<crate::core::search::results::OptimizedSearchRecord>,
+        collection_id: &str,
+        include_vector: bool,
+    ) -> crate::proto::proximadb_v1::SearchResult {
+        let search_vector_records: Vec<_> = results
+            .iter()
+            .map(|result| self.optimized_to_proto_v1(result, include_vector))
+            .collect();
+
+        crate::proto::proximadb_v1::SearchResult {
             results: search_vector_records,
             total_found: results.len() as i64,
             collection_id: Some(collection_id.to_string()),

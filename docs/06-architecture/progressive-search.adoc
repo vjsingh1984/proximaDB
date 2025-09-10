@@ -10,17 +10,16 @@ ProximaDB supports a progressive search pipeline that refines candidates across 
 
 [source,mermaid]
 ----
+%%{init: {'theme':'neutral','themeVariables': {'primaryColor':'#0d47a1','primaryTextColor':'#fff','lineColor':'#1565c0'}} }%%
 flowchart LR
-  Q[Query Vector] --> P1[Binary Filter]
-  P1 --> P2[INT8 Ranking]
-  P2 --> P3[PQ Ranking]
-  P3 --> P4[FP32 Rerank]
-  P4 --> R[Top‑K Results]
+  Q([Query Vector]) --> P1{{Binary Filter}}
+  P1 --> P2{{INT8 Ranking}}
+  P2 --> P3{{PQ Ranking}}
+  P3 --> P4{{FP32 Rerank}}
+  P4 --> R([Top‑K Results])
 
-  style P1 fill:#E3F2FD
-  style P2 fill:#E8F5E9
-  style P3 fill:#FFF3E0
-  style P4 fill:#FCE4EC
+  classDef stage fill:#e3f2fd,stroke:#1565c0,color:#0d47a1;
+  class P1,P2,P3,P4 stage;
 ----
 
 == Stage Sizing
@@ -60,4 +59,3 @@ pq_ranking_selectivity    = 0.30
 
 - Stage execution is designed to be zero‑copy and SIMD‑aware where possible.
 - Caching applies across stages to minimize repeated work.
-

@@ -53,21 +53,21 @@ async fn test_metadata_filtering_basic() {
     // Category A records
     for i in 0..5 {
         let metadata = vec![
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "A".to_string(),
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                     (i * 10) as f64,
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "document".to_string(),
                 )),
             },
@@ -91,21 +91,21 @@ async fn test_metadata_filtering_basic() {
     // Category B records
     for i in 0..5 {
         let metadata = vec![
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "B".to_string(),
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                     (i * 10 + 5) as f64,
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "image".to_string(),
                 )),
             },
@@ -312,15 +312,15 @@ async fn test_metadata_bloom_filter_optimization() {
     let mut records = BTreeMap::new();
     for i in 0..20 {
         let metadata = vec![
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     if i % 2 == 0 { "even" } else { "odd" }.to_string(),
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "status".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     if i < 10 { "active" } else { "inactive" }.to_string(),
                 )),
             },

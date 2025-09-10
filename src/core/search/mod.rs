@@ -835,6 +835,122 @@ pub mod protocol_conversions {
             FilterExpression::And(conditions)
         }
     }
+
+    /// Convert v1 simple filters (map<string, SqlValue>) to FilterExpression
+    pub fn from_v1_simple_filters(
+        filters: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> Result<FilterExpression, String> {
+        if filters.is_empty() {
+            return Ok(FilterExpression::And(vec![]));
+        }
+        
+        let conditions: Result<Vec<FilterExpression>, String> = filters
+            .iter()
+            .map(|(field, sql_value)| {
+                let value = match &sql_value.value {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                        serde_json::json!(n)
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    None => serde_json::Value::Null,
+                };
+                
+                Ok(FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: ComparisonOperator::Equals,
+                    value,
+                })
+            })
+            .collect();
+        
+        let conditions = conditions?;
+        if conditions.len() == 1 {
+            Ok(conditions.into_iter().next().unwrap())
+        } else {
+            Ok(FilterExpression::And(conditions))
+        }
+    }
+    
+    /// Convert v1 metadata filters (MetadataFilter from entity.proto) to FilterExpression  
+    pub fn from_v1_metadata_filter(
+        metadata_filter: &crate::proto::proximadb_v1::MetadataFilter,
+    ) -> Result<FilterExpression, String> {
+        if metadata_filter.clauses.is_empty() {
+            return Ok(FilterExpression::And(vec![]));
+        }
+        
+        let conditions: Result<Vec<FilterExpression>, String> = metadata_filter
+            .clauses
+            .iter()
+            .map(|clause| {
+                let value = match clause {
+                    crate::proto::proximadb_v1::FilterClause {
+                        string_value: Some(s), ..
+                    } => serde_json::Value::String(s.clone()),
+                    crate::proto::proximadb_v1::FilterClause {
+                        int_value: Some(i), ..
+                    } => serde_json::json!(i),
+                    crate::proto::proximadb_v1::FilterClause {
+                        double_value: Some(d), ..
+                    } => serde_json::json!(d),
+                    crate::proto::proximadb_v1::FilterClause {
+                        bool_value: Some(b), ..
+                    } => serde_json::Value::Bool(*b),
+                    _ => serde_json::Value::Null,
+                };
+                
+                let operator = match crate::proto::proximadb_v1::ComparisonOp::try_from(clause.op) {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Eq) => ComparisonOperator::Equals,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Ne) => ComparisonOperator::NotEquals,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Gt) => ComparisonOperator::GreaterThan,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Gte) => ComparisonOperator::GreaterThanOrEqual,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Lt) => ComparisonOperator::LessThan,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Lte) => ComparisonOperator::LessThanOrEqual,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::In) => ComparisonOperator::In,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::NotIn) => ComparisonOperator::NotIn,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Contains) => ComparisonOperator::Contains,
+                    _ => return Err(format!("Unsupported comparison operator: {}", clause.op)),
+                };
+                
+                Ok(FilterExpression::Comparison {
+                    field: clause.field.clone(),
+                    operator,
+                    value,
+                })
+            })
+            .collect();
+        
+        let conditions = conditions?;
+        match crate::proto::proximadb_v1::LogicalOp::try_from(metadata_filter.op) {
+            Ok(crate::proto::proximadb_v1::LogicalOp::And) => {
+                if conditions.len() == 1 {
+                    Ok(conditions.into_iter().next().unwrap())
+                } else {
+                    Ok(FilterExpression::And(conditions))
+                }
+            }
+            Ok(crate::proto::proximadb_v1::LogicalOp::Or) => {
+                if conditions.len() == 1 {
+                    Ok(conditions.into_iter().next().unwrap())
+                } else {
+                    Ok(FilterExpression::Or(conditions))
+                }
+            }
+            _ => {
+                // Default to AND for unspecified
+                if conditions.len() == 1 {
+                    Ok(conditions.into_iter().next().unwrap())
+                } else {
+                    Ok(FilterExpression::And(conditions))
+                }
+            }
+        }
+    }
 }
 
 /// Centralized metadata filter extraction utilities

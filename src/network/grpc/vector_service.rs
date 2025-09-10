@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::api_handlers::UnifiedHandlers;
-use crate::proto::{proximadb, proximadb_v1};
+use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::vector_service_server::{VectorService, VectorServiceServer};
 
 pub struct VectorServiceImpl {
@@ -24,91 +24,10 @@ impl VectorService for VectorServiceImpl {
         request: Request<proximadb_v1::VectorBatchRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
         let req_v1 = request.into_inner();
-        // Helper: convert v1 metadata map to legacy MetadataItem vec
-        fn v1_meta_to_legacy(meta: std::collections::HashMap<String, proximadb_v1::SqlValue>) -> Vec<proximadb::MetadataItem> {
-            meta.into_iter()
-                .map(|(k,v)| {
-                    let val = match v.value {
-                        Some(proximadb_v1::sql_value::Value::StringValue(s)) => Some(proximadb::metadata_item::Value::StringValue(s)),
-                        Some(proximadb_v1::sql_value::Value::NumberValue(n)) => Some(proximadb::metadata_item::Value::NumberValue(n)),
-                        Some(proximadb_v1::sql_value::Value::BoolValue(b)) => Some(proximadb::metadata_item::Value::BoolValue(b)),
-                        None => None,
-                    };
-                    proximadb::MetadataItem { key: k, value: val }
-                })
-                .collect()
-        }
-
-        let legacy = proximadb::VectorBatchRequest {
-            collection_id: req_v1.collection_id.clone(),
-            vectors: req_v1
-                .vectors
-                .into_iter()
-                .map(|v| proximadb::VectorRecord {
-                    id: v.id,
-                    vector: v.vector,
-                    metadata: v1_meta_to_legacy(v.metadata),
-                    timestamp: v.timestamp,
-                    updated_at: v.updated_at,
-                    expires_at: v.expires_at,
-                    version: v.version,
-                    quantized_vector: v.quantized_vector,
-                    source: v.source,
-                })
-                .collect(),
-        };
         self.unified_handlers
-            .handle_vector_batch(legacy)
+            .handle_vector_batch_v1(req_v1)
             .await
-            .map(|resp| {
-                // Helper: convert legacy MetadataItem vec to v1 metadata map
-                fn legacy_meta_to_v1(meta: Vec<proximadb::MetadataItem>) -> std::collections::HashMap<String, proximadb_v1::SqlValue> {
-                    let mut out = std::collections::HashMap::new();
-                    for item in meta {
-                        let val = match item.value {
-                            Some(proximadb::metadata_item::Value::StringValue(s)) => proximadb_v1::SqlValue { value: Some(proximadb_v1::sql_value::Value::StringValue(s)) },
-                            Some(proximadb::metadata_item::Value::NumberValue(n)) => proximadb_v1::SqlValue { value: Some(proximadb_v1::sql_value::Value::NumberValue(n)) },
-                            Some(proximadb::metadata_item::Value::BoolValue(b)) => proximadb_v1::SqlValue { value: Some(proximadb_v1::sql_value::Value::BoolValue(b)) },
-                            None => proximadb_v1::SqlValue { value: None },
-                        };
-                        out.insert(item.key, val);
-                    }
-                    out
-                }
-
-                let v1 = proximadb_v1::VectorOperationResponse {
-                    success: resp.success,
-                    operation: resp.operation,
-                    metrics: resp.metrics.map(|m| proximadb_v1::OperationMetrics {
-                        total_processed: m.total_processed,
-                        successful_count: m.successful_count,
-                        failed_count: m.failed_count,
-                        updated_count: m.updated_count,
-                        processing_time_us: m.processing_time_us,
-                        wal_write_time_us: m.wal_write_time_us,
-                        index_update_time_us: m.index_update_time_us,
-                    }),
-                    results: resp.results.map(|r| proximadb_v1::SearchResult {
-                        results: r
-                            .results
-                            .into_iter()
-                            .map(|rec| proximadb_v1::SearchVectorRecord {
-                                id: rec.id,
-                                score: rec.score,
-                                vector: rec.vector,
-                                metadata: legacy_meta_to_v1(rec.metadata),
-                                version: rec.version,
-                            })
-                            .collect(),
-                        total_found: r.total_found,
-                        collection_id: r.collection_id,
-                    }),
-                    vector_ids: resp.vector_ids,
-                    error_message: resp.error_message,
-                    error_code: resp.error_code,
-                };
-                Response::new(v1)
-            })
+            .map(Response::new)
             .map_err(|e| Status::internal(format!("Vector batch failed: {}", e)))
     }
 
@@ -117,56 +36,10 @@ impl VectorService for VectorServiceImpl {
         request: Request<proximadb_v1::VectorSearchRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
         let req_v1 = request.into_inner();
-        let legacy = proximadb::VectorSearchRequest {
-            collection_id: req_v1.collection_id.clone(),
-            queries: req_v1
-                .queries
-                .into_iter()
-                .map(|q| proximadb::SearchQuery { vector: q.vector, metadata_filter: None })
-                .collect(),
-            top_k: req_v1.top_k,
-            include_fields: req_v1.include_fields.map(|f| proximadb::IncludeFields { vector: f.vector, metadata: f.metadata }),
-            search_params: None,
-            distance_metric_override: req_v1.distance_metric_override,
-            search_optimization: None,
-        };
         self.unified_handlers
-            .handle_vector_search(legacy)
+            .handle_vector_search_v1(req_v1)
             .await
-            .map(|response| {
-                let v1 = proximadb_v1::VectorOperationResponse {
-                    success: response.success,
-                    operation: response.operation,
-                    metrics: response.metrics.map(|m| proximadb_v1::OperationMetrics {
-                        total_processed: m.total_processed,
-                        successful_count: m.successful_count,
-                        failed_count: m.failed_count,
-                        updated_count: m.updated_count,
-                        processing_time_us: m.processing_time_us,
-                        wal_write_time_us: m.wal_write_time_us,
-                        index_update_time_us: m.index_update_time_us,
-                    }),
-                    results: response.results.map(|r| proximadb_v1::SearchResult {
-                        results: r
-                            .results
-                            .into_iter()
-                            .map(|rec| proximadb_v1::SearchVectorRecord {
-                                id: rec.id,
-                                score: rec.score,
-                                vector: rec.vector,
-                                metadata: std::collections::HashMap::new(),
-                                version: rec.version,
-                            })
-                            .collect(),
-                        total_found: r.total_found,
-                        collection_id: r.collection_id,
-                    }),
-                    vector_ids: response.vector_ids,
-                    error_message: response.error_message,
-                    error_code: response.error_code,
-                };
-                Response::new(v1)
-            })
+            .map(Response::new)
             .map_err(|e| Status::internal(format!("Vector search failed: {}", e)))
     }
 
@@ -178,42 +51,9 @@ impl VectorService for VectorServiceImpl {
         let include_vector = req.include_vector.unwrap_or(false);
         let include_metadata = req.include_metadata.unwrap_or(true);
         self.unified_handlers
-            .handle_vector(&req.collection_id, &req.vector_id, include_vector, include_metadata)
+            .handle_vector_v1(&req.collection_id, &req.vector_id, include_vector, include_metadata)
             .await
-            .map(|resp| {
-                let v1 = proximadb_v1::VectorOperationResponse {
-                    success: resp.success,
-                    operation: resp.operation,
-                    metrics: resp.metrics.map(|m| proximadb_v1::OperationMetrics {
-                        total_processed: m.total_processed,
-                        successful_count: m.successful_count,
-                        failed_count: m.failed_count,
-                        updated_count: m.updated_count,
-                        processing_time_us: m.processing_time_us,
-                        wal_write_time_us: m.wal_write_time_us,
-                        index_update_time_us: m.index_update_time_us,
-                    }),
-                    results: resp.results.map(|r| proximadb_v1::SearchResult {
-                        results: r
-                            .results
-                            .into_iter()
-                            .map(|rec| proximadb_v1::SearchVectorRecord {
-                                id: rec.id,
-                                score: rec.score,
-                                vector: rec.vector,
-                                metadata: std::collections::HashMap::new(),
-                                version: rec.version,
-                            })
-                            .collect(),
-                        total_found: r.total_found,
-                        collection_id: r.collection_id,
-                    }),
-                    vector_ids: resp.vector_ids,
-                    error_message: resp.error_message,
-                    error_code: resp.error_code,
-                };
-                Response::new(v1)
-            })
+            .map(Response::new)
             .map_err(|e| Status::internal(format!("Vector get failed: {}", e)))
     }
 }

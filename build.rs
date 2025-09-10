@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("🔨 Building ProximaDB protobuf schemas");
 
     // Compile optimized ProximaDB proto with zero-copy support and serde derives
-    tracing::debug!("Compiling protobuf schemas from proto/proximadb.proto with serde support");
+    tracing::debug!("Compiling protobuf schemas (legacy + v1). Note: remove legacy proximadb.proto once v1 migration completes.");
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
@@ -33,9 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .field_attribute("TimeRange.end", "#[serde(skip)]")
         .field_attribute("typed_field::Value.TimestampValue", "#[serde(skip)]")
         .field_attribute("temporal_clause::Clause.AtTime", "#[serde(skip)]")
+        // TODO(migration): Remove "proto/proximadb.proto" from the list below once all
+        // crate::proto::proximadb::* references are eliminated and only v1 is in use.
         .compile(
             &[
-                "proto/proximadb.proto",
+                "proto/proximadb.proto", // LEGACY – scheduled for removal
                 "proto/proximadb/v1/entity.proto",
                 "proto/proximadb/v1/relations.proto",
                 "proto/proximadb/v1/context.proto",

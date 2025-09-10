@@ -569,8 +569,43 @@ impl AdvancedSearchOptimizer {
                 .map(|f| format!("{:?}", f))
                 .as_deref(),
         );
+        // Prefer v1 cached results if present
+        if let Some(cached_v1) = self
+            .query_cache
+            .get_if_fresh_v1(&key, self.config.result_cache_ttl_secs)
+            .await
+        {
+            debug!("Found fresh cached v1 results for query");
 
-        // Check if we have fresh cached results
+            let mut converted_results = Vec::new();
+            for search_result in cached_v1 {
+                for record in search_result.results {
+                    // Convert v1 metadata map to TypedMetadata
+                    let mut metadata_map = std::collections::HashMap::new();
+                    for (k, v) in record.metadata.into_iter() {
+                        let typed_value = match v.value {
+                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) =>
+                                MetadataValue::String(Arc::from(s.as_str())),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) =>
+                                MetadataValue::Number(n),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) =>
+                                MetadataValue::Bool(b),
+                            None => continue,
+                        };
+                        metadata_map.insert(k, typed_value);
+                    }
+                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::from_map(metadata_map));
+                    if let Some(v) = record.version { rec = rec.with_version(v); }
+                    converted_results.push(rec);
+                }
+            }
+
+            return Ok(Some(converted_results));
+        }
+
+        // Check if we have fresh cached legacy results
         if let Some(cached_results) = self
             .query_cache
             .get_if_fresh(&key, self.config.result_cache_ttl_secs)

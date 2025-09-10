@@ -16,7 +16,7 @@ mod tests {
     use crate::core::VectorRecord;
     use crate::core::search::mvcc_resolution::MvccResolver;
     use crate::core::{BloomFilterConfig, SstConfig};
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
     use std::collections::HashMap;
@@ -151,16 +151,16 @@ mod tests {
         debug!("✅ SST engine created successfully");
 
         // Create collection with storage assignment
-        let collection = crate::proto::proximadb::Collection {
+        let collection = crate::proto::proximadb_v1::Collection {
             id: collection_id.to_string(),
-            config: Some(crate::proto::proximadb::CollectionConfig {
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: collection_id.to_string(),
                 dimension: 3,
-                distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
-                storage_engine: crate::proto::proximadb::StorageEngine::Sst as i32,
+                distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
                 ..Default::default()
             }),
-            storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path),
                 assigned_at: chrono::Utc::now().timestamp(),
             }),
@@ -708,7 +708,7 @@ mod tests {
                 None,
                 vec![MetadataItem {
                     key: "category".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "A".to_string(),
                     )),
                 }],
@@ -720,7 +720,7 @@ mod tests {
                 None,
                 vec![MetadataItem {
                     key: "category".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "B".to_string(),
                     )),
                 }],
@@ -868,13 +868,13 @@ mod tests {
                 vec![
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             (i * 10).to_string(),
                         )),
                     },
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             format!("cat_{}", i % 5),
                         )),
                     },
@@ -935,13 +935,13 @@ mod tests {
                 vec![
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             (i * 10).to_string(),
                         )),
                     },
                     MetadataItem {
                         key: "type".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             if i < 100 { "A" } else { "B" }.to_string(),
                         )),
                     },
@@ -1027,13 +1027,13 @@ mod tests {
                 vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             format!("cat_{}", i % 10)
                         )),
                     },
                     MetadataItem {
                         key: "description".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             format!("This is a test description for item {} with some repetitive text pattern for better compression", i)
                         )),
                     },
@@ -1056,22 +1056,22 @@ mod tests {
             .unwrap();
 
         // Create collection with compression configuration
-        let collection = crate::proto::proximadb::Collection {
+        let collection = crate::proto::proximadb_v1::Collection {
             id: collection_id.to_string(),
-            config: Some(crate::proto::proximadb::CollectionConfig {
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: collection_id.to_string(),
                 dimension: 384,
-                distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
-                storage_engine: crate::proto::proximadb::StorageEngine::Sst as i32,
-                compression: Some(crate::proto::proximadb::CompressionConfig {
-                    algorithm: crate::proto::proximadb::CompressionAlgorithm::CompressionZstd
+                distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
+                compression: Some(crate::proto::proximadb_v1::CompressionConfig {
+                    algorithm: crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd
                         as i32,
                     level: Some(3),
                     ..Default::default()
                 }),
                 ..Default::default()
             }),
-            storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path.to_str().unwrap()),
                 assigned_at: chrono::Utc::now().timestamp(),
             }),
@@ -1218,7 +1218,7 @@ mod tests {
         let mut prev_category = String::new();
         for record in &compacted_records {
             if let Some(category_item) = record.metadata.iter().find(|m| m.key == "category") {
-                if let Some(crate::proto::proximadb::metadata_item::Value::StringValue(cat)) =
+                if let Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(cat)) =
                     &category_item.value
                 {
                     assert!(

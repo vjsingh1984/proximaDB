@@ -313,10 +313,10 @@ impl StreamingSearchService {
             // Request more results to account for potential duplicates
             let search_k = ((remaining_k as f32) * 1.5).ceil() as usize;
 
-            // Search using unified method
-            let results = self
+            // Search using native unified method (avoid proto conversions)
+            let native_results = self
                 .direct_service
-                .unified_search(
+                .unified_search_native(
                     &collection_id,
                     query_vector.clone(),
                     search_k,
@@ -325,17 +325,9 @@ impl StreamingSearchService {
                 )
                 .await?;
 
-            // Convert search results to SearchResult format
-            let mut all_records = Vec::new();
-            for search_result in results {
-                // Extract all SearchVectorRecords from the results
-                for record in search_result.results {
-                    all_records.push(record);
-                }
-            }
-
-            // Sort by score (higher is better)
-            all_records.sort_by(|a, b| {
+            // Sort native results by score (higher is better)
+            let mut all_native = native_results;
+            all_native.sort_by(|a, b| {
                 b.score
                     .partial_cmp(&a.score)
                     .unwrap_or(std::cmp::Ordering::Equal)
@@ -343,7 +335,7 @@ impl StreamingSearchService {
 
             // Deduplicate storage results against WAL results if enabled
             let mut deduped_storage_records = Vec::new();
-            for record in all_records {
+            for record in all_native {
                 let should_include = if let Some(ref mut seen) = seen_ids {
                     if record.id.is_empty() {
                         true // Include empty IDs
@@ -355,24 +347,8 @@ impl StreamingSearchService {
                 };
 
                 if should_include {
-                    // Convert SearchVectorRecord to OptimizedSearchRecord
-                    let mut metadata_map = HashMap::new();
-                    for item in &record.metadata {
-                        if let Some(value) = &item.value {
-                            metadata_map.insert(item.key.clone(), convert_proto_value_to_typed(value.clone()));
-                        }
-                    }
-                    
-                    let optimized_result = OptimizedSearchRecord::new(
-                        record.id.clone(),
-                        record.score
-                    )
-                    .with_similarity(record.similarity.unwrap_or(record.score))
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::from_map(metadata_map))
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0));
-                    
-                    deduped_storage_records.push(optimized_result);
+                    // Record is already OptimizedSearchRecord
+                    deduped_storage_records.push(record);
                     if deduped_storage_records.len() >= remaining_k {
                         break;
                     }

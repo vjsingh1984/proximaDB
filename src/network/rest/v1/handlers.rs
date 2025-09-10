@@ -16,11 +16,10 @@ use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::utils::uuid::Uuid;
-use crate::proto::proximadb::{
+use crate::proto::proximadb_v1::{
     CollectionRequest, CollectionResponse, CollectionOperation,
 };
 use crate::proto::proximadb_v1::{
-    self as v1,
     VectorSearchRequest as V1VectorSearchRequest,
     VectorBatchRequest as V1VectorBatchRequest,
     VectorOperationResponse as V1VectorOperationResponse,
@@ -59,8 +58,8 @@ pub async fn vector_search(
         return Err(ApiError::InvalidArgument("At least one query is required".to_string()));
     }
     
-    // Delegate to UnifiedHandlers v1 wrapper
-    let response_legacy = state
+    // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
+    let v1_resp = state
         .unified_handlers
         .handle_vector_search_v1(request)
         .await
@@ -68,50 +67,6 @@ pub async fn vector_search(
             error!("Vector search failed: {}", e);
             ApiError::Internal(e.to_string())
         })?;
-
-    // Map legacy response to v1
-    // Helper: convert legacy MetadataItem vec to v1 metadata map
-    fn legacy_meta_to_v1(meta: Vec<crate::proto::proximadb::MetadataItem>) -> std::collections::HashMap<String, v1::SqlValue> {
-        let mut out = std::collections::HashMap::new();
-        for item in meta {
-            let val = match item.value {
-                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => v1::SqlValue { value: Some(v1::sql_value::Value::StringValue(s)) },
-                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => v1::SqlValue { value: Some(v1::sql_value::Value::NumberValue(n)) },
-                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => v1::SqlValue { value: Some(v1::sql_value::Value::BoolValue(b)) },
-                None => v1::SqlValue { value: None },
-            };
-            out.insert(item.key, val);
-        }
-        out
-    }
-
-    let v1_resp = V1VectorOperationResponse {
-        success: response_legacy.success,
-        operation: response_legacy.operation,
-        metrics: response_legacy.metrics.map(|m| v1::OperationMetrics {
-            total_processed: m.total_processed,
-            successful_count: m.successful_count,
-            failed_count: m.failed_count,
-            updated_count: m.updated_count,
-            processing_time_us: m.processing_time_us,
-            wal_write_time_us: m.wal_write_time_us,
-            index_update_time_us: m.index_update_time_us,
-        }),
-        results: response_legacy.results.map(|r| v1::SearchResult {
-            results: r.results.into_iter().map(|rec| v1::SearchVectorRecord {
-                id: rec.id,
-                score: rec.score,
-                vector: rec.vector,
-                metadata: legacy_meta_to_v1(rec.metadata),
-                version: rec.version,
-            }).collect(),
-            total_found: r.total_found,
-            collection_id: r.collection_id,
-        }),
-        vector_ids: response_legacy.vector_ids,
-        error_message: response_legacy.error_message,
-        error_code: response_legacy.error_code,
-    };
 
     Ok(JsonResponse(v1_resp))
 }
@@ -136,8 +91,8 @@ pub async fn vector_batch(
         return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
     }
     
-    // Delegate to UnifiedHandlers v1 wrapper
-    let response_legacy = state
+    // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
+    let v1_resp = state
         .unified_handlers
         .handle_vector_batch_v1(request)
         .await
@@ -145,34 +100,6 @@ pub async fn vector_batch(
             error!("Vector batch operation failed: {}", e);
             ApiError::Internal(e.to_string())
         })?;
-
-    let v1_resp = V1VectorOperationResponse {
-        success: response_legacy.success,
-        operation: response_legacy.operation,
-        metrics: response_legacy.metrics.map(|m| v1::OperationMetrics {
-            total_processed: m.total_processed,
-            successful_count: m.successful_count,
-            failed_count: m.failed_count,
-            updated_count: m.updated_count,
-            processing_time_us: m.processing_time_us,
-            wal_write_time_us: m.wal_write_time_us,
-            index_update_time_us: m.index_update_time_us,
-        }),
-        results: response_legacy.results.map(|r| v1::SearchResult {
-            results: r.results.into_iter().map(|rec| v1::SearchVectorRecord {
-                id: rec.id,
-                score: rec.score,
-                vector: rec.vector,
-                metadata: legacy_meta_to_v1(rec.metadata),
-                version: rec.version,
-            }).collect(),
-            total_found: r.total_found,
-            collection_id: r.collection_id,
-        }),
-        vector_ids: response_legacy.vector_ids,
-        error_message: response_legacy.error_message,
-        error_code: response_legacy.error_code,
-    };
 
     Ok(JsonResponse(v1_resp))
 }
@@ -336,8 +263,8 @@ pub async fn delete_collection(
 /// Example using ProtoApiResponse for consistent structure
 pub async fn vector_search_with_metadata(
     State(state): State<AppState>,
-    Json(request): Json<VectorSearchRequest>,
-) -> ApiResult<JsonResponse<ProtoApiResponse<VectorOperationResponse>>> {
+    Json(request): Json<V1VectorSearchRequest>,
+) -> ApiResult<JsonResponse<ProtoApiResponse<V1VectorOperationResponse>>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
     
@@ -347,7 +274,7 @@ pub async fn vector_search_with_metadata(
     );
     
     // Execute search
-    match state.unified_handlers.handle_vector_search(request).await {
+    match state.unified_handlers.handle_vector_search_v1(request).await {
         Ok(response) => {
             let elapsed = start_time.elapsed();
             

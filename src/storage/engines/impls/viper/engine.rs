@@ -646,7 +646,7 @@ impl ViperEngine {
     pub async fn compact_parquet_files(
         &self,
         input_files: Vec<String>,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<String>> {
         let collection_id = collection_config.as_ref().map(|c| c.id.as_str());
 
@@ -1065,7 +1065,7 @@ impl ViperEngine {
         storage_url: &str,
         query_vector: &[f32],
         k: usize,
-    ) -> Result<Vec<crate::proto::proximadb::SearchResult>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         info!(
             "🔍 VIPER Engine: search_vectors called - collection={}, storage_url={}, k={}",
             collection_id, storage_url, k
@@ -1082,13 +1082,13 @@ impl ViperEngine {
             ..SearchParams::default()
         });
 
-        let collection = Arc::new(crate::proto::proximadb::Collection {
+        let collection = Arc::new(crate::proto::proximadb_v1::Collection {
             id: collection_id.to_string(),
-            config: Some(crate::proto::proximadb::CollectionConfig {
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: collection_id.to_string(),
                 dimension: query_vector.len() as u32,
-                distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
-                storage_engine: crate::proto::proximadb::StorageEngine::Viper as i32,
+                distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
                 ..Default::default()
             }),
             stats: None,
@@ -1111,14 +1111,14 @@ impl ViperEngine {
         let internal_results = self.search_vectors_unified(&ctx).await?;
 
         // Convert OptimizedSearchRecord to SearchVectorRecord and wrap in SearchResult
-        let search_records: Vec<crate::proto::proximadb::SearchVectorRecord> = internal_results
+        let search_records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = internal_results
             .into_iter()
             .map(|r| {
                 // Convert OptimizedSearchRecord vector (Arc<Vec<f32>>) to Vec<f32>
                 let vector = r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
                 // Convert TypedMetadata to JSON map for proto conversion
                 let metadata_json = r.metadata.to_json_map();
-                crate::proto::proximadb::SearchVectorRecord {
+                crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
                     vector,
                     metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata_json),
@@ -1133,7 +1133,7 @@ impl ViperEngine {
             .collect();
 
         // Return a single SearchResult containing all results
-        Ok(vec![crate::proto::proximadb::SearchResult {
+        Ok(vec![crate::proto::proximadb_v1::SearchResult {
             results: search_records,
             total_found: 0,
             collection_id: Some(collection_id.to_string()),
@@ -1251,7 +1251,7 @@ impl ViperEngine {
     async fn get_collection_config(
         &self,
         collection_id: &str,
-    ) -> Result<Option<crate::proto::proximadb::Collection>> {
+    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         // Get metadata from collection service if available
         if let Some(collection_service) = &*self.collection_service.read().await {
             match collection_service.collection(collection_id).await {
@@ -1835,9 +1835,9 @@ impl UnifiedStorageEngine for ViperEngine {
             .map(|r| {
                 let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|item| {
                     let value = match item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
                         None => serde_json::Value::Null,
                     };
                     (item.key, value)
@@ -2091,7 +2091,7 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn compact_collection(
         &self,
         collection_id: &str,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<crate::storage::traits::CompactionResult> {
         info!(
             "🗜️ VIPER Engine: Starting collection compaction for {}",

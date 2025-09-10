@@ -174,7 +174,7 @@ use crate::compute::quantization::unified::{
     CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine,
 };
 use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 use crate::storage::optimization::SortingStats;
@@ -419,16 +419,16 @@ impl SstEntry {
             .iter()
             .map(|item| {
                 let value = match &item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                         serde_json::Value::Number(
                             serde_json::Number::from_f64(*n)
                                 .unwrap_or_else(|| serde_json::Number::from(0)),
                         )
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
                     None => serde_json::Value::Null,
@@ -467,16 +467,16 @@ impl SstEntry {
                 .iter()
                 .map(|item| {
                     let value = match &item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                             serde_json::Value::Number(
                                 serde_json::Number::from_f64(*n)
                                     .unwrap_or_else(|| serde_json::Number::from(0)),
                             )
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
                         }
                         None => serde_json::Value::Null,
@@ -960,31 +960,31 @@ mod compression_helpers {
         let collection_compression = if config.compression.to_lowercase() != "none"
             && !config.compression.is_empty()
         {
-            Some(crate::proto::proximadb::CompressionConfig {
+            Some(crate::proto::proximadb_v1::CompressionConfig {
                 algorithm: match config.compression.to_lowercase().as_str() {
-                    "zstd" => crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32,
-                    "lz4" => crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32,
+                    "zstd" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd as i32,
+                    "lz4" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4 as i32,
                     "snappy" => {
-                        crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy as i32
                     }
-                    "gzip" => crate::proto::proximadb::CompressionAlgorithm::CompressionGzip as i32,
+                    "gzip" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip as i32,
                     "brotli" => {
-                        crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli as i32
                     }
                     "bzip2" => {
-                        crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBzip2 as i32
                     }
                     "deflate" => {
-                        crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionDeflate as i32
                     }
-                    "xz" => crate::proto::proximadb::CompressionAlgorithm::CompressionXz as i32,
-                    "zlib" => crate::proto::proximadb::CompressionAlgorithm::CompressionZlib as i32,
+                    "xz" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionXz as i32,
+                    "zlib" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZlib as i32,
                     "lz4hc" => {
-                        crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4hc as i32
                     }
-                    "lzma" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzma as i32,
-                    "lzo" => crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32,
-                    _ => crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
+                    "lzma" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzma as i32,
+                    "lzo" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzo as i32,
+                    _ => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32,
                 },
                 level: Some(config.compression_level as u32),
                 adaptive: false,
@@ -1011,7 +1011,7 @@ mod compression_helpers {
 
     /// Create BlockCompressionConfig from proto CompressionConfig
     pub fn block_compression_from_proto(
-        config: Option<&crate::proto::proximadb::CompressionConfig>,
+        config: Option<&crate::proto::proximadb_v1::CompressionConfig>,
         vector_dim: usize,
     ) -> BlockCompressionConfig {
         if let Some(config) = config {
@@ -1023,53 +1023,53 @@ mod compression_helpers {
 
             // Map proto compression algorithm to unified compression module algorithm
             let compression_algorithm = match config.algorithm {
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32 => {
                     CompressionAlgorithm::None
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZstd as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd as i32 => {
                     CompressionAlgorithm::Zstd
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4 as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4 as i32 => {
                     CompressionAlgorithm::Lz4
                 }
                 x if x
-                    == crate::proto::proximadb::CompressionAlgorithm::CompressionSnappy as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy as i32 =>
                 {
                     CompressionAlgorithm::Snappy
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionGzip as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip as i32 => {
                     CompressionAlgorithm::Gzip
                 }
                 x if x
-                    == crate::proto::proximadb::CompressionAlgorithm::CompressionBrotli as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli as i32 =>
                 {
                     CompressionAlgorithm::Brotli
                 }
                 x if x
-                    == crate::proto::proximadb::CompressionAlgorithm::CompressionBzip2 as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBzip2 as i32 =>
                 {
                     CompressionAlgorithm::Bzip2
                 }
                 x if x
-                    == crate::proto::proximadb::CompressionAlgorithm::CompressionDeflate as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionDeflate as i32 =>
                 {
                     CompressionAlgorithm::Deflate
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionXz as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionXz as i32 => {
                     CompressionAlgorithm::Xz
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionZlib as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZlib as i32 => {
                     CompressionAlgorithm::Zlib
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLzo as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzo as i32 => {
                     CompressionAlgorithm::Lzo
                 }
                 x if x
-                    == crate::proto::proximadb::CompressionAlgorithm::CompressionLz4hc as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4hc as i32 =>
                 {
                     CompressionAlgorithm::Lz4hc
                 }
-                x if x == crate::proto::proximadb::CompressionAlgorithm::CompressionLzma as i32 => {
+                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzma as i32 => {
                     CompressionAlgorithm::Lzma
                 }
                 _ => {
@@ -1085,7 +1085,7 @@ mod compression_helpers {
                 algorithm: compression_algorithm.clone(),
                 compression_level: config.level.unwrap_or(3) as u8,
                 enable_vector_compression: config.algorithm
-                    != crate::proto::proximadb::CompressionAlgorithm::CompressionNone as i32,
+                    != crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32,
                 enable_metadata_compression: true,
                 compression_threshold_bytes: block_size / 1000, // Use 0.1% of block size as threshold
                 dictionary_compression: false,
@@ -1338,15 +1338,15 @@ mod block_utils {
 
                 // Convert to JSON value for min/max tracking
                 let value = match &item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
                     None => {
@@ -3448,7 +3448,7 @@ impl SstStorage {
         collection_id: &str,
         collection_config: Option<&Collection>,
         _force_flush: bool,
-        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<FlushResult> {
         let flush_start = std::time::Instant::now();
 
@@ -4498,7 +4498,7 @@ impl SstStorage {
 
     async fn collection(&self, _collection_id: &str) -> Result<Collection> {
         // TODO: Implement collection retrieval
-        use crate::proto::proximadb::Collection;
+        use crate::proto::proximadb_v1::Collection;
         Ok(Collection {
             id: _collection_id.to_string(),
             ..Default::default()

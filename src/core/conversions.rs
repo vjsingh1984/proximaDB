@@ -26,7 +26,7 @@
 use anyhow::Result;
 
 use crate::core::search::results::InternalSearchResult;
-use crate::proto::proximadb::{
+use crate::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, DistanceMetric,
     IndexingAlgorithm, MetadataItem, SearchParams, SearchQuery, SearchResult as ProtoSearchResult,
     SearchVectorRecord, StorageEngine, VectorOperation,
@@ -228,23 +228,23 @@ pub fn convert_metadata_to_proto(
         .map(|(key, value)| {
             let metadata_value = match value {
                 serde_json::Value::String(s) => Some(
-                    crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                 ),
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                             f,
                         ))
                     } else {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             n.to_string(),
                         ))
                     }
                 }
                 serde_json::Value::Bool(b) => {
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b))
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b))
                 }
-                _ => Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                _ => Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     value.to_string(),
                 )),
             };
@@ -264,15 +264,15 @@ pub fn convert_metadata_from_proto(
     for item in items {
         if let Some(value) = item.value {
             let json_value = match value {
-                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                     serde_json::Value::String(s)
                 }
-                crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
                     serde_json::Value::Number(
                         serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0)),
                     )
                 }
-                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                     serde_json::Value::Bool(b)
                 }
                 // Note: ListValue and MapValue were removed from proto
@@ -315,7 +315,7 @@ pub fn build_collection_config(
             .map(|a| parse_indexing_algorithm(&a))
             .transpose()?
             .map(|algo| {
-                vec![crate::proto::proximadb::IndexConfig {
+                vec![crate::proto::proximadb_v1::IndexConfig {
                     algorithm: algo as i32,
                     ..Default::default()
                 }]
@@ -356,33 +356,33 @@ pub fn build_vector_search_request(
             // Convert each key-value pair to a filter condition
             for (key, value) in f {
                 let metadata_value = match value {
-                    serde_json::Value::String(s) => crate::proto::proximadb::MetadataValue {
-                        value: Some(crate::proto::proximadb::metadata_value::Value::StringValue(
+                    serde_json::Value::String(s) => crate::proto::proximadb_v1::MetadataValue {
+                        value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(
                             s,
                         )),
                     },
-                    serde_json::Value::Number(n) => crate::proto::proximadb::MetadataValue {
-                        value: Some(crate::proto::proximadb::metadata_value::Value::DoubleValue(
+                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::MetadataValue {
+                        value: Some(crate::proto::proximadb_v1::metadata_value::Value::DoubleValue(
                             n.as_f64().unwrap_or(0.0),
                         )),
                     },
-                    serde_json::Value::Bool(b) => crate::proto::proximadb::MetadataValue {
-                        value: Some(crate::proto::proximadb::metadata_value::Value::BoolValue(b)),
+                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::MetadataValue {
+                        value: Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(b)),
                     },
                     _ => continue, // Skip complex types for now
                 };
 
-                let condition = crate::proto::proximadb::FilterCondition {
+                let condition = crate::proto::proximadb_v1::FilterCondition {
                     field_name: key,
-                    operation: crate::proto::proximadb::FilterOperation::Equals as i32,
+                    operation: crate::proto::proximadb_v1::FilterOperation::Equals as i32,
                     value: Some(metadata_value),
                 };
                 conditions.push(condition);
             }
 
-            crate::proto::proximadb::MetadataFilter {
+            crate::proto::proximadb_v1::MetadataFilter {
                 conditions,
-                operator: crate::proto::proximadb::FilterOperator::And as i32,
+                operator: crate::proto::proximadb_v1::FilterOperator::And as i32,
             }
         }),
     };
@@ -393,7 +393,7 @@ pub fn build_vector_search_request(
         top_k: top_k as u32,
         distance_metric_override: None,
         search_params: None,
-        include_fields: Some(crate::proto::proximadb::IncludeFields {
+        include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
             vector: include_vector,
             metadata: include_metadata,
             score: true,
@@ -403,6 +403,63 @@ pub fn build_vector_search_request(
         }),
         search_optimization: Some(SearchParams::default()),
     }
+}
+
+// ============================================================================
+// v1 Metadata Conversions (MetadataItem <-> SqlValue)
+// ============================================================================
+
+/// Convert MetadataItem vec to SqlValue map (both v1 types)
+pub fn metadata_items_to_sql_values(
+    meta: Vec<crate::proto::proximadb_v1::MetadataItem>,
+) -> std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> {
+    let mut out = std::collections::HashMap::new();
+    for item in meta {
+        let val = match item.value {
+            Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                }
+            }
+            Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)),
+                }
+            }
+            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                }
+            }
+            None => crate::proto::proximadb_v1::SqlValue { value: None },
+        };
+        out.insert(item.key, val);
+    }
+    out
+}
+
+/// Convert SqlValue map to MetadataItem vec (both v1 types)
+pub fn sql_values_to_metadata_items(
+    meta: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+) -> Vec<crate::proto::proximadb_v1::MetadataItem> {
+    meta
+        .into_iter()
+        .map(|(k, v)| {
+            let val = match v.value {
+                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s))
+                }
+                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n))
+                }
+                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b))
+                }
+                None => None,
+            };
+            crate::proto::proximadb_v1::MetadataItem { key: k, value: val }
+        })
+        .collect()
 }
 
 #[cfg(test)]

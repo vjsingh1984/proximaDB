@@ -335,6 +335,58 @@ impl InternalSearchResult {
         }
     }
 
+    /// Convert to v1 SearchVectorRecord for proto response
+    pub fn to_search_vector_record_v1(
+        &self,
+        include_vector: bool,
+        include_metadata: bool,
+    ) -> crate::proto::proximadb_v1::SearchVectorRecord {
+        // Convert metadata map to v1 SqlValue map if requested
+        let mut metadata: std::collections::HashMap<
+            String,
+            crate::proto::proximadb_v1::SqlValue,
+        > = std::collections::HashMap::new();
+        if include_metadata {
+            for (key, value) in &self.metadata {
+                let sql_value = match value {
+                    serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                        value: Some(
+                            crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                s.clone(),
+                            ),
+                        ),
+                    },
+                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
+                        value: Some(
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                n.as_f64().unwrap_or(0.0),
+                            ),
+                        ),
+                    },
+                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                        value: Some(
+                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
+                        ),
+                    },
+                    _ => crate::proto::proximadb_v1::SqlValue { value: None },
+                };
+                metadata.insert(key.clone(), sql_value);
+            }
+        }
+
+        crate::proto::proximadb_v1::SearchVectorRecord {
+            id: self.id.clone(),
+            vector: if include_vector {
+                self.vector.clone().unwrap_or_default()
+            } else {
+                Vec::new()
+            },
+            metadata,
+            score: self.score,
+            version: self.version.map(|v| v as i64),
+        }
+    }
+
     /// ==================== UNIFIED SIMILARITY SCORING ====================
     /// Standardized distance-to-similarity conversion for consistent ranking
     /// across all storage engines and WAL search

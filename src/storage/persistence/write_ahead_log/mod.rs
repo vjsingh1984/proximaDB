@@ -321,13 +321,13 @@ pub struct CollectionAssignment {
     /// Base storage location for this collection (e.g., "file:///data/disk1" or "s3://bucket/path")
     pub base_location: String,
     /// Storage engine type (affects flush strategy)
-    pub storage_engine: crate::proto::proximadb::StorageEngine,
+    pub storage_engine: crate::proto::proximadb_v1::StorageEngine,
     /// Vector dimension (for buffer size calculations)
     pub dimension: i32,
     /// Compression config (if any) - critical for write operations
-    pub compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+    pub compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     /// Distance metric (for similarity operations in WAL)
-    pub distance_metric: crate::proto::proximadb::DistanceMetric,
+    pub distance_metric: crate::proto::proximadb_v1::DistanceMetric,
 }
 
 pub struct WriteAheadLogManager {
@@ -1321,7 +1321,7 @@ impl WriteAheadLogManager {
     pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
         // Deletion is implemented via expires_at field
         // Create a vector record with expires_at set to current time
-        let record = crate::proto::proximadb::VectorRecord {
+        let record = crate::proto::proximadb_v1::VectorRecord {
             id: vector_id.clone(),
             vector: Vec::new(),
             metadata: Vec::new(),
@@ -1427,7 +1427,7 @@ impl WriteAheadLogManager {
         let mut proto_payloads = Vec::new();
         for vector in limited_vectors {
             // VectorRecord is already proto type in proto-first architecture
-            let proto_record: crate::proto::proximadb::VectorRecord = vector.clone();
+            let proto_record: crate::proto::proximadb_v1::VectorRecord = vector.clone();
             let proto_bytes = {
                 use prost::Message;
                 proto_record.encode_to_vec()
@@ -1955,7 +1955,7 @@ impl WriteAheadLogManager {
     /// Evaluate filter expression on a vector record with proper enum handling
     fn evaluate_filter_on_record(
         &self,
-        record: &crate::proto::proximadb::VectorRecord,
+        record: &crate::proto::proximadb_v1::VectorRecord,
         filter: &crate::core::search::FilterExpression,
     ) -> bool {
         use crate::core::search::FilterExpression;
@@ -1974,13 +1974,13 @@ impl WriteAheadLogManager {
                             .value
                             .as_ref()
                             .map(|v| match v {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                     s.clone()
                                 }
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
                                     n.to_string()
                                 }
-                                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                                     b.to_string()
                                 }
                             })
@@ -2087,19 +2087,19 @@ impl WriteAheadLogManager {
     /// Convert proto metadata to HashMap for SearchResult
     fn convert_proto_metadata_to_hashmap(
         &self,
-        metadata: &[crate::proto::proximadb::MetadataItem],
+        metadata: &[crate::proto::proximadb_v1::MetadataItem],
     ) -> std::collections::HashMap<String, serde_json::Value> {
         metadata
             .iter()
             .filter_map(|item| {
                 let value = item.value.as_ref().and_then(|v| match v {
-                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                         Some(serde_json::Value::String(s.clone()))
                     }
-                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
                         serde_json::Number::from_f64(*n).map(serde_json::Value::Number)
                     }
-                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                         Some(serde_json::Value::Bool(*b))
                     }
                 })?;

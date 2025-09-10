@@ -130,10 +130,10 @@ impl SqlExecutor {
             Some(params)
         };
 
-        // Execute search using unified_search
-        let search_results = self
+        // Execute search using native results to avoid proto conversions
+        let native_results = self
             .vector_service
-            .unified_search(
+            .unified_search_native(
                 &plan.collection,
                 search_params.query_vector.clone(),
                 search_params.top_k,
@@ -142,89 +142,89 @@ impl SqlExecutor {
             )
             .await?;
 
-        // Convert to result rows
+        // Convert natives to result rows
         let mut rows = Vec::new();
-        // search_results is Vec<SearchResult>, each containing results: Vec<SearchVectorRecord>
-        for search_result in search_results {
-            for result in search_result.results {
-                let mut data = HashMap::new();
+        for result in native_results {
+            let mut data = HashMap::new();
 
-                // Add requested fields
-                for field in &plan.select_fields {
-                    match field.as_str() {
-                        "id" => {
-                            data.insert(
-                                "id".to_string(),
-                                serde_json::Value::String(result.id.clone()),
-                            );
-                        }
-                        "vector" => {
-                            if !result.vector.is_empty() {
-                                let vec_json: Vec<serde_json::Value> = result
-                                    .vector
-                                    .iter()
-                                    .map(|&v| {
-                                        serde_json::Value::Number(
-                                            serde_json::Number::from_f64(v as f64).unwrap(),
-                                        )
-                                    })
-                                    .collect();
-                                data.insert(
-                                    "vector".to_string(),
-                                    serde_json::Value::Array(vec_json),
-                                );
-                            }
-                        }
-                        "metadata_info" => {
-                            // Convert metadata Vec<MetadataItem> to JSON
-                            let mut metadata_map = serde_json::Map::new();
-                            for item in &result.metadata {
-                                if let Some(ref value) = item.value {
-                                    use crate::proto::proximadb::metadata_item::Value;
-                                    let json_value = match value {
-                                        Value::StringValue(s) => {
-                                            serde_json::Value::String(s.clone())
-                                        }
-                                        Value::NumberValue(n) => serde_json::json!(n),
-                                        Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                                    };
-                                    metadata_map.insert(item.key.clone(), json_value);
-                                }
-                            }
-                            data.insert(
-                                "metadata_info".to_string(),
-                                serde_json::Value::Object(metadata_map),
-                            );
-                        }
-                        field if field.starts_with("metadata.") => {
-                            // Extract specific metadata field
-                            let key = &field[9..]; // Skip "metadata."
-                            for item in &result.metadata {
-                                if item.key == key {
-                                    if let Some(ref value) = item.value {
-                                        use crate::proto::proximadb::metadata_item::Value;
-                                        let json_value = match value {
-                                            Value::StringValue(s) => {
-                                                serde_json::Value::String(s.clone())
-                                            }
-                                            Value::NumberValue(n) => serde_json::json!(n),
-                                            Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                                        };
-                                        data.insert(field.to_string(), json_value);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        _ => {} // Ignore unknown fields
+            // Add requested fields
+            for field in &plan.select_fields {
+                match field.as_str() {
+                    "id" => {
+                        data.insert(
+                            "id".to_string(),
+                            serde_json::Value::String(result.id.clone()),
+                        );
                     }
+                    "vector" => {
+                        if let Some(vec) = &result.vector {
+                            let vec_json: Vec<serde_json::Value> = vec
+                                .iter()
+                                .map(|&v| {
+                                    serde_json::Value::Number(
+                                        serde_json::Number::from_f64(v as f64).unwrap(),
+                                    )
+                                })
+                                .collect();
+                            data.insert(
+                                "vector".to_string(),
+                                serde_json::Value::Array(vec_json),
+                            );
+                        }
+                    }
+                    "metadata_info" => {
+                        // Convert TypedMetadata to JSON
+                        let mut metadata_map = serde_json::Map::new();
+                        for (k, v) in result.metadata.as_map().iter() {
+                            let json_value = match v {
+                                crate::core::metadata_types::MetadataValue::String(s) => {
+                                    serde_json::Value::String(s.to_string())
+                                }
+                                crate::core::metadata_types::MetadataValue::Number(n) => {
+                                    serde_json::json!(n)
+                                }
+                                crate::core::metadata_types::MetadataValue::Bool(b) => {
+                                    serde_json::Value::Bool(*b)
+                                }
+                                crate::core::metadata_types::MetadataValue::Null => {
+                                    serde_json::Value::Null
+                                }
+                            };
+                            metadata_map.insert(k.clone(), json_value);
+                        }
+                        data.insert(
+                            "metadata_info".to_string(),
+                            serde_json::Value::Object(metadata_map),
+                        );
+                    }
+                    field if field.starts_with("metadata.") => {
+                        let key = &field[9..];
+                        if let Some(val) = result.metadata.as_map().get(key) {
+                            let json_value = match val {
+                                crate::core::metadata_types::MetadataValue::String(s) => {
+                                    serde_json::Value::String(s.to_string())
+                                }
+                                crate::core::metadata_types::MetadataValue::Number(n) => {
+                                    serde_json::json!(n)
+                                }
+                                crate::core::metadata_types::MetadataValue::Bool(b) => {
+                                    serde_json::Value::Bool(*b)
+                                }
+                                crate::core::metadata_types::MetadataValue::Null => {
+                                    serde_json::Value::Null
+                                }
+                            };
+                            data.insert(field.to_string(), json_value);
+                        }
+                    }
+                    _ => {}
                 }
-
-                rows.push(ResultRow {
-                    data,
-                    similarity: Some(result.score), // Use actual score from search result
-                });
             }
+
+            rows.push(ResultRow {
+                data,
+                similarity: Some(result.score),
+            });
         }
 
         Ok(rows)

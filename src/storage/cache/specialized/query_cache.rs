@@ -1,4 +1,4 @@
-use crate::proto::proximadb::SearchResult;
+use crate::proto::proximadb_v1::SearchResult;
 use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,31 @@ impl QueryCache {
         None
     }
 
+    /// Get cached results as v1 if fresh (converts legacy to v1 on read)
+    pub async fn get_if_fresh_v1(
+        &self,
+        key: &QueryKey,
+        max_age_secs: u64,
+    ) -> Option<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        if let Some(cached) = BaseCache::get_with_hooks(&self.base, key).await {
+            let age = SystemTime::now()
+                .duration_since(cached.cached_at)
+                .unwrap_or_default()
+                .as_secs();
+
+            if age <= max_age_secs {
+                return Some(
+                    cached
+                        .results
+                        .into_iter()
+                        // Results are already v1, no conversion needed
+                        .collect(),
+                );
+            }
+        }
+        None
+    }
+
     /// Cache results with file dependencies
     pub async fn cache_with_dependencies(
         &self,
@@ -112,6 +137,25 @@ impl QueryCache {
             file_dependencies: dependencies,
         };
 
+        BaseCache::put_with_hooks(&self.base, key, cached).await;
+    }
+
+    /// Cache v1 results by converting to legacy for storage
+    pub async fn cache_with_dependencies_v1(
+        &self,
+        key: QueryKey,
+        results: Vec<crate::proto::proximadb_v1::SearchResult>,
+        dependencies: Vec<String>,
+    ) {
+        let legacy: Vec<SearchResult> = results
+            .into_iter()
+            // Results are already v1, no conversion needed
+            .collect();
+        let cached = CachedQueryResult {
+            results: legacy,
+            cached_at: SystemTime::now(),
+            file_dependencies: dependencies,
+        };
         BaseCache::put_with_hooks(&self.base, key, cached).await;
     }
 

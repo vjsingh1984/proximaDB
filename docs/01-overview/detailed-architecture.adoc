@@ -43,37 +43,38 @@ Automatic detection and optimization for available hardware:
 
 [source,mermaid]
 ----
-graph TB
-    subgraph "Client Layer"
-        REST[REST API<br/>Port 5678]
-        GRPC[gRPC API<br/>Port 5679]
+%%{init: {'theme':'base','themeVariables': {'primaryColor':'#4a148c','primaryTextColor':'#fff','lineColor':'#6a1b9a'}} }%%
+flowchart TB
+    subgraph Client Layer
+        REST[REST API\nPort 5678]
+        GRPC[gRPC API\nPort 5679]
     end
-    
-    subgraph "Service Layer"
-        VS[VectorOperations<br/>Direct Access]
-        CS[Collections<br/>Management]
-        SS[Search<br/>Orchestration]
-        ES[Events<br/>Async Processing]
+
+    subgraph Service Layer
+        VS[VectorOperations\nDirect Access]
+        CS[Collections\nManagement]
+        SS[Search\nOrchestration]
+        ES[Events\nAsync Processing]
     end
-    
-    subgraph "Compute & Index"
-        PS[Progressive Search<br/>7-Phase Pipeline]
-        AXIS[AXIS Engine<br/>HNSW/IVF/LSH]
-        HW[Hardware<br/>SIMD/GPU]
+
+    subgraph Compute & Index
+        PS[Progressive Search\n7‑Phase Pipeline]
+        AXIS[AXIS Engine\nHNSW/IVF/LSH]
+        HW[Hardware\nSIMD/GPU]
     end
-    
-    subgraph "Storage Layer"
-        WAL[Write-Ahead Log]
+
+    subgraph Storage Layer
+        WAL[Write‑Ahead Log]
         MT[MemTable]
-        ENG[Storage Engines<br/>SST/VIPER/HELIX]
+        ENG[Storage Engines\nSST/VIPER/HELIX]
     end
-    
-    subgraph "Infrastructure"
-        CACHE[Unified Cache<br/>Multi-Level]
-        FS[IntelligentFS<br/>Cloud Storage]
-        POOL[Memory Pools<br/>Zero-Copy]
+
+    subgraph Infrastructure
+        CACHE[Unified Cache\nMulti‑Level]
+        FS[IntelligentFS\nCloud Storage]
+        POOL[Memory Pools\nZero‑Copy]
     end
-    
+
     REST --> VS
     GRPC --> VS
     VS --> WAL
@@ -84,10 +85,9 @@ graph TB
     PS --> HW
     ENG --> FS
     FS --> CACHE
-    
-    style VS fill:#e8f5e9
-    style PS fill:#fff3e0
-    style CACHE fill:#e3f2fd
+
+    classDef comp fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c;
+    class VS,CS,SS,ES,PS,AXIS,HW,WAL,MT,ENG,CACHE,FS,POOL comp;
 ----
 
 == Core Components

@@ -1196,33 +1196,32 @@ impl HybridQueryEngine {
         
         // Execute VOS search for each collection specified in vector component
         for collection_id in &vector_comp.collections {
-            match self.vector_service.unified_search(
+            match self.vector_service.unified_search_native(
                 collection_id,
                 query_vector.clone(),
                 max_results,
                 vector_comp.filter.clone(),
                 Some(search_config.clone()),
             ).await {
-                Ok(search_results) => {
-                    // Convert VOS SearchResult to VectorCandidate
-                    for search_result in search_results {
-                        for vector_record in search_result.results {
-                            let similarity = vector_record.similarity;
-                            
-                            // Only include results above threshold
-                            if similarity >= threshold {
-                                candidates.push(VectorCandidate {
-                                    node_id: vector_record.id.clone(),
-                                    similarity,
-                                    vector_record: VectorRecord {
-                                        id: vector_record.id,
-                                        vector: vector_record.vector,
-                                        metadata: self.convert_proto_metadata(&vector_record.metadata),
-                                        created_at: vector_record.created_at.unwrap_or(0) as u64,
-                                        updated_at: vector_record.updated_at.unwrap_or(0) as u64,
-                                    },
-                                });
-                            }
+                Ok(native_results) => {
+                    // Convert native results to VectorCandidate
+                    for rec in native_results {
+                        let similarity = rec.similarity.unwrap_or(rec.score);
+
+                        if similarity >= threshold {
+                            let vector = rec.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
+                            let metadata = self.convert_typed_metadata_to_map(rec.metadata.as_map());
+                            candidates.push(VectorCandidate {
+                                node_id: rec.id.clone(),
+                                similarity,
+                                vector_record: VectorRecord {
+                                    id: rec.id,
+                                    vector,
+                                    metadata,
+                                    created_at: rec.timestamp.unwrap_or(0) as u64,
+                                    updated_at: rec.updated_at.unwrap_or(0) as u64,
+                                },
+                            });
                         }
                     }
                 }
@@ -1303,6 +1302,24 @@ impl HybridQueryEngine {
         }
         
         metadata
+    }
+
+    /// Convert TypedMetadata map to HashMap<String, String>
+    fn convert_typed_metadata_to_map(
+        &self,
+        map: &std::collections::HashMap<String, crate::core::metadata_types::MetadataValue>,
+    ) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+        for (k, v) in map.iter() {
+            let s = match v {
+                crate::core::metadata_types::MetadataValue::String(s) => s.to_string(),
+                crate::core::metadata_types::MetadataValue::Number(n) => n.to_string(),
+                crate::core::metadata_types::MetadataValue::Bool(b) => b.to_string(),
+                crate::core::metadata_types::MetadataValue::Null => "null".to_string(),
+            };
+            out.insert(k.clone(), s);
+        }
+        out
     }
     
     /// Convert graph node properties to metadata HashMap

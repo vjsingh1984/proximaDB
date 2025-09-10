@@ -5,6 +5,8 @@ package proximadb.v1;
 import "google/protobuf/timestamp.proto";
 import "proximadb/v1/entity.proto";
 import "proximadb/v1/relations.proto";
+import "proximadb/v1/vector.proto"; // use v1 vector API types
+import "proximadb/v1/vector_types.proto"; // use v1 vector types
 
 // Core graph data model for ProximaDB's native graph database engine
 // Follows proto-first design with zero-copy serialization for maximum performance
@@ -225,12 +227,11 @@ message BatchResponse {
 }
 
 // Graph statistics and metadata
-import "proximadb.proto";
 
 // Hybrid query request combining vector and graph components
 message HybridSearchRequest {
-  // Vector search component
-  proximadb.VectorSearchRequest vector_search_request = 1;
+  // Vector search component (v1)
+  proximadb.v1.VectorSearchRequest vector_search_request = 1;
   
   // Graph traversal component
   TraversalRequest graph_traversal_request = 2;
@@ -265,8 +266,8 @@ message HybridSearchResponse {
   // Statistics for the hybrid search
   HybridSearchStats stats = 4;
 
-  // Vector search results
-  repeated proximadb.SearchVectorRecord vector_results = 5;
+  // Vector search results (v1)
+  repeated proximadb.v1.SearchVectorRecord vector_results = 5;
 }
 
 // Statistics for hybrid search

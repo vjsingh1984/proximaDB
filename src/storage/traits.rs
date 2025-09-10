@@ -46,7 +46,7 @@
 //! - **Index Layer**: AXIS engine coordinates with storage for vector retrieval
 //! - **Compaction**: Background processes use this trait for maintenance operations
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -1423,7 +1423,7 @@ pub struct StorageQueryContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedQuantizationConfig {
     /// Strategy being used (SmartDefaults, CustomLevels, etc.)
-    pub strategy: crate::proto::proximadb::quantization_config::Strategy,
+    pub strategy: crate::proto::proximadb_v1::quantization_config::Strategy,
 
     /// Whether progressive search is enabled
     pub progressive_search_enabled: bool,
@@ -1517,7 +1517,7 @@ pub struct StorageQueryMetadata {
 impl StorageQueryContext {
     /// Parse quantization config into ready-to-use format for progressive search
     fn parse_quantization_config(
-        quant_config: &crate::proto::proximadb::QuantizationConfig,
+        quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
         dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
         
@@ -1559,9 +1559,9 @@ impl StorageQueryContext {
 
     /// Parse proto levels into internal format
     fn parse_proto_levels(
-        proto_levels: &[crate::proto::proximadb::QuantizationLevel],
+        proto_levels: &[crate::proto::proximadb_v1::QuantizationLevel],
     ) -> Vec<QuantizationLevel> {
-        use crate::proto::proximadb::quantization_level::QuantizationType as ProtoQuantType;
+        use crate::proto::proximadb_v1::quantization_level::QuantizationType as ProtoQuantType;
 
         let mut levels: Vec<_> = proto_levels
             .iter()

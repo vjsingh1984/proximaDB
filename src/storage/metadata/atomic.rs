@@ -100,7 +100,7 @@ struct VersionInfo {
     version: u64,
     transaction_id: TransactionId,
     committed_at: DateTime<Utc>,
-    metadata: crate::proto::proximadb::Collection,
+    metadata: crate::proto::proximadb_v1::Collection,
 }
 
 /// Lock information for concurrent access
@@ -391,16 +391,16 @@ impl AtomicMetadataStore {
             let mut version_store = self.version_store.write().await;
             for (collection_id, versioned_metadata) in version_updates {
                 // Convert VersionedCollectionMetadata back to Collection proto
-                let collection = crate::proto::proximadb::Collection {
+                let collection = crate::proto::proximadb_v1::Collection {
                     id: versioned_metadata.id.clone(),
-                    config: Some(crate::proto::proximadb::CollectionConfig {
+                    config: Some(crate::proto::proximadb_v1::CollectionConfig {
                         name: versioned_metadata.name.clone(),
                         dimension: versioned_metadata.dimension as u32,
                         distance_metric: 0, // TODO: Parse from string
                         storage_engine: 0,  // TODO: Parse from config
                         ..Default::default()
                     }),
-                    stats: Some(crate::proto::proximadb::CollectionStats {
+                    stats: Some(crate::proto::proximadb_v1::CollectionStats {
                         vector_count: versioned_metadata.vector_count as i64,
                         index_size_bytes: 0,
                         data_size_bytes: versioned_metadata.total_size_bytes as i64,
@@ -607,7 +607,7 @@ impl AtomicMetadataStore {
 
 #[async_trait]
 impl MetadataStoreInterface for AtomicMetadataStore {
-    async fn create_collection(&self, metadata: crate::proto::proximadb::Collection) -> Result<()> {
+    async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()> {
         let transaction_id = self
             .begin_transaction(IsolationLevel::ReadCommitted)
             .await?;
@@ -622,20 +622,20 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn get_collection(
         &self,
         collection_id: &str,
-    ) -> Result<Option<crate::proto::proximadb::Collection>> {
+    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         tracing::debug!("🔍 Getting collection metadata: {}", collection_id);
 
         // Read from write buffer manager (which handles caching)
         if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
-            let collection = crate::proto::proximadb::Collection {
+            let collection = crate::proto::proximadb_v1::Collection {
                 id: versioned.id,
-                config: Some(crate::proto::proximadb::CollectionConfig {
+                config: Some(crate::proto::proximadb_v1::CollectionConfig {
                     name: versioned.name,
                     dimension: versioned.dimension as u32,
-                    distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
+                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32, // Default for now
                     ..Default::default()
                 }),
-                stats: Some(crate::proto::proximadb::CollectionStats {
+                stats: Some(crate::proto::proximadb_v1::CollectionStats {
                     vector_count: versioned.vector_count as i64,
                     data_size_bytes: versioned.total_size_bytes as i64,
                     ..Default::default()
@@ -658,7 +658,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn update_collection(
         &self,
         collection_id: &str,
-        metadata: crate::proto::proximadb::Collection,
+        metadata: crate::proto::proximadb_v1::Collection,
     ) -> Result<()> {
         let transaction_id = self
             .begin_transaction(IsolationLevel::ReadCommitted)
@@ -695,7 +695,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn list_collections(
         &self,
         filter: Option<MetadataFilter>,
-    ) -> Result<Vec<crate::proto::proximadb::Collection>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
         // Convert filter to write buffer manager format
         let write_buffer_filter = filter.map(|_f| {
             Box::new(move |_versioned: &VersionedCollectionMetadata| -> bool {
@@ -713,15 +713,15 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         let metadata_list = versioned_list
             .into_iter()
             .map(|versioned| {
-                crate::proto::proximadb::Collection {
+                crate::proto::proximadb_v1::Collection {
                     id: versioned.id,
-                    config: Some(crate::proto::proximadb::CollectionConfig {
+                    config: Some(crate::proto::proximadb_v1::CollectionConfig {
                         name: versioned.name,
                         dimension: versioned.dimension as u32,
-                        distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default for now
+                        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32, // Default for now
                         ..Default::default()
                     }),
-                    stats: Some(crate::proto::proximadb::CollectionStats {
+                    stats: Some(crate::proto::proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,
                         data_size_bytes: versioned.total_size_bytes as i64,
                         ..Default::default()

@@ -70,11 +70,11 @@ use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::core::config::StorageConfig;
-use crate::proto::proximadb::{Collection, CollectionConfig};
+use crate::proto::proximadb_v1::{Collection, CollectionConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
 
-// Proto-first architecture - use crate::proto::proximadb::Collection directly
+// Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
 // Local types to replace assignment service
 #[derive(Debug, Clone)]
@@ -128,7 +128,7 @@ impl CollectionService {
     /// Takes native types directly, no proto/avro conversions needed
     pub async fn create_collection(
         &self,
-        config: &crate::proto::proximadb::CollectionConfig,
+        config: &crate::proto::proximadb_v1::CollectionConfig,
     ) -> Result<CollectionServiceResponse> {
         debug!(
             "🆕 Creating collection: {} with distance_metric={}",
@@ -141,7 +141,7 @@ impl CollectionService {
 
         // Ensure storage_config exists and set compression within it
         if enriched_config.storage_config.is_none() {
-            enriched_config.storage_config = Some(crate::proto::proximadb::StorageConfig {
+            enriched_config.storage_config = Some(crate::proto::proximadb_v1::StorageConfig {
                 enable_all_optimizations: Some(true), // All optimizations on by default
                 ..Default::default()
             });
@@ -175,9 +175,9 @@ impl CollectionService {
                         e
                     );
                     // Fallback to simple default
-                    enriched_config.quantization = Some(crate::proto::proximadb::QuantizationConfig {
+                    enriched_config.quantization = Some(crate::proto::proximadb_v1::QuantizationConfig {
                         enabled: true,
-                        strategy: crate::proto::proximadb::quantization_config::Strategy::SmartDefaults as i32,
+                        strategy: crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32,
                         custom_levels: vec![],
                         enable_progressive_search: true,
                         binary_filter_selectivity: 0.3,
@@ -210,7 +210,7 @@ impl CollectionService {
         // SDK defines compression config in collection metadata and it drives datablock compression
         if let Some(ref storage_cfg) = enriched_config.storage_config {
             if let Some(ref compression) = storage_cfg.compression {
-                use crate::proto::proximadb::CompressionAlgorithm;
+                use crate::proto::proximadb_v1::CompressionAlgorithm;
                 use crate::storage::engine_capabilities::EngineCapabilities;
 
                 // Convert engine type to enum
@@ -332,14 +332,14 @@ impl CollectionService {
         let proto_collection = Collection {
             id: uuid.clone(),
             config: Some(enriched_config.clone()), // Use enriched config with compression
-            stats: Some(crate::proto::proximadb::CollectionStats {
+            stats: Some(crate::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
             created_at: now,
             updated_at: now,
-            storage_assignment: Some(crate::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 base_location: base_location.clone(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
@@ -459,7 +459,7 @@ impl CollectionService {
     /// Convert proto IndexConfig to internal IndexConfig
     fn convert_proto_index_config(
         &self,
-        _proto_config: &crate::proto::proximadb::IndexConfig,
+        _proto_config: &crate::proto::proximadb_v1::IndexConfig,
     ) -> Result<crate::index::config::IndexConfig> {
         // Extract algorithm name from proto config
         let _algorithm_name = match _proto_config.algorithm {
@@ -535,7 +535,7 @@ impl CollectionService {
     pub async fn native_quantization_config(
         &self,
         identifier: &str,
-    ) -> Result<Option<crate::proto::proximadb::QuantizationConfig>> {
+    ) -> Result<Option<crate::proto::proximadb_v1::QuantizationConfig>> {
         debug!(
             "🔍 Getting quantization config for collection: {}",
             identifier
@@ -923,10 +923,10 @@ impl CollectionService {
     /// Resolve compression configuration based on SDK request and server defaults
     fn resolve_compression_config(
         &self,
-        requested: Option<&crate::proto::proximadb::CompressionConfig>,
+        requested: Option<&crate::proto::proximadb_v1::CompressionConfig>,
         _storage_engine: i32,
-    ) -> Option<crate::proto::proximadb::CompressionConfig> {
-        use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig};
+    ) -> Option<crate::proto::proximadb_v1::CompressionConfig> {
+        use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig};
 
         // If compression explicitly requested, validate and use it
         if let Some(config) = requested {
@@ -968,7 +968,7 @@ impl CollectionService {
     pub async fn update_collection_compression(
         &self,
         identifier: &str,
-        compression: &crate::proto::proximadb::CompressionConfig,
+        compression: &crate::proto::proximadb_v1::CompressionConfig,
     ) -> Result<CollectionServiceResponse> {
         let start_time = std::time::Instant::now();
 
@@ -991,7 +991,7 @@ impl CollectionService {
         if let Some(ref mut config) = updated_collection.config {
             // Ensure storage_config exists
             if config.storage_config.is_none() {
-                config.storage_config = Some(crate::proto::proximadb::StorageConfig::default());
+                config.storage_config = Some(crate::proto::proximadb_v1::StorageConfig::default());
             }
             // Set compression in storage_config
             if let Some(ref mut storage_config) = config.storage_config {
@@ -1406,7 +1406,7 @@ impl Default for CollectionServiceBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::CollectionConfig;
+    use crate::proto::proximadb_v1::CollectionConfig;
 
     #[tokio::test]
     async fn test_collection_validation() {

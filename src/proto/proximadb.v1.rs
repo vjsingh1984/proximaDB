@@ -2078,6 +2078,883 @@ pub mod context_service_server {
         const NAME: &'static str = "proximadb.v1.ContextService";
     }
 }
+/// Simple typed value for SQL parameters and row fields
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SqlValue {
+    #[prost(oneof = "sql_value::Value", tags = "1, 2, 3")]
+    pub value: ::core::option::Option<sql_value::Value>,
+}
+/// Nested message and enum types in `SqlValue`.
+pub mod sql_value {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(string, tag = "1")]
+        StringValue(::prost::alloc::string::String),
+        #[prost(double, tag = "2")]
+        NumberValue(f64),
+        #[prost(bool, tag = "3")]
+        BoolValue(bool),
+    }
+}
+/// Single SQL row field
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SqlRowField {
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub value: ::core::option::Option<SqlValue>,
+}
+/// SQL row with optional similarity score
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SqlRow {
+    #[prost(message, repeated, tag = "1")]
+    pub fields: ::prost::alloc::vec::Vec<SqlRowField>,
+    #[prost(float, optional, tag = "2")]
+    pub similarity: ::core::option::Option<f32>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExecuteSqlRequest {
+    #[prost(string, tag = "1")]
+    pub query: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub parameters: ::prost::alloc::vec::Vec<SqlValue>,
+    /// Optional collection context
+    #[prost(string, optional, tag = "3")]
+    pub collection: ::core::option::Option<::prost::alloc::string::String>,
+    /// Optional limit override
+    #[prost(uint32, optional, tag = "4")]
+    pub limit: ::core::option::Option<u32>,
+    /// Optional offset override
+    #[prost(uint32, optional, tag = "5")]
+    pub offset: ::core::option::Option<u32>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ExecuteSqlResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub rows: ::prost::alloc::vec::Vec<SqlRow>,
+    #[prost(uint64, tag = "2")]
+    pub rows_scanned: u64,
+    #[prost(uint64, tag = "3")]
+    pub rows_returned: u64,
+    #[prost(uint64, tag = "4")]
+    pub execution_time_ms: u64,
+    #[prost(string, repeated, tag = "5")]
+    pub columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "6")]
+    pub column_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IncludeFields {
+    #[prost(bool, tag = "1")]
+    pub vector: bool,
+    #[prost(bool, tag = "2")]
+    pub metadata: bool,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetadataItem {
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    #[prost(oneof = "metadata_item::Value", tags = "2, 3, 4")]
+    pub value: ::core::option::Option<metadata_item::Value>,
+}
+/// Nested message and enum types in `MetadataItem`.
+pub mod metadata_item {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(string, tag = "2")]
+        StringValue(::prost::alloc::string::String),
+        #[prost(double, tag = "3")]
+        NumberValue(f64),
+        #[prost(bool, tag = "4")]
+        BoolValue(bool),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchQuery {
+    #[prost(float, repeated, tag = "1")]
+    pub vector: ::prost::alloc::vec::Vec<f32>,
+    /// Simple equality filters using SqlValue (perfect for SQL WHERE clauses)
+    #[prost(map = "string, message", tag = "2")]
+    pub filters: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+    /// Advanced structured filters for complex queries (reuses entity.proto schema)
+    #[prost(message, optional, tag = "3")]
+    pub advanced_filter: ::core::option::Option<MetadataFilter>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchParams {
+    #[prost(uint32, optional, tag = "1")]
+    pub top_k: ::core::option::Option<u32>,
+    #[prost(double, optional, tag = "2")]
+    pub accuracy_threshold: ::core::option::Option<f64>,
+    #[prost(bool, optional, tag = "3")]
+    pub include_expired: ::core::option::Option<bool>,
+    #[prost(uint32, optional, tag = "4")]
+    pub timeout_ms: ::core::option::Option<u32>,
+    #[prost(bool, optional, tag = "5")]
+    pub enable_two_stage: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "6")]
+    pub enable_clustering_hint: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "7")]
+    pub enable_metadata_filtering_hint: ::core::option::Option<bool>,
+    /// Simplified hints map
+    #[prost(map = "string, message", tag = "10")]
+    #[serde(skip)]
+    pub custom_hints: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        SqlValue,
+    >,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchOptimization {
+    #[prost(uint32, optional, tag = "1")]
+    pub top_k: ::core::option::Option<u32>,
+    #[prost(double, optional, tag = "2")]
+    pub accuracy_threshold: ::core::option::Option<f64>,
+    #[prost(map = "string, message", tag = "3")]
+    pub filters: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorSearchRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub queries: ::prost::alloc::vec::Vec<SearchQuery>,
+    #[prost(uint32, tag = "3")]
+    pub top_k: u32,
+    #[prost(message, optional, tag = "4")]
+    pub include_fields: ::core::option::Option<IncludeFields>,
+    #[prost(message, optional, tag = "5")]
+    pub search_params: ::core::option::Option<SearchParams>,
+    #[prost(uint32, optional, tag = "6")]
+    pub distance_metric_override: ::core::option::Option<u32>,
+    #[prost(message, optional, tag = "7")]
+    pub search_optimization: ::core::option::Option<SearchOptimization>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorRecord {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(float, repeated, tag = "2")]
+    pub vector: ::prost::alloc::vec::Vec<f32>,
+    #[prost(map = "string, message", tag = "3")]
+    pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+    #[prost(int64, tag = "4")]
+    pub timestamp: i64,
+    #[prost(int64, optional, tag = "5")]
+    pub updated_at: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "6")]
+    pub expires_at: ::core::option::Option<i64>,
+    #[prost(int64, optional, tag = "7")]
+    pub version: ::core::option::Option<i64>,
+    #[prost(bytes = "vec", tag = "8")]
+    pub quantized_vector: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "9")]
+    pub source: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorBatchRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub vectors: ::prost::alloc::vec::Vec<VectorRecord>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorGetRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub vector_id: ::prost::alloc::string::String,
+    #[prost(bool, optional, tag = "3")]
+    pub include_vector: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag = "4")]
+    pub include_metadata: ::core::option::Option<bool>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct OperationMetrics {
+    #[prost(int64, tag = "1")]
+    pub total_processed: i64,
+    #[prost(int64, tag = "2")]
+    pub successful_count: i64,
+    #[prost(int64, tag = "3")]
+    pub failed_count: i64,
+    #[prost(int64, tag = "4")]
+    pub updated_count: i64,
+    #[prost(int64, tag = "5")]
+    pub processing_time_us: i64,
+    #[prost(int64, tag = "6")]
+    pub wal_write_time_us: i64,
+    #[prost(int64, tag = "7")]
+    pub index_update_time_us: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchVectorRecord {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(double, tag = "2")]
+    pub score: f64,
+    #[prost(float, repeated, tag = "3")]
+    pub vector: ::prost::alloc::vec::Vec<f32>,
+    #[prost(map = "string, message", tag = "4")]
+    pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+    #[prost(int64, optional, tag = "5")]
+    pub version: ::core::option::Option<i64>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchResult {
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<SearchVectorRecord>,
+    #[prost(int64, tag = "2")]
+    pub total_found: i64,
+    #[prost(string, optional, tag = "3")]
+    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorOperationResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(int32, tag = "2")]
+    pub operation: i32,
+    #[prost(message, optional, tag = "3")]
+    pub metrics: ::core::option::Option<OperationMetrics>,
+    #[prost(message, optional, tag = "4")]
+    pub results: ::core::option::Option<SearchResult>,
+    #[prost(string, repeated, tag = "5")]
+    pub vector_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "6")]
+    pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "7")]
+    pub error_code: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Strongly-typed enums for metrics and engines
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DistanceMetric {
+    Unspecified = 0,
+    Cosine = 1,
+    Euclidean = 2,
+    DotProduct = 3,
+    Hamming = 4,
+    Manhattan = 5,
+    Jaccard = 6,
+    Angular = 7,
+    Chebyshev = 8,
+    Canberra = 9,
+    Minkowski = 10,
+    BrayCurtis = 11,
+    Hellinger = 12,
+    Custom = 13,
+}
+impl DistanceMetric {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            DistanceMetric::Unspecified => "DISTANCE_METRIC_UNSPECIFIED",
+            DistanceMetric::Cosine => "COSINE",
+            DistanceMetric::Euclidean => "EUCLIDEAN",
+            DistanceMetric::DotProduct => "DOT_PRODUCT",
+            DistanceMetric::Hamming => "HAMMING",
+            DistanceMetric::Manhattan => "MANHATTAN",
+            DistanceMetric::Jaccard => "JACCARD",
+            DistanceMetric::Angular => "ANGULAR",
+            DistanceMetric::Chebyshev => "CHEBYSHEV",
+            DistanceMetric::Canberra => "CANBERRA",
+            DistanceMetric::Minkowski => "MINKOWSKI",
+            DistanceMetric::BrayCurtis => "BRAY_CURTIS",
+            DistanceMetric::Hellinger => "HELLINGER",
+            DistanceMetric::Custom => "CUSTOM",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DISTANCE_METRIC_UNSPECIFIED" => Some(Self::Unspecified),
+            "COSINE" => Some(Self::Cosine),
+            "EUCLIDEAN" => Some(Self::Euclidean),
+            "DOT_PRODUCT" => Some(Self::DotProduct),
+            "HAMMING" => Some(Self::Hamming),
+            "MANHATTAN" => Some(Self::Manhattan),
+            "JACCARD" => Some(Self::Jaccard),
+            "ANGULAR" => Some(Self::Angular),
+            "CHEBYSHEV" => Some(Self::Chebyshev),
+            "CANBERRA" => Some(Self::Canberra),
+            "MINKOWSKI" => Some(Self::Minkowski),
+            "BRAY_CURTIS" => Some(Self::BrayCurtis),
+            "HELLINGER" => Some(Self::Hellinger),
+            "CUSTOM" => Some(Self::Custom),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum StorageEngine {
+    Unspecified = 0,
+    Viper = 1,
+    Sst = 2,
+    Nova = 3,
+    Helix = 4,
+    Swift = 5,
+}
+impl StorageEngine {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            StorageEngine::Unspecified => "STORAGE_ENGINE_UNSPECIFIED",
+            StorageEngine::Viper => "VIPER",
+            StorageEngine::Sst => "SST",
+            StorageEngine::Nova => "NOVA",
+            StorageEngine::Helix => "HELIX",
+            StorageEngine::Swift => "SWIFT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "STORAGE_ENGINE_UNSPECIFIED" => Some(Self::Unspecified),
+            "VIPER" => Some(Self::Viper),
+            "SST" => Some(Self::Sst),
+            "NOVA" => Some(Self::Nova),
+            "HELIX" => Some(Self::Helix),
+            "SWIFT" => Some(Self::Swift),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum IndexingAlgorithm {
+    Unspecified = 0,
+    Hnsw = 1,
+    Ivf = 2,
+    Pq = 3,
+    Flat = 4,
+}
+impl IndexingAlgorithm {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            IndexingAlgorithm::Unspecified => "INDEXING_ALGORITHM_UNSPECIFIED",
+            IndexingAlgorithm::Hnsw => "HNSW",
+            IndexingAlgorithm::Ivf => "IVF",
+            IndexingAlgorithm::Pq => "PQ",
+            IndexingAlgorithm::Flat => "FLAT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "INDEXING_ALGORITHM_UNSPECIFIED" => Some(Self::Unspecified),
+            "HNSW" => Some(Self::Hnsw),
+            "IVF" => Some(Self::Ivf),
+            "PQ" => Some(Self::Pq),
+            "FLAT" => Some(Self::Flat),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod vector_service_client {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// Vector operations (v1, versioned namespace)
+    #[derive(Debug, Clone)]
+    pub struct VectorServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl VectorServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> VectorServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> VectorServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
+        {
+            VectorServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn vector_batch(
+            &mut self,
+            request: impl tonic::IntoRequest<super::VectorBatchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.VectorService/VectorBatch",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.VectorService", "VectorBatch"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn vector_search(
+            &mut self,
+            request: impl tonic::IntoRequest<super::VectorSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.VectorService/VectorSearch",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.VectorService", "VectorSearch"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn vector_get(
+            &mut self,
+            request: impl tonic::IntoRequest<super::VectorGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.VectorService/VectorGet",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.VectorService", "VectorGet"));
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod vector_service_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with VectorServiceServer.
+    #[async_trait]
+    pub trait VectorService: Send + Sync + 'static {
+        async fn vector_batch(
+            &self,
+            request: tonic::Request<super::VectorBatchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
+        async fn vector_search(
+            &self,
+            request: tonic::Request<super::VectorSearchRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
+        async fn vector_get(
+            &self,
+            request: tonic::Request<super::VectorGetRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::VectorOperationResponse>,
+            tonic::Status,
+        >;
+    }
+    /// Vector operations (v1, versioned namespace)
+    #[derive(Debug)]
+    pub struct VectorServiceServer<T: VectorService> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: VectorService> VectorServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for VectorServiceServer<T>
+    where
+        T: VectorService,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/proximadb.v1.VectorService/VectorBatch" => {
+                    #[allow(non_camel_case_types)]
+                    struct VectorBatchSvc<T: VectorService>(pub Arc<T>);
+                    impl<
+                        T: VectorService,
+                    > tonic::server::UnaryService<super::VectorBatchRequest>
+                    for VectorBatchSvc<T> {
+                        type Response = super::VectorOperationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::VectorBatchRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as VectorService>::vector_batch(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = VectorBatchSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.VectorService/VectorSearch" => {
+                    #[allow(non_camel_case_types)]
+                    struct VectorSearchSvc<T: VectorService>(pub Arc<T>);
+                    impl<
+                        T: VectorService,
+                    > tonic::server::UnaryService<super::VectorSearchRequest>
+                    for VectorSearchSvc<T> {
+                        type Response = super::VectorOperationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::VectorSearchRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as VectorService>::vector_search(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = VectorSearchSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.VectorService/VectorGet" => {
+                    #[allow(non_camel_case_types)]
+                    struct VectorGetSvc<T: VectorService>(pub Arc<T>);
+                    impl<
+                        T: VectorService,
+                    > tonic::server::UnaryService<super::VectorGetRequest>
+                    for VectorGetSvc<T> {
+                        type Response = super::VectorOperationResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::VectorGetRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as VectorService>::vector_get(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = VectorGetSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: VectorService> Clone for VectorServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: VectorService> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: VectorService> tonic::server::NamedService for VectorServiceServer<T> {
+        const NAME: &'static str = "proximadb.v1.VectorService";
+    }
+}
 /// Node represents a vertex in the graph with labels and properties
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -2357,9 +3234,9 @@ pub struct BatchResponse {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HybridSearchRequest {
-    /// Vector search component
+    /// Vector search component (v1)
     #[prost(message, optional, tag = "1")]
-    pub vector_search_request: ::core::option::Option<super::VectorSearchRequest>,
+    pub vector_search_request: ::core::option::Option<VectorSearchRequest>,
     /// Graph traversal component
     #[prost(message, optional, tag = "2")]
     pub graph_traversal_request: ::core::option::Option<TraversalRequest>,
@@ -2389,9 +3266,9 @@ pub struct HybridSearchResponse {
     /// Statistics for the hybrid search
     #[prost(message, optional, tag = "4")]
     pub stats: ::core::option::Option<HybridSearchStats>,
-    /// Vector search results
+    /// Vector search results (v1)
     #[prost(message, repeated, tag = "5")]
-    pub vector_results: ::prost::alloc::vec::Vec<super::SearchVectorRecord>,
+    pub vector_results: ::prost::alloc::vec::Vec<SearchVectorRecord>,
 }
 /// Statistics for hybrid search
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -2585,6 +3462,29 @@ pub struct UniqueConstraintResponse {
     pub success: bool,
     #[prost(string, optional, tag = "2")]
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Connected components response
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ConnectedComponentsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub components: ::prost::alloc::vec::Vec<Component>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Component {
+    #[prost(string, repeated, tag = "1")]
+    pub node_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Cycle detection response
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CycleCheckResponse {
+    #[prost(bool, tag = "1")]
+    pub has_cycle: bool,
 }
 /// Supported property filter operators
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -3178,6 +4078,62 @@ pub mod graph_service_client {
                 .insert(GrpcMethod::new("proximadb.v1.GraphService", "ShortestPath"));
             self.inner.unary(req, path, codec).await
         }
+        /// Graph analysis
+        pub async fn get_connected_components(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ConnectedComponentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/GetConnectedComponents",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v1.GraphService",
+                        "GetConnectedComponents",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn has_cycle(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CycleCheckResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.GraphService/HasCycle",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.GraphService", "HasCycle"));
+            self.inner.unary(req, path, codec).await
+        }
         /// Unique constraint DDL
         pub async fn add_unique_constraint(
             &mut self,
@@ -3401,6 +4357,21 @@ pub mod graph_service_server {
             request: tonic::Request<super::ShortestPathRequest>,
         ) -> std::result::Result<
             tonic::Response<super::ShortestPathResponse>,
+            tonic::Status,
+        >;
+        /// Graph analysis
+        async fn get_connected_components(
+            &self,
+            request: tonic::Request<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ConnectedComponentsResponse>,
+            tonic::Status,
+        >;
+        async fn has_cycle(
+            &self,
+            request: tonic::Request<super::GetStatsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::CycleCheckResponse>,
             tonic::Status,
         >;
         /// Unique constraint DDL
@@ -4203,6 +5174,102 @@ pub mod graph_service_server {
                     };
                     Box::pin(fut)
                 }
+                "/proximadb.v1.GraphService/GetConnectedComponents" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetConnectedComponentsSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for GetConnectedComponentsSvc<T> {
+                        type Response = super::ConnectedComponentsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetStatsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::get_connected_components(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetConnectedComponentsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.GraphService/HasCycle" => {
+                    #[allow(non_camel_case_types)]
+                    struct HasCycleSvc<T: GraphService>(pub Arc<T>);
+                    impl<
+                        T: GraphService,
+                    > tonic::server::UnaryService<super::GetStatsRequest>
+                    for HasCycleSvc<T> {
+                        type Response = super::CycleCheckResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetStatsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as GraphService>::has_cycle(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = HasCycleSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/proximadb.v1.GraphService/AddUniqueConstraint" => {
                     #[allow(non_camel_case_types)]
                     struct AddUniqueConstraintSvc<T: GraphService>(pub Arc<T>);
@@ -4480,5 +5547,911 @@ pub mod graph_service_server {
     }
     impl<T: GraphService> tonic::server::NamedService for GraphServiceServer<T> {
         const NAME: &'static str = "proximadb.v1.GraphService";
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CollectionConfig {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub dimension: u32,
+    #[prost(enumeration = "DistanceMetric", tag = "3")]
+    pub distance_metric: i32,
+    #[prost(enumeration = "StorageEngine", tag = "4")]
+    pub storage_engine: i32,
+    #[prost(string, repeated, tag = "5")]
+    pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "6")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CollectionStats {
+    #[prost(int64, tag = "1")]
+    pub vector_count: i64,
+    #[prost(int64, tag = "2")]
+    pub index_size_bytes: i64,
+    #[prost(int64, tag = "3")]
+    pub data_size_bytes: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Collection {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub config: ::core::option::Option<CollectionConfig>,
+    #[prost(message, optional, tag = "3")]
+    pub stats: ::core::option::Option<CollectionStats>,
+    #[prost(int64, tag = "4")]
+    pub created_at: i64,
+    #[prost(int64, tag = "5")]
+    pub updated_at: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetCollectionRequest {
+    /// name or ID
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListCollectionsRequest {
+    #[prost(uint32, optional, tag = "1")]
+    pub limit: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub offset: ::core::option::Option<u32>,
+    #[prost(bool, optional, tag = "3")]
+    pub include_stats: ::core::option::Option<bool>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListCollectionsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub collections: ::prost::alloc::vec::Vec<Collection>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteCollectionRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DeleteCollectionResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+/// Generated client implementations.
+pub mod collection_service_client {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    #[derive(Debug, Clone)]
+    pub struct CollectionServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl CollectionServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> CollectionServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> CollectionServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
+        {
+            CollectionServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn create_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CollectionConfig>,
+        ) -> std::result::Result<tonic::Response<super::Collection>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CollectionService/CreateCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CollectionService", "CreateCollection"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetCollectionRequest>,
+        ) -> std::result::Result<tonic::Response<super::Collection>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CollectionService/GetCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CollectionService", "GetCollection"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_collections(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListCollectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListCollectionsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CollectionService/ListCollections",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CollectionService", "ListCollections"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteCollectionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.CollectionService/DeleteCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v1.CollectionService", "DeleteCollection"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod collection_service_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with CollectionServiceServer.
+    #[async_trait]
+    pub trait CollectionService: Send + Sync + 'static {
+        async fn create_collection(
+            &self,
+            request: tonic::Request<super::CollectionConfig>,
+        ) -> std::result::Result<tonic::Response<super::Collection>, tonic::Status>;
+        async fn get_collection(
+            &self,
+            request: tonic::Request<super::GetCollectionRequest>,
+        ) -> std::result::Result<tonic::Response<super::Collection>, tonic::Status>;
+        async fn list_collections(
+            &self,
+            request: tonic::Request<super::ListCollectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListCollectionsResponse>,
+            tonic::Status,
+        >;
+        async fn delete_collection(
+            &self,
+            request: tonic::Request<super::DeleteCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteCollectionResponse>,
+            tonic::Status,
+        >;
+    }
+    #[derive(Debug)]
+    pub struct CollectionServiceServer<T: CollectionService> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: CollectionService> CollectionServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for CollectionServiceServer<T>
+    where
+        T: CollectionService,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/proximadb.v1.CollectionService/CreateCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateCollectionSvc<T: CollectionService>(pub Arc<T>);
+                    impl<
+                        T: CollectionService,
+                    > tonic::server::UnaryService<super::CollectionConfig>
+                    for CreateCollectionSvc<T> {
+                        type Response = super::Collection;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CollectionConfig>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CollectionService>::create_collection(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = CreateCollectionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CollectionService/GetCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetCollectionSvc<T: CollectionService>(pub Arc<T>);
+                    impl<
+                        T: CollectionService,
+                    > tonic::server::UnaryService<super::GetCollectionRequest>
+                    for GetCollectionSvc<T> {
+                        type Response = super::Collection;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetCollectionRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CollectionService>::get_collection(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = GetCollectionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CollectionService/ListCollections" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListCollectionsSvc<T: CollectionService>(pub Arc<T>);
+                    impl<
+                        T: CollectionService,
+                    > tonic::server::UnaryService<super::ListCollectionsRequest>
+                    for ListCollectionsSvc<T> {
+                        type Response = super::ListCollectionsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListCollectionsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CollectionService>::list_collections(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ListCollectionsSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v1.CollectionService/DeleteCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteCollectionSvc<T: CollectionService>(pub Arc<T>);
+                    impl<
+                        T: CollectionService,
+                    > tonic::server::UnaryService<super::DeleteCollectionRequest>
+                    for DeleteCollectionSvc<T> {
+                        type Response = super::DeleteCollectionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteCollectionRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as CollectionService>::delete_collection(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = DeleteCollectionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: CollectionService> Clone for CollectionServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: CollectionService> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: CollectionService> tonic::server::NamedService
+    for CollectionServiceServer<T> {
+        const NAME: &'static str = "proximadb.v1.CollectionService";
+    }
+}
+/// Generated client implementations.
+pub mod sql_service_client {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    /// SQL execution service (v1, versioned namespace)
+    #[derive(Debug, Clone)]
+    pub struct SqlServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl SqlServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> SqlServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> SqlServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::BoxBody>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::BoxBody>,
+            >>::Error: Into<StdError> + Send + Sync,
+        {
+            SqlServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        pub async fn execute_sql(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ExecuteSqlRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExecuteSqlResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Unknown,
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v1.SqlService/ExecuteSql",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("proximadb.v1.SqlService", "ExecuteSql"));
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod sql_service_server {
+    #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with SqlServiceServer.
+    #[async_trait]
+    pub trait SqlService: Send + Sync + 'static {
+        async fn execute_sql(
+            &self,
+            request: tonic::Request<super::ExecuteSqlRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ExecuteSqlResponse>,
+            tonic::Status,
+        >;
+    }
+    /// SQL execution service (v1, versioned namespace)
+    #[derive(Debug)]
+    pub struct SqlServiceServer<T: SqlService> {
+        inner: _Inner<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    struct _Inner<T>(Arc<T>);
+    impl<T: SqlService> SqlServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            let inner = _Inner(inner);
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for SqlServiceServer<T>
+    where
+        T: SqlService,
+        B: Body + Send + 'static,
+        B::Error: Into<StdError> + Send + 'static,
+    {
+        type Response = http::Response<tonic::body::BoxBody>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            let inner = self.inner.clone();
+            match req.uri().path() {
+                "/proximadb.v1.SqlService/ExecuteSql" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExecuteSqlSvc<T: SqlService>(pub Arc<T>);
+                    impl<
+                        T: SqlService,
+                    > tonic::server::UnaryService<super::ExecuteSqlRequest>
+                    for ExecuteSqlSvc<T> {
+                        type Response = super::ExecuteSqlResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ExecuteSqlRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as SqlService>::execute_sql(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = ExecuteSqlSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        Ok(
+                            http::Response::builder()
+                                .status(200)
+                                .header("grpc-status", "12")
+                                .header("content-type", "application/grpc")
+                                .body(empty_body())
+                                .unwrap(),
+                        )
+                    })
+                }
+            }
+        }
+    }
+    impl<T: SqlService> Clone for SqlServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    impl<T: SqlService> Clone for _Inner<T> {
+        fn clone(&self) -> Self {
+            Self(Arc::clone(&self.0))
+        }
+    }
+    impl<T: std::fmt::Debug> std::fmt::Debug for _Inner<T> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self.0)
+        }
+    }
+    impl<T: SqlService> tonic::server::NamedService for SqlServiceServer<T> {
+        const NAME: &'static str = "proximadb.v1.SqlService";
     }
 }

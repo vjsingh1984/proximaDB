@@ -99,7 +99,7 @@ impl Flush {
             Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::proto::proximadb::DistanceMetric::Cosine,
+                crate::proto::proximadb_v1::DistanceMetric::Cosine,
             ),
         );
         let quantization_engine = Some(Arc::new(
@@ -137,7 +137,7 @@ impl Flush {
         force: bool,
         synchronous: bool,
         viper_config: &crate::core::config::ViperConfig,
-        provided_collection_config: Option<&crate::proto::proximadb::Collection>,
+        provided_collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<crate::storage::traits::FlushResult> {
         info!("🔄 VIPER: Starting flush operation with staging pattern");
         info!(
@@ -468,7 +468,7 @@ impl Flush {
         &self,
         records: &[VectorRecord],
         collection_id: &str,
-        collection_config: &Option<crate::proto::proximadb::Collection>,
+        collection_config: &Option<crate::proto::proximadb_v1::Collection>,
         vector_dimensions: usize,
         viper_config: &crate::core::config::ViperConfig,
     ) -> Result<Vec<u8>> {
@@ -543,7 +543,7 @@ impl Flush {
         }
 
         // 🎯 DYNAMIC FILTERABLE METADATA: Use proto filterable_columns directly
-        let filterable_metadata: Vec<&crate::proto::proximadb::FilterableColumnSpec> =
+        let filterable_metadata: Vec<&crate::proto::proximadb_v1::FilterableColumnSpec> =
             if let Some(collection) = collection_config {
                 if let Some(ref config) = collection.config {
                     config.filterable_columns.iter().collect()
@@ -665,15 +665,15 @@ impl Flush {
                     .iter()
                     .find(|item| item.key == filterable_column.name)
                     .map(|item| match &item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                             serde_json::Number::from_f64(*n)
                                 .map(serde_json::Value::Number)
                                 .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
                         }
                         None => serde_json::Value::Null,
@@ -689,13 +689,13 @@ impl Flush {
                 if !filterable_field_names.contains(&item.key) {
                     // Convert metadata value to string for storage
                     let value_str = match &item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             s.clone()
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                             n.to_string()
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                             b.to_string()
                         }
                         None => String::new(),
@@ -757,7 +757,7 @@ impl Flush {
             let values = filterable_arrays.get(&filterable_column.name).unwrap();
 
             let arrow_array: Arc<dyn Array> = {
-                use crate::proto::proximadb::FilterableDataType;
+                use crate::proto::proximadb_v1::FilterableDataType;
                 match FilterableDataType::try_from(filterable_column.data_type) {
                     Ok(FilterableDataType::FilterableString) => {
                         let string_values: Vec<Option<String>> = values
@@ -966,7 +966,7 @@ impl Flush {
             if let Some(ref config) = collection.config {
                 if let Some(ref storage_config) = config.storage_config {
                     if let Some(ref compression) = storage_config.compression {
-                        use crate::proto::proximadb::CompressionAlgorithm as ProtoAlgorithm;
+                        use crate::proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
 
                         // Convert proto compression to core compression algorithm
                         match ProtoAlgorithm::try_from(compression.algorithm) {
@@ -1075,7 +1075,7 @@ impl Flush {
         // Apply column-specific encodings from filterable metadata
         for filterable_column in &filterable_metadata {
             if let Some(encoding_hint) = filterable_column.encoding_hint {
-                use crate::proto::proximadb::ColumnEncoding;
+                use crate::proto::proximadb_v1::ColumnEncoding;
                 let column_path =
                     parquet::schema::types::ColumnPath::from(filterable_column.name.as_str());
 
@@ -1191,7 +1191,7 @@ impl Flush {
     fn quantize_to_int8(
         &self,
         fp32_vector: &[f32],
-        _quant_config: &crate::proto::proximadb::QuantizationConfig,
+        _quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
     ) -> Vec<i8> {
         if fp32_vector.is_empty() {
             return Vec::new();
@@ -1235,7 +1235,7 @@ impl Flush {
         collection_id: &str,
         filename: &str,
         temp_file_path: &std::path::Path,
-        collection_config: &Option<crate::proto::proximadb::Collection>,
+        collection_config: &Option<crate::proto::proximadb_v1::Collection>,
     ) -> Result<String> {
         let file_size = std::fs::metadata(temp_file_path)?.len();
         info!(
@@ -1337,7 +1337,7 @@ impl Flush {
         collection_id: &str,
         filename: &str,
         parquet_data: &[u8],
-        collection_config: &Option<crate::proto::proximadb::Collection>,
+        collection_config: &Option<crate::proto::proximadb_v1::Collection>,
     ) -> Result<String> {
         info!(
             "🔄 Writing Parquet file atomically: {} ({} bytes)",
@@ -1466,7 +1466,7 @@ impl Flush {
     async fn sort_records_for_parquet_encoding(
         &self,
         records: &[VectorRecord],
-        collection_config: &Option<crate::proto::proximadb::Collection>,
+        collection_config: &Option<crate::proto::proximadb_v1::Collection>,
     ) -> Result<(Vec<VectorRecord>, SortingStats)> {
         // Extract filterable columns from collection config
         let filterable_columns = collection_config

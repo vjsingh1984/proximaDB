@@ -21,11 +21,11 @@ impl CollectionService for CollectionServiceImpl {
         request: Request<proximadb_v1::CollectionConfig>,
     ) -> Result<Response<proximadb_v1::Collection>, Status> {
         let cfg = request.into_inner();
-        // Map to legacy CollectionRequest
-        let legacy = crate::proto::proximadb::CollectionRequest {
-            operation: crate::proto::proximadb::CollectionOperation::CollectionCreate as i32,
+        // Create v1 CollectionRequest
+        let request = crate::proto::proximadb_v1::CollectionRequest {
+            operation: crate::proto::proximadb_v1::CollectionOperation::CollectionCreate as i32,
             collection_id: Some(cfg.name.clone()),
-            collection_config: Some(crate::proto::proximadb::CollectionConfig {
+            collection_config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: cfg.name.clone(),
                 dimension: cfg.dimension,
                 distance_metric: cfg.distance_metric as i32,
@@ -45,18 +45,14 @@ impl CollectionService for CollectionServiceImpl {
         };
         let resp = self
             .unified_handlers
-            .handle_collection_operation(legacy)
+            .handle_collection_operation(request)
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {}", e)))?;
-        // Minimal mapping: return Collection with config and defaults
-        let col = proximadb_v1::Collection {
-            id: resp.collection_id.unwrap_or_else(|| cfg.name.clone()),
-            config: Some(cfg),
-            stats: Some(proximadb_v1::CollectionStats { vector_count: 0, index_size_bytes: 0, data_size_bytes: 0 }),
-            created_at: 0,
-            updated_at: 0,
-        };
-        Ok(Response::new(col))
+        if let Some(collection) = resp.collection {
+            Ok(Response::new(collection))
+        } else {
+            Err(Status::internal("CreateCollection did not return a collection"))
+        }
     }
 
     async fn get_collection(
@@ -64,8 +60,8 @@ impl CollectionService for CollectionServiceImpl {
         request: Request<proximadb_v1::GetCollectionRequest>,
     ) -> Result<Response<proximadb_v1::Collection>, Status> {
         let req = request.into_inner();
-        let legacy = crate::proto::proximadb::CollectionRequest {
-            operation: crate::proto::proximadb::CollectionOperation::CollectionGet as i32,
+        let request = crate::proto::proximadb_v1::CollectionRequest {
+            operation: crate::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
             collection_id: Some(req.collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -74,38 +70,35 @@ impl CollectionService for CollectionServiceImpl {
         };
         let resp = self
             .unified_handlers
-            .handle_collection_operation(legacy)
+            .handle_collection_operation(request)
             .await
             .map_err(|e| Status::internal(format!("GetCollection failed: {}", e)))?;
-        let col = proximadb_v1::Collection {
-            id: resp.collection_id.unwrap_or(req.collection_id),
-            config: None,
-            stats: Some(proximadb_v1::CollectionStats { vector_count: 0, index_size_bytes: 0, data_size_bytes: 0 }),
-            created_at: 0,
-            updated_at: 0,
-        };
-        Ok(Response::new(col))
+        if let Some(collection) = resp.collection {
+            Ok(Response::new(collection))
+        } else {
+            Err(Status::not_found("Collection not found"))
+        }
     }
 
     async fn list_collections(
         &self,
         _request: Request<proximadb_v1::ListCollectionsRequest>,
     ) -> Result<Response<proximadb_v1::ListCollectionsResponse>, Status> {
-        let legacy = crate::proto::proximadb::CollectionRequest {
-            operation: crate::proto::proximadb::CollectionOperation::CollectionList as i32,
+        let request = crate::proto::proximadb_v1::CollectionRequest {
+            operation: crate::proto::proximadb_v1::CollectionOperation::CollectionList as i32,
             collection_id: None,
             collection_config: None,
             query_params: Default::default(),
             options: Default::default(),
             migration_config: Default::default(),
         };
-        let _resp = self
+        let resp = self
             .unified_handlers
-            .handle_collection_operation(legacy)
+            .handle_collection_operation(request)
             .await
             .map_err(|e| Status::internal(format!("ListCollections failed: {}", e)))?;
-        // Minimal placeholder mapping
-        Ok(Response::new(proximadb_v1::ListCollectionsResponse { collections: vec![] }))
+        let collections = resp.collections;
+        Ok(Response::new(proximadb_v1::ListCollectionsResponse { collections }))
     }
 
     async fn delete_collection(
@@ -113,8 +106,8 @@ impl CollectionService for CollectionServiceImpl {
         request: Request<proximadb_v1::DeleteCollectionRequest>,
     ) -> Result<Response<proximadb_v1::DeleteCollectionResponse>, Status> {
         let req = request.into_inner();
-        let legacy = crate::proto::proximadb::CollectionRequest {
-            operation: crate::proto::proximadb::CollectionOperation::CollectionDelete as i32,
+        let request = crate::proto::proximadb_v1::CollectionRequest {
+            operation: crate::proto::proximadb_v1::CollectionOperation::CollectionDelete as i32,
             collection_id: Some(req.collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -123,7 +116,7 @@ impl CollectionService for CollectionServiceImpl {
         };
         let _ = self
             .unified_handlers
-            .handle_collection_operation(legacy)
+            .handle_collection_operation(request)
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {}", e)))?;
         Ok(Response::new(proximadb_v1::DeleteCollectionResponse { success: true }))

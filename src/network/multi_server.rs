@@ -558,17 +558,17 @@ impl SharedServices {
                 );
 
                 // Convert storage metadata to proto collection format
-                let collection_config = crate::proto::proximadb::CollectionConfig {
+                let collection_config = crate::proto::proximadb_v1::CollectionConfig {
                     name: metadata.name.clone(),
                     dimension: metadata.dimension as u32,
-                    distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32, // Default
-                    storage_engine: crate::proto::proximadb::StorageEngine::Viper as i32, // Default
+                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32, // Default
+                    storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32, // Default
                     filterable_columns: vec![],
                     index_configs: vec![],
-                    quantization: Some(crate::proto::proximadb::QuantizationConfig {
+                    quantization: Some(crate::proto::proximadb_v1::QuantizationConfig {
                         enabled: true, // Quantization enabled by default
                         strategy:
-                            crate::proto::proximadb::quantization_config::Strategy::SmartDefaults
+                            crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults
                                 as i32,
                         custom_levels: vec![],
                         enable_progressive_search: true, // Progressive search enabled by default
@@ -603,10 +603,10 @@ impl SharedServices {
                     embedding_models: None, // No embedding models for imported collections
                 };
 
-                let proto_collection = crate::proto::proximadb::Collection {
+                let proto_collection = crate::proto::proximadb_v1::Collection {
                     id: format!("recovered-{}", Uuid::new_v4()),
                     config: Some(collection_config),
-                    stats: Some(crate::proto::proximadb::CollectionStats {
+                    stats: Some(crate::proto::proximadb_v1::CollectionStats {
                         vector_count: metadata.vector_count as i64,
                         index_size_bytes: metadata.total_size_bytes as i64,
                         data_size_bytes: metadata.total_size_bytes as i64,

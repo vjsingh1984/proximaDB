@@ -16,28 +16,28 @@ use tracing::info;
 
 // Helper function to get string value from metadata
 fn get_metadata_string(
-    metadata: &[crate::proto::proximadb::MetadataItem],
+    metadata: &[crate::proto::proximadb_v1::MetadataItem],
     key: &str,
 ) -> Option<String> {
     metadata
         .iter()
         .find(|item| item.key == key)
         .and_then(|item| match &item.value {
-            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => Some(s.clone()),
+            Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => Some(s.clone()),
             _ => None,
         })
 }
 
 // Helper function to get number value from metadata
 fn get_metadata_number(
-    metadata: &[crate::proto::proximadb::MetadataItem],
+    metadata: &[crate::proto::proximadb_v1::MetadataItem],
     key: &str,
 ) -> Option<f64> {
     metadata
         .iter()
         .find(|item| item.key == key)
         .and_then(|item| match &item.value {
-            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => Some(*n),
+            Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => Some(*n),
             _ => None,
         })
 }
@@ -61,21 +61,21 @@ async fn test_metadata_filtering_with_sstable_reader() {
     // Category A records
     for i in 0..5 {
         let metadata = vec![
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "A".to_string(),
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                     (i * 10) as f64,
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "document".to_string(),
                 )),
             },
@@ -99,21 +99,21 @@ async fn test_metadata_filtering_with_sstable_reader() {
     // Category B records
     for i in 0..5 {
         let metadata = vec![
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "B".to_string(),
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                     (i * 10 + 5) as f64,
                 )),
             },
-            crate::proto::proximadb::MetadataItem {
+            crate::proto::proximadb_v1::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "image".to_string(),
                 )),
             },
@@ -251,33 +251,33 @@ async fn test_metadata_bloom_filter_functionality() {
     assert!(!filter.might_contain(b"key2"));
 
     // Test metadata operations using MetadataItem
-    let electronics_item = crate::proto::proximadb::MetadataItem {
+    let electronics_item = crate::proto::proximadb_v1::MetadataItem {
         key: "category".to_string(),
-        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
             "electronics".to_string(),
         )),
     };
-    let books_item = crate::proto::proximadb::MetadataItem {
+    let books_item = crate::proto::proximadb_v1::MetadataItem {
         key: "category".to_string(),
-        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
             "books".to_string(),
         )),
     };
-    let clothing_item = crate::proto::proximadb::MetadataItem {
+    let clothing_item = crate::proto::proximadb_v1::MetadataItem {
         key: "category".to_string(),
-        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
             "clothing".to_string(),
         )),
     };
-    let premium_item = crate::proto::proximadb::MetadataItem {
+    let premium_item = crate::proto::proximadb_v1::MetadataItem {
         key: "type".to_string(),
-        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
             "premium".to_string(),
         )),
     };
-    let basic_item = crate::proto::proximadb::MetadataItem {
+    let basic_item = crate::proto::proximadb_v1::MetadataItem {
         key: "type".to_string(),
-        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
             "basic".to_string(),
         )),
     };

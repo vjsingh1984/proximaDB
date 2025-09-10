@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Use proto enums as base types for consistency
-use crate::proto::proximadb::{
+use crate::proto::proximadb_v1::{
     DistanceMetric as ProtoDistanceMetric, IndexingAlgorithm as ProtoIndexingAlgorithm,
     StorageEngine as ProtoStorageEngine,
 };

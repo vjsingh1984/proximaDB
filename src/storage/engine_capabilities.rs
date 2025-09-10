@@ -11,7 +11,7 @@
 //! This module provides static methods to check what features each engine supports
 //! without needing to instantiate engine instances.
 
-use crate::proto::proximadb::{CompressionAlgorithm, StorageEngine};
+use crate::proto::proximadb_v1::{CompressionAlgorithm, StorageEngine};
 use std::collections::HashSet;
 
 /// Engine capabilities checker - provides static methods for feature support queries

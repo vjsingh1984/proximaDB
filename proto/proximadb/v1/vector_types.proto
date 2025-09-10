@@ -2,7 +2,8 @@ syntax = "proto3";
 
 package proximadb.v1;
 
-import "proximadb/v1/types.proto"; // reuse SqlValue for metadata maps
+import "proximadb/v1/types.proto";
+import "proximadb/v1/entity.proto"; // reuse SqlValue for metadata maps
 
 // Strongly-typed enums for metrics and engines
 enum DistanceMetric {
@@ -55,9 +56,10 @@ message MetadataItem {
 
 message SearchQuery {
   repeated float vector = 1;
-  // Simplified filter; details are handled server-side
-  // Optional to preserve compatibility
-  // map<string, SqlValue> filter = 2;
+  // Simple equality filters using SqlValue (perfect for SQL WHERE clauses)
+  map<string, SqlValue> filters = 2;
+  // Advanced structured filters for complex queries (reuses entity.proto schema)
+  optional MetadataFilter advanced_filter = 3;
 }
 
 message SearchParams {
