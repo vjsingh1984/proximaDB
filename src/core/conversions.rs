@@ -161,7 +161,14 @@ impl From<InternalSearchResult> for SearchVectorRecord {
             version: native.version,
             timestamp: native.timestamp,
             source: native.source.clone(),
-            expanded_context: native.expanded_context.clone(),
+            expanded_context: native.expanded_context.iter().map(|sc| {
+                match &sc.data {
+                    Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
+                    Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
+                    Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                    None => "[Empty Content]".to_string(),
+                }
+            }).collect(),
         }
     }
 }
@@ -179,7 +186,14 @@ impl From<&InternalSearchResult> for SearchVectorRecord {
             version: native.version,
             timestamp: native.timestamp,
             source: native.source.clone(),
-            expanded_context: native.expanded_context.clone(),
+            expanded_context: native.expanded_context.iter().map(|sc| {
+                match &sc.data {
+                    Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
+                    Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
+                    Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                    None => "[Empty Content]".to_string(),
+                }
+            }).collect(),
         }
     }
 }

@@ -507,7 +507,7 @@ impl ColdStorageBackend {
             to_node_id: edge.to_node_id.clone(),
             edge_type: edge.edge_type.clone(),
             properties,
-            weight: edge.weight,
+            weight: edge.weight.map(|w| w as f32),
             created_at: edge.created_at.as_ref().map(|t| t.seconds as u64),
             updated_at: edge.updated_at.as_ref().map(|t| t.seconds as u64),
         })

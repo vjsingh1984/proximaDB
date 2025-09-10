@@ -56,6 +56,7 @@
 //! - **Performance Optimized**: SIMD-ready operations and cache-friendly access patterns
 
 use crate::core::error::ProximaDBError;
+use crate::metrics::updater::OperationMetricsUpdate;
 use crate::graph::{
     Node, Edge, NodeId, EdgeId, GraphMemoryPool, OperationMode,
     TraversalRequest, TraversalResponse, NodeQuery, EdgeQuery,
@@ -161,7 +162,7 @@ impl GraphService {
         if let Some(updater) = &self.metrics_updater {
             let _ = updater.record_operation(
                 "graph",
-                crate::metrics::OperationMetricsUpdate {
+                OperationMetricsUpdate {
                     operation_type: "graph.shortest_path".into(),
                     latency_us: t0.elapsed().as_micros() as f64,
                     success: result.is_some(),
@@ -1033,7 +1034,7 @@ fn prop_contains(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate
         if let Some(updater) = &self.metrics_updater {
             let _ = updater.record_operation(
                 "graph",
-                crate::metrics::OperationMetricsUpdate {
+                OperationMetricsUpdate {
                     operation_type: "graph.traverse".into(),
                     latency_us: t0.elapsed().as_micros() as f64,
                     success: true,

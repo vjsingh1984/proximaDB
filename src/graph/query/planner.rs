@@ -724,10 +724,10 @@ impl QueryPlanner {
             let mut estimated_result_size = 0;
 
             // Estimate selectivity based on labels
-            if !node_pattern.labels.is_empty() {
+            if !starting_node_pattern.labels.is_empty() {
                 // Use the most selective label if multiple are present
                 let mut label_selectivity = 1.0;
-                for label in &node_pattern.labels {
+                for label in &starting_node_pattern.labels {
                     if let Some(&count) = stats.label_selectivity.get(label) {
                         label_selectivity *= (count as f64 / node_count).min(1.0);
                     } else {
@@ -735,27 +735,27 @@ impl QueryPlanner {
                         label_selectivity *= 0.1;
                     }
                 }
-                current_cardinality *= label_selectivity;
+                initial_cardinality *= label_selectivity;
             }
 
             // Estimate selectivity based on properties (simplified)
-            if !node_pattern.properties.is_empty() {
+            if !starting_node_pattern.properties.is_empty() {
                 // For each property, assume a default selectivity (e.g., 10%)
                 // TODO: Use actual property selectivity from stats
-                current_cardinality *= 0.1_f64.powi(node_pattern.properties.len() as i32);
+                initial_cardinality *= 0.1_f64.powi(starting_node_pattern.properties.len() as i32);
             }
 
-            let estimated_output_cardinality = current_cardinality.max(1.0) as usize;
+            let estimated_output_cardinality = initial_cardinality.max(1.0) as usize;
 
             // Choose strategy based on selectivity and index availability
             let step_cost;
             let step_type;
 
             // Simplified logic: if labels are present, assume index seek is possible
-            if self.config.optimizations.use_indexes && !node_pattern.labels.is_empty() {
+            if self.config.optimizations.use_indexes && !starting_node_pattern.labels.is_empty() {
                 step_type = PlanStepType::IndexSeek {
-                    index_name: format!("label_index_{}", node_pattern.labels.first().unwrap()),
-                    key_value: serde_json::Value::String(node_pattern.labels.first().unwrap().clone()),
+                    index_name: format!("label_index_{}", starting_node_pattern.labels.first().unwrap()),
+                    key_value: serde_json::Value::String(starting_node_pattern.labels.first().unwrap().clone()),
                 };
                 step_cost = CostEstimate::new(
                     self.config.cost_model.index_seek_cost,
@@ -764,8 +764,8 @@ impl QueryPlanner {
                 );
             } else {
                 step_type = PlanStepType::NodeScan {
-                    labels: if !node_pattern.labels.is_empty() {
-                        Some(node_pattern.labels.clone())
+                    labels: if !starting_node_pattern.labels.is_empty() {
+                        Some(starting_node_pattern.labels.clone())
                     } else {
                         None
                     },
@@ -787,7 +787,6 @@ impl QueryPlanner {
             estimated_cost = estimated_cost.add(&node_scan_step.cost);
             estimated_result_size = node_scan_step.output_cardinality;
             steps.push(node_scan_step);
-        }
 
         // Step 2: Handle Edge Patterns (simplified to a generic traversal for now)
         if !pattern.edges.is_empty() || !pattern.paths.is_empty() {
@@ -857,6 +856,7 @@ impl QueryPlanner {
         // Set current_steps and current_estimated_cost for comparison
         current_steps = steps;
         current_estimated_cost = estimated_cost;
+        current_estimated_result_size = estimated_result_size;
 
         // Compare with best plan found so far
         if current_estimated_cost.total_cost < min_cost {
@@ -869,7 +869,7 @@ impl QueryPlanner {
                 created_at: std::time::SystemTime::now(),
             });
         }
-    // End of the for loop
+        } // End of the for loop
 
         best_plan.ok_or_else(|| ProximaDBError::invalid_argument("Could not generate a plan for the given pattern"))
     }

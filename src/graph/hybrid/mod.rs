@@ -1289,9 +1289,11 @@ impl HybridQueryEngine {
         let mut metadata = HashMap::new();
         
         for item in proto_metadata {
+            let key = &item.key;
+            let value = &item.value;
             // Convert protobuf metadata values to strings for simplicity
             // In a production system, this would preserve type information
-            let value_str = match &value {
+            let value_str = match value {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => s.clone(),
                 Some(crate::proto::proximadb_v1::metadata_item::Value::IntValue(i)) => i.to_string(),
                 Some(crate::proto::proximadb_v1::metadata_item::Value::FloatValue(f)) => f.to_string(),

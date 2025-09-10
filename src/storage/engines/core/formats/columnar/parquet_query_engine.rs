@@ -1600,7 +1600,7 @@ impl UnifiedParquetReader {
 
                     all_results.push(crate::proto::proximadb_v1::SearchVectorRecord {
                         id: vector_record.id.clone(),
-                        score: similarity_score,
+                        score: similarity_score as f64,
                         similarity: Some(similarity_score),
                         vector: vector_record.vector.clone(),
                         metadata: vector_record.metadata.clone(),

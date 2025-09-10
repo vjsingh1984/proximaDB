@@ -161,12 +161,12 @@ pub fn merge_metadata(base: &[MetadataItem], updates: &[MetadataItem]) -> Vec<Me
     
     // Add base metadata
     for item in base {
-        merged.insert(key.clone(), item.clone());
+        merged.insert(item.key.clone(), item.clone());
     }
     
     // Apply updates (overwrites existing keys)
     for item in updates {
-        merged.insert(key.clone(), item.clone());
+        merged.insert(item.key.clone(), item.clone());
     }
     
     merged.into_values().collect()

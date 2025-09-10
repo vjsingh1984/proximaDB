@@ -56,10 +56,10 @@ impl WALVectorBatch {
         // Add all metadata keys to bloom filter
         for record in self.vector_records.iter() {
             for item in &record.metadata {
-                bloom_filter.insert(key.as_bytes());
+                bloom_filter.insert(item.key.as_bytes());
 
                 // Also add key=value pairs for exact matching
-                let value_str = match &value {
+                let value_str = match &item.value {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         s.clone()
                     }
@@ -72,7 +72,7 @@ impl WALVectorBatch {
                     _ => continue,
                 };
 
-                let key_value = format!("{}={}", key, value_str);
+                let key_value = format!("{}={}", item.key, value_str);
                 bloom_filter.insert(key_value.as_bytes());
             }
         }

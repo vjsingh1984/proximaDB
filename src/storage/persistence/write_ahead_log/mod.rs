@@ -1822,7 +1822,7 @@ impl WriteAheadLogManager {
                 let mut search_result = search_result;
                 search_result.vector_id = Some(vector_record.id.clone());
                 search_result.timestamp = Some(vector_record.timestamp);
-                search_result.version = vector_record.version;
+                search_result.version = vector_record.version.map(|v| v as u32);
 
                 all_results.push(search_result);
             }

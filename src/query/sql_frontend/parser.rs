@@ -63,7 +63,7 @@ impl SqlFrontendParser {
     fn convert_select(&self, select: &SqlSelect, query: &SqlQuery) -> Result<Select> {
         // Convert projection
         let projection = select.projection.iter()
-            .map(|(key, value)| self.convert_select_item(item))
+            .map(|item| self.convert_select_item(item))
             .collect::<Result<Vec<_>>>()?;
 
         // Convert FROM clause

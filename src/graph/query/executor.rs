@@ -20,6 +20,7 @@
 //! `QueryPlan` and executing it against the graph data, returning the results.
 
 use crate::core::error::ProximaDBError;
+use crate::core::QueryError;
 use crate::graph::{Node, Edge, NodeId, GraphMemoryPool, GraphService};
 use super::planner::{QueryPlan, PlanStep, PlanStepType, TraversalAlgorithm};
 use super::{QueryResult, QueryContext, QueryStats};

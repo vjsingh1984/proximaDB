@@ -116,7 +116,7 @@
   
   <!-- Performance and cloud indicators -->
   <g transform="translate(140, 98)">
-    <text x="0" y="0" font-family="Arial, sans-serif" font-size="8" fill="#10b981">⚡ Hardware-accelerated</text>
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="8" fill="#10b981">⚡ Accelerated</text>
     <text x="70" y="0" font-family="Arial, sans-serif" font-size="8" fill="#0ea5e9">☁️ Zero Infrastructure</text>
   </g>
 

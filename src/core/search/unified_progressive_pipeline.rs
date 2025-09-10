@@ -455,7 +455,8 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
-            if let Some(quantized) = &record.quantized_vector {
+            if !record.quantized_vector.is_empty() {
+                let quantized = &record.quantized_vector;
                 // Compute hamming distance for binary vectors
                 let score = self.compute_hamming_distance(&query, quantized);
                 candidates.push(StageCandidate {

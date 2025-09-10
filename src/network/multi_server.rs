@@ -60,6 +60,8 @@ use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
 use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::MetadataBackendFactory;
+use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use crate::metrics::MetricsConfig;
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///
@@ -649,12 +651,19 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating GraphService for graph database operations...");
         let mut graph_service_inst = crate::graph::GraphService::new();
         // Create a simple file-backed metrics updater under data_root/metrics
+        let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let metrics_config = MetricsConfig {
+            enabled: true,
+            collection_partitions: 16,
+            storage_path: format!("file://{}/metrics", storage_config.data_root),
+            flush_interval_seconds: 60,
+            max_pending_updates: 10000,
+            compression_enabled: true,
+        };
         let metrics_store = Arc::new(crate::metrics::store::MetricsPersistenceLayer::new(
-            crate::metrics::store::MetricsStoreConfig {
-                storage_path: format!("file://{}/metrics", storage_config.data_root),
-                ..Default::default()
-            },
-        ));
+            filesystem_factory,
+            metrics_config,
+        ).await?);
         let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> =
             Arc::new(crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()));
         graph_service_inst.set_metrics_updater(metrics_updater.clone());

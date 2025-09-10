@@ -270,7 +270,7 @@ pub trait MetadataBloomFilter: BloomFilterStrategy {
 pub fn serialize_metadata_value(item: &crate::proto::proximadb_v1::MetadataItem) -> String {
     use crate::proto::proximadb_v1::sql_value::Value;
 
-    match &value {
+    match &item.value {
         Some(Value::StringValue(s)) => s.clone(),
         Some(Value::NumberValue(n)) => {
             // Use consistent number formatting to avoid precision issues

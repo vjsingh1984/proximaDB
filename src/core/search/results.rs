@@ -328,7 +328,14 @@ impl InternalSearchResult {
                 None
             }, // Preserve source info when requested
             expanded_context: if include_source {
-                self.expanded_context.clone()
+                self.expanded_context.iter().map(|sc| {
+                    match &sc.data {
+                        Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
+                        Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
+                        Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                        None => "[Empty Content]".to_string(),
+                    }
+                }).collect()
             } else {
                 Vec::new()
             },

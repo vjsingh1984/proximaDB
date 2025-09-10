@@ -5,7 +5,7 @@
 
 use crate::query::ast::{Query, Select, Expr, BinaryOp};
 use crate::query::execution::{
-    ExecutionPlan, ExecutionStrategy, ExecutionOperation, FusionStrategy
+    ExecutionPlan, ExecutionStrategy, ExecutionOperation, FusionStrategy, ProjectionTransform
 };
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::graph::service::GraphService;

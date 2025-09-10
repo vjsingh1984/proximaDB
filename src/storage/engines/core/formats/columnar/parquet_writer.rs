@@ -566,8 +566,10 @@ impl StreamingParquetWriter {
                     .map(|r| {
                         let mut map = serde_json::Map::new();
                         for item in &r.metadata {
+                            let key = &item.key;
+                            let value = &item.value;
                             // Convert MetadataItem to JSON value
-                            let json_value = match &value {
+                            let json_value = match value {
                                 Some(metadata_item::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
@@ -792,7 +794,9 @@ impl StreamingParquetWriter {
                 // Convert Vec<MetadataItem> to serde_json::Map
                 let mut metadata_map = serde_json::Map::new();
                 for item in &record.metadata {
-                    let json_value = match &value {
+                    let key = &item.key;
+                    let value = &item.value;
+                    let json_value = match value {
                         Some(metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }

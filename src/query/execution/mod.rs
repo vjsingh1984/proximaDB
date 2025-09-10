@@ -13,7 +13,7 @@ use crate::query::ast::{Query, Select};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::graph::service::GraphService;
 use crate::core::search::FilterExpression;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

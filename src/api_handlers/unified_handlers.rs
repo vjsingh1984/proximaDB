@@ -308,9 +308,9 @@ impl UnifiedHandlers {
                 vector: v.vector,
                 metadata: crate::core::conversions::sql_values_to_metadata_items(v.metadata),
                 timestamp: v.timestamp as u32, // legacy uses u32 seconds; v1 uses i64, keep as-is if types align
-                updated_at: v.updated_at.map(|x| x as u32),
-                expires_at: v.expires_at.map(|x| x as u32),
-                version: v.version.map(|x| x as u32),
+                updated_at: v.updated_at.map(|x| x as i64),
+                expires_at: v.expires_at.map(|x| x as i64),
+                version: v.version.map(|x| x as i64),
                 quantized_vector: v.quantized_vector,
                 source: v.source,
             })

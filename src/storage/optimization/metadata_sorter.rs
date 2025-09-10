@@ -143,8 +143,8 @@ impl MetadataSorter {
     fn extract_metadata_value(&self, record: &VectorRecord, key: &str) -> SortableValue {
         // Find the metadata item
         for item in &record.metadata {
-            if key == key {
-                match &value {
+            if item.key == key {
+                match &item.value {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         return SortableValue::from_string(s);
                     }

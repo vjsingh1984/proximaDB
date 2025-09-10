@@ -1122,12 +1122,19 @@ impl ViperEngine {
                     id: r.id,
                     vector,
                     metadata: crate::core::proto_metadata_helper::json_metadata_to_proto(&metadata_json),
-                    score: r.score,
+                    score: r.score as f64,
                     similarity: r.similarity,
                     version: None,
                     timestamp: None,
                     source: r.source,
-                    expanded_context: r.expanded_context,
+                    expanded_context: r.expanded_context.iter().map(|sc| {
+                        match &sc.data {
+                            Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                            None => "[Empty Content]".to_string(),
+                        }
+                    }).collect(),
                 }
             })
             .collect();
@@ -1843,7 +1850,7 @@ impl UnifiedStorageEngine for ViperEngine {
                     (key, value)
                 }).collect();
 
-                let mut record = OptimizedSearchRecord::new(r.id, r.score)
+                let mut record = OptimizedSearchRecord::new(r.id, r.score as f32)
                     .add_vector(r.vector)
                     .with_metadata(TypedMetadata::from_json_map(metadata_map));
                 

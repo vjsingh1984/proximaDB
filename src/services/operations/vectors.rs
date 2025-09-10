@@ -516,7 +516,7 @@ impl VectorOperationsService {
 
         // Get collection configuration
         let collection = self.get_or_load_collection(collection_id).await?;
-        let search_params = crate::query::unified_query_optimizer::SearchParameters::default();
+        let search_params = crate::query::unified_query_optimizer::SearchParams::default();
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal.clone())
@@ -570,7 +570,7 @@ impl VectorOperationsService {
 
         // Plan context
         let collection = self.get_or_load_collection(collection_id).await?;
-        let search_params = crate::query::unified_query_optimizer::SearchParameters::default();
+        let search_params = crate::query::unified_query_optimizer::SearchParams::default();
         let optimization_goal = config
             .as_ref()
             .map(|c| c.optimization_goal.clone())
@@ -621,7 +621,7 @@ impl VectorOperationsService {
                     .map(|arc| (**arc).clone())
                     .unwrap_or_default(),
                 metadata: meta_json,
-                version: rec.version,
+                version: rec.version.map(|v| v as i64),
             });
         }
         Ok(vec![crate::core::service_types::DomainSearchResult {
@@ -1939,7 +1939,14 @@ impl VectorOperationsService {
                 None
             },
             expanded_context: if include_source {
-                result.expanded_context.clone()
+                result.expanded_context.iter().map(|sc| {
+                    match &sc.data {
+                        Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
+                        Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
+                        Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                        None => "[Empty Content]".to_string(),
+                    }
+                }).collect()
             } else {
                 vec![]
             },

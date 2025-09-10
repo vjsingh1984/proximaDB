@@ -2347,8 +2347,8 @@ impl UnifiedSstableReader {
                 // Efficient SearchResult creation (minimize allocations)
                 // Convert metadata to TypedMetadata
                 let mut metadata_map = std::collections::HashMap::new();
-                for item in &record.metadata {
-                    if let Some(value) = &value {
+                for (key, item) in &record.metadata {
+                    if let Some(value) = &item.value {
                         use crate::proto::proximadb_v1::metadata_item;
                         let typed_value = match value {
                             metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
@@ -3236,7 +3236,7 @@ impl UnifiedSstableReader {
                         timestamp: record.timestamp,
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
-                        version: record.version.map(|v| v as u32),
+                        version: record.version.map(|v| v as i64),
                         quantized_vector: None,
                         source: None,
                     }));
@@ -4039,7 +4039,7 @@ impl UnifiedSstableReader {
         // Pre-allocate HashMap to exact size to avoid reallocations
         let mut map = HashMap::with_capacity(items.len());
         for item in items {
-            let value = match &value {
+            let value = match &item.value {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                     serde_json::Value::String(s.clone())
                 }
@@ -4053,7 +4053,7 @@ impl UnifiedSstableReader {
                 }
                 None => serde_json::Value::Null,
             };
-            map.insert(key.clone(), value);
+            map.insert(item.key.clone(), value);
         }
         map
     }

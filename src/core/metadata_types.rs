@@ -218,7 +218,7 @@ impl From<&crate::proto::proximadb_v1::MetadataItem> for MetadataValue {
     fn from(item: &crate::proto::proximadb_v1::MetadataItem) -> Self {
         use crate::proto::proximadb_v1::sql_value::Value;
         
-        match &value {
+        match &item.value {
             Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
             Some(Value::NumberValue(n)) => MetadataValue::Number(*n),
             Some(Value::BoolValue(b)) => MetadataValue::Bool(*b),
@@ -231,7 +231,7 @@ impl From<&crate::proto::proximadb_v1::MetadataItem> for MetadataValue {
 impl From<&crate::proto::proximadb_v1::SqlValue> for MetadataValue {
     fn from(item: &crate::proto::proximadb_v1::SqlValue) -> Self {
         use crate::proto::proximadb_v1::sql_value::Value;
-        match &value {
+        match &item.value {
             Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
             Some(Value::NumberValue(n)) => MetadataValue::Number(*n),
             Some(Value::BoolValue(b)) => MetadataValue::Bool(*b),

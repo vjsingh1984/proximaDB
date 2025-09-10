@@ -2602,9 +2602,9 @@ impl RaptorWriter {
             quantized_vector,
             metadata,
             timestamp: vector.timestamp,
-            updated_at: vector.updated_at,
-            expires_at: vector.expires_at,
-            version: vector.version,
+            updated_at: vector.updated_at.map(|v| v as u32),
+            expires_at: vector.expires_at.map(|v| v as u32),
+            version: vector.version.map(|v| v as u32),
             source_content,
         };
 
@@ -4381,8 +4381,8 @@ impl RaptorWriter {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
             for item in &vector.metadata {
-                let key = &key;
-                let value = &value;
+                let key = &item.key;
+                let value = &item.value;
                 self.column_projections
                     .metadata_columns
                     .entry(key.clone())

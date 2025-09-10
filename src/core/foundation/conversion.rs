@@ -36,7 +36,7 @@ pub fn convert_vec<T, U>(items: Vec<T>) -> Vec<U>
 where
     T: ToUnified<U>,
 {
-    items.into_iter().map(|(key, value)| item.to_unified()).collect()
+    items.into_iter().map(|item| item.to_unified()).collect()
 }
 
 /// Utility for converting Option types
@@ -52,7 +52,7 @@ pub fn convert_result<T, U, E>(result: Result<T, E>) -> Result<U, E>
 where
     T: ToUnified<U>,
 {
-    result.map(|(key, value)| item.to_unified())
+    result.map(|item| item.to_unified())
 }
 
 // Convenience type aliases

@@ -865,7 +865,7 @@ impl Compaction {
                                 timestamp: existing_record.timestamp.unwrap_or(0) as u32,
                                 vector: vec![],
                                 metadata: vec![],
-                                updated_at: existing_record.timestamp.map(|t| t as u32),
+                                updated_at: existing_record.timestamp.map(|t| t as i64),
                                 expires_at: None,
                                 quantized_vector: None,
                                 source: None,
@@ -877,7 +877,7 @@ impl Compaction {
                                 timestamp: record_timestamp.flatten().unwrap_or(0) as u32,
                                 vector: vec![],
                                 metadata: vec![],
-                                updated_at: record_timestamp.flatten().map(|t| t as u32),
+                                updated_at: record_timestamp.flatten().map(|t| t as i64),
                                 expires_at: None,
                                 quantized_vector: None,
                                 source: None,
@@ -1264,8 +1264,8 @@ impl Compaction {
                             .filter(|(k, _)| *k != "vector")
                             .map(|(k, v)| {
                                 let mut item = crate::proto::proximadb_v1::MetadataItem::default();
-                                key = k.clone();
-                                value = Some(
+                                item.key = k.clone();
+                                item.value = Some(
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                         v.to_string(),
                                     ),
@@ -1279,7 +1279,7 @@ impl Compaction {
                             vector,
                             metadata,
                             version: Some(record.version as u32),
-                            updated_at: record.timestamp.map(|t| t as u32),
+                            updated_at: record.timestamp.map(|t| t as i64),
                             expires_at: None,
                             quantized_vector: None,
                             source: None,

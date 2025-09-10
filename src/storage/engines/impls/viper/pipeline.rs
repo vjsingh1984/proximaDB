@@ -791,13 +791,13 @@ impl VectorRecordProcessor {
             let a_val = a
                 .metadata
                 .iter()
-                .find(|item| &key == field)
-                .map(|(key, value)| &value);
+                .find(|item| &item.key == field)
+                .map(|item| &item.value);
             let b_val = b
                 .metadata
                 .iter()
-                .find(|item| &key == field)
-                .map(|(key, value)| &value);
+                .find(|item| &item.key == field)
+                .map(|item| &item.value);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
                     // Convert metadata values to JSON for comparison
@@ -3117,9 +3117,9 @@ impl CompactionEngine {
                     record
                         .metadata
                         .iter()
-                        .find(|item| &key == field)
-                        .map(|(key, value)| {
-                            let value_str = match &value {
+                        .find(|item| &item.key == field)
+                        .map(|item| {
+                            let value_str = match &item.value {
                                 Some(MetadataValue::StringValue(s)) => s.clone(),
                                 Some(MetadataValue::NumberValue(n)) => n.to_string(),
                                 Some(MetadataValue::BoolValue(b)) => b.to_string(),

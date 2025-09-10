@@ -452,6 +452,17 @@ pub struct FollowOperator {
     pub return_paths: bool,
 }
 
+/// Assembly strategies for ASSEMBLE operations
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AssemblyStrategy {
+    /// Temporal ordering strategy
+    TemporalOrdering,
+    /// Semantic clustering strategy
+    SemanticClustering,
+    /// Relevance ranking strategy
+    RelevanceRanking,
+}
+
 /// Direction for graph traversal
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TraversalDirection {

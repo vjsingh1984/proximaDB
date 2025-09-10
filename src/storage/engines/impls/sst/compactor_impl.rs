@@ -396,8 +396,8 @@ impl SstCompactor {
 
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
-                let ver_a = Self::normalize_version(a.version);
-                let ver_b = Self::normalize_version(b.version);
+                let ver_a = Self::normalize_version(a.version.map(|v| v as u32));
+                let ver_b = Self::normalize_version(b.version.map(|v| v as u32));
 
                 ver_a
                     .cmp(&ver_b)
@@ -578,8 +578,8 @@ impl SstCompactor {
 
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
-                let ver_a = Self::normalize_version(a.version);
-                let ver_b = Self::normalize_version(b.version);
+                let ver_a = Self::normalize_version(a.version.map(|v| v as u32));
+                let ver_b = Self::normalize_version(b.version.map(|v| v as u32));
 
                 ver_a
                     .cmp(&ver_b)

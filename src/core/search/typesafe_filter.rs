@@ -284,7 +284,7 @@ impl TypeSafeFilterEvaluator {
 pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_json::Value> {
     let mut map = HashMap::new();
     for item in items {
-        let value = match &value {
+        let value = match &item.value {
             Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(MetadataValue::NumberValue(n)) => {
                 if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
@@ -299,7 +299,7 @@ pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_j
             Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
             None => serde_json::Value::Null,
         };
-        map.insert(key.clone(), value);
+        map.insert(item.key.clone(), value);
     }
     map
 }

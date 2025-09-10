@@ -594,7 +594,7 @@ impl AdvancedSearchOptimizer {
                         };
                         metadata_map.insert(k, typed_value);
                     }
-                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score)
+                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                         .add_vector(record.vector.clone())
                         .with_metadata(TypedMetadata::from_map(metadata_map));
                     if let Some(v) = record.version { rec = rec.with_version(v); }
@@ -632,14 +632,14 @@ impl AdvancedSearchOptimizer {
                             metadata_map.insert(item.key.clone(), typed_value);
                         }
                     }
-                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score)
+                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                         .add_vector(record.vector.clone())
                         .with_metadata(TypedMetadata::from_map(metadata_map));
                     if let Some(sim) = record.similarity {
                         rec = rec.with_similarity(sim);
                     }
                     if let (Some(v), Some(ts)) = (record.version, record.timestamp) {
-                        rec = rec.with_version_info(v, ts);
+                        rec = rec.with_version_info(v as u32, ts as u32);
                     }
                     converted_results.push(rec);
                 }
@@ -676,14 +676,21 @@ impl AdvancedSearchOptimizer {
                 .iter()
                 .map(|r| crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id.clone(),
-                    score: r.score,
+                    score: r.score as f64,
                     similarity: r.similarity,
                     vector: r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default(),
-                    metadata: vec![], // Would convert metadata
-                    version: r.version,
-                    timestamp: r.timestamp,
+                    metadata: std::collections::HashMap::new(), // Would convert metadata
+                    version: r.version.map(|v| v as i64),
+                    timestamp: r.timestamp as i64,
                     source: r.source.clone(),
-                    expanded_context: r.expanded_context.clone(),
+                    expanded_context: r.expanded_context.iter().map(|sc| {
+                        match &sc.data {
+                            Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
+                            Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                            None => "[Empty Content]".to_string(),
+                        }
+                    }).collect(),
                 })
                 .collect(),
             total_found: results.len() as i64,
