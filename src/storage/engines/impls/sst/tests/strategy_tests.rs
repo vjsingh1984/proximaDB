@@ -78,7 +78,7 @@ mod tests {
 
                     metadata_stats
                         .min_values
-                        .entry(item.0.clone())
+                        .entry(key.clone())
                         .and_modify(|v| {
                             if let (Ok(existing), Ok(new)) = (
                                 v.as_deref().unwrap().parse::<f32>(),
@@ -93,7 +93,7 @@ mod tests {
 
                     metadata_stats
                         .max_values
-                        .entry(item.0.clone())
+                        .entry(key.clone())
                         .and_modify(|v| {
                             if let (Ok(existing), Ok(new)) = (
                                 v.as_deref().unwrap().parse::<f32>(),

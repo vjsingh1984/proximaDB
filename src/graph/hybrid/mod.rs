@@ -1298,7 +1298,7 @@ impl HybridQueryEngine {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => b.to_string(),
                 None => "null".to_string(),
             };
-            metadata.insert(item.0.clone(), value_str);
+            metadata.insert(key.clone(), value_str);
         }
         
         metadata
@@ -1346,7 +1346,7 @@ impl HybridQueryEngine {
                 }
                 None => "null".to_string(),
             };
-            metadata.insert(item.0.clone(), value_str);
+            metadata.insert(key.clone(), value_str);
         }
         
         metadata

@@ -7,7 +7,7 @@
 
 This document outlines the technical debt and planned refactoring efforts for ProximaDB.
 
-== Status Snapshot (Reviewed: 2025-09-09)
+== Status Snapshot (Reviewed: 2025-09-10)
 
 - Done: Many unused imports/vars removed; clippy is enforced (deny warnings) via `make clippy`; protobuf enum conversions migrating to `try_from`.
 - In Progress: API consolidation around UnifiedHandlers; SQL path consolidation; zero-copy data path extension across graph/HELIX.

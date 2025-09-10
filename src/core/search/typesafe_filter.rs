@@ -36,7 +36,7 @@ impl TypeSafeFilterEvaluator {
         // Convert MetadataItem slice to a HashMap for efficient lookup
         let metadata_map: HashMap<&str, &MetadataItem> = metadata
             .iter()
-            .map(|(key, value)| (key.as_str(), item))
+            .map(|item| (item.key.as_str(), item))
             .collect();
 
         self.evaluate_recursive(expr, &metadata_map)
@@ -299,7 +299,7 @@ pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_j
             Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
             None => serde_json::Value::Null,
         };
-        map.insert(item.0.clone(), value);
+        map.insert(key.clone(), value);
     }
     map
 }

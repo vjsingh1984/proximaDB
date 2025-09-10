@@ -484,7 +484,7 @@ fn json_to_metadata_items(value: &serde_json::Value) -> Result<Vec<crate::proto:
             
             if let Some(value) = value {
                 items.push(MetadataItem {
-                    key: item.0.clone(),
+                    key: key.clone(),
                     value: Some(value),
                 });
             }

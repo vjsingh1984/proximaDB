@@ -247,7 +247,7 @@ impl MetadataIndex {
                     };
                     
                     if let Some(idx) = new_index {
-                        self.column_indexes.insert(item.0.clone(), idx);
+                        self.column_indexes.insert(key.clone(), idx);
                     }
                     
                     // Update index with this value
@@ -301,7 +301,7 @@ impl MetadataIndex {
                 value_to_blocks,
                 cardinality,
             } => {
-                let bitset = value_to_blocks.entry(item.1.clone()).or_insert_with(|| {
+                let bitset = value_to_blocks.entry(value.clone()).or_insert_with(|| {
                     *cardinality += 1;
                     BitSet::new(10000) // Assume max 10k blocks
                 });
@@ -317,7 +317,7 @@ impl MetadataIndex {
                     *min = min.min(num);
                     *max = max.max(num);
 
-                    let ordered = OrderedValue::from(item.1.clone());
+                    let ordered = OrderedValue::from(value.clone());
                     let bitset = tree.entry(ordered).or_insert_with(|| BitSet::new(10000));
                     bitset.set(block_id);
 
@@ -414,7 +414,7 @@ impl MetadataIndex {
                     .cloned()
                     .unwrap_or_else(|| BitSet::new(self.table_stats.total_blocks as usize))),
                 ColumnIndex::BTree { tree, .. } => {
-                    let ordered = OrderedValue::from(item.1.clone());
+                    let ordered = OrderedValue::from(value.clone());
                     Ok(tree
                         .get(&ordered)
                         .cloned()

@@ -157,7 +157,7 @@ impl TypedMetadata {
     pub fn to_json_map(&self) -> HashMap<String, serde_json::Value> {
         let mut json_map = HashMap::with_capacity(self.inner.len());
         for (key, value) in self.inner.iter() {
-            json_map.insert(item.0.clone(), value.to_json());
+            json_map.insert(key.clone(), value.to_json());
         }
         json_map
     }
@@ -253,25 +253,13 @@ impl From<(&String, &MetadataValue)> for crate::proto::proximadb_v1::MetadataIte
         };
         
         crate::proto::proximadb_v1::MetadataItem {
-            key: item.0.clone(),
+            key: key.clone(),
             value: proto_value,
         }
     }
 }
 
-/// Convert to v1 protobuf MetadataItem (vector types)
-impl From<(&String, &MetadataValue)> for crate::proto::proximadb_v1::MetadataItem {
-    fn from((key, value): (&String, &MetadataValue)) -> Self {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        let proto_value = match value {
-            MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
-            MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
-            MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
-            MetadataValue::Null => None,
-        };
-        crate::proto::proximadb_v1::MetadataItem { key: item.0.clone(), value: proto_value }
-    }
-}
+// Duplicate From implementation removed - keeping the one at line 244
 
 /// Builder pattern for efficient metadata construction
 pub struct TypedMetadataBuilder {

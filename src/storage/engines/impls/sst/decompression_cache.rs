@@ -159,7 +159,7 @@ impl DecompressionCache {
                         // Check if file has been modified
                         if let Some(last_modified) = file_timestamps.get(&key.file_path) {
                             if *last_modified > cached_block.cached_at {
-                                return Some(item.0.clone());
+                                return Some(key.clone());
                             }
                         }
                         None
@@ -203,7 +203,7 @@ impl DecompressionCache {
             .iter()
             .filter_map(|(key, _)| {
                 if key.file_path == file_path {
-                    Some(item.0.clone())
+                    Some(key.clone())
                 } else {
                     None
                 }
@@ -242,7 +242,7 @@ impl DecompressionCache {
             .iter()
             .filter_map(|(key, _)| {
                 if key.file_path.contains(collection_id) {
-                    Some(item.0.clone())
+                    Some(key.clone())
                 } else {
                     None
                 }
@@ -331,7 +331,7 @@ impl DecompressionCache {
 
         // Add to cache
         let mut cache = self.block_cache.write().await;
-        if let Some(evicted) = cache.put(item.0.clone(), cached_block) {
+        if let Some(evicted) = cache.put(key.clone(), cached_block) {
             *current_size -= evicted.size_bytes;
         }
         *current_size += size_bytes;
@@ -342,7 +342,7 @@ impl DecompressionCache {
             comp_caches
                 .entry(algo.clone())
                 .or_insert_with(Vec::new)
-                .push(item.0.clone());
+                .push(key.clone());
         }
 
         // Update statistics
@@ -591,7 +591,7 @@ mod tests {
         let block = DataBlock::new(1, vec![]);
         cache
             .put(
-                item.0.clone(),
+                key.clone(),
                 block.clone(),
                 Some(crate::core::compression::CompressionAlgorithm::Zstd),
             )

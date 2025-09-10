@@ -2,7 +2,19 @@ syntax = "proto3";
 
 package proximadb.v1;
 
+import "google/protobuf/struct.proto"; // For NullValue
+
 // SQL EXECUTION (wire-efficient row encoding)
+
+// Array wrapper for nested values (oneof cannot be repeated directly)
+message SqlArray {
+  repeated SqlValue values = 1;
+}
+
+// Object wrapper for nested key/value metadata
+message SqlObject {
+  map<string, SqlValue> fields = 1;
+}
 
 // Simple typed value for SQL parameters and row fields
 message SqlValue {
@@ -10,6 +22,11 @@ message SqlValue {
     string string_value = 1;
     double number_value = 2;
     bool bool_value = 3;
+    int64 int64_value = 4;
+    bytes bytes_value = 5;
+    google.protobuf.NullValue null_value = 6;
+    SqlArray array_value = 7;
+    SqlObject object_value = 8;
   }
 }
 
@@ -41,4 +58,3 @@ message ExecuteSqlResponse {
   repeated string columns = 5;
   repeated string column_types = 6;
 }
-

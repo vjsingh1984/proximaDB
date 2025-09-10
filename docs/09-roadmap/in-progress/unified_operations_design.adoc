@@ -12,7 +12,7 @@ This document specifies the unified design for coordinating flush, compaction, a
 
 toc::[]
 
-== Status Snapshot (Reviewed: 2025-09-09)
+== Status Snapshot (Reviewed: 2025-09-10)
 
 - Implemented: Locking primitives and background task orchestration in storage/index subsystems; metrics surfaced via dashboard (`/metrics`).
 - In Progress: Coordinator consolidation across engines; automatic re-quantization triggers; cross-operation cost model.

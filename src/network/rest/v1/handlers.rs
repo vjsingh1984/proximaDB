@@ -15,6 +15,7 @@ use tracing::{error, info};
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::proto_json::ProtoApiResponse;
+use crate::proto::proximadb_v1;
 use crate::utils::uuid::Uuid;
 use crate::proto::proximadb_v1::{
     CollectionRequest, CollectionResponse, CollectionOperation,
@@ -300,8 +301,8 @@ pub async fn vector_search_with_metadata(
 pub struct SqlQueryRequest {
     /// SQL query string
     pub query: String,
-    /// Optional parameters for parameterized queries
-    pub parameters: Option<Vec<serde_json::Value>>,
+    /// Optional parameters for parameterized queries (proto-aligned)
+    pub parameters: Option<Vec<proximadb_v1::SqlValue>>,
     /// Optional collection to use as default context
     pub collection: Option<String>,
     /// Optional timeout in milliseconds
@@ -309,19 +310,7 @@ pub struct SqlQueryRequest {
 }
 
 /// SQL query response structure
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SqlQueryResponse {
-    /// Result rows as JSON objects
-    pub rows: Vec<serde_json::Value>,
-    /// Column metadata (name, type)
-    pub columns: Vec<SqlColumnInfo>,
-    /// Number of rows returned
-    pub row_count: usize,
-    /// Execution time in milliseconds
-    pub execution_time_ms: u64,
-    /// Request ID for tracing
-    pub request_id: String,
-}
+// For REST, we now return proximadb.v1 ExecuteSqlResponse directly, wrapped by ProtoApiResponse
 
 /// Column information in SQL results
 #[derive(Debug, Serialize, Deserialize)]
@@ -345,7 +334,7 @@ pub struct SqlColumnInfo {
 pub async fn execute_sql(
     State(state): State<AppState>,
     Json(request): Json<SqlQueryRequest>,
-) -> ApiResult<JsonResponse<ProtoApiResponse<SqlQueryResponse>>> {
+) -> ApiResult<JsonResponse<ProtoApiResponse<proximadb_v1::ExecuteSqlResponse>>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
     
@@ -360,41 +349,27 @@ pub async fn execute_sql(
         return Err(ApiError::InvalidArgument("SQL query cannot be empty".to_string()));
     }
 
-    // Execute SQL query through unified handlers
+    // Execute through v1 path (typed params and rows)
     match state
         .unified_handlers
-        .execute_sql_query(
-            request.query,
-            request.parameters,
-            request.collection,
-        )
+        .execute_sql_v1(request.query, request.parameters.clone(), request.collection)
         .await
     {
-        Ok(sql_result) => {
+        Ok(mut v1_resp) => {
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
-            
-            // Convert SqlQueryResult to our response format
-            let columns = sql_result
-                .columns
-                .into_iter()
-                .map(|(name, data_type)| SqlColumnInfo { name, data_type })
-                .collect();
+            v1_resp.execution_time_ms = execution_time_ms as u64;
 
-            let response = SqlQueryResponse {
-                rows: sql_result.rows,
-                columns,
-                row_count: sql_result.row_count,
-                execution_time_ms,
+            let meta = crate::network::rest::proto_json::ResponseMetadata {
                 request_id: request_id.clone(),
+                processing_time_ms: execution_time_ms,
+                server_version: None,
             };
+            let api_response = ProtoApiResponse::success(v1_resp)
+                .with_metadata(meta);
 
-            let api_response = ProtoApiResponse::success(response)
-                .with_execution_time(execution_time_ms)
-                .with_request_id(&request_id);
-            
             info!(
-                "SQL query {} completed in {}ms, returned {} rows",
-                request_id, execution_time_ms, sql_result.row_count
+                "SQL query {} completed in {}ms",
+                request_id, execution_time_ms
             );
 
             Ok(JsonResponse(api_response))
@@ -416,6 +391,29 @@ pub struct ExplainQueryRequest {
     pub analyze: Option<bool>,
     /// Optional collection context
     pub collection: Option<String>,
+}
+
+/// Helper: convert proto SqlValue to serde_json::Value (temporary until full internal refactor)
+fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
+    use proximadb_v1::sql_value::Value as V;
+    match v.value.as_ref() {
+        Some(V::StringValue(s)) => serde_json::Value::String(s.clone()),
+        Some(V::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0))),
+        Some(V::BoolValue(b)) => serde_json::Value::Bool(*b),
+        Some(V::Int64Value(i)) => serde_json::Value::Number((*i).into()),
+        Some(V::BytesValue(b)) => {
+            // Represent bytes as JSON array of integers
+            serde_json::Value::Array(b.iter().map(|x| serde_json::Value::Number((*x as u64).into())).collect())
+        }
+        Some(V::NullValue(_)) => serde_json::Value::Null,
+        Some(V::ArrayValue(arr)) => serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect()),
+        Some(V::ObjectValue(obj)) => {
+            let mut map = serde_json::Map::new();
+            for (k, sv) in &obj.fields { map.insert(k.clone(), sql_value_to_json(sv)); }
+            serde_json::Value::Object(map)
+        }
+        None => serde_json::Value::Null,
+    }
 }
 
 /// EXPLAIN query response
@@ -459,8 +457,13 @@ pub async fn explain_sql(
         request_id: request_id.clone(),
     };
 
+    let meta = crate::network::rest::proto_json::ResponseMetadata {
+        request_id: request_id.clone(),
+        processing_time_ms: 0,
+        server_version: None,
+    };
     let api_response = ProtoApiResponse::success(response)
-        .with_request_id(&request_id);
+        .with_metadata(meta);
     
     info!("EXPLAIN query {} completed", request_id);
     Ok(JsonResponse(api_response))

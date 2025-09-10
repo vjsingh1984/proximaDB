@@ -205,7 +205,7 @@ impl OptimizedVectorWriter {
                                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                                 None => serde_json::Value::Null,
                             };
-                            (item.0.clone(), value)
+                            (key.clone(), value)
                         })
                         .collect();
                     let json_metadata = serde_json::Value::Object(json_map);

@@ -1855,7 +1855,7 @@ impl RowGroupCache {
             }
         }
 
-        self.cache.insert(item.0.clone(), batch);
+        self.cache.insert(key.clone(), batch);
         *self.access_counts.entry(key).or_insert(0) += 1;
     }
 

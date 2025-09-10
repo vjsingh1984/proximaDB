@@ -263,7 +263,7 @@ pub fn convert_metadata_from_proto(
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     for item in items {
-        if let Some(value) = value {
+        if let Some(value) = item.value {
             let json_value = match value {
                 crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                     serde_json::Value::String(s)
@@ -279,7 +279,7 @@ pub fn convert_metadata_from_proto(
                 // Note: ListValue and MapValue were removed from proto
                 // Arrays and objects can be stored as JSON strings if needed
             };
-            map.insert(key, json_value);
+            map.insert(item.key, json_value);
         }
     }
     map
@@ -471,7 +471,7 @@ pub fn metadata_items_to_sql_values(
 ) -> std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> {
     let mut out = std::collections::HashMap::new();
     for item in meta {
-        let val = match value {
+        let val = match item.value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                 crate::proto::proximadb_v1::SqlValue {
                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
@@ -489,7 +489,7 @@ pub fn metadata_items_to_sql_values(
             }
             None => crate::proto::proximadb_v1::SqlValue { value: None },
         };
-        out.insert(key, val);
+        out.insert(item.key, val);
     }
     out
 }

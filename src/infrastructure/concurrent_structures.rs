@@ -175,7 +175,7 @@ where
 
         let now = Instant::now();
         let item = StoredItem {
-            value: item.clone(),
+            value: value,
             timestamp: now,
             last_accessed: now,
             access_count: AtomicUsize::new(1),
@@ -228,7 +228,7 @@ where
             self.metrics.decrement_entries();
             self.metrics.add_memory_bytes(-(item.size_bytes as i64));
             self.metrics.record_success(start.elapsed());
-            Some(value)
+            Some(item.value)
         } else {
             self.metrics.record_success(start.elapsed());
             None

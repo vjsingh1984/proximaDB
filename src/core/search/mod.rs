@@ -823,9 +823,9 @@ pub mod protocol_conversions {
         let conditions: Vec<FilterExpression> = filters
             .iter()
             .map(|(key, value)| FilterExpression::Comparison {
-                field: item.0.clone(),
+                field: key.clone(),
                 operator: ComparisonOperator::Equals,
-                value: item.1.clone(),
+                value: serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
             })
             .collect();
 
@@ -997,7 +997,7 @@ pub mod filter_extraction {
             } => {
                 // Only extract equality conditions for metadata filtering
                 if matches!(operator, ComparisonOperator::Equals) {
-                    conditions.insert(field.clone(), item.1.clone());
+                    conditions.insert(field.clone(), value.clone());
                 }
             }
             FilterExpression::And(exprs) => {

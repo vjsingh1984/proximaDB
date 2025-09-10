@@ -211,7 +211,7 @@ where
 
         for key in keys {
             let value = self.data.get(key);
-            results.push((item.0.clone(), value));
+            results.push((key.clone(), value));
         }
 
         Ok(results)

@@ -96,7 +96,7 @@ impl MetadataFilterPushdown {
 
             for (key, value) in metadata {
                 column_data
-                    .entry(item.0.clone())
+                    .entry(key.clone())
                     .or_insert_with(Vec::new)
                     .push(Some(value));
             }
@@ -373,7 +373,7 @@ impl MetadataFilterPushdown {
                     }
                     metadata_item::Value::BoolValue(b) => Value::Bool(*b),
                 };
-                metadata.insert(entry.item.0.clone(), json_value);
+                metadata.insert(entry.key.clone(), json_value);
             }
         }
 
@@ -400,19 +400,19 @@ impl MetadataFilterPushdown {
         for value_opt in values {
             match value_opt {
                 Some(value) => {
-                    distinct_values.insert(item.1.clone());
-                    *value_histogram.entry(item.1.clone()).or_insert(0) += 1;
+                    distinct_values.insert(value.clone());
+                    *value_histogram.entry(value.clone()).or_insert(0) += 1;
 
                     // Update min/max for comparable values
                     if min_value.is_none()
                         || self.compare_values(value, min_value.as_ref().unwrap()) < 0
                     {
-                        min_value = Some(item.1.clone());
+                        min_value = Some(value.clone());
                     }
                     if max_value.is_none()
                         || self.compare_values(value, max_value.as_ref().unwrap()) > 0
                     {
-                        max_value = Some(item.1.clone());
+                        max_value = Some(value.clone());
                     }
                 }
                 None => null_count += 1,
@@ -464,7 +464,7 @@ impl MetadataFilterPushdown {
                 if let Some(record) = records.get(i) {
                     if !record.id.is_empty() {
                         inverted_index
-                            .entry(item.1.clone())
+                            .entry(value.clone())
                             .or_insert_with(HashSet::new)
                             .insert(record.id.clone());
                     }
@@ -594,7 +594,7 @@ impl MetadataBloomBuilder {
             };
             let builder = self
                 .builders
-                .entry(entry.item.0.clone())
+                .entry(entry.key.clone())
                 .or_insert_with(|| BloomFilterBuilder::new(config));
 
             // Serialize the metadata value for the bloom filter

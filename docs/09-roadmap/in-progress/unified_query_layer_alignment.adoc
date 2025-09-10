@@ -1,4 +1,5 @@
  = Unified Query Layer Alignment — Graph + Vector
+// NOTE: Superseded by `query_sql_alignment_consolidated.adoc` in this directory.
  :toc:
  :icons: font
 :source-highlighter: rouge
@@ -26,7 +27,7 @@ Provide a coherent, shared architecture for graph and vector queries that standa
 | Component | Status | Evidence & Critical Findings | Completion %
 
 | **SQL Frontend** | ✅ | `src/query/sql_frontend/parser.rs` - 346 lines, full sqlparser-rs, production-ready | 95%
-| **REST API** | 🟡 | `/api/v1/sql/execute` active; EXPLAIN wired to `QueryEngine::explain_sql()` with real VOS hints; Graph REST under `/api/v1/graph/*` | 85%
+| **REST API** | 🟡 | `/api/v1/sql/execute` active; returns `ExecuteSqlResponse` (rows as `SqlRow/SqlValue`); EXPLAIN wired to `QueryEngine::explain_sql()` with real VOS hints; Graph REST under `/api/v1/graph/*` | 85%
 | **Query Orchestration** | ✅ | **RESOLVED**: Deprecate SQL Frontend, standardize on production-tested SQL Engine | 85%
 | **Vector Integration** | ✅ | VectorOperationsService fully operational, comprehensive capabilities | 95%
 | **Graph Integration** | ✅ | ORION query planner (1,085 lines), real cost-based optimization | 90%
@@ -50,15 +51,15 @@ Provide a coherent, shared architecture for graph and vector queries that standa
 
 ==== 🟡 **REST API - Functional with Limitations** - `src/network/rest/v1/handlers.rs` (80% Complete)
 **Active Endpoints:**
-- ✅ `/api/v1/sql/execute` - **Production ready** with comprehensive error handling
-- ⚠️ `/api/v1/sql/explain` - **Mock implementation** using `create_example_explain_plan()`
+- ✅ `/api/v1/sql/execute` - Production ready with comprehensive error handling
+- ✅ `/api/v1/sql/explain` - Uses `QueryEngine::explain_sql()` for real plans and hints
 
 **Integration Status:**
 - ✅ **Backend Integration**: Full pipeline to UnifiedHandlers → SqlEngine
 - ✅ **Error Handling**: 10 error types with proper HTTP status mapping
 - ✅ **Client Support**: Python client integration verified
 - ❌ **Streaming**: No streaming support for large result sets
-- ⚠️ **EXPLAIN**: Uses synthetic plans, not real query analysis
+- 🟡 **EXPLAIN**: Real planner integration; Analyze metrics not yet collected
 
 ==== ✅ **Query Orchestration - ARCHITECTURAL DECISION RESOLVED** - Dual SQL Systems (85% Complete)
 
@@ -133,7 +134,7 @@ pub struct VectorQueryComponent {
 }
 ```
 
-==== 🟡 **EXPLAIN/ANALYZE - Mixed Implementation** - `src/query/explain.rs` (75% Complete)
+==== 🟡 **EXPLAIN/ANALYZE - Mixed Implementation** - `src/query/explain.rs` (80% Complete)
 **Complete Infrastructure (321 lines):**
 - ✅ **ExplainPlan**: Comprehensive structure with all hint types
 - ✅ **GraphHints**: Real integration with graph query planner
@@ -144,16 +145,15 @@ pub struct VectorQueryComponent {
 - ✅ **GraphHints**: Production-ready with real query plan integration
 - 🟡 **VectorHints**: Real cache/progressive data, mock estimates (ef_search, candidates)
 - 🔴 **AnalyzeMetrics**: Complete structures, no actual metrics collection
-- 🔴 **SQL Integration**: REST endpoint uses mock data, not real analysis
+- 🟡 **SQL Integration**: REST endpoint uses real planner; Analyze metrics not yet collected
 
 **Evidence of Real vs Mock:**
 ```rust
 // REAL: Graph query planning
 hints.estimated_nodes_visited = Some(plan.estimated_result_size);
 
-// MOCK: SQL endpoint  
-let plan = create_example_explain_plan(&request.query, analyze);
-// TODO: Integrate with actual query planning
+// REST EXPLAIN endpoint routes to real planner
+let plan = qe.explain_sql(&request.query).await?;
 ```
 
 ==== 🔲 **Testing Infrastructure - Major Gap** (40% Complete)
@@ -179,11 +179,11 @@ Based on detailed analysis of 34 SQL-related files and comprehensive implementat
 - **Graph Path**: QueryContext uses limits in ORION/PULSAR/QUASAR engines
 - **Metrics**: Unified metrics integration in both paths via `src/query/utils/metrics.rs`
 
-**2) SQL → VOS lowering and EXPLAIN hints**: 🟡 **ARCHITECTURAL CONFUSION** (70% Complete)
+**2) SQL → VOS lowering and EXPLAIN hints**: 🟡 **ARCHITECTURAL NOTES** (70% Complete)
 - **PROBLEM**: **Dual SQL architectures** - `sql_frontend/` (sqlparser-rs) vs `sql_engine/` (vector-optimized)
 - **SQL Frontend**: ✅ Production-ready `SqlFrontendParser` (346 lines, full sqlparser-rs integration)
 - **SQL Engine**: ✅ Operational vector SQL engine (319 lines, VOS integrated)
-- **REST API**: ✅ `/api/v1/sql/execute` active, `/api/v1/sql/explain` uses mock data
+- **REST API**: ✅ `/api/v1/sql/execute` and `/api/v1/sql/explain` active; `/sql/execute` returns `ExecuteSqlResponse (SqlRow/SqlValue)`; EXPLAIN uses real planner
 - **Issue**: API uses SqlEngine, not SqlFrontend - architectural decision needed
 
 **3) Hybrid orchestration and VOS → graph seeding**: ❌ **CRITICAL IMPLEMENTATION ISSUES** (60% Complete)
@@ -221,14 +221,14 @@ Based on detailed analysis of 34 SQL-related files and comprehensive implementat
 - **Features**: Request validation, error handling, execution metrics, request tracing
 - **Missing**: Streaming support for large result sets
 
-==== ✅ **EXPLAIN/ANALYZE** - `src/query/explain.rs` (90% Complete)
+==== 🟡 **EXPLAIN/ANALYZE** - `src/query/explain.rs` (80% Complete)
 - **ExplainPlan**: ✅ Comprehensive structure with vector, graph, join hints, ANALYZE metrics
 - **VectorHints**: ✅ Extended with index_type, quantization_level, cost estimates
 - **GraphHints**: ✅ Complete traversal planning, index usage, statistics integration
 - **JoinCostEstimate**: ✅ Hybrid query join cost estimation and cardinality tracking
-- **AnalyzeMetrics**: ✅ Actual execution metrics, cache statistics, resource usage
-- **REST Endpoint**: ✅ `/api/v1/sql/explain` with comprehensive plan generation
-- **Missing**: Integration with actual query planner (currently uses example plans)
+- **AnalyzeMetrics**: 🟡 Structures present; actual metrics collection pending
+- **REST Endpoint**: ✅ `/api/v1/sql/explain` returns real plans and hints
+- **Missing**: Analyze metrics collection and validation tests
 
 == Layered Architecture
 
@@ -408,7 +408,7 @@ EXPLAIN/ANALYZE semantics:
 
 == API Surfaces
 
-- REST: `/api/v1/sql/execute` (SQL), `/api/v1/graph/*` (graph). Streaming supported for large results.
+- REST: `/api/v1/sql/execute` (SQL), `/api/v1/graph/*` (graph). No streaming yet for large SQL results.
 - gRPC: `proximadb.v1.SqlService`, `proximadb.v1.VectorService`, `proximadb.v1.GraphService`.
   - Messages: SQL under `proximadb.v1.types`, Vector under `proximadb.v1.vector_types`
 - gRPC: `ExecuteSql` RPC; graph service RPCs.
@@ -606,10 +606,10 @@ async fn execute_semantic_bfs_traversal(
 - **Evidence**: Code references `vector_comp.collections` but struct has `collection: Option<String>`
 - **Impact**: Sophisticated semantic algorithms unusable in production
 
-**3. Mock vs Real Implementation Gaps**
-- **EXPLAIN Endpoint**: Uses synthetic plans, not real query analysis
-- **AnalyzeMetrics**: Complete structures, no actual execution metrics collection
-- **Integration**: Missing end-to-end pipeline connections
+**3. Remaining Gaps**
+- **EXPLAIN Endpoint**: Uses real planner and hints via `QueryEngine::explain_sql()`
+- **AnalyzeMetrics**: Structures present; actual execution metrics collection pending
+- **Integration**: Missing end-to-end hybrid pipeline connections
 
 === **Implementation Evidence Summary**
 

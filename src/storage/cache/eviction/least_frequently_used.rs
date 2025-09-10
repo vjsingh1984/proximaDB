@@ -46,9 +46,9 @@ impl<K: Hash + Eq + Clone> LFUStrategy<K> {
         freq_lists
             .entry(new_freq)
             .or_insert_with(HashSet::new)
-            .insert(item.clone());
+            .insert(key.clone());
 
-        freq_map.insert(item.clone(), new_freq);
+        freq_map.insert(key.clone(), new_freq);
 
         // Update minimum frequency (min_freq is now usize not K)
         if new_freq < *min_freq || *min_freq == 0 {

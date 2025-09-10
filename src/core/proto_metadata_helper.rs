@@ -19,7 +19,7 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, serd
                 Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                 None => serde_json::Value::Null,
             };
-            (item.0.clone(), value)
+            (key.clone(), value)
         })
         .collect()
 }
@@ -63,7 +63,7 @@ pub fn proto_metadata_to_hashmap(metadata: &[MetadataItem]) -> HashMap<String, S
                 Some(metadata_item::Value::BoolValue(b)) => b.to_string(),
                 None => String::new(),
             };
-            (item.0.clone(), value_str)
+            (key.clone(), value_str)
         })
         .collect()
 }

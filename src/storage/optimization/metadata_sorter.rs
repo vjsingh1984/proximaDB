@@ -185,7 +185,7 @@ impl MetadataSorter {
             let cardinality = distinct_values.len();
             stats
                 .distinct_values_per_key
-                .insert(sort_item.0.clone(), cardinality);
+                .insert(sort_key.clone(), cardinality);
 
             debug!(
                 "📈 Metadata key '{}': {} distinct values (cardinality: {:.2}%)",

@@ -546,7 +546,7 @@ impl Compaction {
                 let compaction_key = task.output_file.to_string_lossy().to_string();
                 {
                     let mut active = active_compactions.write().await;
-                    active.insert(compaction_item.0.clone(), task.clone());
+                    active.insert(compaction_key.clone(), task.clone());
                 }
 
                 let start_time = std::time::Instant::now();

@@ -479,7 +479,7 @@ impl ColdStorageBackend {
     fn node_to_storable(&self, node: &Node) -> Result<StorableNode> {
         let mut properties = HashMap::new();
         for (key, value) in &node.properties {
-            properties.insert(item.0.clone(), self.property_value_to_storable(value)?);
+            properties.insert(key.clone(), self.property_value_to_storable(value)?);
         }
         
         Ok(StorableNode {
@@ -498,7 +498,7 @@ impl ColdStorageBackend {
     fn edge_to_storable(&self, edge: &Edge) -> Result<StorableEdge> {
         let mut properties = HashMap::new();
         for (key, value) in &edge.properties {
-            properties.insert(item.0.clone(), self.property_value_to_storable(value)?);
+            properties.insert(key.clone(), self.property_value_to_storable(value)?);
         }
         
         Ok(StorableEdge {

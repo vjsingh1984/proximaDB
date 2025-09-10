@@ -105,7 +105,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 )) => b.to_string(),
                                 None => String::new(),
                             };
-                            (item.0.clone(), value_str)
+                            (key.clone(), value_str)
                         })
                         .collect();
 
@@ -423,7 +423,7 @@ mod tests {
         let keys: std::collections::HashSet<String> = deserialized[0]
             .metadata
             .iter()
-            .map(|(key, value)| item.0.clone())
+            .map(|(key, value)| key.clone())
             .collect();
         assert!(keys.contains_hash("key1"));
         assert!(keys.contains_hash("key2"));

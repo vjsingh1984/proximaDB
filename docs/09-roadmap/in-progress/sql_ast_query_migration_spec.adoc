@@ -1,4 +1,5 @@
 = SQL-AST Query Migration Design – ProximaDB
+// NOTE: Superseded by `query_sql_alignment_consolidated.adoc` in this directory.
 :toc:
 :icons: font
 :source-highlighter: rouge
@@ -21,12 +22,25 @@ Limitations:
  - Missing standard SQL grammar coverage; no formal parameter binding; ad hoc SKS parsing.
  - REST endpoints not aligned to SQL-first flow; gRPC lacks an ExecuteSql RPC.
 
-== Implementation Status (Reviewed: 2025-09-09)
+== Implementation Status (Reviewed: 2025-09-10)
 
 - SQL Frontend: Present under `src/query/sql_frontend/` (parser complete; lowering WIP).
-- REST: `/api/v1/sql/execute` implemented; `/api/v1/sql/explain` now calls `QueryEngine::explain_sql()` and surfaces VOS plan hints; gRPC `proximadb.v1.SqlService/ExecuteSql` implemented.
-- Vector orchestration: Delegation to VOS is functional; hybrid orchestration path exists but not wired to public APIs.
-- Next steps: Choose single SQL path (frontend vs engine), wire EXPLAIN to real plan/hints, add gRPC ExecuteSql, and integrate hybrid execution end-to-end.
+- REST: `/api/v1/sql/execute` and `/api/v1/sql/explain` live; EXPLAIN uses `QueryEngine::explain_sql()` with real vector/graph hints. gRPC `proximadb.v1.SqlService/ExecuteSql` implemented. REST SQL now returns proto‑aligned `ExecuteSqlResponse` (rows as `SqlRow/SqlValue`).
+- Vector orchestration: Delegation to VOS is functional; hybrid orchestration path exists but is not yet exposed in public SQL APIs.
+- Next steps: Choose single SQL path (frontend vs engine) and integrate hybrid execution end-to-end; keep improving EXPLAIN hints (Analyze metrics not yet collected).
+
+=== Row Shaping Types (Canonical)
+
+- Use `proximadb.v1.SqlValue` for parameters and row fields across gRPC and REST.
+- `SqlValue` supports: string, number (f64), bool, int64, bytes, null, array (`SqlArray`), object (`SqlObject`).
+- UnifiedHandlers now accepts `SqlValue` params and returns `ExecuteSqlResponse` with rows as `SqlRow/SqlValue`.
+- Internal SQL engine produces typed rows (SqlRow/SqlValue) alongside legacy JSON (temporary `rows_v1` → complete; `rows` → deprecated).
+
+=== Parameter Binding (Current)
+
+- UnifiedHandlers applies `SqlValue` parameters to SQL via literal substitution (supports string, number, bool, int64, null, bytes, array, object).
+- Next step: add native parameter binding to parser/planner to avoid string substitution.
+- REST DTOs mirror the proto; avoid `serde_json::Value` in request/response types.
 
 == Proposal Overview
 

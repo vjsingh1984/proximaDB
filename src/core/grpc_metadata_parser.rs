@@ -152,7 +152,7 @@ fn parse_json_field_query(
                 queries.push(MetadataQuery::Field(FieldQuery {
                     field: field_name.to_string(),
                     operator,
-                    value: item.1.clone(),
+                    value: value.clone(),
                 }));
             }
 
@@ -168,7 +168,7 @@ fn parse_json_field_query(
             // Simple equality: {"category": "electronics"}
             Ok(Some(MetadataQuery::field_eq(
                 field_name,
-                field_item.1.clone(),
+                field_value.clone(),
             )))
         }
     }
@@ -272,7 +272,7 @@ fn parse_simple_filters(
         // Try to parse value as JSON, fall back to string
         let json_value = match serde_json::from_str::<JsonValue>(value) {
             Ok(json_val) => json_val,
-            Err(_) => JsonValue::String(item.1.clone()),
+            Err(_) => JsonValue::String(value.clone()),
         };
 
         queries.push(MetadataQuery::field_eq(key, json_value));
@@ -302,7 +302,7 @@ fn parse_simple_filters_excluding_operators(
         // Try to parse value as JSON, fall back to string
         let json_value = match serde_json::from_str::<JsonValue>(value) {
             Ok(json_val) => json_val,
-            Err(_) => JsonValue::String(item.1.clone()),
+            Err(_) => JsonValue::String(value.clone()),
         };
 
         queries.push(MetadataQuery::field_eq(key, json_value));

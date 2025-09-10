@@ -60,7 +60,7 @@ pub fn service_to_proto(
                 )),
             };
             crate::proto::proximadb_v1::MetadataItem {
-                key: item.0.clone(),
+                key: key.clone(),
                 value: metadata_value,
             }
         })

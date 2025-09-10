@@ -1018,7 +1018,7 @@ impl SwiftEngine {
                             }
                             None => serde_json::Value::Null,
                         };
-                        (item.0.clone(), value)
+                        (key.clone(), value)
                     })
                     .collect();
 

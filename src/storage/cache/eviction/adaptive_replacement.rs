@@ -67,8 +67,8 @@ impl<K: Hash + Eq + Clone> ARCStrategy<K> {
         }
 
         // Add to T2 front (MRU position)
-        t2.push_front(item.clone());
-        locations.insert(item.clone(), CacheLocation::T2);
+        t2.push_front(key.clone());
+        locations.insert(key.clone(), CacheLocation::T2);
     }
 }
 
@@ -106,7 +106,7 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                 let mut t2 = self.t2.write().unwrap();
                 if let Some(pos) = t2.iter().position(|k| k == key) {
                     t2.remove(pos);
-                    t2.push_front(item.clone());
+                    t2.push_front(key.clone());
                 }
             }
             Some(CacheLocation::B1) => {
@@ -143,8 +143,8 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
         let mut locations = self.location_map.write().unwrap();
 
         // New entries go to T1 (recent)
-        t1.push_front(item.clone());
-        locations.insert(item.clone(), CacheLocation::T1);
+        t1.push_front(key.clone());
+        locations.insert(key.clone(), CacheLocation::T1);
     }
 
     fn update_on_evict(&mut self, key: &Self::Key) {
@@ -159,8 +159,8 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                 if let Some(pos) = t1.iter().position(|k| k == key) {
                     t1.remove(pos);
                     // Add to ghost list B1
-                    b1.push_front(item.clone());
-                    locations.insert(item.clone(), CacheLocation::B1);
+                    b1.push_front(key.clone());
+                    locations.insert(key.clone(), CacheLocation::B1);
                 }
             }
             Some(CacheLocation::T2) => {
@@ -170,8 +170,8 @@ impl<K: Hash + Eq + Clone + Send + Sync> EvictionStrategy for ARCStrategy<K> {
                 if let Some(pos) = t2.iter().position(|k| k == key) {
                     t2.remove(pos);
                     // Add to ghost list B2
-                    b2.push_front(item.clone());
-                    locations.insert(item.clone(), CacheLocation::B2);
+                    b2.push_front(key.clone());
+                    locations.insert(key.clone(), CacheLocation::B2);
                 }
             }
             _ => {}

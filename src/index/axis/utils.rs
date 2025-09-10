@@ -346,7 +346,7 @@ pub mod metadata {
                     };
 
                     proto_value.map(|value| MetadataItem {
-                        key: item.0.clone(),
+                        key: key.clone(),
                         value: Some(value),
                     })
                 })

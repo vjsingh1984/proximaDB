@@ -166,7 +166,7 @@ impl PredictivePrefetcher {
     /// Record an access and update patterns
     pub async fn record_access(&self, key: &BlockCacheKey, hit: bool) -> Result<()> {
         let record = AccessRecord {
-            key: item.0.clone(),
+            key: key.clone(),
             timestamp: Instant::now(),
             access_type: self.detect_access_type(key).await,
             hit,
@@ -342,7 +342,7 @@ impl PredictivePrefetcher {
 
             if !queue.is_active(&entry.key) && !self.prefetch_cache.contains_key(&entry.key) {
                 // Start async prefetch task
-                let key = entry.item.0.clone();
+                let key = entry.key.clone();
                 let prefetcher = self.clone();
 
                 let handle = tokio::spawn(async move { prefetcher.prefetch_block(&key).await });
@@ -371,7 +371,7 @@ impl PredictivePrefetcher {
 
         // Real implementation would be:
         // let block = self.sstable_reader.read_block(&key.file_path, key.block_index).await?;
-        // self.prefetch_cache.insert(item.0.clone(), block);
+        // self.prefetch_cache.insert(key.clone(), block);
         //
         // let latency = start.elapsed().as_micros() as u64;
         // self.metrics.prefetch_latency_us.fetch_add(latency, Ordering::Relaxed);
@@ -636,7 +636,7 @@ mod tests {
 
             // Just update patterns without triggering actual prefetch
             let record = AccessRecord {
-                key: item.0.clone(),
+                key: key.clone(),
                 timestamp: Instant::now(),
                 access_type: AccessType::Sequential,
                 hit: true,
@@ -681,7 +681,7 @@ mod tests {
                 };
 
                 let record = AccessRecord {
-                    key: item.0.clone(),
+                    key: key.clone(),
                     timestamp: Instant::now(),
                     access_type: AccessType::Random,
                     hit: true,
@@ -721,7 +721,7 @@ mod tests {
             };
 
             let record = AccessRecord {
-                key: item.0.clone(),
+                key: key.clone(),
                 timestamp: Instant::now(),
                 access_type: AccessType::Sequential,
                 hit: true,

@@ -380,7 +380,7 @@ where
             let mut _total_size = 0u64;
 
             for (key, value) in &entries {
-                match memtable.insert(item.0.clone(), item.1.clone()).await {
+                match memtable.insert(key.clone(), value.clone()).await {
                     Ok(size_delta) => _total_size += size_delta,
                     Err(_) => continue,
                 }
@@ -451,7 +451,7 @@ where
             let mut _total_results = 0;
 
             for (from_key, limit) in &ranges {
-                match memtable.range_scan(from_item.0.clone(), *limit).await {
+                match memtable.range_scan(from_key.clone(), *limit).await {
                     Ok(scan_results) => {
                         success_count += 1;
                         _total_results += scan_results.len();

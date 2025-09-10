@@ -407,7 +407,7 @@ impl IndexManager {
         }
         
         self.node_property_indexes.insert(
-            property_item.0.clone(),
+            property_key.clone(),
             PropertyIndex::new(property_key)
         );
         
@@ -423,7 +423,7 @@ impl IndexManager {
         }
         
         self.edge_property_indexes.insert(
-            property_item.0.clone(),
+            property_key.clone(),
             PropertyIndex::new(property_key)
         );
         

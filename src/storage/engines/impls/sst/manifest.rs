@@ -326,7 +326,7 @@ impl SstManifest {
             if current_group.is_none() || file.min_key <= current_max_key {
                 // File overlaps with current group
                 if file.max_key > current_max_key {
-                    current_max_key = file.max_item.0.clone();
+                    current_max_key = file.max_key.clone();
                 }
                 current_group.push(file);
                 
@@ -341,7 +341,7 @@ impl SstManifest {
                     groups.push(current_group);
                 }
                 current_group = vec![file.clone()];
-                current_max_key = file.max_item.0.clone();
+                current_max_key = file.max_key.clone();
             }
         }
         

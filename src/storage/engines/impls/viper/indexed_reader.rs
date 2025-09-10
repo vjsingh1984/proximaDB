@@ -84,18 +84,18 @@ impl VIPERParquetMetadataSource {
                         // data_type removed -  Self::infer_data_type(&value),
                         has_index: true, // VIPER has column-level indexes via parquet
                         cardinality: None,
-                        min_value: Some(item.1.clone()),
-                        max_value: Some(item.1.clone()),
+                        min_value: Some(value.clone()),
+                        max_value: Some(value.clone()),
                         null_count: Some(0),
                     });
                 
                 // Update min/max values
                 if let (Some(min), Some(max)) = (&entry.min_value, &entry.max_value) {
                     if Self::compare_json_values(&value, min) == std::cmp::Ordering::Less {
-                        entry.min_value = Some(item.1.clone());
+                        entry.min_value = Some(value.clone());
                     }
                     if Self::compare_json_values(&value, max) == std::cmp::Ordering::Greater {
-                        entry.max_value = Some(item.1.clone());
+                        entry.max_value = Some(value.clone());
                     }
                 }
                 

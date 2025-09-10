@@ -5,11 +5,11 @@
 :source-highlighter: rouge
 :status: in-progress
 
-== Implementation Status (Reviewed: 2025-09-09)
+== Implementation Status (Reviewed: 2025-09-10)
 
-- Implemented: Hybrid proto (`HybridSearchRequest/Response`) and REST/gRPC scaffolding; hybrid engine with semantic traversal strategies present in `src/graph/hybrid/`.
+- Implemented: EntityService gRPC (`proto/proximadb/v1/entity.proto`, `src/network/grpc/entity_service.rs`) and REST (`src/network/rest/v1/entities.rs`); Hybrid proto (`HybridSearchRequest/Response`) and scaffolding; hybrid engine with semantic traversal strategies present in `src/graph/hybrid/`.
 - In Progress: Public API wiring to HybridQueryEngine and integration tests; fix struct field mismatches; add EXPLAIN and metrics surfaces for hybrid flows.
-- Next: Deliver end-to-end hybrid examples, stabilize SQL extensions (SIMILAR/FOLLOW/ASSEMBLE), and benchmark unified SKS paths.
+- Next: Deliver end-to-end hybrid examples, stabilize SQL extensions (SIMILAR/FOLLOW/ASSEMBLE), wire HybridQueryEngine to public APIs, and benchmark unified SKS paths.
 
 == Executive Summary: Creating the SKS Market Category
 

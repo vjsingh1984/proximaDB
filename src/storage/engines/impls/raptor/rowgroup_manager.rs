@@ -247,7 +247,7 @@ impl RowGroups {
                     .iter()
                     .map(|(key, value)| {
                         (
-                            item.0.clone(),
+                            key.clone(),
                             match &value {
                                 Some(
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),

@@ -59,7 +59,7 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, Json
                 // Note: Arrays and objects are serialized as JSON strings for now
                 // since the proto doesn't have native array/object types yet
             };
-            map.insert(item.0.clone(), json_value);
+            map.insert(key.clone(), json_value);
         }
     }
     
@@ -161,12 +161,12 @@ pub fn merge_metadata(base: &[MetadataItem], updates: &[MetadataItem]) -> Vec<Me
     
     // Add base metadata
     for item in base {
-        merged.insert(item.0.clone(), item.clone());
+        merged.insert(key.clone(), item.clone());
     }
     
     // Apply updates (overwrites existing keys)
     for item in updates {
-        merged.insert(item.0.clone(), item.clone());
+        merged.insert(key.clone(), item.clone());
     }
     
     merged.into_values().collect()

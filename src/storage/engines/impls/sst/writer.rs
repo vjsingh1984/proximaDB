@@ -381,9 +381,9 @@ impl SstableWriter {
             // Update bloom filters
             key_bloom_filter.insert(key.as_bytes());
 
-            for metadata_item in &vector_record.metadata {
+            for (key, value) in &vector_record.metadata {
                 metadata_builder
-                    .add_metadata_item(metadata_item.item.clone(), metadata_item.clone());
+                    .add_metadata_item(key.clone(), value.clone());
                 metadata_value_count += 1;
             }
 
@@ -651,16 +651,16 @@ impl SstableWriter {
                     // Track min/max values
                     let entry_min = metadata_min_values
                         .entry(column.clone())
-                        .or_insert_with(|| item.1.clone());
+                        .or_insert_with(|| value.clone());
                     if Self::compare_json_values(&value, entry_min) == std::cmp::Ordering::Less {
-                        *entry_min = item.1.clone();
+                        *entry_min = value.clone();
                     }
 
                     let entry_max = metadata_max_values
                         .entry(column.clone())
-                        .or_insert_with(|| item.1.clone());
+                        .or_insert_with(|| value.clone());
                     if Self::compare_json_values(&value, entry_max) == std::cmp::Ordering::Greater {
-                        *entry_max = item.1.clone();
+                        *entry_max = value.clone();
                     }
                 }
             }
@@ -868,16 +868,16 @@ impl SstableWriter {
                     // Track min/max values
                     let entry_min = metadata_min_values
                         .entry(column.clone())
-                        .or_insert_with(|| item.1.clone());
+                        .or_insert_with(|| value.clone());
                     if Self::compare_json_values(&value, entry_min) == std::cmp::Ordering::Less {
-                        *entry_min = item.1.clone();
+                        *entry_min = value.clone();
                     }
 
                     let entry_max = metadata_max_values
                         .entry(column.clone())
-                        .or_insert_with(|| item.1.clone());
+                        .or_insert_with(|| value.clone());
                     if Self::compare_json_values(&value, entry_max) == std::cmp::Ordering::Greater {
-                        *entry_max = item.1.clone();
+                        *entry_max = value.clone();
                     }
                 }
             }

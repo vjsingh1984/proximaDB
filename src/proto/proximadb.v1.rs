@@ -2078,12 +2078,28 @@ pub mod context_service_server {
         const NAME: &'static str = "proximadb.v1.ContextService";
     }
 }
+/// Array wrapper for nested values (oneof cannot be repeated directly)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SqlArray {
+    #[prost(message, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<SqlValue>,
+}
+/// Object wrapper for nested key/value metadata
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SqlObject {
+    #[prost(map = "string, message", tag = "1")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
+}
 /// Simple typed value for SQL parameters and row fields
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SqlValue {
-    #[prost(oneof = "sql_value::Value", tags = "1, 2, 3")]
+    #[prost(oneof = "sql_value::Value", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub value: ::core::option::Option<sql_value::Value>,
 }
 /// Nested message and enum types in `SqlValue`.
@@ -2098,6 +2114,16 @@ pub mod sql_value {
         NumberValue(f64),
         #[prost(bool, tag = "3")]
         BoolValue(bool),
+        #[prost(int64, tag = "4")]
+        Int64Value(i64),
+        #[prost(bytes, tag = "5")]
+        BytesValue(::prost::alloc::vec::Vec<u8>),
+        #[prost(enumeration = "::prost_types::NullValue", tag = "6")]
+        NullValue(i32),
+        #[prost(message, tag = "7")]
+        ArrayValue(super::SqlArray),
+        #[prost(message, tag = "8")]
+        ObjectValue(super::SqlObject),
     }
 }
 /// Single SQL row field

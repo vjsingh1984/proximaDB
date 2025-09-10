@@ -357,7 +357,7 @@ impl RaptorReader {
                 let cache_key = format!("{}:{}:raptor", file_path, rg_idx);
                 self.cache
                     .pattern_tracker()
-                    .track_access_async(cache_item.0.clone(), CacheType::VectorData);
+                    .track_access_async(cache_key.clone(), CacheType::VectorData);
 
                 // Try zero-copy cached read first
                 if let Ok(cached_data) = FileSystem::read(self.filesystem.as_ref(), file_path).await
@@ -454,7 +454,7 @@ impl RaptorReader {
             // DIRECT access to unified cache - no wrapper method
             self.cache
                 .pattern_tracker()
-                .track_access_async(cache_item.0.clone(), CacheType::VectorData);
+                .track_access_async(cache_key.clone(), CacheType::VectorData);
 
             // TODO: Implement proper caching with updated APIs
 
@@ -963,7 +963,7 @@ impl RaptorReader {
                             };
 
                             record.metadata.push(crate::proto::proximadb_v1::MetadataItem {
-                                key: item.0.clone(),
+                                key: key.clone(),
                                 value: Some(metadata_value),
                             });
                         }
@@ -1020,7 +1020,7 @@ impl RaptorReader {
         // Track access pattern for predictive prefetching
         self.cache
             .pattern_tracker()
-            .track_access_async(cache_item.0.clone(), CacheType::Metadata);
+            .track_access_async(cache_key.clone(), CacheType::Metadata);
 
         // The zero-copy system handles metadata caching internally
         // For now, we'll always read from disk and let the filesystem layer cache it
@@ -3325,7 +3325,7 @@ impl RaptorReader {
                         ColumnType::Metadata(key) => {
                             partial
                                 .metadata
-                                .insert(item.0.clone(), self.decode_metadata_column(&decompressed)?);
+                                .insert(key.clone(), self.decode_metadata_column(&decompressed)?);
                         }
                         ColumnType::SourceContent => {
                             partial.source_content =

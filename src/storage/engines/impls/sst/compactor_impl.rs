@@ -712,11 +712,9 @@ impl SstCompactor {
                         // Find metadata items with matching key
                         let a_val = a
                             .metadata
-                            .iter()
-                            .find(|m| m.key == *key)
-                            .and_then(|m| m.value.as_ref())
-                            .and_then(|v| match v {
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            .get(key)
+                            .and_then(|sql_val| match &sql_val.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     Some(s.as_str())
                                 }
                                 _ => None,
@@ -724,11 +722,9 @@ impl SstCompactor {
 
                         let b_val = b
                             .metadata
-                            .iter()
-                            .find(|m| m.key == *key)
-                            .and_then(|m| m.value.as_ref())
-                            .and_then(|v| match v {
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            .get(key)
+                            .and_then(|sql_val| match &sql_val.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     Some(s.as_str())
                                 }
                                 _ => None,

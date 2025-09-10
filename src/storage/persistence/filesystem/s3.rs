@@ -221,8 +221,8 @@ impl S3FileSystem {
                     (&config.access_key_id, &config.secret_access_key)
                 {
                     Ok(Box::new(super::auth::StaticCredentialProvider::new(
-                        access_item.0.clone(),
-                        secret_item.0.clone(),
+                        access_key.clone(),
+                        secret_key.clone(),
                         config.session_token.clone(),
                     )))
                 } else {

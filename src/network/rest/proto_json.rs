@@ -232,7 +232,7 @@ pub mod utils {
         let mut map = serde_json::Map::new();
         for item in items {
             if let Some(value) = &value {
-                map.insert(item.0.clone(), metadata_value_to_json(value));
+                map.insert(key.clone(), metadata_value_to_json(value));
             }
         }
         map

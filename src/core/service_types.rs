@@ -200,7 +200,7 @@ impl VectorRecord {
                 serde_json::Value::Bool(b) => Value::Union(4, Box::new(Value::Boolean(*b))),
                 _ => Value::Union(0, Box::new(Value::Null)), // Arrays and objects become null
             };
-            metadata_map.insert(item.0.clone(), avro_value);
+            metadata_map.insert(key.clone(), avro_value);
         }
         record.put("metadata_info", Value::Map(metadata_map));
 
@@ -289,7 +289,7 @@ impl VectorRecord {
                 serde_json::Value::Bool(b) => MetadataValue::Bool(*b),
                 _ => MetadataValue::Null,
             };
-            metadata_map.insert(item.0.clone(), typed_value);
+            metadata_map.insert(key.clone(), typed_value);
         }
         
         OptimizedSearchRecord::new(

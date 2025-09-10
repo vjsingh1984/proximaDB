@@ -303,7 +303,7 @@ where
                 if !node.is_marked() {
                     if let Some(ref key) = node.key {
                         if let Some(value) = node.get_value() {
-                            let key = item.clone();
+                            let key = key.clone();
                             self.current = next;
                             return Some((key, (*value).clone()));
                         }
@@ -355,7 +355,7 @@ where
     /// Insert a key-value pair into the skip list
     pub fn insert(&self, key: K, value: V) -> Option<V> {
         let level = self.random_level();
-        let new_node = Box::into_raw(Box::new(Node::new(item.clone(), value, level)));
+        let new_node = Box::into_raw(Box::new(Node::new(key.clone(), value, level)));
         
         loop {
             let position = self.find_position(&key);
@@ -534,7 +534,7 @@ where
     /// Get iterator over elements in a range [start_key, end_key)
     pub fn range_keys(&self, start_key: &K, end_key: &K) -> SkipListIterator<K, V> {
         let start_node = self.find_node(start_key);
-        SkipListIterator::new(start_node, Some(end_item.clone()), self)
+        SkipListIterator::new(start_node, Some(end_key.clone()), self)
     }
     
     /// Get iterator over elements using Range syntax (for stdlib compatibility)
@@ -552,10 +552,10 @@ where
         let end_key = match range.end_bound() {
             Bound::Included(key) => {
                 // For inclusive end, we need to go one past
-                let k = item.clone();
+                let k = key.clone();
                 Some(k)
             }
-            Bound::Excluded(key) => Some(item.clone()),
+            Bound::Excluded(key) => Some(key.clone()),
             Bound::Unbounded => None,
         };
         

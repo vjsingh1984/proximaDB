@@ -6,10 +6,10 @@
 :source-highlighter: rouge
 :status: in-progress
 
-== Implementation Status (Reviewed: 2025-09-09)
+== Implementation Status (Reviewed: 2025-09-10)
 
-- Implemented: Core entity/source fields in proto and REST; storage backends support large payloads; examples include retrieval pipelines.
-- In Progress: Standardized size limits/streaming semantics and SDK helpers; end-to-end tests across binary types (images/audio) pending.
+- Implemented: `VectorRecord.source` (string) in v1 proto (`proto/proximadb/v1/vector_types.proto`); simple `SourceContent` message exists for future use; REST/handlers pass through `source` where present.
+- In Progress: Adopt structured `SourceContent` in APIs; standardized size limits/streaming semantics and SDK helpers; end-to-end tests across binary types (images/audio) pending.
 
 == Executive Summary
 
@@ -66,6 +66,25 @@ This document specifies the design for storing source content alongside vector e
 5. **Backward Compatibility**: Optional field, gradual migration
 
 === Proto Definition
+
+Current (v1) minimal form:
+
+[source,protobuf]
+----
+message VectorRecord {
+  string id = 1;
+  repeated float vector = 2;
+  map<string, SqlValue> metadata = 3;
+  int64 timestamp = 4;
+  optional int64 updated_at = 5;
+  optional int64 expires_at = 6;
+  optional int64 version = 7;
+  bytes quantized_vector = 8;
+  optional string source = 9;
+}
+----
+
+Proposed structured form (future):
 
 [source,protobuf]
 ----

@@ -700,7 +700,7 @@ impl Flush {
                         }
                         None => String::new(),
                     };
-                    extra_kvs.push((item.0.clone(), value_str));
+                    extra_kvs.push((key.clone(), value_str));
                 }
             }
             extra_metadata_data.push(extra_kvs);

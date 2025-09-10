@@ -995,45 +995,45 @@ pub fn migrate_universal_filter(
                 let condition = match operator {
                     ComparisonOperator::Equals => FilterCondition::Equals {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::NotEquals => FilterCondition::NotEquals {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::GreaterThan => FilterCondition::GreaterThan {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::GreaterThanOrEqual => FilterCondition::GreaterThanOrEqual {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::LessThan => FilterCondition::LessThan {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::LessThanOrEqual => FilterCondition::LessThanOrEqual {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::In => FilterCondition::In {
                         column: field.clone(),
                         values: match value {
                             serde_json::Value::Array(arr) => arr.clone(),
-                            _ => vec![item.1.clone()],
+                            _ => vec![value.clone()],
                         },
                     },
                     ComparisonOperator::NotIn => FilterCondition::NotIn {
                         column: field.clone(),
                         values: match value {
                             serde_json::Value::Array(arr) => arr.clone(),
-                            _ => vec![item.1.clone()],
+                            _ => vec![value.clone()],
                         },
                     },
                     ComparisonOperator::Contains => FilterCondition::Contains {
                         column: field.clone(),
-                        value: item.1.clone(),
+                        value: value.clone(),
                     },
                     ComparisonOperator::StartsWith => FilterCondition::StartsWith {
                         column: field.clone(),
@@ -1049,7 +1049,7 @@ pub fn migrate_universal_filter(
                             serde_json::Value::Array(arr) if arr.len() >= 2 => {
                                 (arr[0].clone(), arr[1].clone())
                             }
-                            _ => (item.1.clone(), item.1.clone()),
+                            _ => (value.clone(), value.clone()),
                         };
                         FilterCondition::Between {
                             column: field.clone(),

@@ -80,7 +80,7 @@ where
         if let Some(mut entry) = self.l1_backend.get(key).await {
             entry.touch();
             // Update the entry with new access time
-            let _ = self.l1_backend.put(item.clone(), entry.clone()).await;
+            let _ = self.l1_backend.put(key.clone(), entry.clone()).await;
             Some(entry.value)
         } else {
             None
@@ -91,7 +91,7 @@ where
         if let Some(ref l2) = self.l2_backend {
             if let Some(mut entry) = l2.get(key).await {
                 entry.touch();
-                let _ = l2.put(item.clone(), entry.clone()).await;
+                let _ = l2.put(key.clone(), entry.clone()).await;
                 Some(entry.value)
             } else {
                 None
@@ -105,7 +105,7 @@ where
         if let Some(ref l3) = self.l3_backend {
             if let Some(mut entry) = l3.get(key).await {
                 entry.touch();
-                let _ = l3.put(item.clone(), entry.clone()).await;
+                let _ = l3.put(key.clone(), entry.clone()).await;
                 Some(entry.value)
             } else {
                 None
@@ -116,10 +116,10 @@ where
     }
 
     async fn put_l1(&self, key: Self::Key, value: Self::Value) {
-        let entry = CacheEntry::new(item.clone());
+        let entry = CacheEntry::new(key.clone());
 
         // Try to insert
-        match self.l1_backend.put(item.clone(), entry.clone()).await {
+        match self.l1_backend.put(key.clone(), entry.clone()).await {
             Ok(_) => {
                 // Success - update eviction strategy and metrics
                 let mut strategy = self.eviction_strategy.write().await;
@@ -149,7 +149,7 @@ where
                         self.metrics.record_eviction();
 
                         // Now try to insert the new entry
-                        if self.l1_backend.put(item.clone(), entry).await.is_ok() {
+                        if self.l1_backend.put(key.clone(), entry).await.is_ok() {
                             strategy.update_on_insert(&key, 0);
                             self.metrics.record_put();
                         } else {
@@ -213,7 +213,7 @@ where
     async fn promote_to_l1(&self, key: &Self::Key, value: &Self::Value) {
         // Check if value is small enough for L1
         if value.size_bytes() <= self.max_entry_size_for_l1 {
-            self.put_l1(item.clone(), item.clone()).await;
+            self.put_l1(key.clone(), key.clone()).await;
         }
     }
 
@@ -223,7 +223,7 @@ where
 
         // Also ensure it's in L2
         if self.l2_backend.is_some() {
-            self.put_l2(item.clone(), item.clone()).await;
+            self.put_l2(key.clone(), key.clone()).await;
         }
     }
 

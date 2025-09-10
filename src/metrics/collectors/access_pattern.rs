@@ -255,7 +255,7 @@ impl AccessPatternMetricsCollector {
         // Create access event
         let event = AccessEvent {
             timestamp: SystemTime::now(),
-            file_key: file_item.0.clone(),
+            file_key: file_key.clone(),
             collection_id: collection_id.clone(),
             access_type: AccessType::Random, // Will be determined by pattern engine
             size_bytes,
@@ -288,7 +288,7 @@ impl AccessPatternMetricsCollector {
         // Update frequency histogram
         *historical
             .frequency_histogram
-            .entry(event.file_item.0.clone())
+            .entry(event.file_key.clone())
             .or_insert(0) += 1;
 
         // Update hourly patterns

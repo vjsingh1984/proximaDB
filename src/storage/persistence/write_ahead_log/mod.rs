@@ -2104,7 +2104,7 @@ impl WriteAheadLogManager {
                     }
                 })?;
 
-                Some((item.0.clone(), value))
+                Some((key.clone(), value))
             })
             .collect()
     }

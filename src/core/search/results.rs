@@ -228,7 +228,7 @@ impl InternalSearchResult {
                     Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                     None => return None,
                 };
-                Some((item.0.clone(), value))
+                Some((key.clone(), value))
             })
             .collect();
 
@@ -300,7 +300,7 @@ impl InternalSearchResult {
                         _ => None, // Skip complex types for now
                     };
                     MetadataItem {
-                        key: item.0.clone(),
+                        key: key.clone(),
                         value: proto_value,
                     }
                 })
@@ -370,7 +370,7 @@ impl InternalSearchResult {
                     },
                     _ => crate::proto::proximadb_v1::SqlValue { value: None },
                 };
-                metadata.insert(item.0.clone(), sql_value);
+                metadata.insert(key.clone(), sql_value);
             }
         }
 

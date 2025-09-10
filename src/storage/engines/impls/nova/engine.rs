@@ -846,7 +846,7 @@ impl UnifiedStorageEngine for NovaEngine {
                             )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,
                         };
-                        (item.0.clone(), value)
+                        (key.clone(), value)
                     })
                     .collect();
 
@@ -1106,7 +1106,7 @@ impl NovaEngine {
                             )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,
                         };
-                        (item.0.clone(), value)
+                        (key.clone(), value)
                     })
                     .collect();
 

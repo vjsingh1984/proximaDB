@@ -20,31 +20,10 @@ impl SqlService for SqlServiceImpl {
         request: Request<proximadb_v1::ExecuteSqlRequest>,
     ) -> Result<Response<proximadb_v1::ExecuteSqlResponse>, Status> {
         let req = request.into_inner();
-        // Convert parameters to serde_json for unified handler
-        let params_json: Option<Vec<serde_json::Value>> = if req.parameters.is_empty() {
-            None
-        } else {
-            Some(
-                req.parameters
-                    .iter()
-                    .map(|p| match &p.value {
-                        Some(proximadb_v1::sql_value::Value::StringValue(s)) => {
-                            serde_json::Value::String(s.clone())
-                        }
-                        Some(proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::json!(n),
-                        Some(proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                            serde_json::Value::Bool(*b)
-                        }
-                        None => serde_json::Value::Null,
-                    })
-                    .collect(),
-            )
-        };
-
-        // Delegate to UnifiedHandlers v1 method to avoid duplicate mapping
+        // Delegate to UnifiedHandlers v1 method (typed params, typed rows)
         let resp = self
             .unified_handlers
-            .execute_sql_v1(req.query, params_json, req.collection)
+            .execute_sql_v1(req.query, if req.parameters.is_empty() { None } else { Some(req.parameters) }, req.collection)
             .await
             .map_err(|e| Status::internal(format!("SQL execution failed: {}", e)))?;
         Ok(Response::new(resp))

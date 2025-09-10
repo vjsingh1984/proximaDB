@@ -746,7 +746,7 @@ impl FastLanesDataBlock {
         let mut metadata_keys = HashSet::new();
         for record in &self.records {
             for item in &record.metadata {
-                metadata_keys.insert(item.0.clone());
+                metadata_keys.insert(key.clone());
             }
         }
 

@@ -366,7 +366,7 @@ impl StreamingParquetWriter {
                                         serde_json::Value::Bool(*b)
                                     }
                                 };
-                                (item.0.clone(), json_value)
+                                (key.clone(), json_value)
                             })
                         })
                         .collect();
@@ -419,7 +419,7 @@ impl StreamingParquetWriter {
                                     serde_json::Value::Bool(*b)
                                 }
                             };
-                            (item.0.clone(), json_value)
+                            (key.clone(), json_value)
                         })
                     })
                     .collect();
@@ -583,7 +583,7 @@ impl StreamingParquetWriter {
                                 }
                                 None => serde_json::Value::Null,
                             };
-                            map.insert(item.0.clone(), json_value);
+                            map.insert(key.clone(), json_value);
                         }
                         map
                     })
@@ -806,7 +806,7 @@ impl StreamingParquetWriter {
                         Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     };
-                    metadata_map.insert(item.0.clone(), json_value);
+                    metadata_map.insert(key.clone(), json_value);
                 }
                 self.add_metadata_to_bloom_filters(&metadata_map)?;
             }

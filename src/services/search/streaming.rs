@@ -440,7 +440,7 @@ impl StreamingSearchService {
                     let mut metadata_map = HashMap::new();
                     for item in &record.metadata {
                         if let Some(value) = &value {
-                            metadata_map.insert(item.0.clone(), convert_proto_value_to_typed(item.1.clone()));
+                            metadata_map.insert(key.clone(), convert_proto_value_to_typed(value.clone()));
                         }
                     }
                     

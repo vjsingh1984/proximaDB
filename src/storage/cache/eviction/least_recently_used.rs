@@ -36,8 +36,8 @@ impl<K: Hash + Eq + Clone> LRUStrategy<K> {
         }
 
         // Add to front
-        order.push_front(item.clone());
-        positions.insert(item.clone(), 0);
+        order.push_front(key.clone());
+        positions.insert(key.clone(), 0);
 
         // Update positions for all other keys
         for (k, p) in positions.iter_mut() {

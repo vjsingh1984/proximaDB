@@ -1915,7 +1915,7 @@ impl VectorOperationsService {
                 };
                 
                 MetadataItem {
-                    key: item.0.clone(),
+                    key: key.clone(),
                     value: proto_value,
                 }
             })
@@ -1981,7 +1981,7 @@ impl VectorOperationsService {
                 },
                 MetadataValue::Null => crate::proto::proximadb_v1::SqlValue { value: None },
             };
-            metadata.insert(item.0.clone(), sql_value);
+            metadata.insert(key.clone(), sql_value);
         }
 
         crate::proto::proximadb_v1::SearchVectorRecord {

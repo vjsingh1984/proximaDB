@@ -146,7 +146,7 @@ pub async fn search_sstable(
                                 crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => n.to_string(),
                                 crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => b.to_string(),
                             };
-                            Some((item.0.clone(), value_str))
+                            Some((key.clone(), value_str))
                         } else {
                             None
                         }

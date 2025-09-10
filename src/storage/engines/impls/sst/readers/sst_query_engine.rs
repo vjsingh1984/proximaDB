@@ -821,8 +821,8 @@ impl ModularBlockReader {
         }
 
         // Build SstableIndex
-        let min_key = entries.first().map(|e| e.item.0.clone()).unwrap_or_default();
-        let max_key = entries.last().map(|e| e.item.0.clone()).unwrap_or_default();
+        let min_key = entries.first().map(|e| e.key.clone()).unwrap_or_default();
+        let max_key = entries.last().map(|e| e.key.clone()).unwrap_or_default();
 
         let index = SstableIndex {
             entries,
@@ -2355,7 +2355,7 @@ impl UnifiedSstableReader {
                             metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
                             metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
                         };
-                        metadata_map.insert(item.0.clone(), typed_value);
+                        metadata_map.insert(key.clone(), typed_value);
                     }
                 }
                 
@@ -2628,11 +2628,11 @@ impl UnifiedSstableReader {
                     .iter()
                     .map(|e| {
                         crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
-                            key: e.item.0.clone(),
+                            key: e.key.clone(),
                             block_offset: e.offset,
                             block_size: e.size as usize,
-                            min_key: e.item.0.clone(), // Would need to track actual min/max
-                            max_key: e.item.0.clone(),
+                            min_key: e.key.clone(), // Would need to track actual min/max
+                            max_key: e.key.clone(),
                             vector_count: 1, // Approximation
                             bloom_filter_offset: None,
                         }
@@ -2643,10 +2643,10 @@ impl UnifiedSstableReader {
                 let mut cache_metadata_stats = std::collections::HashMap::new();
                 for (key, stats) in loaded_index.metadata_stats.iter() {
                     cache_metadata_stats.insert(
-                        item.0.clone(),
+                        key.clone(),
                         crate::storage::cache::specialized::index_node_cache::MetadataStats {
-                            min_value: stats.min_item.1.clone(),
-                            max_value: stats.max_item.1.clone(),
+                            min_value: stats.min_value.clone(),
+                            max_value: stats.max_value.clone(),
                             null_count: stats.null_count,
                             distinct_count: stats.distinct_count,
                         },
@@ -4053,7 +4053,7 @@ impl UnifiedSstableReader {
                 }
                 None => serde_json::Value::Null,
             };
-            map.insert(item.0.clone(), value);
+            map.insert(key.clone(), value);
         }
         map
     }
@@ -4094,7 +4094,7 @@ impl UnifiedSstableReader {
                 let cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
                     file_path: file_path.to_string(),
                     entries: entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
-                        key: e.item.0.clone(),
+                        key: e.key.clone(),
                         block_offset: e.offset,
                         block_size: e.size as usize,
                         min_key: e.metadata_min_values.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -4114,8 +4114,8 @@ impl UnifiedSstableReader {
                     entries: entries.clone(),
                     metadata_stats: HashMap::new(),
                     vector_count: entries.len(),
-                    min_key: entries.first().map(|e| e.item.0.clone()).unwrap_or_default(),
-                    max_key: entries.last().map(|e| e.item.0.clone()).unwrap_or_default(),
+                    min_key: entries.first().map(|e| e.key.clone()).unwrap_or_default(),
+                    max_key: entries.last().map(|e| e.key.clone()).unwrap_or_default(),
                 }
             };
 

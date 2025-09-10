@@ -1005,7 +1005,7 @@ where
         let start = Instant::now();
 
         // Insert into DashMap storage
-        let old_value = self.storage.insert(item.clone(), item.clone());
+        let old_value = self.storage.insert(key, value);
 
         // Update metrics
         self.metrics.record_operation("insert", start.elapsed());
@@ -1145,7 +1145,7 @@ where
         let old_value = self.storage.get(&key).await;
 
         // Insert into Moka cache
-        self.storage.insert(item.clone(), item.clone()).await;
+        self.storage.insert(key, value).await;
 
         // Update metrics
         self.metrics.record_operation("insert", start.elapsed());
