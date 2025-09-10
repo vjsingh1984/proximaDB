@@ -29,72 +29,44 @@
     </filter>
   </defs>
 
-  <!-- Logo Symbol: Unified Intelligence Platform -->
+  <!-- Logo Symbol: 2x2 Quadrant Grid (Cloud, Graph, Vector, SKS) -->
   <g transform="translate(60, 60)">
-    <!-- Central unified intelligence hub -->
-    <circle cx="0" cy="0" r="28" fill="url(#logoGradient)" filter="url(#logoGlow)"/>
-    
-    <!-- Vector representation (mathematical arrows) -->
-    <g stroke="white" stroke-width="2.5" opacity="0.8">
-      <line x1="-15" y1="-15" x2="-8" y2="-8" stroke-linecap="round"/>
-      <line x1="8" y1="-8" x2="15" y2="-15" stroke-linecap="round"/>
-      <line x1="-15" y1="15" x2="-8" y2="8" stroke-linecap="round"/>
-      <line x1="8" y1="8" x2="15" y2="15" stroke-linecap="round"/>
-      <!-- Vector arrow heads -->
-      <polygon points="-6,-6 -10,-10 -4,-10" fill="white" opacity="0.8"/>
-      <polygon points="6,-6 10,-10 4,-10" fill="white" opacity="0.8"/>
+    <!-- Enclosing ring around the grid -->
+    <circle cx="0" cy="0" r="34" fill="none" stroke="url(#logoGradient)" stroke-width="3" filter="url(#logoGlow)"/>
+
+    <!-- Q1: Cloud (top-left) -->
+    <g transform="translate(-14,-14)">
+      <path d="M -8,2 Q -8,-4 -4,-4 Q -2,-6 2,-4 Q 6,-6 8,-2 Q 10,0 8,2 Q 6,4 2,4 L -6,4 Q -8,4 -8,2 Z"
+            fill="url(#cloudGradient)" stroke="white" stroke-width="0.6" opacity="0.95"/>
     </g>
-    
-    <!-- Graph network nodes -->
-    <g fill="#ffffff" opacity="0.9">
-      <circle cx="0" cy="-22" r="3"/>
-      <circle cx="19" cy="-11" r="3"/>
-      <circle cx="19" cy="11" r="3"/>
-      <circle cx="0" cy="22" r="3"/>
-      <circle cx="-19" cy="11" r="3"/>
-      <circle cx="-19" cy="-11" r="3"/>
-    </g>
-    
-    <!-- Graph connections -->
-    <g stroke="#ffffff" stroke-width="1.5" opacity="0.7">
-      <path d="M 0,-22 Q 15,-18 19,-11"/>
-      <path d="M 19,-11 Q 15,0 19,11"/>
-      <path d="M 19,11 Q 8,18 0,22"/>
-      <path d="M 0,22 Q -15,15 -19,11"/>
-      <path d="M -19,11 Q -15,0 -19,-11"/>
-      <path d="M -19,-11 Q -8,-18 0,-22"/>
-    </g>
-    
-    <!-- SKS database/storage representation (cylinder) -->
-    <g fill="white" opacity="0.6" stroke="white" stroke-width="1">
-      <ellipse cx="0" cy="-5" rx="8" ry="3"/>
-      <rect x="-8" y="-5" width="16" height="10"/>
-      <ellipse cx="0" cy="5" rx="8" ry="3"/>
-    </g>
-    
-    <!-- Cloud serverless icon (top-right) -->
-    <g transform="translate(35, -35)">
-      <path d="M -8,-2 Q -8,-6 -4,-6 Q -2,-8 2,-6 Q 6,-8 8,-4 Q 10,-2 8,0 Q 6,2 2,2 L -6,2 Q -8,2 -8,-2 Z" 
-            fill="url(#cloudGradient)" opacity="0.8" stroke="white" stroke-width="0.5"/>
-    </g>
-    
-    <!-- Multi-cloud indicators (small cloud icons) -->
-    <g opacity="0.6">
-      <g transform="translate(-38, -25) scale(0.5)">
-        <path d="M -6,-2 Q -6,-4 -3,-4 Q -1,-5 1,-4 Q 3,-5 4,-3 Q 5,-2 4,0 L -4,0 Q -6,0 -6,-2 Z" 
-              fill="#0ea5e9"/>
+
+    <!-- Q2: Graph (top-right) -->
+    <g transform="translate(14,-14)">
+      <g fill="#ffffff" opacity="0.95">
+        <circle cx="-6" cy="-4" r="2.2"/>
+        <circle cx="6" cy="-4" r="2.2"/>
+        <circle cx="0" cy="6" r="2.2"/>
       </g>
-      <g transform="translate(38, 25) scale(0.5)">
-        <path d="M -6,-2 Q -6,-4 -3,-4 Q -1,-5 1,-4 Q 3,-5 4,-3 Q 5,-2 4,0 L -4,0 Q -6,0 -6,-2 Z" 
-              fill="#0ea5e9"/>
+      <g stroke="#ffffff" stroke-width="1.2" opacity="0.85">
+        <line x1="-6" y1="-4" x2="6" y2="-4"/>
+        <line x1="-6" y1="-4" x2="0" y2="6"/>
+        <line x1="6" y1="-4" x2="0" y2="6"/>
       </g>
     </g>
-    
-    <!-- Performance/speed indicators -->
-    <g fill="white" opacity="0.3">
-      <circle cx="-12" cy="0" r="1.5"/>
-      <circle cx="-8" cy="0" r="1"/>
-      <circle cx="-4" cy="0" r="0.5"/>
+
+    <!-- Q3: Vector (bottom-left) -->
+    <g transform="translate(-14,14)" opacity="0.95">
+      <g stroke="#ffffff" stroke-width="1.6">
+        <line x1="-6" y1="6" x2="6" y2="-6" stroke-linecap="round"/>
+      </g>
+      <polygon points="6,-6 1,-6 6,-1" fill="#ffffff"/>
+    </g>
+
+    <!-- Q4: SKS (bottom-right, cylinder) -->
+    <g transform="translate(14,14)" fill="white" opacity="0.9" stroke="white" stroke-width="0.8">
+      <ellipse cx="0" cy="-3" rx="6" ry="2.2"/>
+      <rect x="-6" y="-3" width="12" height="8"/>
+      <ellipse cx="0" cy="5" rx="6" ry="2.2"/>
     </g>
   </g>
 
