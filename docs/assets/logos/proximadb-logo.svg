@@ -52,13 +52,22 @@
       </g>
     </g>
 
-    <!-- Q3: Vector (bottom-left) outline only -->
+    <!-- Q3: Vector (bottom-left) as quiver of 3 arrows (outline only) -->
     <g transform="translate(-14,14)">
       <g stroke="#059669" stroke-width="1.8" fill="none">
+        <!-- Common origin -->
+        <!-- Arrow 1 -->
         <line x1="-6" y1="6" x2="6" y2="-6" stroke-linecap="round"/>
-        <!-- Arrow head as outline -->
         <line x1="6" y1="-6" x2="2" y2="-6"/>
         <line x1="6" y1="-6" x2="6" y2="-2"/>
+        <!-- Arrow 2 -->
+        <line x1="-6" y1="6" x2="3" y2="2" stroke-linecap="round"/>
+        <line x1="3" y1="2" x2="-1" y2="2"/>
+        <line x1="3" y1="2" x2="3" y2="6"/>
+        <!-- Arrow 3 -->
+        <line x1="-6" y1="6" x2="0" y2="-6" stroke-linecap="round"/>
+        <line x1="0" y1="-6" x2="-4" y2="-6"/>
+        <line x1="0" y1="-6" x2="0" y2="-2"/>
       </g>
     </g>
 
