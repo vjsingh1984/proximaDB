@@ -19,7 +19,7 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info};
-use crate::query::ast::{Expr, FuncCall};
+use crate::query::ast::Expr;
 use crate::query::execution::{ExecutionOperation, QueryRow};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::graph::service::GraphService;
@@ -63,12 +63,16 @@ impl SksExecutor {
     }
 
     /// Parse SKS function from sql_frontend AST and convert to execution plan
-    pub fn parse_sks_function(&self, func_call: &FuncCall) -> Result<SksFunction> {
-        match func_call.name.to_uppercase().as_str() {
-            "SIMILAR" => self.parse_similar_function(func_call),
-            "FOLLOW" => self.parse_follow_function(func_call), 
-            "ASSEMBLE" => self.parse_assemble_function(func_call),
-            _ => Err(anyhow!("Unknown SKS function: {}", func_call.name)),
+    pub fn parse_sks_function(&self, func_call: &Expr) -> Result<SksFunction> {
+        if let Expr::FuncCall { name, args } = func_call {
+            match name.to_uppercase().as_str() {
+                "SIMILAR" => self.parse_similar_function(name, args),
+                "FOLLOW" => self.parse_follow_function(name, args), 
+                "ASSEMBLE" => self.parse_assemble_function(name, args),
+                _ => Err(anyhow!("Unknown SKS function: {}", name)),
+            }
+        } else {
+            Err(anyhow!("Expected function call expression"))
         }
     }
 
@@ -235,12 +239,12 @@ impl SksExecutor {
     }
 
     /// Helper: Parse SIMILAR function from SQL AST
-    fn parse_similar_function(&self, func_call: &FuncCall) -> Result<SksFunction> {
-        if func_call.args.len() < 3 {
+    fn parse_similar_function(&self, name: &str, args: &[Expr]) -> Result<SksFunction> {
+        if args.len() < 3 {
             return Err(anyhow!("SIMILAR function requires at least 3 arguments: field, vector, metric"));
         }
 
-        // TODO: Extract arguments from func_call.args
+        // TODO: Extract arguments from args
         // - Field name (embedding_field)
         // - Query vector or text
         // - Distance metric
@@ -255,8 +259,8 @@ impl SksExecutor {
     }
 
     /// Helper: Parse FOLLOW function from SQL AST
-    fn parse_follow_function(&self, func_call: &FuncCall) -> Result<SksFunction> {
-        if func_call.args.len() < 2 {
+    fn parse_follow_function(&self, name: &str, args: &[Expr]) -> Result<SksFunction> {
+        if args.len() < 2 {
             return Err(anyhow!("FOLLOW function requires at least 2 arguments: start_node, edge_type"));
         }
 
@@ -270,7 +274,7 @@ impl SksExecutor {
     }
 
     /// Helper: Parse ASSEMBLE function from SQL AST  
-    fn parse_assemble_function(&self, func_call: &FuncCall) -> Result<SksFunction> {
+    fn parse_assemble_function(&self, name: &str, args: &[Expr]) -> Result<SksFunction> {
         // TODO: Extract assembly parameters and options
         Ok(SksFunction::Assemble {
             context_items: vec![], // TODO: Extract from args

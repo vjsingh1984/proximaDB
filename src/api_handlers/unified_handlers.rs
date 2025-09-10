@@ -1351,7 +1351,7 @@ impl UnifiedHandlers {
 
         // 3. Create unified query engine with vector and graph services
         let graph_service = Arc::new(crate::graph::service::GraphService::new());
-        let query_engine = crate::query::execution::mod::QueryEngine::new(
+        let query_engine = crate::query::execution::QueryEngine::new(
             self.vector_operations_service.clone(),
             graph_service,
         );
