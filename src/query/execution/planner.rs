@@ -50,10 +50,7 @@ impl ExecutionPlanner {
 
     /// Plan SELECT query with intelligent strategy detection
     fn plan_select(&self, select: &Select) -> Result<ExecutionPlan> {
-        // Explicitly fail fast on unsupported features
-        if !select.joins.is_empty() {
-            return Err(anyhow!("JOIN is not implemented yet in the unified planner"));
-        }
+        // Join scaffolding: we'll emit Join ops for visibility; executor returns NotImplemented
         // Analyze query characteristics to determine optimal strategy
         let query_analysis = self.analyze_query(select)?;
         
@@ -77,6 +74,16 @@ impl ExecutionPlanner {
         // Generate performance optimizations
         let optimizations = self.generate_optimizations(select, &query_analysis);
         let performance_hints = self.generate_performance_hints(&query_analysis);
+
+        // Add Join scaffolding ops, if present
+        let mut operations = operations;
+        if !select.joins.is_empty() {
+            for j in &select.joins {
+                let kind = match j.kind { crate::query::ast::JoinKind::Inner => crate::query::execution::JoinKind::Inner, crate::query::ast::JoinKind::Left => crate::query::execution::JoinKind::Left };
+                let on_str = j.on.as_ref().map(|e| format!("{:?}", e)).unwrap_or_else(|| "<none>".to_string());
+                operations.push(ExecutionOperation::Join { kind, on: on_str });
+            }
+        }
 
         Ok(ExecutionPlan {
             execution_strategy,
@@ -287,9 +294,27 @@ impl ExecutionPlanner {
     }
 
     /// Try to parse a query vector from an expression (best-effort)
-    fn try_parse_query_vector(&self, _expr: &Expr) -> Option<Vec<f32>> {
-        // TODO: Support VECTOR([...]) literals and bound parameters
-        None
+    fn try_parse_query_vector(&self, expr: &Expr) -> Option<Vec<f32>> {
+        match expr {
+            // VECTOR(0.1, 0.2, 0.3)
+            Expr::FuncCall { name, args } if name.eq_ignore_ascii_case("VECTOR") => {
+                let mut out = Vec::new();
+                for a in args {
+                    if let Expr::Literal(crate::query::ast::Literal::Number(n)) = a { out.push(*n as f32); } else { return None; }
+                }
+                if out.is_empty() { None } else { Some(out) }
+            }
+            // '[0.1,0.2,0.3]' string literal
+            Expr::Literal(crate::query::ast::Literal::String(s)) => {
+                if s.starts_with('[') {
+                    if let Ok(v) = serde_json::from_str::<Vec<f32>>(s) { return Some(v); }
+                }
+                None
+            }
+            // Parameter (defer to binder)
+            Expr::Param(_) => None,
+            _ => None,
+        }
     }
 
     /// Convert an expression into start node IDs for FOLLOW
