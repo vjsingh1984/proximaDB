@@ -124,7 +124,7 @@
       ⚡ Sub-Microsecond Latency
     </text>
     <text x="150" y="45" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="white">
-      0.048μs @ 20M ops/sec
+      Hardware-accelerated
     </text>
     <text x="150" y="65" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#e2e8f0">
       SIMD-Optimized • Zero-Copy
