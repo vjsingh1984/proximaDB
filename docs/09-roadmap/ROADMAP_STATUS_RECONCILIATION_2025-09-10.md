@@ -15,8 +15,9 @@ Highlights:
 
 1) Query SQL Alignment (docs/09-roadmap/in-progress/query_sql_alignment_consolidated.adoc)
 - Actual: Implemented and integrated; frontend is default.
-- Evidence: `src/query/sql_frontend/parser.rs` (placeholders, SKS validation), `src/query/execution/{mod,planner,executor}.rs` (ops + aggregate), `src/api_handlers/unified_handlers.rs` (frontend default)
-- Gaps: JOIN execution (equality join supported in hybrid join of vector/graph rows; full relational join pending); UNION/CTE parse-only; richer HAVING; streaming/pagination.
+- Evidence: `src/query/sql_frontend/parser.rs` (placeholders, SKS validation), `src/query/execution/{mod,planner,executor}.rs` (ops + aggregate + join), `src/api_handlers/unified_handlers.rs` (frontend default)
+- New: GROUP BY/HAVING implemented; JOIN equality joins (hash) with alias‑prefixed projections; parameter binding in frontend; SIMILAR/FOLLOW mapped to ops.
+- Gaps: ON handling for qualified identifiers and multiple joins; predicate pushdown; group-by expressions; UNION/CTE execution; streaming/pagination.
 
 2) Proto v1 Migration (docs/09-roadmap/in-progress/proto_v1_migration_checklist.md)
 - Actual: Complete. API paths use `crate::proto::proximadb_v1::*`; no `crate::proto::proximadb::*` usages in code paths.
@@ -44,9 +45,13 @@ Highlights:
 - Updated `query_sql_alignment_consolidated.adoc` to reflect the current implementation status.
 - Updated `docs/09-roadmap/README.adoc` to move completed items to a new "Completed" section.
 
-## Next Actions
+## Next Actions (Prioritized)
 
-- Implement JOIN execution (equality join) for relational flows; extend join keys and types.
-- Add streaming/pagination for SQL results.
-- Enrich HAVING and aggregate expressions (aliases/exprs).
-- Finish EntityStore persistence; add integration tests for SKS flows.
+1) Complete relational JOINs in sql_frontend (foundational)
+   - Expand ON parsing (qualified identifiers), support multiple chained joins, pushdown filters, and projection pushdown.
+2) Aggregates & HAVING (expr support)
+   - Group-by expressions, preserve select-item aliases end-to-end, richer HAVING semantics.
+3) Streaming/pagination for SQL
+   - Server streaming and paged responses for large result sets.
+4) SKS persistence & tests
+   - Implement EntityStore persistence + temporal filters; add E2E tests.

@@ -15,7 +15,8 @@ Implemented:
 - `sql_frontend/{parser,lowering}.rs` with sqlparser-rs, placeholders → Expr::Param, SKS validation
 - Unified execution: `query/execution/{mod,planner,executor}.rs`; VOS HashMap-based metadata filtering
 - SKS functions: SIMILAR/FOLLOW lowered and mapped to VectorSearch/GraphTraversal; Hybrid uses RRF
-- GROUP BY/HAVING: Aggregate op + basic numeric aggregation in executor
+- GROUP BY/HAVING: Aggregate op + numeric aggregation; HAVING evaluation over aggregate rows
+- JOIN: Planner emits Join ops (INNER/LEFT); executor supports equality hash-joins with alias‑prefixed projections (left_alias.*, right_alias.*)
 
 Completed:
 - AST lowering foundation (`lowering.rs`): SELECT/WHERE/ORDER BY/LIMIT, HashMap-friendly filter lowering
@@ -23,13 +24,13 @@ Completed:
 - Hybrid fusion algorithms available (RRF, Adaptive) in executor
 
 In Progress:
-- JOIN execution (equality join for small/medium sets); JOIN op scaffolded in planner
-- UNION/CTE parse-only; execution pending
-- Richer HAVING and aggregate expressions (aliases/exprs)
+- JOIN: expand ON handling (qualified identifiers, multiple joins), join chaining, predicate pushdown
+- Aggregates: group-by expressions; preserve select-item aliases through execution
+- UNION/CTE: currently parse-only; execution planning pending
 - Streaming/pagination for large results
 
 TODO:
-- Model registry integration for embedding validation
+- Model registry integration for embedding validation (optional)
 
 == 🗺️ Implementation Roadmap
 
