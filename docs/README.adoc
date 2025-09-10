@@ -21,6 +21,12 @@
 - Roadmap statuses are reconciled against code; see `09-roadmap/ROADMAP_STATUS_RECONCILIATION_2025-09-10.md`.
 - Some root-level reports (e.g., optimization summaries) are historical snapshots; treat as reference/appendix.
 
+== Diagrams & Code Blocks
+
+- Mermaid in AsciiDoc: use `[source,mermaid]` fenced with `----`.
+- SQL in AsciiDoc: use `[source,sql]` fenced with `----`.
+- GitHub rendering: Markdown renders Mermaid natively; AsciiDoc Mermaid may not render on GitHub without extensions. For GitHub, add a Markdown mirror (`README.md`) with ```mermaid fences if needed.
+
 == How to Contribute to Docs
 
 - Keep pages concise and task-oriented; avoid marketing claims without measured data.
