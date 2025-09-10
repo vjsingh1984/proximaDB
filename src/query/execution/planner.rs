@@ -103,7 +103,7 @@ impl ExecutionPlanner {
 
         // Check for SKS functions in WHERE clause
         if let Some(where_expr) = &select.selection {
-            analysis.has_sks_functions = self.detect_sks_functions(where_expr);
+            analysis.has_sks_functions = self.detect_sks_functions(where_expr) || self.contains_sks_funcs(where_expr);
         }
 
         // Check for graph patterns in FROM clause
@@ -122,6 +122,17 @@ impl ExecutionPlanner {
         analysis.filter_complexity = self.calculate_filter_complexity(&select.selection);
 
         Ok(analysis)
+    }
+
+    /// Quick detector for SKS function variants lowered by the frontend
+    fn contains_sks_funcs(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::SksSimilar { .. } | Expr::SksFollow { .. } => true,
+            Expr::Unary { expr, .. } => self.contains_sks_funcs(expr),
+            Expr::Binary { left, right, .. } => self.contains_sks_funcs(left) || self.contains_sks_funcs(right),
+            Expr::AggCall { args, .. } | Expr::FuncCall { args, .. } => args.iter().any(|e| self.contains_sks_funcs(e)),
+            _ => false,
+        }
     }
 
     /// Generate execution operations for the selected strategy

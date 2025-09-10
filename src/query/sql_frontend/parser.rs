@@ -299,7 +299,46 @@ impl SqlFrontendParser {
                 if self.is_aggregate_function(&name) {
                     Ok(Expr::AggCall { name, args })
                 } else {
-                    Ok(Expr::FuncCall { name, args })
+                    // Normalize function name for SKS detection
+                    let upper = name.to_uppercase();
+                    match upper.as_str() {
+                        "SIMILAR" => {
+                            // Expected: SIMILAR(field, query, metric?, threshold?)
+                            if args.len() < 2 {
+                                return Err(anyhow!("SIMILAR requires at least 2 arguments"));
+                            }
+                            let field = match &args[0] {
+                                Expr::Identifier(s) => s.clone(),
+                                other => format!("{}", match other { _ => "expr" }),
+                            };
+                            let query_expr = Box::new(args[1].clone());
+                            let metric = if args.len() >= 3 {
+                                if let Expr::Literal(Literal::String(s)) = &args[2] { Some(s.clone()) } else { None }
+                            } else { None };
+                            let threshold = if args.len() >= 4 {
+                                if let Expr::Literal(Literal::Number(n)) = &args[3] { Some(*n) } else { None }
+                            } else { None };
+                            Ok(Expr::SksSimilar { field, query: query_expr, metric, threshold })
+                        }
+                        "FOLLOW" => {
+                            // Expected: FOLLOW(start, edge_type, max_depth)
+                            if args.len() < 3 {
+                                return Err(anyhow!("FOLLOW requires 3 arguments"));
+                            }
+                            let start = Box::new(args[0].clone());
+                            let edge = match &args[1] {
+                                Expr::Literal(Literal::String(s)) => s.clone(),
+                                Expr::Identifier(s) => s.clone(),
+                                _ => "edge".to_string(),
+                            };
+                            let max_depth = match &args[2] {
+                                Expr::Literal(Literal::Number(n)) => (*n as u32),
+                                _ => 2u32,
+                            };
+                            Ok(Expr::SksFollow { start, edge, max_depth })
+                        }
+                        _ => Ok(Expr::FuncCall { name, args }),
+                    }
                 }
             },
 

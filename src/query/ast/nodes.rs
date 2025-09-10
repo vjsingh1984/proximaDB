@@ -82,6 +82,18 @@ pub enum Expr {
     // Aggregates
     AggCall { name: String, args: Vec<Expr> },
     // Table functions (SIMILAR, FOLLOW, ASSEMBLE) lowered as function calls
+    // SKS-specific functions (structured for planner)
+    SksSimilar {
+        field: String,
+        query: Box<Expr>,
+        metric: Option<String>,
+        threshold: Option<f64>,
+    },
+    SksFollow {
+        start: Box<Expr>,
+        edge: String,
+        max_depth: u32,
+    },
 }
 
 #[derive(Debug, Clone)]
