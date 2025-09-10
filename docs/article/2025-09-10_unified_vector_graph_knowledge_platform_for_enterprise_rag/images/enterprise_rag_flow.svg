@@ -34,7 +34,7 @@
   <text x="170" y="120" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Ingestion</text>
   <text x="80" y="145" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Documents → Embeddings</text>
   <text x="80" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Metadata (dept, version, dates)</text>
-  <text x="80" y="195" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Entities & relations extracted</text>
+  <text x="80" y="195" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Entities &amp; relations extracted</text>
   <!-- doc icon -->
   <rect x="240" y="102" width="30" height="40" fill="#f3f4f6" stroke="#9ca3af" rx="4"/>
   <polyline points="270,102 260,112 270,112" fill="none" stroke="#9ca3af"/>
@@ -43,8 +43,8 @@
   <rect x="340" y="90" width="230" height="120" rx="10" ry="10" style="fill:url(#panelGradPurple); stroke:#6b21a8; stroke-width:2;"/>
   <text x="455" y="120" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Semantic Knowledge Store (SKS)</text>
   <text x="360" y="145" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Entities with embeddings</text>
-  <text x="360" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Provenance & temporal info</text>
-  <text x="360" y="195" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Typed & flexible metadata</text>
+  <text x="360" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Provenance &amp; temporal info</text>
+  <text x="360" y="195" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Typed &amp; flexible metadata</text>
   <!-- cylinder -->
   <ellipse cx="555" cy="115" rx="18" ry="6" fill="#f3f4f6" stroke="#9ca3af"/>
   <rect x="537" y="115" width="36" height="24" fill="#f3f4f6" stroke="#9ca3af"/>
@@ -54,7 +54,7 @@
   <rect x="650" y="90" width="220" height="120" rx="10" ry="10" style="fill:url(#panelGradBlue); stroke:#1d4ed8; stroke-width:2;"/>
   <text x="760" y="120" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Graph Relationships</text>
   <text x="670" y="145" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• References, ownership, dependencies</text>
-  <text x="670" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Constraints & traversal</text>
+  <text x="670" y="170" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Constraints &amp; traversal</text>
   <!-- graph nodes -->
   <g>
     <circle cx="855" cy="120" r="5"/>
@@ -88,8 +88,8 @@
 
   <rect x="520" y="360" width="200" height="90" rx="10" ry="10" style="fill:url(#panelGradBlue); stroke:#1f2937; stroke-width:2;"/>
   <text x="620" y="388" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Graph Service</text>
-  <text x="540" y="412" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Traversal & pathfinding</text>
-  <text x="540" y="434" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Constraints & streaming</text>
+  <text x="540" y="412" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Traversal &amp; pathfinding</text>
+  <text x="540" y="434" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Constraints &amp; streaming</text>
 
   <!-- Fusion -->
   <rect x="750" y="300" width="170" height="110" rx="10" ry="10" style="fill:url(#panelGrad); stroke:#1f2937; stroke-width:2;">
@@ -97,13 +97,13 @@
   </rect>
   <text x="835" y="328" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Fusion</text>
   <text x="765" y="354" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• RRF / Adaptive fusion</text>
-  <text x="765" y="376" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Ranking & dedup</text>
+  <text x="765" y="376" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Ranking &amp; dedup</text>
 
   <!-- Answer -->
   <rect x="950" y="280" width="190" height="140" rx="10" ry="10" style="fill:url(#panelGrad); stroke:#1f2937; stroke-width:2;"/>
   <text x="1045" y="310" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Answer + Citations</text>
   <text x="970" y="336" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Cited sources (URLs)</text>
-  <text x="970" y="358" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Owner & timestamp</text>
+  <text x="970" y="358" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Owner &amp; timestamp</text>
   <text x="970" y="380" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">• Compact context window</text>
 
   <!-- Arrows lower row -->
@@ -127,8 +127,8 @@
 
   <rect x="320" y="440" width="280" height="50" rx="18" ry="18" style="fill:#f3f4f6; stroke:#9ca3af; stroke-width:1.5;"/>
   <rect x="338" y="458" width="20" height="12" style="fill:#10b981;"/>
-  <text x="365" y="468" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">SKS Entities & Metadata</text>
+  <text x="365" y="468" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">SKS Entities &amp; Metadata</text>
   <rect x="520" y="458" width="20" height="12" style="fill:#f59e0b;"/>
-  <text x="545" y="468" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">Provenance & Temporal</text>
+  <text x="545" y="468" style="font-family:Arial, sans-serif; font-size:13px; fill:#374151;">Provenance &amp; Temporal</text>
 
 </svg>
