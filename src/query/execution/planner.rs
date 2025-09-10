@@ -308,6 +308,14 @@ impl ExecutionPlanner {
 
     fn validate_follow_edge(&self, fol: &SksFollowArgs) -> Result<()> {
         if fol.edge.trim().is_empty() { return Err(anyhow!("FOLLOW: edge type cannot be empty")); }
+        // Use GraphService stats to validate edge types when available
+        // (best-effort; if stats not accessible, skip)
+        if let Ok(stats) = self.graph_service.get_stats() {
+            let exists = stats.edge_type_stats.iter().any(|e| e.edge_type == fol.edge);
+            if !exists {
+                return Err(anyhow!("FOLLOW: unknown edge type '{}'. Check graph schema or ingest.", fol.edge));
+            }
+        }
         Ok(())
     }
 
