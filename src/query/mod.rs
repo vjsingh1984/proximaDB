@@ -159,10 +159,13 @@
 //! ```
 
 pub mod sql_engine;
+pub mod sql_frontend;
+pub mod execution; // New unified execution engine
 pub mod unified_query_optimizer;
 pub mod vector_search;
 pub mod sks_extensions;
 pub mod explain;
+pub mod ast;
 
 // Re-export main types
 pub use sql_engine::{QueryPlanner, SqlEngine, SqlExecutionResult, SqlParser};
