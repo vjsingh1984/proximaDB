@@ -14,7 +14,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     
-    use crate::proto::proximadb::{Collection, CollectionConfig, DistanceMetric, StorageEngine};
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric, StorageEngine};
     use crate::storage::metadata::backends::{
         MetadataBackendFactory,
         metrics_decorator::MetricsDecorator,

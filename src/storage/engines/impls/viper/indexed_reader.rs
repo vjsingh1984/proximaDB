@@ -67,7 +67,7 @@ impl VIPERParquetMetadataSource {
         
         // Read all records to build metadata cache (for now - could be optimized)
         // TODO: Implement proper batch reading for large files
-        let all_records: Vec<crate::proto::proximadb::VectorRecord> = Vec::new(); // Placeholder - actual implementation needed
+        let all_records: Vec<crate::proto::proximadb_v1::VectorRecord> = Vec::new(); // Placeholder - actual implementation needed
         let total_rows = all_records.len();
         
         // Build column metadata cache
@@ -182,7 +182,7 @@ impl VIPERIndexBasedReader {
         // For now, read all and filter by indices
         // TODO: Implement true selective reading at parquet level
         // TODO: Implement proper batch reading
-        let all_records: Vec<crate::proto::proximadb::VectorRecord> = Vec::new(); // Placeholder
+        let all_records: Vec<crate::proto::proximadb_v1::VectorRecord> = Vec::new(); // Placeholder
         
         let selective_records: Vec<VectorRecord> = indices
             .iter()

@@ -137,17 +137,17 @@ pub use service_types::{
 ///
 /// The proto definition has been aligned to include all fields
 /// previously in VectorRecord, making this a complete replacement.
-pub type VectorRecord = crate::proto::proximadb::VectorRecord;
+pub type VectorRecord = crate::proto::proximadb_v1::VectorRecord;
 
 /// Type alias for cleaner imports
-pub type ProtoVectorRecord = crate::proto::proximadb::VectorRecord;
+pub type ProtoVectorRecord = crate::proto::proximadb_v1::VectorRecord;
 
 /// Helper struct for bincode serialization of non-vector VectorRecord fields
 /// This avoids the overhead of protobuf for the remaining fields
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 struct VectorRecordOtherFields {
     pub id: Option<String>,
-    pub metadata: Vec<crate::proto::proximadb::MetadataItem>,
+    pub metadata: Vec<crate::proto::proximadb_v1::MetadataItem>,
     pub timestamp: u32,
     pub updated_at: Option<u32>,
     pub expires_at: Option<u32>,

@@ -202,7 +202,7 @@ pub struct ClusterMetadata {
 }
 
 /// Use proto-generated config directly - no more duplicates!
-pub use crate::proto::proximadb::QuantizationConfig;
+pub use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// DEPRECATED: Use proto-generated QuantizationType instead
 /// Keeping for backward compatibility only

@@ -70,13 +70,13 @@ impl QueryExecutor {
                 },
                 PlanStepType::IndexSeek { index_name, key_value } => {
                     // TODO: Implement IndexSeek execution
-                    return Err(ProximaDBError::not_implemented("IndexSeek execution not yet implemented"));
+                    return Err(ProximaDBError::Query(QueryError::InvalidQuery("IndexSeek execution not yet implemented".to_string())));
                 },
                 PlanStepType::Traverse { algorithm, max_depth, edge_filters } => {
                     // TODO: Implement Traversal execution
-                    return Err(ProximaDBError::not_implemented("Traversal execution not yet implemented"));
+                    return Err(ProximaDBError::Query(QueryError::InvalidQuery("Traversal execution not yet implemented".to_string())));
                 },
-                _ => return Err(ProximaDBError::not_implemented(&format!("Plan step type {:?} not yet implemented", step.step_type))),
+                _ => return Err(ProximaDBError::Query(QueryError::InvalidQuery(format!("Plan step type {:?} not yet implemented", step.step_type)))),
             }
         }
 

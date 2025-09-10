@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::traits::{
     InternalCollectionProvider, MetadataProvider, MetricsOperationType, UnifiedMetricsCollector,
 };

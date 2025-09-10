@@ -16,7 +16,7 @@ mod tests {
 
     // Helper to create test SST records
     fn create_test_records(count: usize, prefix: &str) -> Vec<SstRecord> {
-        use crate::proto::proximadb::{MetadataItem, metadata_item};
+        use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
 
         (0..count)
             .map(|i| SstRecord {
@@ -93,7 +93,7 @@ mod tests {
     // #[tokio::test]
     #[allow(dead_code)]
     async fn test_hierarchical_sst_write_read() {
-        use crate::proto::proximadb::{MetadataItem, metadata_item};
+        use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
         let temp_dir = TempDir::new().unwrap();
         let sst_path = temp_dir
             .path()
@@ -250,7 +250,7 @@ mod tests {
     // #[tokio::test]
     #[allow(dead_code)]
     async fn test_metadata_statistics_in_blocks() {
-        use crate::proto::proximadb::{MetadataItem, metadata_item};
+        use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
         let temp_dir = TempDir::new().unwrap();
         let sst_path = temp_dir
             .path()

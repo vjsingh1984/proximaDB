@@ -34,7 +34,7 @@ use tracing::{debug, info, warn};
 // Quantization now handled by unified compute module
 use crate::core::proto_metadata_helper;
 use crate::core::{String, VectorRecord};
-use crate::proto::proximadb::metadata_item::Value as MetadataValue;
+use crate::proto::proximadb_v1::metadata_item::Value as MetadataValue;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator

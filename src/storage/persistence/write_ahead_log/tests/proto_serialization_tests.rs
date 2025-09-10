@@ -8,7 +8,7 @@
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::proto::proximadb::MetadataItem;
+use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -51,13 +51,13 @@ fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "proto_version".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "3".to_string(),
                 )),
             },
             MetadataItem {
                 key: "encoding".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "protobuf".to_string(),
                 )),
             },
@@ -132,19 +132,19 @@ async fn test_proto_metadata_encoding() {
     vector.metadata = vec![
         MetadataItem {
             key: "unicode".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "Hello 世界 🌍".to_string(),
             )),
         },
         MetadataItem {
             key: "special_chars".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
             )),
         },
         MetadataItem {
             key: "empty".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "".to_string(),
             )),
         },
@@ -153,7 +153,7 @@ async fn test_proto_metadata_encoding() {
     // Verify metadata is properly set
     assert_eq!(vector.metadata.len(), 3);
     assert!(
-        matches!(&vector.metadata[0].value, Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) if s == "Hello 世界 🌍")
+        matches!(&vector.metadata[0].value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "Hello 世界 🌍")
     );
 }
 

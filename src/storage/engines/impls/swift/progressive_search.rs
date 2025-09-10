@@ -636,18 +636,18 @@ fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool
 }
 
 fn metadata_item_to_json(
-    value: &Option<crate::proto::proximadb::metadata_item::Value>,
+    value: &Option<crate::proto::proximadb_v1::metadata_item::Value>,
 ) -> serde_json::Value {
     match value {
-        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
             serde_json::Value::String(s.clone())
         }
-        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(f)) => {
+        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f)) => {
             serde_json::Value::Number(
                 serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
             )
         }
-        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
             serde_json::Value::Bool(*b)
         }
         None => serde_json::Value::Null,

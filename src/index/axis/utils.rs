@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::core::VectorRecord;
-use crate::proto::proximadb::MetadataItem;
+use crate::proto::proximadb_v1::MetadataItem;
 
 /// High-performance concurrent vector storage
 /// Used by INDEX implementations to store vector data for search operations
@@ -308,15 +308,15 @@ pub mod metadata {
         for item in metadata {
             if let Some(value) = item.value {
                 let json_value = match value {
-                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                         JsonValue::String(s)
                     }
-                    crate::proto::proximadb::metadata_item::Value::NumberValue(f) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f) => {
                         serde_json::Number::from_f64(f)
                             .map(JsonValue::Number)
                             .unwrap_or(JsonValue::Null)
                     }
-                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                         JsonValue::Bool(b)
                     }
                 };
@@ -334,13 +334,13 @@ pub mod metadata {
                 .filter_map(|(key, value)| {
                     let proto_value = match value {
                         JsonValue::String(s) => Some(
-                            crate::proto::proximadb::metadata_item::Value::StringValue(s.clone()),
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
                         ),
                         JsonValue::Number(n) => n
                             .as_f64()
-                            .map(crate::proto::proximadb::metadata_item::Value::NumberValue),
+                            .map(crate::proto::proximadb_v1::metadata_item::Value::NumberValue),
                         JsonValue::Bool(b) => {
-                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(*b))
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b))
                         }
                         _ => None,
                     };
@@ -439,8 +439,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_vector_store() {
-        use crate::proto::proximadb::VectorRecord;
-        use crate::proto::proximadb::MetadataItem;
+        use crate::proto::proximadb_v1::VectorRecord;
+        use crate::proto::proximadb_v1::MetadataItem;
 
         let store = IndexVectorStore::new(3);
 

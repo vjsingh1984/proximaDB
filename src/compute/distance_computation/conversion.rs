@@ -3,7 +3,7 @@
 //! Provides helpers to convert between proto and internal distance metric representations
 
 use crate::compute::distance_computation::engine::DistanceMetric;
-use crate::proto::proximadb::DistanceMetric as ProtoDistanceMetric;
+use crate::proto::proximadb_v1::DistanceMetric as ProtoDistanceMetric;
 
 /// Convert proto distance metric enum value (i32) to internal DistanceMetric
 ///
@@ -72,7 +72,7 @@ pub fn internal_distance_to_proto(metric: DistanceMetric) -> i32 {
 /// # Returns
 /// The distance metric from config or Cosine as default
 pub fn get_distance_metric_from_config(
-    collection_config: Option<&crate::proto::proximadb::CollectionConfig>,
+    collection_config: Option<&crate::proto::proximadb_v1::CollectionConfig>,
 ) -> DistanceMetric {
     collection_config
         .map(|config| proto_distance_to_internal(config.distance_metric))
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn test_get_from_config() {
         // Test with config
-        let config = crate::proto::proximadb::CollectionConfig {
+        let config = crate::proto::proximadb_v1::CollectionConfig {
             distance_metric: ProtoDistanceMetric::Euclidean as i32,
             ..Default::default()
         };

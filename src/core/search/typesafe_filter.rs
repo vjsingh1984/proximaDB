@@ -5,8 +5,8 @@
 //! SST and VIPER engines.
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb::{FilterableColumnSpec, FilterableDataType};
-use crate::proto::proximadb::{MetadataItem, metadata_item::Value as MetadataValue};
+use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
+use crate::proto::proximadb_v1::{MetadataItem, metadata_item::Value as MetadataValue};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 

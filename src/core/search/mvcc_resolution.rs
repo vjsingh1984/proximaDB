@@ -193,7 +193,7 @@ mod tests {
         expires_at: Option<u32>,
     ) -> VectorRecord {
         // Use empty string to represent append-only semantics when id is None
-        crate::proto::proximadb::VectorRecord {
+        crate::proto::proximadb_v1::VectorRecord {
             id: id.unwrap_or_default(),
             vector: vec![1.0, 2.0, 3.0],
             metadata: vec![],

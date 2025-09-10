@@ -6,7 +6,7 @@
 use anyhow::Result;
 use tracing::debug;
 
-use crate::proto::proximadb::{
+use crate::proto::proximadb_v1::{
     QuantizationConfig, QuantizationLevel, quantization_config::Strategy,
     quantization_level::QuantizationType,
 };

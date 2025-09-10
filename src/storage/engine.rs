@@ -681,7 +681,7 @@ impl StorageEngine {
     /// This method is called by SharedServices during initialization to restore collection metadata
     pub async fn recovered_collections_metadata(
         &self,
-    ) -> crate::storage::Result<Vec<(String, crate::proto::proximadb::Collection)>> {
+    ) -> crate::storage::Result<Vec<(String, crate::proto::proximadb_v1::Collection)>> {
         tracing::info!("📊 Extracting collection metadata from recovered WAL entries");
 
         let mut collections_metadata = Vec::new();
@@ -726,19 +726,19 @@ impl StorageEngine {
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
                                     let mut collection =
-                                        crate::proto::proximadb::Collection::default();
+                                        crate::proto::proximadb_v1::Collection::default();
                                     collection.id = collection_id.to_string();
                                     collection.config =
-                                        Some(crate::proto::proximadb::CollectionConfig {
+                                        Some(crate::proto::proximadb_v1::CollectionConfig {
                                             name: collection_id.to_string(),
                                             dimension: record.vector.len() as u32,
                                             distance_metric:
-                                                crate::proto::proximadb::DistanceMetric::Cosine
+                                                crate::proto::proximadb_v1::DistanceMetric::Cosine
                                                     as i32,
                                             ..Default::default()
                                         });
                                     collection.stats =
-                                        Some(crate::proto::proximadb::CollectionStats {
+                                        Some(crate::proto::proximadb_v1::CollectionStats {
                                             vector_count: entries.len() as i64,
                                             data_size_bytes: (entries.len()
                                                 * record.vector.len()

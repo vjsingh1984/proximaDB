@@ -764,7 +764,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 let similarity_result =
                     crate::compute::distance_computation::engine::SimilarityResult::new(
                         distance,
-                        crate::proto::proximadb::DistanceMetric::Euclidean,
+                        crate::proto::proximadb_v1::DistanceMetric::Euclidean,
                     );
 
                 let id = if record.id.is_empty() {
@@ -779,12 +779,12 @@ impl UnifiedStorageEngine for SwiftEngine {
                     .map(|item| {
                         let value = match &item.value {
                             Some(
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                             ) => serde_json::Value::String(s.clone()),
                             Some(
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(n),
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
                             ) => serde_json::json!(n),
-                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
                                 b,
                             )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,
@@ -1007,13 +1007,13 @@ impl SwiftEngine {
                     .iter()
                     .map(|item| {
                         let value = match &item.value {
-                            Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                                 serde_json::Value::String(s.clone())
                             }
-                            Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                                 serde_json::json!(n)
                             }
-                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                                 serde_json::Value::Bool(*b)
                             }
                             None => serde_json::Value::Null,

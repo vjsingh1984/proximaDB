@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::super::*;
-    use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig};
+    use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig};
     use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use proximadb::core::serialization::CompressionAlgorithm;

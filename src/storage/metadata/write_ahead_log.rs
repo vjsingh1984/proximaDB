@@ -493,7 +493,7 @@ impl MetadataWriteAheadLog {
             let current_time = chrono::Utc::now().timestamp_micros();
 
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-            let delete_record = crate::proto::proximadb::VectorRecord {
+            let delete_record = crate::proto::proximadb_v1::VectorRecord {
                 id: vector_id,
                 vector: vec![0.0], // Vector content irrelevant for delete
                 metadata: Vec::new(),
@@ -620,7 +620,7 @@ impl MetadataWriteAheadLog {
         let vector = json.iter().map(|&b| b as f32).collect();
 
         let timestamp_secs = metadata.timestamp; // Already in seconds
-        Ok(crate::proto::proximadb::VectorRecord {
+        Ok(crate::proto::proximadb_v1::VectorRecord {
             id: format!("metadata_{}", metadata.id),
             vector,
             metadata: vec![],

@@ -28,7 +28,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved

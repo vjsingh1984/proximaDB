@@ -11,7 +11,7 @@ use tracing::info;
 use super::{
     MigrationConfig, MigrationEvent, MigrationEventType, MigrationStatus, MigrationStrategy,
 };
-use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
+use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::engines::factory::StorageEngineFactory;
 use crate::storage::traits::UnifiedStorageEngine;
 

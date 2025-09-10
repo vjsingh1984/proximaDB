@@ -142,9 +142,9 @@ pub async fn search_sstable(
                     .filter_map(|item| {
                         if let Some(value) = &item.value {
                             let value_str = match value {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => s.clone(),
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(n) => n.to_string(),
-                                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => b.to_string(),
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => s.clone(),
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => n.to_string(),
+                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => b.to_string(),
                             };
                             Some((item.key.clone(), value_str))
                         } else {

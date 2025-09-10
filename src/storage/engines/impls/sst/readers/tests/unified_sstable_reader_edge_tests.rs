@@ -845,9 +845,9 @@ mod edge_tests {
             SstRecord {
                 id: "deleted_2".to_string(),
                 vector: vec![],
-                metadata: vec![crate::proto::proximadb::MetadataItem {
+                metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                     key: "deletion_reason".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "user_requested".to_string(),
                     )),
                 }],

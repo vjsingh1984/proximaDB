@@ -10,7 +10,7 @@ use super::super::*;
 // use super::super::monitoring::{CacheMonitoringDashboard, AlertManager};
 // use super::super::optimization::CacheOptimizer;
 use crate::metrics::{CacheMetricsCollector, CacheMetricsSnapshot};
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;

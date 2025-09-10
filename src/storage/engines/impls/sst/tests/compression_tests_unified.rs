@@ -10,7 +10,7 @@
 use crate::core::compression::{
     CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext,
 };
-use crate::proto::proximadb::{CompressionAlgorithm, CompressionConfig, MetadataItem};
+use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig, MetadataItem};
 use crate::storage::engines::impls::sst::{DataBlock, DataBlockCompressionConfig, SstRecord};
 
 fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
@@ -19,7 +19,7 @@ fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
         vector: vec![1.0; vector_dim],
         metadata: vec![MetadataItem {
             key: "test_key".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "test_value".to_string(),
             )),
         }],

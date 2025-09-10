@@ -1,4 +1,4 @@
-= ProximaDB Architecture
+= ProximaDB: Unified Intelligence Platform Architecture
 :toc:
 :toclevels: 3
 :icons: font
@@ -7,14 +7,16 @@
 
 == System Overview
 
-ProximaDB is a high-performance vector database designed for similarity search at scale. It features hardware acceleration, multiple storage engines, and a proto-first design for zero serialization overhead.
+ProximaDB is the world's first **Unified Intelligence Platform** combining vector search, graph relationships, and semantic knowledge in a single, serverless-ready system. It pioneers a new category of AI infrastructure that eliminates the complexity of managing multiple specialized databases.
 
-== Core Design Principles
+== Revolutionary Design Principles
 
-. *Proto-First*: VectorRecord flows natively as protobuf types
-. *Direct Access*: Zero-copy paths wherever possible
-. *Hardware Aware*: Automatic SIMD/GPU detection and utilization
-. *Engine Specialization*: Multiple specialized engines optimized for different workloads
+. **Unified Intelligence**: Vector + Graph + SKS in one coherent system
+. **Multimodal Native**: Text, image, video, audio processing built-in  
+. **Serverless Architecture**: API-first with automated orchestration
+. **Proto-First**: Zero serialization overhead with native protobuf flow
+. **Hardware Accelerated**: Automatic SIMD/GPU detection and optimization
+. **Category Creating**: Enables AI applications impossible with fragmented systems
 
 == System Architecture
 

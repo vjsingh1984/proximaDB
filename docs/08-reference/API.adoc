@@ -1,4 +1,4 @@
-= ProximaDB API Reference
+= ProximaDB Unified Intelligence Platform API Reference
 :toc:
 :toclevels: 3
 :icons: font
@@ -6,7 +6,18 @@
 
 == Overview
 
-ProximaDB exposes gRPC (port 5679) and REST (port 5678) APIs for vector operations. gRPC offers higher throughput; REST offers broad compatibility.
+ProximaDB exposes comprehensive **Unified Intelligence APIs** via gRPC (port 5679) and REST (port 5678) for vector search, graph operations, and semantic knowledge store (SKS) capabilities. The platform features **automated API orchestration** that intelligently routes requests to appropriate engines.
+
+**Three API Categories:**
+- **Vector APIs**: Multimodal semantic search (text, image, video, audio)
+- **Graph APIs**: Relationship modeling, traversal, and analysis  
+- **SKS APIs**: Hybrid vector+graph intelligence with context assembly
+
+**API Benefits:**
+- **Serverless-Ready**: Zero infrastructure management required
+- **Auto-Orchestration**: Intelligent routing eliminates manual integration
+- **Performance Optimized**: gRPC for throughput, REST for compatibility
+- **Type-Safe**: Protocol buffer definitions ensure consistency
 
 == Connection
 

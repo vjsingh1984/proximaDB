@@ -14,7 +14,7 @@ use crate::core::VectorRecord;
 use crate::storage::engines::impls::helix::*;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine, StorageQueryContext};
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Create test vector records with known patterns
 fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {

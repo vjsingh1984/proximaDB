@@ -6,7 +6,7 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, CompactionParameters, StorageQueryContext, StorageQueryMetadata};
 use crate::core::search::SearchParams;
-use crate::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};
+use crate::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;

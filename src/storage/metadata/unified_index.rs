@@ -23,7 +23,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Performance metrics for monitoring and optimization
 #[derive(Debug, Clone, Serialize, Deserialize)]

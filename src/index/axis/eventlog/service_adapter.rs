@@ -70,7 +70,7 @@ impl EventLogServiceAdapter {
     pub async fn embedded(
         config: EventLogConfig,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
-        collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>,
+        collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb_v1::Collection>>>,
     ) -> Result<Arc<Self>> {
         let manager = EventLogManager::new(config, filesystem_factory, collection_cache).await?;
         Self::new(manager, ServiceMode::Embedded).await
@@ -80,7 +80,7 @@ impl EventLogServiceAdapter {
     pub async fn standalone(
         config: EventLogConfig,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
-        collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>,
+        collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb_v1::Collection>>>,
         bind_address: String,
         port: u16,
     ) -> Result<Arc<Self>> {
@@ -355,7 +355,7 @@ impl EventLogServiceFactory {
     pub async fn create(
         config: EventLogConfig,
         filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
-        collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>,
+        collection_cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb_v1::Collection>>>,
         deployment_mode: Option<String>,
     ) -> Result<Arc<dyn EventLogService>> {
         let service: Arc<dyn EventLogService> = match deployment_mode.as_deref() {

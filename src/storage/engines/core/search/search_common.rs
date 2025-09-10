@@ -429,16 +429,16 @@ impl UniversalSearchPipeline {
                 .filter_map(|item| {
                     item.value.map(|v| {
                         let json_value = match v {
-                            crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                 serde_json::Value::String(s)
                             }
-                            crate::proto::proximadb::metadata_item::Value::NumberValue(f) => {
+                            crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f) => {
                                 serde_json::Value::Number(
                                     serde_json::Number::from_f64(f)
                                         .unwrap_or(serde_json::Number::from(0)),
                                 )
                             }
-                            crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                            crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                                 serde_json::Value::Bool(b)
                             }
                         };

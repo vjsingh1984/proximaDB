@@ -30,7 +30,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::metrics::collectors::EngineMetricsCollector;
-use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
+use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{

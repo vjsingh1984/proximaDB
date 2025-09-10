@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::proximadb::CompressionConfig as ProtoCompressionConfig;
+use crate::proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
 
 /// Row-based compression configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,7 +262,7 @@ pub struct CompressionStats {
 impl RowBasedCompressionConfig {
     /// Create compression config from proto config
     pub fn from_proto_config(proto_config: &ProtoCompressionConfig) -> Self {
-        use crate::proto::proximadb::CompressionAlgorithm as ProtoAlgorithm;
+        use crate::proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
         let algorithm = match ProtoAlgorithm::try_from(proto_config.algorithm) {
             Ok(ProtoAlgorithm::CompressionZstd) => CompressionAlgorithm::Zstd,
             Ok(ProtoAlgorithm::CompressionLz4) => CompressionAlgorithm::Lz4,

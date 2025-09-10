@@ -46,13 +46,13 @@ fn create_test_search_context() -> SearchPlan {
         filterable_columns: vec![
             crate::core::search::FilterableColumn {
                 name: "category".to_string(),
-                // data_type removed -  crate::proto::proximadb::ColumnDataType::String,
+                // data_type removed -  crate::proto::proximadb_v1::ColumnDataType::String,
                 is_indexed: true,
                 estimated_cardinality: 100,
             },
             crate::core::search::FilterableColumn {
                 name: "score".to_string(),
-                // data_type removed -  crate::proto::proximadb::ColumnDataType::Float,
+                // data_type removed -  crate::proto::proximadb_v1::ColumnDataType::Float,
                 is_indexed: false,
                 estimated_cardinality: 1000,
             },

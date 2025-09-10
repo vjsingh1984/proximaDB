@@ -2,7 +2,7 @@
 pub mod viper_pipeline_tests {
     use super::*;
     use crate::core::VectorRecord;
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
     use crate::compute::QuantizationLevel;
     use crate::storage::engines::impls::viper::pipeline::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -24,7 +24,7 @@ pub mod viper_pipeline_tests {
                 .into_iter()
                 .map(|(k, v)| MetadataItem {
                     key: k,
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         v,
                     )),
                 })

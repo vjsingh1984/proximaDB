@@ -33,7 +33,7 @@ impl super::VectorBatchSerializer for BincodeSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
 
     fn create_test_vector() -> VectorRecord {
@@ -42,7 +42,7 @@ mod tests {
             vector: vec![0.1, 0.2, 0.3, 0.4],
             metadata: vec![MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "test".to_string(),
                 )),
             }],

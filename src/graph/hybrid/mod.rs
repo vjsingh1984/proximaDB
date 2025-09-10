@@ -544,7 +544,7 @@ impl HybridQueryEngine {
                 }
                 Err(e) => {
                     // Fallback to graph-based vector search if VOS is unavailable
-                    debug!("VOS search failed, falling back to graph-based search: {}", e);
+                    tracing::debug!("VOS search failed, falling back to graph-based search: {}", e);
                     candidates.extend(self.fallback_graph_vector_search(vector_comp, threshold, max_results).await?);
                 }
             }
@@ -1174,7 +1174,7 @@ impl HybridQueryEngine {
         threshold: f32,
         max_results: usize,
     ) -> QueryResult<Vec<VectorCandidate>> {
-        use crate::services::search::UnifiedSearchConfig;
+        use crate::services::operations::vectors::UnifiedSearchConfig;
         
         let mut candidates = Vec::new();
         
@@ -1219,7 +1219,7 @@ impl HybridQueryEngine {
                                     vector,
                                     metadata,
                                     created_at: rec.timestamp.unwrap_or(0) as u64,
-                                    updated_at: rec.updated_at.unwrap_or(0) as u64,
+                                    updated_at: Some(rec.updated_at.unwrap_or(0) as i64),
                                 },
                             });
                         }
@@ -1267,7 +1267,7 @@ impl HybridQueryEngine {
                             vector: embedding.clone(),
                             metadata: self.convert_node_properties_to_metadata(&node.properties),
                             created_at: node.created_at.map(|t| t.seconds).unwrap_or(0) as u64,
-                            updated_at: node.updated_at.map(|t| t.seconds).unwrap_or(0) as u64,
+                            updated_at: Some(node.updated_at.map(|t| t.seconds).unwrap_or(0) as i64),
                         },
                     });
                 }
@@ -1284,7 +1284,7 @@ impl HybridQueryEngine {
     /// Convert protobuf metadata to HashMap
     fn convert_proto_metadata(
         &self,
-        proto_metadata: &[crate::proto::proximadb::MetadataItem],
+        proto_metadata: &[crate::proto::proximadb_v1::MetadataItem],
     ) -> HashMap<String, String> {
         let mut metadata = HashMap::new();
         
@@ -1292,10 +1292,10 @@ impl HybridQueryEngine {
             // Convert protobuf metadata values to strings for simplicity
             // In a production system, this would preserve type information
             let value_str = match &item.value {
-                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => s.clone(),
-                Some(crate::proto::proximadb::metadata_item::Value::IntValue(i)) => i.to_string(),
-                Some(crate::proto::proximadb::metadata_item::Value::FloatValue(f)) => f.to_string(),
-                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => b.to_string(),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => s.clone(),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::IntValue(i)) => i.to_string(),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::FloatValue(f)) => f.to_string(),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => b.to_string(),
                 None => "null".to_string(),
             };
             metadata.insert(item.key.clone(), value_str);
@@ -1613,10 +1613,6 @@ mod tests {
     fn test_filter_operator() {
         match FilterOperator::Equal {
             FilterOperator::Equal => assert!(true),
-            _ => assert!(false),
-        }
-    }
-}sert!(true),
             _ => assert!(false),
         }
     }

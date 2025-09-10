@@ -145,6 +145,203 @@ pub struct VectorOperationsService {
 }
 
 impl VectorOperationsService {
+    /// Public v1 boundary: execute vector search and return v1 response
+    pub async fn search_v1(
+        &self,
+        req: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let collection_id = req.collection_id.clone();
+        let top_k = req.top_k as usize;
+        let query_vector = req
+            .queries
+            .get(0)
+            .map(|q| q.vector.clone())
+            .ok_or_else(|| anyhow::anyhow!("No query vectors provided"))?;
+        let include_vectors = req
+            .include_fields
+            .as_ref()
+            .map(|f| f.vector)
+            .unwrap_or(false);
+        let include_metadata = req
+            .include_fields
+            .as_ref()
+            .map(|f| f.metadata)
+            .unwrap_or(true);
+
+        let cfg = Some(UnifiedSearchConfig {
+            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+            progressive_search: true,
+            progressive_recalls: None,
+            include_vectors,
+            include_metadata,
+            scenario: None,
+        });
+
+        let results = self
+            .unified_search_v1(&collection_id, query_vector, top_k, None, cfg)
+            .await?;
+
+        let (results, total_count) = if let Some(r) = results.into_iter().next() {
+            let total = r.total_found;
+            (Some(r), total)
+        } else {
+            (None, 0)
+        };
+
+        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+            success: true,
+            operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorSearch as i32,
+            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                total_processed: total_count,
+                successful_count: total_count,
+                failed_count: 0,
+                updated_count: 0,
+                processing_time_us: 0,
+                wal_write_time_us: 0,
+                index_update_time_us: 0,
+            }),
+            results,
+            vector_ids: vec![],
+            error_message: None,
+            error_code: None,
+        })
+    }
+
+    /// Public v1 boundary: insert/upsert batch of vectors and return v1 response
+    pub async fn vector_batch_v1(
+        &self,
+        req: crate::proto::proximadb_v1::VectorBatchRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let start_time = std::time::Instant::now();
+        let collection_id = req.collection_id.clone();
+
+        // Convert v1 vectors to native core::VectorRecord
+        let native_vectors: Vec<crate::core::VectorRecord> = req
+            .vectors
+            .into_iter()
+            .map(|v| crate::core::VectorRecord {
+                id: v.id,
+                collection_id: collection_id.clone(),
+                vector: v.vector,
+                metadata: crate::core::conversions::sql_values_to_json_map(v.metadata),
+                timestamp: v.timestamp,
+                updated_at: v.updated_at,
+                expires_at: v.expires_at,
+                version: v.version,
+            })
+            .collect();
+
+        match self
+            .handle_vector_batch_proto_vec(&collection_id, native_vectors)
+            .await
+        {
+            Ok(bytes) => {
+                let mut success = false;
+                let mut vector_ids: Vec<String> = Vec::new();
+                let mut error_code: Option<String> = None;
+                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    success = json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    vector_ids = json
+                        .get("vector_ids")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    error_code = json.get("error_code").and_then(|v| v.as_str()).map(String::from);
+                }
+
+                Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                    success,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorBatch as i32,
+                    metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                        total_processed: vector_ids.len() as i64,
+                        successful_count: if success { vector_ids.len() as i64 } else { 0 },
+                        failed_count: if success { 0 } else { vector_ids.len() as i64 },
+                        updated_count: 0,
+                        processing_time_us: start_time.elapsed().as_micros() as i64,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    results: None,
+                    vector_ids,
+                    error_message: None,
+                    error_code,
+                })
+            }
+            Err(e) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                success: false,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorBatch as i32,
+                metrics: None,
+                results: None,
+                vector_ids: vec![],
+                error_message: Some(format!("{}", e)),
+                error_code: Some("VECTOR_INSERT_FAILED".to_string()),
+            }),
+        }
+    }
+
+    /// Public v1 boundary: get vector by ID and return v1 response
+    pub async fn vector_get_v1(
+        &self,
+        req: crate::proto::proximadb_v1::VectorGetRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let start_time = std::time::Instant::now();
+        let include_vector = req.include_vector.unwrap_or(false);
+        let include_metadata = req.include_metadata.unwrap_or(true);
+
+        match self
+            .vector(&req.collection_id, &req.vector_id, include_vector, include_metadata)
+            .await
+        {
+            Ok(Some(rec)) => {
+                let v1_rec = crate::proto::proximadb_v1::SearchVectorRecord {
+                    id: if rec.id.is_empty() { "unknown".to_string() } else { rec.id },
+                    score: 1.0,
+                    vector: rec.vector,
+                    metadata: crate::core::conversions::json_map_to_sql_values(rec.metadata),
+                    version: rec.updated_at.map(|x| x as i64),
+                };
+                Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                    success: true,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                    metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                        total_processed: 1,
+                        successful_count: 1,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: start_time.elapsed().as_micros() as i64,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    results: Some(crate::proto::proximadb_v1::SearchResult {
+                        results: vec![v1_rec],
+                        total_found: 1,
+                        collection_id: Some(req.collection_id.clone()),
+                    }),
+                    vector_ids: vec![req.vector_id.clone()],
+                    error_message: None,
+                    error_code: None,
+                })
+            }
+            Ok(None) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                success: false,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                metrics: None,
+                results: None,
+                vector_ids: vec![],
+                error_message: None,
+                error_code: Some("NOT_FOUND".to_string()),
+            }),
+            Err(e) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                success: false,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                metrics: None,
+                results: None,
+                vector_ids: vec![],
+                error_message: Some(format!("{}", e)),
+                error_code: Some("INTERNAL_ERROR".to_string()),
+            }),
+        }
+    }
     /// Create new service with consolidated optimizer and WAL manager for two-stage search
     pub fn new(
         storage_engine: Arc<SstStorage>,
@@ -1668,34 +1865,6 @@ impl VectorOperationsService {
             .collect())
     }
 
-    /// Helper method to convert InternalSearchResult to proto SearchResult
-    /// This is the standard conversion point from internal to API types
-    fn convert_to_proto_search_result(
-        &self,
-        internal_results: Vec<crate::core::search::InternalSearchResult>,
-        collection_id: &str,
-        include_vectors: bool,
-        include_metadata: bool,
-        include_source: bool,
-    ) -> crate::proto::proximadb_v1::SearchResult {
-        let search_vector_records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> =
-            internal_results
-                .iter()
-                .map(|result| {
-                    result.to_search_vector_record(
-                        include_vectors,
-                        include_metadata,
-                        include_source,
-                    )
-                })
-                .collect();
-
-        crate::proto::proximadb_v1::SearchResult {
-            results: search_vector_records,
-            total_found: internal_results.len() as i64,
-            collection_id: Some(collection_id.to_string()),
-        }
-    }
 
     /// v1: Convert InternalSearchResult to proximadb_v1::SearchResult
     fn convert_to_proto_search_result_v1(
@@ -1777,32 +1946,6 @@ impl VectorOperationsService {
         }
     }
     
-    /// Convert a vector of OptimizedSearchRecords to proto SearchResult
-    pub fn optimized_results_to_proto(
-        &self,
-        results: Vec<crate::core::search::results::OptimizedSearchRecord>,
-        collection_id: &str,
-        include_vector: bool,
-        include_source: bool,
-    ) -> crate::proto::proximadb_v1::SearchResult {
-        let search_vector_records: Vec<_> = results
-            .iter()
-            .enumerate()
-            .map(|(_, result)| {
-                self.optimized_to_proto(
-                    result,
-                    include_vector,
-                    include_source,
-                )
-            })
-            .collect();
-        
-        crate::proto::proximadb_v1::SearchResult {
-            results: search_vector_records,
-            total_found: results.len() as i64,
-            collection_id: Some(collection_id.to_string()),
-        }
-    }
 
     /// Convert OptimizedSearchRecord to v1 proto SearchVectorRecord
     fn optimized_to_proto_v1(

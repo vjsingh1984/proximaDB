@@ -553,7 +553,7 @@ impl ParquetReconstructor {
         &self,
         _column: &Arc<dyn Array>,
         _row_idx: usize,
-    ) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::MetadataItem>> {
         // TODO: Implement proper metadata extraction and conversion to MetadataItem
         Ok(Vec::new())
     }

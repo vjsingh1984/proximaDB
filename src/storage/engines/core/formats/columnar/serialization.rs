@@ -515,7 +515,7 @@ impl ColumnarSerializer {
             .map(|(i, vector)| VectorRecord {
                 id: format!("record_{}", i), // Placeholder - would come from ID column
                 vector,
-                timestamp: chrono::Utc::now().timestamp() as u32,
+                timestamp: chrono::Utc::now().timestamp(),
                 ..Default::default()
             })
             .collect();

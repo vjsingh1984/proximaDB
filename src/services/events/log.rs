@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 use crate::index::axis::eventlog::{
     EventLogConfig, EventLogService as EventLogServiceTrait, EventLogServiceFactory, ServiceMode,
 };
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog service that coordinates between storage and AXIS indexing

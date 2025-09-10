@@ -227,13 +227,13 @@ impl MetadataIndex {
 
                     // Convert MetadataItem value to serde_json::Value
                     let json_value = match &item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                             serde_json::json!(n)
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
                         }
                         _ => serde_json::Value::Null,

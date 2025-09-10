@@ -8,8 +8,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::super::universal_backend::*;
-    use crate::proto::proximadb::Collection;
-    use crate::proto::proximadb::{
+    use crate::proto::proximadb_v1::Collection;
+    use crate::proto::proximadb_v1::{
         Collection as Collection, CollectionConfig as CollectionConfig,
         CollectionStats, CollectionMetadata, DistanceMetric, StorageEngine, 
         IndexingAlgorithm, FilterableColumnSpec, FilterableData,

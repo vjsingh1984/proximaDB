@@ -241,7 +241,7 @@ pub struct ColumnarConfig {
 
 // DEPRECATED: Replaced with proto-generated config
 // All quantization configs now use the canonical proto version
-pub use crate::proto::proximadb::QuantizationConfig;
+pub use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// Optimization thresholds
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,7 +405,7 @@ pub struct ColumnarOptimizations {
 }
 
 // DEPRECATED: Replaced with proto-generated QuantizationLevel
-pub use crate::proto::proximadb::QuantizationLevel;
+pub use crate::proto::proximadb_v1::QuantizationLevel;
 
 /// Create optimized Parquet schema for vectors with mandatory ID column
 pub fn create_columnar_schema(

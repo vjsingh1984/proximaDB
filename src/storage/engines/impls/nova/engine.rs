@@ -3,7 +3,7 @@
 
 use crate::core::compression::StandardCompression;
 use crate::core::search::DataFreshnessTier;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
@@ -836,12 +836,12 @@ impl UnifiedStorageEngine for NovaEngine {
                     .map(|item| {
                         let value = match &item.value {
                             Some(
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                             ) => serde_json::Value::String(s.clone()),
                             Some(
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(n),
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
                             ) => serde_json::json!(n),
-                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
                                 b,
                             )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,
@@ -1096,12 +1096,12 @@ impl NovaEngine {
                     .map(|item| {
                         let value = match &item.value {
                             Some(
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s),
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                             ) => serde_json::Value::String(s.clone()),
                             Some(
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(n),
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
                             ) => serde_json::json!(n),
-                            Some(crate::proto::proximadb::metadata_item::Value::BoolValue(
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
                                 b,
                             )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,

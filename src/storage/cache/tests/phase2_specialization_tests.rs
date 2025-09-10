@@ -1,7 +1,7 @@
 //! Phase 2: Specialize Existing Cache Tests
 
 use super::super::*;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::specialized::*;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -79,7 +79,7 @@ async fn test_query_result_cache_specialization() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb::SearchResult;
+    use crate::proto::proximadb_v1::SearchResult;
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 

@@ -36,7 +36,7 @@ use tracing::{debug, info, trace};
 // Use proto enum as the single source of truth for DistanceMetric
 use super::create_distance_calculator;
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
-pub use crate::proto::proximadb::DistanceMetric;
+pub use crate::proto::proximadb_v1::DistanceMetric;
 use crate::services::collection::manager::CollectionService;
 
 // Re-export HardwareBackend for public use

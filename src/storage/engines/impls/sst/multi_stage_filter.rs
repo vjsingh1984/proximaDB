@@ -589,9 +589,9 @@ mod tests {
                 crate::storage::engines::impls::sst::SstRecord {
                     id: Some("vec1".to_string()),
                     vector: vec![0.1; 128],
-                    metadata: vec![crate::proto::proximadb::MetadataItem {
+                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             "electronics".to_string(),
                         )),
                     }],
@@ -606,9 +606,9 @@ mod tests {
                 crate::storage::engines::impls::sst::SstRecord {
                     id: Some("vec2".to_string()),
                     vector: vec![0.2; 128],
-                    metadata: vec![crate::proto::proximadb::MetadataItem {
+                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             "books".to_string(),
                         )),
                     }],
@@ -623,9 +623,9 @@ mod tests {
                 crate::storage::engines::impls::sst::SstRecord {
                     id: Some("vec3".to_string()),
                     vector: vec![0.3; 128],
-                    metadata: vec![crate::proto::proximadb::MetadataItem {
+                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             "electronics".to_string(),
                         )),
                     }],

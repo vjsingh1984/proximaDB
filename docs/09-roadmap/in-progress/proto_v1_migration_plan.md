@@ -20,6 +20,28 @@ Metrics snapshot (run locally to refresh)
 - Legacy refs: `rg -n "crate::proto::proximadb::" src | wc -l` (by module: api_handlers≈35, network≈32, services≈41, core≈146, query≈3, graph≈5, storage≈537)
 - v1 refs total: `rg -n "proto::proximadb_v1" src | wc -l` → ≈215
 
+## Status Metrics (Auto‑Snapshot)
+The following counts were gathered over the current tree to reflect real progress.
+
+- Total source files under `src/`: 711
+- Files still using legacy proto (`crate::proto::proximadb::`): 104
+- Files using v1 proto (`proto::proximadb_v1`): 97
+- Net migrated/native‑only files (no legacy reference): ~607 (711 − 104)
+
+Per‑module file counts (legacy → v1)
+- `src/api_handlers`: 0 legacy → 2 v1
+- `src/network`: 0 legacy → 12 v1
+- `src/services`: 2 legacy → 5 v1
+- `src/core`: 19 legacy → 8 v1
+- `src/query`: 2 legacy → 1 v1
+- `src/graph`: 1 legacy → 12 v1
+- `src/storage`: 65 legacy → 55 v1
+
+Interpretation
+- Edges (api_handlers/network) are effectively v1‑only now.
+- Services are largely v1/native; a small number of legacy helpers remain for compatibility signatures.
+- Core + Storage hold most of the remaining legacy usage and will be migrated next.
+
 Metrics
 - Remaining legacy references in repo (approximate, run locally): `rg -n "crate::proto::proximadb::" src` (services/API paths trending down; full removal pending).
 

@@ -144,7 +144,7 @@ impl SSTRowFilterEvaluator {
     fn get_or_convert_metadata(
         &mut self,
         record_id: &str,
-        metadata: &[crate::proto::proximadb::MetadataItem],
+        metadata: &[crate::proto::proximadb_v1::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
         if let Some(cached) = self.metadata_cache.get(record_id) {
             return Ok(cached.clone());
@@ -166,7 +166,7 @@ impl SSTRowFilterEvaluator {
     fn get_or_convert_vector_metadata(
         &mut self,
         cache_key: &str,
-        metadata: &[crate::proto::proximadb::MetadataItem],
+        metadata: &[crate::proto::proximadb_v1::MetadataItem],
     ) -> Result<HashMap<String, serde_json::Value>> {
         if let Some(cached) = self.metadata_cache.get(cache_key) {
             return Ok(cached.clone());
@@ -504,9 +504,9 @@ mod tests {
             let mut metadata = Vec::new();
 
             // Add test metadata
-            metadata.push(crate::proto::proximadb::MetadataItem {
+            metadata.push(crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     if i % 3 == 0 {
                         "electronics".to_string()
                     } else {
@@ -515,16 +515,16 @@ mod tests {
                 )),
             });
 
-            metadata.push(crate::proto::proximadb::MetadataItem {
+            metadata.push(crate::proto::proximadb_v1::MetadataItem {
                 key: "price".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::NumberValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                     (50 + (i * 10) % 200) as f64,
                 )),
             });
 
-            metadata.push(crate::proto::proximadb::MetadataItem {
+            metadata.push(crate::proto::proximadb_v1::MetadataItem {
                 key: "brand".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     if i % 7 == 0 {
                         "Apple".to_string()
                     } else {

@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use crate::utils::uuid::Uuid;
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FileSystem;
 
 /// Common serialization utilities

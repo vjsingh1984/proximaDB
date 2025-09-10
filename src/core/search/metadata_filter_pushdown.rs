@@ -12,7 +12,7 @@ use tracing::debug;
 
 use crate::core::bloom::{BloomFilter, BloomFilterBuilder};
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Metadata filter optimizer with pushdown capabilities
 pub struct MetadataFilterPushdown {
@@ -361,7 +361,7 @@ impl MetadataFilterPushdown {
         for entry in &record.metadata {
             // Convert the protobuf metadata value to serde_json::Value
             if let Some(ref proto_value) = entry.value {
-                use crate::proto::proximadb::metadata_item;
+                use crate::proto::proximadb_v1::metadata_item;
                 let json_value = match proto_value {
                     metadata_item::Value::StringValue(s) => Value::String(s.clone()),
                     metadata_item::Value::NumberValue(n) => {
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
-        use crate::proto::proximadb::{metadata_item::Value, MetadataItem, VectorRecord};
+        use crate::proto::proximadb_v1::{metadata_item::Value, MetadataItem, VectorRecord};
 
         let mut builder = MetadataBloomBuilder::new(1000);
 

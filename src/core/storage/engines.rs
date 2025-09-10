@@ -4,7 +4,7 @@
 pub use crate::compute::distance_computation::DistanceMetric;
 
 // Use the canonical StorageEngine from proto instead of duplicate enum
-pub use crate::proto::proximadb::StorageEngine;
+pub use crate::proto::proximadb_v1::StorageEngine;
 
 impl StorageEngine {
     /// Get all available storage engines

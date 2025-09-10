@@ -24,7 +24,7 @@ mod tests {
 
     // Helper to create test SST records
     fn create_test_records(count: usize, prefix: &str) -> Vec<SstRecord> {
-        use crate::proto::proximadb::{MetadataItem, metadata_item};
+        use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
 
         (0..count)
             .map(|i| SstRecord {
@@ -72,7 +72,7 @@ mod tests {
             for item in &record.metadata {
                 if let Some(value) = &item.value {
                     let value_str = match value {
-                        crate::proto::proximadb::metadata_item::Value::StringValue(s) => s.clone(),
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => s.clone(),
                         _ => continue, // Skip non-string values for this test
                     };
 
@@ -486,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_statistics_validation() {
-        use crate::proto::proximadb::{MetadataItem, metadata_item};
+        use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
 
         let temp_dir = TempDir::new().unwrap();
         let sst_path = temp_dir

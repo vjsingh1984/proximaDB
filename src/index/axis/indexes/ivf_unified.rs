@@ -35,7 +35,7 @@ use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::index::axis::clustering::{AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig};
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
 use crate::index::axis::zero_overhead_vector::{CollectionConfig, ZeroOverheadCollection};
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -1181,21 +1181,21 @@ impl UnifiedIvfIndex {
         let _metadata_items = metadata
             .map(|map| {
                 map.into_iter()
-                    .map(|(key, value)| crate::proto::proximadb::MetadataItem {
+                    .map(|(key, value)| crate::proto::proximadb_v1::MetadataItem {
                         key,
                         value: Some(match value {
                             serde_json::Value::String(s) => {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s)
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)
                             }
                             serde_json::Value::Number(n) => {
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                                     n.as_f64().unwrap_or(0.0),
                                 )
                             }
                             serde_json::Value::Bool(b) => {
-                                crate::proto::proximadb::metadata_item::Value::BoolValue(b)
+                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)
                             }
-                            _ => crate::proto::proximadb::metadata_item::Value::StringValue(
+                            _ => crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                 value.to_string(),
                             ),
                         }),

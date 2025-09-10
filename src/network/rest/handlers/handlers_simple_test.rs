@@ -2,7 +2,7 @@
 mod tests {
     use super::*;
     use crate::core::proto_metadata_helper;
-    use crate::proto::proximadb::{MetadataItem, metadata_item};
+    use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
     use tracing::{debug, error, info};
 
     #[test]

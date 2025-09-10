@@ -214,7 +214,7 @@ impl SstCompactor {
         input_files: Vec<String>,
         output_file: String,
         target_level: u8,
-        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<ZeroCopyCompactionStats> {
         debug!("🔍 SST_COMPACTOR: compact_files called");
         debug!("   Input files: {:?}", input_files);
@@ -666,7 +666,7 @@ impl SstCompactor {
         mut records: Vec<VectorRecord>,
         output_path: &str,
         level: u8,
-        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<WriterStats> {
         debug!("🔍 SST_COMPACTOR: write_merged_records");
         debug!("   Records to write: {}", records.len());
@@ -716,7 +716,7 @@ impl SstCompactor {
                             .find(|m| m.key == *key)
                             .and_then(|m| m.value.as_ref())
                             .and_then(|v| match v {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                     Some(s.as_str())
                                 }
                                 _ => None,
@@ -728,7 +728,7 @@ impl SstCompactor {
                             .find(|m| m.key == *key)
                             .and_then(|m| m.value.as_ref())
                             .and_then(|v| match v {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                     Some(s.as_str())
                                 }
                                 _ => None,
@@ -915,7 +915,7 @@ impl SstCompactor {
         &self,
         files_by_size: Vec<(String, u64)>,
         target_size: u64,
-        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<Vec<ZeroCopyCompactionStats>> {
         debug!(
             "🔍 SST_COMPACTOR: compact_size_tiered with compression: {:?}",

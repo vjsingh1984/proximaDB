@@ -215,7 +215,7 @@
 //! 4. **Version Carefully**: Plan schema evolution
 //! 5. **Document Fields**: Add comments in .proto files
 
-pub mod proximadb;
+pub mod proximadb; // TODO: Remove once v1 schema is complete
 
 // V1 proto definitions for SKS (Semantic Knowledge Store)
 #[path = "proximadb.v1.rs"]

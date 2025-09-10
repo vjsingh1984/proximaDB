@@ -378,9 +378,9 @@ pub struct DomainSearchResult {
 }
 
 /// Use proto-generated enums as single source of truth
-pub use crate::proto::proximadb::DistanceMetric;
-pub use crate::proto::proximadb::IndexingAlgorithm;
-pub use crate::proto::proximadb::StorageEngine;
+pub use crate::proto::proximadb_v1::DistanceMetric;
+pub use crate::proto::proximadb_v1::IndexingAlgorithm;
+pub use crate::proto::proximadb_v1::StorageEngine;
 /// Compression algorithms for data storage and transmission
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CompressionAlgorithm {
@@ -703,10 +703,10 @@ pub struct CollectionResponse {
     pub operation: CollectionOperation,
     /// Single collection result (for GET operation) - use proto Collection
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub collection: Option<crate::proto::proximadb::Collection>,
+    pub collection: Option<crate::proto::proximadb_v1::Collection>,
     /// Multiple collections result (for LIST operation) - use proto Collection
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collections: Vec<crate::proto::proximadb::Collection>,
+    pub collections: Vec<crate::proto::proximadb_v1::Collection>,
     /// Number of affected items
     #[serde(default)]
     pub affected_count: i64,
@@ -815,7 +815,7 @@ impl CollectionResponse {
     }
 
     /// Set the single collection result
-    pub fn with_collection(mut self, collection: crate::proto::proximadb::Collection) -> Self {
+    pub fn with_collection(mut self, collection: crate::proto::proximadb_v1::Collection) -> Self {
         self.collection = Some(collection);
         self.affected_count = 1;
         self
@@ -824,7 +824,7 @@ impl CollectionResponse {
     /// Set the multiple collections result
     pub fn with_collections(
         mut self,
-        collections: Vec<crate::proto::proximadb::Collection>,
+        collections: Vec<crate::proto::proximadb_v1::Collection>,
     ) -> Self {
         self.affected_count = collections.len() as i64;
         self.collections = collections;
@@ -1164,5 +1164,5 @@ impl OperationResponse {
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
 pub type UnifiedSearchResult = OptimizedSearchRecord;
-pub type UnifiedCollection = crate::proto::proximadb::Collection;
+pub type UnifiedCollection = crate::proto::proximadb_v1::Collection;
 pub type VectorSearchResult = OptimizedSearchRecord; // Alias from schema_types.rs

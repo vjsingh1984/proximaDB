@@ -7,7 +7,7 @@
 //! - Cleanup instructions after successful flushes
 
 use crate::core::VectorRecord;
-use crate::proto::proximadb::MetadataItem;
+use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::persistence::write_ahead_log::{
     FlushDataSource, WALFlushCoordinator, config::SyncMode,
 };
@@ -120,7 +120,7 @@ fn create_test_vector(id: &str) -> VectorRecord {
         vector: vec![0.1; 128],
         metadata: vec![MetadataItem {
             key: "test".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "true".to_string(),
             )),
         }],

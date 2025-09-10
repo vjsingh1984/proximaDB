@@ -8,8 +8,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::super::local_rocksdb_backend::*;
-    use crate::proto::proximadb::Collection;
-    use crate::proto::proximadb::{
+    use crate::proto::proximadb_v1::Collection;
+    use crate::proto::proximadb_v1::{
         Collection as Collection, CollectionConfig as CollectionConfig,
         CollectionStats, CollectionMetadata, DistanceMetric, StorageEngine, 
         IndexingAlgorithm, FilterableColumnSpec, FilterableData,
@@ -102,8 +102,8 @@ mod tests {
                     storage_quantization: Some(StorageQuantizationConfig {
                         enabled: Some(true),
                         level: Some(QuantizationLevel {
-                            level_type: Some(crate::proto::proximadb::quantization_level::LevelType::Scalar(
-                                crate::proto::proximadb::ScalarQuantizationConfig {
+                            level_type: Some(crate::proto::proximadb_v1::quantization_level::LevelType::Scalar(
+                                crate::proto::proximadb_v1::ScalarQuantizationConfig {
                                     bits: 8,
                                     scale: Some(1.0),
                                     offset: Some(0.0),
@@ -263,7 +263,7 @@ mod tests {
                 index_name: Some("secondary_ivf".to_string()),
                 algorithm: Some(IndexingAlgorithm::Ivf as i32),
                 is_primary: Some(false),
-                ivf_config: Some(crate::proto::proximadb::IvfConfig {
+                ivf_config: Some(crate::proto::proximadb_v1::IvfConfig {
                     n_lists: Some(1000),
                     n_probe: Some(10),
                     use_pq: Some(true),

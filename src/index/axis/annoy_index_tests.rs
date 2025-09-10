@@ -20,7 +20,7 @@ mod tests {
     use crate::core::VectorRecord;
     use crate::index::axis::index_factory::AxisVectorIndex;
     use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -154,7 +154,7 @@ mod tests {
 
             let metadata = vec![MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     (i % 2).to_string(),
                 )),
             }];
@@ -169,7 +169,7 @@ mod tests {
         // Search with filter
         let query = vec![1.0, 0.0, 0.0, 0.0];
         let filter = |record: &VectorRecord| -> bool {
-            record.metadata.iter().any(|item| item.key == "category" && matches!(&item.value, Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) if s == "1"))
+            record.metadata.iter().any(|item| item.key == "category" && matches!(&item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "1"))
         };
 
         let results = index.search(&query, 5, Some(&filter)).await.unwrap();

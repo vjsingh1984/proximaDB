@@ -16,8 +16,8 @@ use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::TypedMetadata;
-use crate::proto::proximadb::QuantizationConfig;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::QuantizationConfig;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Unified progressive search orchestrator
 pub struct UnifiedProgressiveSearchPipeline {
@@ -242,7 +242,7 @@ impl UnifiedProgressiveSearchPipeline {
         let mut stages = Vec::new();
 
         // Use strategy to determine stages since custom_levels is proto QuantizationLevel
-        use crate::proto::proximadb::quantization_config::Strategy;
+        use crate::proto::proximadb_v1::quantization_config::Strategy;
         match config.strategy() {
             Strategy::SmartDefaults => {
                 stages.push(SearchStage::Binary);
@@ -700,7 +700,7 @@ impl UnifiedProgressiveSearchPipeline {
 
         for entry in &record.metadata {
             if let Some(ref proto_value) = entry.value {
-                use crate::proto::proximadb::metadata_item;
+                use crate::proto::proximadb_v1::metadata_item;
                 use serde_json::Value;
 
                 let json_value = match proto_value {

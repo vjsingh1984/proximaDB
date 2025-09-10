@@ -26,7 +26,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use std::collections::HashMap;
-use crate::proto::proximadb::metadata_item;
+use crate::proto::proximadb_v1::metadata_item;
 use crate::services::operations::vectors::VectorOperationsService;
 
 /// Helper function to convert proto metadata Value to TypedMetadata value

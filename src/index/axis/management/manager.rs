@@ -219,7 +219,7 @@ pub struct AxisManager {
     /// Collections are cached by VectorOperationsService and shared here
     /// for fast access during index operations
     shared_collection_cache:
-        Option<Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>>,
+        Option<Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb_v1::Collection>>>>,
 }
 
 /// Status of ongoing migrations
@@ -344,7 +344,7 @@ impl AxisManager {
     /// Set shared collection cache from VectorOperationsService
     pub fn set_shared_collection_cache(
         &mut self,
-        cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb::Collection>>>,
+        cache: Arc<dashmap::DashMap<String, Arc<crate::proto::proximadb_v1::Collection>>>,
     ) {
         self.shared_collection_cache = Some(cache);
         tracing::info!("🔗 AXIS: Shared collection cache set for read-only access");
@@ -1148,8 +1148,8 @@ impl AxisManager {
     async fn quantize_for_index(
         &self,
         vector: &VectorRecord,
-        quant_config: &crate::proto::proximadb::QuantizationConfig,
-        collection_config: &crate::proto::proximadb::CollectionConfig,
+        quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
+        collection_config: &crate::proto::proximadb_v1::CollectionConfig,
     ) -> Result<VectorRecord> {
         use crate::compute::distance_computation::conversion::proto_distance_to_internal;
         use crate::compute::quantization::storage_engine::{

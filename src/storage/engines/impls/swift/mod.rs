@@ -241,7 +241,7 @@ impl Default for QuantizationConfigOLD {
 }
 
 /// Use proto-generated config directly - no more duplicates!
-pub use crate::proto::proximadb::QuantizationConfig;
+pub use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// PQ Codebook
 #[derive(Debug, Clone, Serialize, Deserialize)]

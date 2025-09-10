@@ -443,7 +443,7 @@ fn deserialize_vector(bytes: &[u8]) -> Result<Vec<f32>> {
 }
 
 /// Deserialize metadata from Arrow array
-fn deserialize_metadata(array: &ArrayRef, row: usize) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
+fn deserialize_metadata(array: &ArrayRef, row: usize) -> Result<Vec<crate::proto::proximadb_v1::MetadataItem>> {
     // Handle different metadata formats
     if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
         // JSON string format
@@ -462,8 +462,8 @@ fn deserialize_metadata(array: &ArrayRef, row: usize) -> Result<Vec<crate::proto
 }
 
 /// Convert JSON to MetadataItems
-fn json_to_metadata_items(value: &serde_json::Value) -> Result<Vec<crate::proto::proximadb::MetadataItem>> {
-    use crate::proto::proximadb::{MetadataItem, metadata_item};
+fn json_to_metadata_items(value: &serde_json::Value) -> Result<Vec<crate::proto::proximadb_v1::MetadataItem>> {
+    use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
     
     let mut items = Vec::new();
     

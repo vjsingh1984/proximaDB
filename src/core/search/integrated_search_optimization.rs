@@ -33,7 +33,7 @@ use crate::core::search::{
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::{
     MetadataStore, QueryCache,
     orchestrator::{CacheType, CrossCacheOrchestrator},
@@ -336,7 +336,7 @@ impl AdvancedSearchOptimizer {
         _filter: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         // Create a StorageQueryContext from the parameters
-        let collection = Arc::new(crate::proto::proximadb::Collection {
+        let collection = Arc::new(crate::proto::proximadb_v1::Collection {
             id: collection_id.to_string(),
             config: None,
             stats: None,
@@ -622,7 +622,7 @@ impl AdvancedSearchOptimizer {
                     let mut metadata_map = std::collections::HashMap::new();
                     for item in &record.metadata {
                         if let Some(value) = &item.value {
-                            use crate::proto::proximadb::metadata_item;
+                            use crate::proto::proximadb_v1::metadata_item;
                             let typed_value = match value {
                                 metadata_item::Value::StringValue(s) =>
                                     MetadataValue::String(Arc::from(s.as_str())),
@@ -671,10 +671,10 @@ impl AdvancedSearchOptimizer {
         );
 
         // Convert to proto SearchVectorRecord for caching
-        let proto_results = crate::proto::proximadb::SearchResult {
+        let proto_results = crate::proto::proximadb_v1::SearchResult {
             results: results
                 .iter()
-                .map(|r| crate::proto::proximadb::SearchVectorRecord {
+                .map(|r| crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id.clone(),
                     score: r.score,
                     similarity: r.similarity,
@@ -971,7 +971,7 @@ impl AdvancedSearchOptimizer {
             let mut metadata_map = std::collections::HashMap::new();
             for item in &record.metadata {
                 if let Some(value) = &item.value {
-                    use crate::proto::proximadb::metadata_item;
+                    use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
                         metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),

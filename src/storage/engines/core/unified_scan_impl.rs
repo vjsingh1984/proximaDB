@@ -43,7 +43,7 @@ impl UnifiedScanImpl {
         engine: &dyn UnifiedStorageEngine,
         collection_id: &str,
         strategy: ScanStrategy,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Box<dyn ScanIterator>> {
         match strategy {
             ScanStrategy::FullScan { include_deleted, batch_size, parallel, use_cache } => {
@@ -149,7 +149,7 @@ impl UnifiedScanImpl {
         collection_id: &str,
         predicates: Option<crate::core::search::FilterExpression>,
         enable_pushdown: bool,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Box<dyn ScanIterator>> {
         info!("Creating filtered scan for {} engine with pushdown={}", self.engine_name, enable_pushdown);
         
@@ -478,7 +478,7 @@ pub async fn create_unified_scan(
     engine: &dyn UnifiedStorageEngine,
     collection_id: &str,
     strategy: ScanStrategy,
-    collection_config: Option<&crate::proto::proximadb::Collection>,
+    collection_config: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> Result<Box<dyn ScanIterator>> {
     let impl_helper = UnifiedScanImpl::new(engine.engine_name());
     impl_helper.create_scan(engine, collection_id, strategy, collection_config).await

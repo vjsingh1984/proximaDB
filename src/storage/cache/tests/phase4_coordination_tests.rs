@@ -384,7 +384,7 @@ async fn test_memory_pressure_handling() {
 
 // Using UsageStats from orchestrator module
 // Placeholder implementations for testing
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // Helper implementations moved to main module
 // Removed duplicate impl block - these methods are already in the main CacheMetrics impl

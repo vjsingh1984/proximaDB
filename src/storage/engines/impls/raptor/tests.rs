@@ -374,7 +374,7 @@ mod tests {
                     vector[0] = rg_idx as f32 * 10.0; // Different pattern per rowgroup
                     vector[1] = i as f32;
 
-                    let record = crate::proto::proximadb::VectorRecord {
+                    let record = crate::proto::proximadb_v1::VectorRecord {
                         id: Some(format!("vec_{}_{}", rg_idx, i)),
                         vector,
                         ..Default::default()

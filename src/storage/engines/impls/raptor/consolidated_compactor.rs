@@ -16,7 +16,7 @@ use crate::index::axis::clustering::{
     AxisClusteringEngine as AxisClustering,
     ClusteringConfig as AxisClusteringConfig, ReusableClusteringEngine,
 };
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;

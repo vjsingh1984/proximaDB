@@ -2278,6 +2278,9 @@ pub struct VectorRecord {
     pub quantized_vector: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, optional, tag = "9")]
     pub source: ::core::option::Option<::prost::alloc::string::String>,
+    /// Collection association
+    #[prost(string, optional, tag = "10")]
+    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -2364,6 +2367,174 @@ pub struct VectorOperationResponse {
     pub error_message: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "7")]
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
+}
+/// Quantization configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QuantizationConfig {
+    #[prost(bool, tag = "1")]
+    pub enabled: bool,
+    #[prost(enumeration = "quantization_config::Strategy", tag = "2")]
+    pub strategy: i32,
+    #[prost(message, repeated, tag = "3")]
+    pub custom_levels: ::prost::alloc::vec::Vec<QuantizationLevel>,
+    #[prost(bool, tag = "4")]
+    pub enable_progressive_search: bool,
+    #[prost(float, tag = "5")]
+    pub binary_filter_selectivity: f32,
+    #[prost(float, tag = "6")]
+    pub int8_ranking_selectivity: f32,
+    #[prost(float, tag = "7")]
+    pub pq_ranking_selectivity: f32,
+    #[prost(uint32, tag = "8")]
+    pub training_sample_size: u32,
+    #[prost(float, tag = "9")]
+    pub quality_threshold: f32,
+}
+/// Nested message and enum types in `QuantizationConfig`.
+pub mod quantization_config {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum Strategy {
+        SmartDefaults = 0,
+        CustomLevels = 1,
+        Minimal = 2,
+        Aggressive = 3,
+    }
+    impl Strategy {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Strategy::SmartDefaults => "SMART_DEFAULTS",
+                Strategy::CustomLevels => "CUSTOM_LEVELS",
+                Strategy::Minimal => "MINIMAL",
+                Strategy::Aggressive => "AGGRESSIVE",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "SMART_DEFAULTS" => Some(Self::SmartDefaults),
+                "CUSTOM_LEVELS" => Some(Self::CustomLevels),
+                "MINIMAL" => Some(Self::Minimal),
+                "AGGRESSIVE" => Some(Self::Aggressive),
+                _ => None,
+            }
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QuantizationLevel {
+    #[prost(string, tag = "1")]
+    pub level_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "quantization_level::QuantizationType", tag = "2")]
+    pub r#type: i32,
+    #[prost(uint32, tag = "3")]
+    pub bits: u32,
+}
+/// Nested message and enum types in `QuantizationLevel`.
+pub mod quantization_level {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum QuantizationType {
+        Binary = 0,
+        Scalar = 1,
+        Product = 2,
+        Uniform = 3,
+        None = 4,
+    }
+    impl QuantizationType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                QuantizationType::Binary => "BINARY",
+                QuantizationType::Scalar => "SCALAR",
+                QuantizationType::Product => "PRODUCT",
+                QuantizationType::Uniform => "UNIFORM",
+                QuantizationType::None => "NONE",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "BINARY" => Some(Self::Binary),
+                "SCALAR" => Some(Self::Scalar),
+                "PRODUCT" => Some(Self::Product),
+                "UNIFORM" => Some(Self::Uniform),
+                "NONE" => Some(Self::None),
+                _ => None,
+            }
+        }
+    }
+}
+/// Filterable column specification
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FilterableColumnSpec {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(enumeration = "FilterableDataType", tag = "2")]
+    pub data_type: i32,
+    #[prost(bool, tag = "3")]
+    pub indexed: bool,
+    #[prost(bool, tag = "4")]
+    pub supports_range: bool,
+    #[prost(uint32, optional, tag = "5")]
+    pub estimated_cardinality: ::core::option::Option<u32>,
+}
+/// Source content for provenance tracking
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SourceContent {
+    #[prost(oneof = "source_content::Data", tags = "1, 2, 3")]
+    pub data: ::core::option::Option<source_content::Data>,
+}
+/// Nested message and enum types in `SourceContent`.
+pub mod source_content {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Data {
+        #[prost(string, tag = "1")]
+        TextContent(::prost::alloc::string::String),
+        #[prost(bytes, tag = "2")]
+        BinaryContent(::prost::alloc::vec::Vec<u8>),
+        #[prost(string, tag = "3")]
+        ExternalReference(::prost::alloc::string::String),
+    }
 }
 /// Strongly-typed enums for metrics and engines
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -2500,6 +2671,153 @@ impl IndexingAlgorithm {
             "IVF" => Some(Self::Ivf),
             "PQ" => Some(Self::Pq),
             "FLAT" => Some(Self::Flat),
+            _ => None,
+        }
+    }
+}
+/// Operation enums
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum VectorOperation {
+    Unspecified = 0,
+    /// Unified batch operation (insert/upsert/delete)
+    VectorBatch = 1,
+    /// Vector search operation
+    VectorSearch = 2,
+    /// Get single vector by ID
+    VectorGet = 3,
+}
+impl VectorOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            VectorOperation::Unspecified => "VECTOR_OPERATION_UNSPECIFIED",
+            VectorOperation::VectorBatch => "VECTOR_BATCH",
+            VectorOperation::VectorSearch => "VECTOR_SEARCH",
+            VectorOperation::VectorGet => "VECTOR_GET",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "VECTOR_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "VECTOR_BATCH" => Some(Self::VectorBatch),
+            "VECTOR_SEARCH" => Some(Self::VectorSearch),
+            "VECTOR_GET" => Some(Self::VectorGet),
+            _ => None,
+        }
+    }
+}
+/// Compression algorithms
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CompressionAlgorithm {
+    CompressionNone = 0,
+    CompressionZstd = 1,
+    CompressionLz4 = 2,
+    CompressionSnappy = 3,
+    CompressionGzip = 4,
+    CompressionBrotli = 5,
+    CompressionBzip2 = 6,
+    CompressionDeflate = 7,
+    CompressionXz = 8,
+    CompressionZlib = 9,
+    CompressionLzo = 10,
+    CompressionLz4hc = 11,
+    CompressionLzma = 12,
+}
+impl CompressionAlgorithm {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            CompressionAlgorithm::CompressionNone => "COMPRESSION_NONE",
+            CompressionAlgorithm::CompressionZstd => "COMPRESSION_ZSTD",
+            CompressionAlgorithm::CompressionLz4 => "COMPRESSION_LZ4",
+            CompressionAlgorithm::CompressionSnappy => "COMPRESSION_SNAPPY",
+            CompressionAlgorithm::CompressionGzip => "COMPRESSION_GZIP",
+            CompressionAlgorithm::CompressionBrotli => "COMPRESSION_BROTLI",
+            CompressionAlgorithm::CompressionBzip2 => "COMPRESSION_BZIP2",
+            CompressionAlgorithm::CompressionDeflate => "COMPRESSION_DEFLATE",
+            CompressionAlgorithm::CompressionXz => "COMPRESSION_XZ",
+            CompressionAlgorithm::CompressionZlib => "COMPRESSION_ZLIB",
+            CompressionAlgorithm::CompressionLzo => "COMPRESSION_LZO",
+            CompressionAlgorithm::CompressionLz4hc => "COMPRESSION_LZ4HC",
+            CompressionAlgorithm::CompressionLzma => "COMPRESSION_LZMA",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "COMPRESSION_NONE" => Some(Self::CompressionNone),
+            "COMPRESSION_ZSTD" => Some(Self::CompressionZstd),
+            "COMPRESSION_LZ4" => Some(Self::CompressionLz4),
+            "COMPRESSION_SNAPPY" => Some(Self::CompressionSnappy),
+            "COMPRESSION_GZIP" => Some(Self::CompressionGzip),
+            "COMPRESSION_BROTLI" => Some(Self::CompressionBrotli),
+            "COMPRESSION_BZIP2" => Some(Self::CompressionBzip2),
+            "COMPRESSION_DEFLATE" => Some(Self::CompressionDeflate),
+            "COMPRESSION_XZ" => Some(Self::CompressionXz),
+            "COMPRESSION_ZLIB" => Some(Self::CompressionZlib),
+            "COMPRESSION_LZO" => Some(Self::CompressionLzo),
+            "COMPRESSION_LZ4HC" => Some(Self::CompressionLz4hc),
+            "COMPRESSION_LZMA" => Some(Self::CompressionLzma),
+            _ => None,
+        }
+    }
+}
+/// Filterable data types
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FilterableDataType {
+    Unspecified = 0,
+    FilterableString = 1,
+    FilterableInteger = 2,
+    FilterableFloat = 3,
+    FilterableBoolean = 4,
+    FilterableDatetime = 5,
+    FilterableArrayString = 6,
+    FilterableArrayInteger = 7,
+    FilterableArrayFloat = 8,
+}
+impl FilterableDataType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            FilterableDataType::Unspecified => "FILTERABLE_DATA_TYPE_UNSPECIFIED",
+            FilterableDataType::FilterableString => "FILTERABLE_STRING",
+            FilterableDataType::FilterableInteger => "FILTERABLE_INTEGER",
+            FilterableDataType::FilterableFloat => "FILTERABLE_FLOAT",
+            FilterableDataType::FilterableBoolean => "FILTERABLE_BOOLEAN",
+            FilterableDataType::FilterableDatetime => "FILTERABLE_DATETIME",
+            FilterableDataType::FilterableArrayString => "FILTERABLE_ARRAY_STRING",
+            FilterableDataType::FilterableArrayInteger => "FILTERABLE_ARRAY_INTEGER",
+            FilterableDataType::FilterableArrayFloat => "FILTERABLE_ARRAY_FLOAT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FILTERABLE_DATA_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "FILTERABLE_STRING" => Some(Self::FilterableString),
+            "FILTERABLE_INTEGER" => Some(Self::FilterableInteger),
+            "FILTERABLE_FLOAT" => Some(Self::FilterableFloat),
+            "FILTERABLE_BOOLEAN" => Some(Self::FilterableBoolean),
+            "FILTERABLE_DATETIME" => Some(Self::FilterableDatetime),
+            "FILTERABLE_ARRAY_STRING" => Some(Self::FilterableArrayString),
+            "FILTERABLE_ARRAY_INTEGER" => Some(Self::FilterableArrayInteger),
+            "FILTERABLE_ARRAY_FLOAT" => Some(Self::FilterableArrayFloat),
             _ => None,
         }
     }
@@ -5565,6 +5883,23 @@ pub struct CollectionConfig {
     pub tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, optional, tag = "6")]
     pub description: ::core::option::Option<::prost::alloc::string::String>,
+    /// Additional fields needed by collection manager
+    #[prost(message, repeated, tag = "7")]
+    pub filterable_columns: ::prost::alloc::vec::Vec<FilterableColumnSpec>,
+    #[prost(message, repeated, tag = "8")]
+    pub index_configs: ::prost::alloc::vec::Vec<IndexConfig>,
+    #[prost(message, optional, tag = "9")]
+    pub quantization: ::core::option::Option<QuantizationConfig>,
+    #[prost(message, optional, tag = "10")]
+    pub storage_config: ::core::option::Option<StorageConfig>,
+    #[prost(string, tag = "11")]
+    pub primary_index: ::prost::alloc::string::String,
+    #[prost(bool, tag = "12")]
+    pub auto_index_selection: bool,
+    #[prost(string, optional, tag = "13")]
+    pub owner: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "14")]
+    pub embedding_models: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -5591,6 +5926,58 @@ pub struct Collection {
     pub created_at: i64,
     #[prost(int64, tag = "5")]
     pub updated_at: i64,
+    #[prost(message, optional, tag = "6")]
+    pub storage_assignment: ::core::option::Option<StorageAssignment>,
+}
+/// Index configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IndexConfig {
+    #[prost(string, tag = "1")]
+    pub index_name: ::prost::alloc::string::String,
+    #[prost(enumeration = "IndexingAlgorithm", tag = "2")]
+    pub algorithm: i32,
+    #[prost(map = "string, string", tag = "3")]
+    pub parameters: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(bool, tag = "4")]
+    pub enabled: bool,
+}
+/// Storage configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StorageConfig {
+    #[prost(string, tag = "1")]
+    pub storage_path: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub data_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(enumeration = "CompressionAlgorithm", tag = "3")]
+    pub compression: i32,
+    #[prost(uint32, tag = "4")]
+    pub max_file_size_mb: u32,
+    #[prost(bool, tag = "5")]
+    pub enable_caching: bool,
+}
+/// Storage assignment information
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StorageAssignment {
+    #[prost(string, tag = "1")]
+    pub primary_path: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "2")]
+    pub backup_paths: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(enumeration = "StorageEngine", tag = "3")]
+    pub engine: i32,
+    #[prost(map = "string, string", tag = "4")]
+    pub engine_config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -5631,6 +6018,120 @@ pub struct DeleteCollectionRequest {
 pub struct DeleteCollectionResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
+}
+/// Unified collection request message
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CollectionRequest {
+    #[prost(int32, tag = "1")]
+    pub operation: i32,
+    #[prost(string, optional, tag = "2")]
+    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(message, optional, tag = "3")]
+    pub collection_config: ::core::option::Option<CollectionConfig>,
+    #[prost(map = "string, string", tag = "4")]
+    pub query_params: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(map = "string, bool", tag = "5")]
+    pub options: ::std::collections::HashMap<::prost::alloc::string::String, bool>,
+    #[prost(map = "string, string", tag = "6")]
+    pub migration_config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Unified collection response message
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CollectionResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(message, optional, tag = "2")]
+    pub collection: ::core::option::Option<Collection>,
+    #[prost(message, repeated, tag = "3")]
+    pub collections: ::prost::alloc::vec::Vec<Collection>,
+    #[prost(string, optional, tag = "4")]
+    pub error_message: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "5")]
+    pub error_code: ::core::option::Option<::prost::alloc::string::String>,
+    /// Additional legacy fields
+    #[prost(int32, tag = "6")]
+    pub operation: i32,
+    #[prost(int64, tag = "7")]
+    pub affected_count: i64,
+    #[prost(int64, tag = "8")]
+    pub total_count: i64,
+    #[prost(map = "string, string", tag = "9")]
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(int64, tag = "10")]
+    pub processing_time_us: i64,
+}
+/// Collection snapshot for backups/migrations
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CollectionSnapshot {
+    #[prost(message, optional, tag = "1")]
+    pub collection: ::core::option::Option<Collection>,
+    #[prost(message, repeated, tag = "2")]
+    pub vectors: ::prost::alloc::vec::Vec<VectorRecord>,
+    #[prost(int64, tag = "3")]
+    pub snapshot_timestamp: i64,
+    #[prost(string, tag = "4")]
+    pub snapshot_version: ::prost::alloc::string::String,
+}
+/// Collection operations enum
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum CollectionOperation {
+    Unspecified = 0,
+    CollectionCreate = 1,
+    CollectionUpdate = 2,
+    CollectionGet = 3,
+    CollectionList = 4,
+    CollectionDelete = 5,
+    CollectionMigrate = 6,
+    CollectionGetIdByName = 7,
+}
+impl CollectionOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            CollectionOperation::Unspecified => "COLLECTION_OPERATION_UNSPECIFIED",
+            CollectionOperation::CollectionCreate => "COLLECTION_CREATE",
+            CollectionOperation::CollectionUpdate => "COLLECTION_UPDATE",
+            CollectionOperation::CollectionGet => "COLLECTION_GET",
+            CollectionOperation::CollectionList => "COLLECTION_LIST",
+            CollectionOperation::CollectionDelete => "COLLECTION_DELETE",
+            CollectionOperation::CollectionMigrate => "COLLECTION_MIGRATE",
+            CollectionOperation::CollectionGetIdByName => "COLLECTION_GET_ID_BY_NAME",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "COLLECTION_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "COLLECTION_CREATE" => Some(Self::CollectionCreate),
+            "COLLECTION_UPDATE" => Some(Self::CollectionUpdate),
+            "COLLECTION_GET" => Some(Self::CollectionGet),
+            "COLLECTION_LIST" => Some(Self::CollectionList),
+            "COLLECTION_DELETE" => Some(Self::CollectionDelete),
+            "COLLECTION_MIGRATE" => Some(Self::CollectionMigrate),
+            "COLLECTION_GET_ID_BY_NAME" => Some(Self::CollectionGetIdByName),
+            _ => None,
+        }
+    }
 }
 /// Generated client implementations.
 pub mod collection_service_client {

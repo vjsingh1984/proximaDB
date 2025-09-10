@@ -13,7 +13,7 @@ use crate::compute::quantization::storage_engine::{
 use crate::compute::quantization::types::QuantizationLevel;
 use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
-use crate::proto::proximadb::QuantizationConfig;
+use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::utils::cache::LruCache;
 use parking_lot::RwLock;
 use std::collections::hash_map::DefaultHasher;
@@ -404,7 +404,7 @@ impl QueryPreprocessor {
         &self,
         config: &QuantizationConfig,
     ) -> Vec<UnifiedQuantizationLevel> {
-        use crate::proto::proximadb::quantization_config::Strategy;
+        use crate::proto::proximadb_v1::quantization_config::Strategy;
 
         if !config.enabled {
             return vec![];

@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
@@ -1711,7 +1711,7 @@ impl InternalCollectionProvider for UniversalMetadataBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::CollectionConfig;
+    use crate::proto::proximadb_v1::CollectionConfig;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -1754,7 +1754,7 @@ mod tests {
         let collection = Collection {
             id: "test_id".to_string(),
             config: Some(collection_config),
-            stats: Some(crate::proto::proximadb::CollectionStats {
+            stats: Some(crate::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,
@@ -1790,7 +1790,7 @@ mod tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::proto::proximadb::{CollectionConfig, CollectionStats, IndexingAlgorithm};
+    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats, IndexingAlgorithm};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -1821,7 +1821,7 @@ mod integration_tests {
 
         // Create a test collection using proper proto structure
 
-        let collection = crate::proto::proximadb::Collection {
+        let collection = crate::proto::proximadb_v1::Collection {
             id: "test_atomic".to_string(),
             config: Some(CollectionConfig {
                 name: "test_atomic_collection".to_string(),
@@ -1907,7 +1907,7 @@ mod integration_tests {
             .unwrap();
 
         // Store a collection using proper proto structure
-        let collection = crate::proto::proximadb::Collection {
+        let collection = crate::proto::proximadb_v1::Collection {
             id: "relative_test".to_string(),
             config: Some(CollectionConfig {
                 name: "relative_test_collection".to_string(),

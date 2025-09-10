@@ -32,6 +32,7 @@ use crate::proto::proximadb_v1::{
     SearchVectorRecord, StorageEngine, VectorOperation,
     VectorSearchRequest,
 };
+use std::collections::HashMap;
 
 // ============================================================================
 // REST to Proto Conversions
@@ -287,6 +288,61 @@ pub fn convert_metadata_from_proto(
 // ============================================================================
 // Collection Config Conversions
 // ============================================================================
+
+/// Convert a map of v1 SqlValue to JSON values
+pub fn sql_values_to_json_map(
+    items: HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+) -> HashMap<String, serde_json::Value> {
+    let mut out = HashMap::new();
+    for (k, v) in items {
+        let json = match v.value {
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                serde_json::Value::String(s)
+            }
+            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                serde_json::Number::from_f64(n)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            }
+            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                serde_json::Value::Bool(b)
+            }
+            None => serde_json::Value::Null,
+        };
+        out.insert(k, json);
+    }
+    out
+}
+
+/// Convert a JSON map to v1 SqlValue map
+pub fn json_map_to_sql_values(
+    items: HashMap<String, serde_json::Value>,
+) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
+    let mut out = HashMap::new();
+    for (k, v) in items {
+        let sql = match v {
+            serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+            },
+            serde_json::Value::Number(n) => {
+                let f = n.as_f64().unwrap_or(0.0);
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                }
+            }
+            serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+            },
+            other => crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    other.to_string(),
+                )),
+            },
+        };
+        out.insert(k, sql);
+    }
+    out
+}
 
 /// Build a CollectionConfig from JSON parameters
 pub fn build_collection_config(

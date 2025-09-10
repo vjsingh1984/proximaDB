@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Collection index entry - contains both record and secondary keys
 #[derive(Debug, Clone)]

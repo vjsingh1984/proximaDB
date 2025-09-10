@@ -204,7 +204,7 @@ mod tests {
     use super::*;
     // MetadataQueueServiceConfig moved or removed
     // use crate::index::axis::metadata::MetadataQueueServiceConfig;
-    use crate::proto::proximadb::Collection;
+    use crate::proto::proximadb_v1::Collection;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use dashmap::DashMap;
     use tempfile::TempDir;

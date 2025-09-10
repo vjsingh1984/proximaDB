@@ -30,7 +30,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 // Bloom filter handled internally
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -80,7 +80,7 @@ pub struct SchemaMapping {
 pub struct CollectionContext {
     pub collection_id: String,
     pub file_paths: Vec<String>,
-    pub filterable_columns: Vec<crate::proto::proximadb::FilterableColumnSpec>,
+    pub filterable_columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>,
     pub quantization_columns: Vec<String>,
     pub estimated_size_mb: f64,
     pub estimated_document_count: usize,
@@ -1542,7 +1542,7 @@ impl UnifiedParquetReader {
         &self,
         params: &crate::core::search::SearchParams,
         collection_context: &CollectionContext,
-    ) -> Result<Vec<crate::proto::proximadb::SearchVectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchVectorRecord>> {
         debug!("📖 UnifiedParquetReader::search_vectors called");
         debug!(
             "📖 Collection context: files={}, filterable_columns={:?}",
@@ -1598,7 +1598,7 @@ impl UnifiedParquetReader {
 
                     // metadata_map is not used, so we can remove it
 
-                    all_results.push(crate::proto::proximadb::SearchVectorRecord {
+                    all_results.push(crate::proto::proximadb_v1::SearchVectorRecord {
                         id: vector_record.id.clone(),
                         score: similarity_score,
                         similarity: Some(similarity_score),

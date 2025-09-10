@@ -18,7 +18,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
+use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 
 /// Migration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

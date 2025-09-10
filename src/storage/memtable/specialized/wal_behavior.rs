@@ -60,13 +60,13 @@ impl WALVectorBatch {
 
                 // Also add key=value pairs for exact matching
                 let value_str = match &item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         s.clone()
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                         n.to_string()
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         b.to_string()
                     }
                     _ => continue,
@@ -460,7 +460,7 @@ impl WALBehaviorWrapper {
         _metadata_filters: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<crate::proto::proximadb::SearchVectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchVectorRecord>> {
         tracing::info!(
             "🔍 WAL_SEARCH: Searching unflushed vectors in collection {} (top_k={}) using {:?}",
             collection_id,
@@ -532,7 +532,7 @@ impl WALBehaviorWrapper {
         // Convert (SimilarityResult, VectorRecord) to SearchVectorRecord objects
         let mut search_results = Vec::new();
         for (_rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
-            let search_result = crate::proto::proximadb::SearchVectorRecord {
+            let search_result = crate::proto::proximadb_v1::SearchVectorRecord {
                 id: vector_record.id.clone(),
                 score: similarity.raw_value,
                 similarity: Some(similarity.normalized_score),
@@ -1130,9 +1130,9 @@ mod tests {
             let vector_record = crate::core::VectorRecord {
                 id: Some(vector_id.to_string()),
                 vector: vec![i as f32, (i + 1) as f32],
-                metadata: vec![crate::proto::proximadb::MetadataItem {
+                metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                     key: "version".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         i.to_string(),
                     )),
                 }],

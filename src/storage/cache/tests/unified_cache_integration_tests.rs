@@ -4,7 +4,7 @@
 //! to ensure correctness and eliminate cache duplication.
 
 use super::*;
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::specialized::{
     BitmapFilterCache, IndexNodeCache, MetadataStore, VectorStore,
     index_node_cache::{MetadataStats, SstIndexEntry, SstableIndex},

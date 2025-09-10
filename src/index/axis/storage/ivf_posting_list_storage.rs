@@ -169,18 +169,18 @@ impl PostingListStorage {
                     // For posting list entries, we store the distance as a simple vector
                     let vector = vec![entry.distance_to_centroid];
                     let metadata = vec![
-                        crate::proto::proximadb::MetadataItem {
+                        crate::proto::proximadb_v1::MetadataItem {
                             key: "cluster_id".to_string(),
                             value: Some(
-                                crate::proto::proximadb::metadata_item::Value::StringValue(
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                     cluster_id.to_string(),
                                 ),
                             ),
                         },
-                        crate::proto::proximadb::MetadataItem {
+                        crate::proto::proximadb_v1::MetadataItem {
                             key: "vector_id".to_string(),
                             value: Some(
-                                crate::proto::proximadb::metadata_item::Value::StringValue(
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                     entry.vector_id.clone(),
                                 ),
                             ),
@@ -188,7 +188,7 @@ impl PostingListStorage {
                     ];
                     records.insert(
                         id.clone(),
-                        crate::proto::proximadb::VectorRecord {
+                        crate::proto::proximadb_v1::VectorRecord {
                             id,
                             vector,
                             metadata,

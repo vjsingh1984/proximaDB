@@ -314,7 +314,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let mut records = std::collections::BTreeMap::new();
                 records.insert(
                     id.to_string(),
-                    crate::proto::proximadb::VectorRecord {
+                    crate::proto::proximadb_v1::VectorRecord {
                         id: id.to_string(),
                         vector: vec![], // Empty vector for index data
                         metadata: vec![],
@@ -499,12 +499,12 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let value = bincode::serialize(&data)?;
                 let mut records = std::collections::BTreeMap::new();
                 // Create a dummy SstRecord with serialized data as the vector
-                let record = crate::proto::proximadb::VectorRecord {
+                let record = crate::proto::proximadb_v1::VectorRecord {
                     id: id.to_string(),
                     vector: vec![], // Empty vector since we're storing serialized data
-                    metadata: vec![crate::proto::proximadb::MetadataItem {
+                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                         key: "serialized_data".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             base64_encode(&value),
                         )),
                     }],

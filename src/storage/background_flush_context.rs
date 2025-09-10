@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb::FilterableColumnSpec;
+use crate::proto::proximadb_v1::FilterableColumnSpec;
 use crate::services::collection::manager::CollectionService;
 
 /// Storage engine types supported by ProximaDB
@@ -30,10 +30,10 @@ impl TryFrom<i32> for StorageEngineType {
 
     fn try_from(value: i32) -> Result<Self> {
         match value {
-            x if x == crate::proto::proximadb::StorageEngine::Viper as i32 => {
+            x if x == crate::proto::proximadb_v1::StorageEngine::Viper as i32 => {
                 Ok(StorageEngineType::Viper)
             }
-            x if x == crate::proto::proximadb::StorageEngine::Sst as i32 => {
+            x if x == crate::proto::proximadb_v1::StorageEngine::Sst as i32 => {
                 Ok(StorageEngineType::Sst)
             }
             _ => Err(anyhow!("Unknown storage engine type: {}", value)),
@@ -132,7 +132,7 @@ impl BackgroundFlushContext {
     /// Convert internal DistanceMetric to proto DistanceMetric
     /// Centralizes distance metric conversion to ensure all 13 supported metrics are handled
     pub fn distance_metric_to_proto(metric: &DistanceMetric) -> i32 {
-        use crate::proto::proximadb::DistanceMetric as ProtoDistanceMetric;
+        use crate::proto::proximadb_v1::DistanceMetric as ProtoDistanceMetric;
 
         match metric {
             // Core metrics
@@ -160,7 +160,7 @@ impl BackgroundFlushContext {
     /// Convert internal StorageEngineType to proto StorageEngine
     /// Centralizes storage engine conversion for code reuse
     pub fn storage_engine_to_proto(engine: &StorageEngineType) -> i32 {
-        use crate::proto::proximadb::StorageEngine as ProtoStorageEngine;
+        use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 
         match engine {
             StorageEngineType::Viper => ProtoStorageEngine::Viper as i32,
@@ -171,8 +171,8 @@ impl BackgroundFlushContext {
     /// Create a complete Collection proto from the background context
     /// This provides all necessary information for flush and compaction operations
     /// without requiring additional service calls
-    pub fn to_collection_proto(&self) -> crate::proto::proximadb::Collection {
-        use crate::proto::proximadb::{
+    pub fn to_collection_proto(&self) -> crate::proto::proximadb_v1::Collection {
+        use crate::proto::proximadb_v1::{
             Collection, CollectionConfig, CollectionStats, StorageAssignment,
         };
 
@@ -188,7 +188,7 @@ impl BackgroundFlushContext {
             storage_engine: Self::storage_engine_to_proto(&self.storage_engine),
             filterable_columns: self.filterable_columns.clone(),
             quantization: self.quantization.as_ref().map(|qc| {
-                crate::proto::proximadb::QuantizationConfig {
+                crate::proto::proximadb_v1::QuantizationConfig {
                     enabled: qc.enabled,
                     ..Default::default()
                 }
@@ -260,14 +260,14 @@ impl BackgroundFlushContext {
         let quantization = config.quantization.as_ref().map(|qc| {
             // Extract quantization type from the new QuantizationConfig
             let quantization_type = match qc.strategy() {
-                crate::proto::proximadb::quantization_config::Strategy::SmartDefaults => {
+                crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults => {
                     "smart_defaults"
                 }
-                crate::proto::proximadb::quantization_config::Strategy::CustomLevels => {
+                crate::proto::proximadb_v1::quantization_config::Strategy::CustomLevels => {
                     "custom_levels"
                 }
-                crate::proto::proximadb::quantization_config::Strategy::Minimal => "minimal",
-                crate::proto::proximadb::quantization_config::Strategy::Aggressive => "aggressive",
+                crate::proto::proximadb_v1::quantization_config::Strategy::Minimal => "minimal",
+                crate::proto::proximadb_v1::quantization_config::Strategy::Aggressive => "aggressive",
             };
 
             QuantizationConfig {

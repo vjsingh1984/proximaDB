@@ -14,7 +14,7 @@ mod benchmarks {
     use crate::core::VectorRecord;
     use crate::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata};
     use crate::core::search::SearchParams;
-    use crate::proto::proximadb::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};
     use criterion::{black_box, Criterion};
     use rand::{Rng, SeedableRng};
     use std::collections::HashMap;

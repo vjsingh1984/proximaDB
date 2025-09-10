@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::proto::proximadb::{MetadataItem, VectorRecord, metadata_item};
+    use crate::proto::proximadb_v1::{MetadataItem, VectorRecord, metadata_item};
     use axum::Json;
     use axum::extract::{Path, Query, State};
     use std::sync::Arc;

@@ -71,7 +71,7 @@ use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock
 //     factory::BloomFilterFactory,
 // };
 use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
-use crate::proto::proximadb::CompressionConfig;
+use crate::proto::proximadb_v1::CompressionConfig;
 
 // Use core compression directly instead of adapter
 use crate::core::compression::{
@@ -105,7 +105,7 @@ impl SstableWriter {
         path: P,
         block_size: usize,
         filesystem: Arc<FilesystemFactory>,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Self {
         // Initialize compression provider directly
         let compression_provider = StandardCompression::default();
@@ -139,11 +139,11 @@ impl SstableWriter {
                     // Get distance metric from collection config
                     collection.config.as_ref()
                     .map(|cfg| match cfg.distance_metric() {
-                        crate::proto::proximadb::DistanceMetric::Cosine => 
+                        crate::proto::proximadb_v1::DistanceMetric::Cosine => 
                             crate::compute::distance_computation::engine::DistanceMetric::Cosine,
-                        crate::proto::proximadb::DistanceMetric::Euclidean =>
+                        crate::proto::proximadb_v1::DistanceMetric::Euclidean =>
                             crate::compute::distance_computation::engine::DistanceMetric::Euclidean,
-                        crate::proto::proximadb::DistanceMetric::DotProduct =>
+                        crate::proto::proximadb_v1::DistanceMetric::DotProduct =>
                             crate::compute::distance_computation::engine::DistanceMetric::DotProduct,
                         _ => crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                     })
@@ -630,15 +630,15 @@ impl SstableWriter {
 
                 // Convert MetadataItem to JSON for statistics
                 let value = match &metadata_item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
                     None => serde_json::Value::Null,
@@ -847,15 +847,15 @@ impl SstableWriter {
 
                 // Convert MetadataItem to JSON for statistics (needed for filter expressions)
                 let value = match &metadata_item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
                     None => serde_json::Value::Null,

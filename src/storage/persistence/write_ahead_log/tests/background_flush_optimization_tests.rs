@@ -13,7 +13,7 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::VectorRecord;
-    use crate::proto::proximadb::{Collection, MetadataItem};
+    use crate::proto::proximadb_v1::{Collection, MetadataItem};
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };

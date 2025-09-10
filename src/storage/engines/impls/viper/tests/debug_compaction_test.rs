@@ -7,7 +7,7 @@ use tempfile::TempDir;
 use tracing::{debug, error, info};
 
 use crate::core::VectorRecord;
-use crate::proto::proximadb::MetadataItem;
+use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
@@ -101,8 +101,8 @@ async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
 fn create_test_collection(
     collection_id: &str,
     base_path: &str,
-) -> crate::proto::proximadb::Collection {
-    use crate::proto::proximadb::{Collection, CollectionConfig, StorageAssignment};
+) -> crate::proto::proximadb_v1::Collection {
+    use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment};
 
     Collection {
         id: collection_id.to_string(),
@@ -143,7 +143,7 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
             .collect(),
         metadata: vec![MetadataItem {
             key: "test_key".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "test_value".to_string(),
             )),
         }],

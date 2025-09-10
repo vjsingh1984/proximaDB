@@ -9,7 +9,7 @@ use super::common::{
 use super::config::{CompressionStrategy, PxKStrategy};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::proto::proximadb::DistanceMetric;
+use crate::proto::proximadb_v1::DistanceMetric;
 use anyhow::Result;
 use std::collections::HashSet;
 

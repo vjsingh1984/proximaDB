@@ -7,7 +7,7 @@ mod metadata_backend_tests {
     use crate::storage::metadata::backends::universal_backend::{
         UniversalMetadataBackend, UniversalMetadataConfig,
     };
-    use crate::proto::proximadb::Collection;
+    use crate::proto::proximadb_v1::Collection;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::InternalCollectionProvider;
     use crate::storage::StorageEngine;
@@ -73,7 +73,7 @@ mod metadata_backend_tests {
         }
         
         // Create a collection through the shared collection service
-        let collection_config = crate::proto::proximadb::CollectionConfig {
+        let collection_config = crate::proto::proximadb_v1::CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 128,
             distance_metric: Some("cosine".to_string()),
@@ -176,7 +176,7 @@ mod metadata_backend_tests {
         assert!(result.is_none()); // No collections exist yet
         
         // Create a collection through collection service
-        let collection_config = crate::proto::proximadb::CollectionConfig {
+        let collection_config = crate::proto::proximadb_v1::CollectionConfig {
             name: "test".to_string(),
             dimension: 256,
             distance_metric: Some("euclidean".to_string()),

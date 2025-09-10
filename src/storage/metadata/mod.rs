@@ -97,10 +97,10 @@ pub use write_ahead_log::{
 /// Operations that can be performed on metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetadataOperation {
-    CreateCollection(crate::proto::proximadb::Collection),
+    CreateCollection(crate::proto::proximadb_v1::Collection),
     UpdateCollection {
         collection_id: String,
-        metadata: crate::proto::proximadb::Collection,
+        metadata: crate::proto::proximadb_v1::Collection,
     },
     DeleteCollection(String),
     UpdateStats {
@@ -142,7 +142,7 @@ pub struct MetadataFilter {
 
     /// Custom filter function
     pub custom_filter:
-        Option<Box<dyn Fn(&crate::proto::proximadb::Collection) -> bool + Send + Sync>>,
+        Option<Box<dyn Fn(&crate::proto::proximadb_v1::Collection) -> bool + Send + Sync>>,
 }
 
 impl std::fmt::Debug for MetadataFilter {
@@ -188,19 +188,19 @@ impl Default for MetadataFilter {
 #[async_trait]
 pub trait MetadataStoreInterface: Send + Sync {
     /// Create a new collection
-    async fn create_collection(&self, metadata: crate::proto::proximadb::Collection) -> Result<()>;
+    async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()>;
 
     /// Get collection metadata by ID
     async fn get_collection(
         &self,
         collection_id: &str,
-    ) -> Result<Option<crate::proto::proximadb::Collection>>;
+    ) -> Result<Option<crate::proto::proximadb_v1::Collection>>;
 
     /// Update collection metadata
     async fn update_collection(
         &self,
         collection_id: &str,
-        metadata: crate::proto::proximadb::Collection,
+        metadata: crate::proto::proximadb_v1::Collection,
     ) -> Result<()>;
 
     /// Delete collection metadata
@@ -210,7 +210,7 @@ pub trait MetadataStoreInterface: Send + Sync {
     async fn list_collections(
         &self,
         filter: Option<MetadataFilter>,
-    ) -> Result<Vec<crate::proto::proximadb::Collection>>;
+    ) -> Result<Vec<crate::proto::proximadb_v1::Collection>>;
 
     /// Update collection statistics atomically
     async fn update_stats(

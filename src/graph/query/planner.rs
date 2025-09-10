@@ -869,7 +869,7 @@ impl QueryPlanner {
                 created_at: std::time::SystemTime::now(),
             });
         }
-    } // End of the for loop
+    // End of the for loop
 
         best_plan.ok_or_else(|| ProximaDBError::invalid_argument("Could not generate a plan for the given pattern"))
     }

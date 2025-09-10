@@ -45,7 +45,7 @@ impl std::fmt::Display for StorageEngineType {
 impl StorageEngineType {
     /// Convert from proto StorageEngine enum
     pub fn from_proto(engine: i32) -> Self {
-        use crate::proto::proximadb::StorageEngine;
+        use crate::proto::proximadb_v1::StorageEngine;
         match StorageEngine::try_from(engine) {
             Ok(StorageEngine::Sst) => StorageEngineType::SST,
             Ok(StorageEngine::Viper) => StorageEngineType::VIPER,

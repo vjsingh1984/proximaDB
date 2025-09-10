@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
 
 use crate::compute::UnifiedQuantizationLevel as QuantizationLevel;
@@ -390,12 +390,12 @@ impl StorageEngineBenchmark {
 
         let collection = Arc::new(Collection {
             id: "benchmark_collection".to_string(),
-            config: Some(crate::proto::proximadb::CollectionConfig {
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: "benchmark".to_string(),
                 dimension: dimension as u32,
                 distance_metric: DistanceMetric::Cosine as i32,
                 quantization: if enable_quantization {
-                    Some(crate::proto::proximadb::QuantizationConfig {
+                    Some(crate::proto::proximadb_v1::QuantizationConfig {
                         enabled: true,
                         strategy: 0, // SmartDefaults
                         enable_progressive_search: true,

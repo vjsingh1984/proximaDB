@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // Import proto types
-use crate::proto::proximadb::{Collection, CollectionConfig, CollectionStats};
+use crate::proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats};
 
 use super::{
     MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
@@ -485,8 +485,8 @@ impl MetadataStoreInterface for MetadataStore {
                 let config = CollectionConfig {
                     name: versioned.name.clone(),
                     dimension: versioned.dimension as u32,
-                    distance_metric: crate::proto::proximadb::DistanceMetric::Cosine.into(), // Default
-                    storage_engine: crate::proto::proximadb::StorageEngine::Viper.into(), // Default
+                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine.into(), // Default
+                    storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper.into(), // Default
                     storage_config: None,
                     index_configs: Vec::new(),
                     primary_index: None,
@@ -582,8 +582,8 @@ impl MetadataStoreInterface for MetadataStore {
                     let config = CollectionConfig {
                         name: versioned.name.clone(),
                         dimension: versioned.dimension as u32,
-                        distance_metric: crate::proto::proximadb::DistanceMetric::Cosine.into(),
-                        storage_engine: crate::proto::proximadb::StorageEngine::Viper.into(),
+                        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine.into(),
+                        storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper.into(),
                         storage_config: None,
                         index_configs: Vec::new(),
                         primary_index: None,

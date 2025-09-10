@@ -3,7 +3,7 @@
 use crate::compute::distance_computation::engine::SimilarityResult;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::metadata_types::TypedMetadata;
-use crate::proto::proximadb::SourceContent;
+use crate::proto::proximadb_v1::SourceContent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -212,13 +212,13 @@ impl InternalSearchResult {
     }
 
     /// Create search result from VectorRecord with score - preserves all source information
-    pub fn from_vector_record(record: &crate::proto::proximadb::VectorRecord, score: f32) -> Self {
+    pub fn from_vector_record(record: &crate::proto::proximadb_v1::VectorRecord, score: f32) -> Self {
         // Convert metadata from proto MetadataItem to serde_json::Value
         let metadata = record
             .metadata
             .iter()
             .filter_map(|item| {
-                use crate::proto::proximadb::metadata_item::Value;
+                use crate::proto::proximadb_v1::metadata_item::Value;
                 let value = match &item.value {
                     Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
                     Some(Value::NumberValue(n)) => serde_json::Value::Number(
@@ -283,8 +283,8 @@ impl InternalSearchResult {
         include_vector: bool,
         include_metadata: bool,
         include_source: bool,
-    ) -> crate::proto::proximadb::SearchVectorRecord {
-        use crate::proto::proximadb::{MetadataItem, SearchVectorRecord, metadata_item::Value};
+    ) -> crate::proto::proximadb_v1::SearchVectorRecord {
+        use crate::proto::proximadb_v1::{MetadataItem, SearchVectorRecord, metadata_item::Value};
 
         // Convert metadata back to proto format if requested
         let metadata = if include_metadata {

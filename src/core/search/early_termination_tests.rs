@@ -11,7 +11,7 @@ mod tests {
         Flushed,
         Compacted,
     }
-    use crate::proto::proximadb::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use chrono::Utc;
 
     fn create_test_vector_record(id: &str, similarity: f32) -> VectorRecord {

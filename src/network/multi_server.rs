@@ -991,22 +991,4 @@ pub struct ServerStatus {
     pub grpc_address: Option<SocketAddr>,
     pub tls_enabled: bool,
 }
-        // Background TTL sweeper for graph (runs every 60s)
-        {
-            let graph_service_bg = graph_service.clone();
-            let sweep_secs = self
-                .config
-                .api_config
-                .as_ref()
-                .map(|c| c.ttl_sweep_interval_seconds)
-                .unwrap_or(900);
-            tokio::spawn(async move {
-                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(sweep_secs));
-                loop {
-                    ticker.tick().await;
-                    if let Err(e) = graph_service_bg.sweep_expired().await {
-                        tracing::warn!("Graph TTL sweep failed: {}", e);
-                    }
-                }
-            });
-        }
+// TODO: Re-add TTL sweeper code in proper function context if needed

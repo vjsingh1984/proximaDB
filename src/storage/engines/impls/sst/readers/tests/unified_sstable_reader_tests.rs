@@ -98,21 +98,21 @@ mod tests {
         let mut builder = crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder::new(config);
         
         // Add metadata values using MetadataItem
-        let electronics_item = crate::proto::proximadb::MetadataItem {
+        let electronics_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("electronics".to_string())),
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("electronics".to_string())),
         };
-        let books_item = crate::proto::proximadb::MetadataItem {
+        let books_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("books".to_string())),
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string())),
         };
-        let active_item = crate::proto::proximadb::MetadataItem {
+        let active_item = crate::proto::proximadb_v1::MetadataItem {
             key: "status".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("active".to_string())),
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("active".to_string())),
         };
-        let inactive_item = crate::proto::proximadb::MetadataItem {
+        let inactive_item = crate::proto::proximadb_v1::MetadataItem {
             key: "status".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("inactive".to_string())),
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("inactive".to_string())),
         };
         
         builder.add_metadata_item("category".to_string(), electronics_item.clone());
@@ -128,13 +128,13 @@ mod tests {
         assert!(filter.might_match_metadata("status", &active_item));
         
         // Test non-existent values
-        let furniture_item = crate::proto::proximadb::MetadataItem {
+        let furniture_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("furniture".to_string())),
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("furniture".to_string())),
         };
-        let deleted_item = crate::proto::proximadb::MetadataItem {
+        let deleted_item = crate::proto::proximadb_v1::MetadataItem {
             key: "status".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue("deleted".to_string())),
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("deleted".to_string())),
         };
         assert!(!filter.might_match_metadata("category", &furniture_item));
         assert!(!filter.might_match_metadata("status", &deleted_item));

@@ -32,7 +32,7 @@ use crate::core::search::OptimizedSearchRecord;
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
 use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
 
 /// Progressive search executor that can be used by any storage engine
@@ -591,7 +591,7 @@ impl ProgressiveSearchExecutor {
             let mut metadata_map = std::collections::HashMap::new();
             for item in record.metadata {
                 if let Some(value) = item.value {
-                    use crate::proto::proximadb::metadata_item;
+                    use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
                         metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),

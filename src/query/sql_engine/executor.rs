@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::planner::ExecutionPlan;
-use crate::proto::proximadb::DistanceMetric;
+use crate::proto::proximadb_v1::DistanceMetric;
 use crate::services::VectorOperationsService;
 
 /// SQL execution result

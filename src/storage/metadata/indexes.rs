@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Fast lookup result for metadata queries
 #[derive(Debug, Clone)]

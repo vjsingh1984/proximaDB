@@ -8,7 +8,7 @@
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::proto::proximadb::MetadataItem;
+use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -50,13 +50,13 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "bincode_test".to_string(),
                 )),
             },
             MetadataItem {
                 key: "value".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     value.to_string(),
                 )),
             },
@@ -460,19 +460,19 @@ async fn test_bincode_batch_metadata() {
         vector.metadata = vec![
             MetadataItem {
                 key: "index".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     i.to_string(),
                 )),
             },
             MetadataItem {
                 key: "binary_data".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     format!("{:08b}", i),
                 )),
             },
             MetadataItem {
                 key: "timestamp".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     (1234567890 + i * 1000).to_string(),
                 )),
             },

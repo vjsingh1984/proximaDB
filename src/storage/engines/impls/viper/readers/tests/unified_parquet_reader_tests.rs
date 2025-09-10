@@ -8,7 +8,7 @@ mod tests {
     use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::core::{String, VectorRecord};
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
     use crate::storage::engines::core::formats::columnar::{
         CollectionContext, UnifiedParquetReader,
     };
@@ -338,13 +338,13 @@ mod tests {
                         .append_value(&meta_item.key);
                     // Convert metadata value to string
                     let value_str = match &meta_item.value {
-                        Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             s.clone()
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                             n.to_string()
                         }
-                        Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                             b.to_string()
                         }
                         None => String::new(),
@@ -408,13 +408,13 @@ mod tests {
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             format!("cat_{}", i % 3),
                         )),
                     },
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             (i as f32 * 0.5).to_string(),
                         )),
                     },

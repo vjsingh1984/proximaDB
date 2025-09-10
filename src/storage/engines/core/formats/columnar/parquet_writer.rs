@@ -21,7 +21,7 @@ use tracing::{debug, info, trace};
 
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb::metadata_item;
+use crate::proto::proximadb_v1::metadata_item;
 use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
 use crate::storage::engines::core::formats::columnar::QuantizationConfig;
 
@@ -353,16 +353,16 @@ impl StreamingParquetWriter {
                         .filter_map(|item| {
                             item.value.as_ref().map(|v| {
                                 let json_value = match v {
-                                    crate::proto::proximadb::metadata_item::Value::StringValue(
+                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                         s,
                                     ) => serde_json::Value::String(s.clone()),
-                                    crate::proto::proximadb::metadata_item::Value::NumberValue(
+                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                                         f,
                                     ) => serde_json::Value::Number(
                                         serde_json::Number::from_f64(*f)
                                             .unwrap_or(serde_json::Number::from(0)),
                                     ),
-                                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                                         serde_json::Value::Bool(*b)
                                     }
                                 };
@@ -406,16 +406,16 @@ impl StreamingParquetWriter {
                     .filter_map(|item| {
                         item.value.as_ref().map(|v| {
                             let json_value = match v {
-                                crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                crate::proto::proximadb::metadata_item::Value::NumberValue(f) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f) => {
                                     serde_json::Value::Number(
                                         serde_json::Number::from_f64(*f)
                                             .unwrap_or(serde_json::Number::from(0)),
                                     )
                                 }
-                                crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                                     serde_json::Value::Bool(*b)
                                 }
                             };

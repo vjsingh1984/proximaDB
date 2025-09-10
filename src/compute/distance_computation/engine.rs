@@ -52,7 +52,7 @@ use std::cmp::Ordering;
 use std::sync::{Arc, OnceLock};
 
 // Use proto enum as the single source of truth for DistanceMetric
-pub use crate::proto::proximadb::DistanceMetric;
+pub use crate::proto::proximadb_v1::DistanceMetric;
 
 // Extension trait for DistanceMetric
 pub trait DistanceMetricExt {

@@ -5,7 +5,7 @@
 
 //! gRPC protocol implementation with thin handlers
 
-pub mod v1;
+// pub mod v1; // Removed - not needed
 pub mod entity_service;
 pub mod graph_service;
 pub mod vector_service;

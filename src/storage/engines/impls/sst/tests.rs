@@ -66,13 +66,13 @@ async fn test_sst_storage_flush_and_search() {
         ..Default::default()
     };
 
-    let collection = Arc::new(crate::proto::proximadb::Collection {
+    let collection = Arc::new(crate::proto::proximadb_v1::Collection {
         id: collection_id.clone(),
-        config: Some(crate::proto::proximadb::CollectionConfig {
+        config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: collection_id.clone(),
             dimension: 3,
-            distance_metric: crate::proto::proximadb::DistanceMetric::Cosine as i32,
-            storage_engine: crate::proto::proximadb::StorageEngine::Sst as i32,
+            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+            storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
             ..Default::default()
         }),
         ..Default::default()

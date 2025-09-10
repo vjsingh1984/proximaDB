@@ -197,7 +197,7 @@ impl Compaction {
     async fn get_parquet_files_by_level(
         &self,
         collection_id: &str,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<std::collections::HashMap<u32, Vec<FileMetadata>>> {
         use std::collections::HashMap;
 
@@ -291,7 +291,7 @@ impl Compaction {
     async fn check_level_based_compaction_needed(
         &self,
         collection_id: &str,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Option<LevelBasedCompactionTask>> {
         // Use provided collection config or return None if not available
         let collection = match collection_config {
@@ -335,7 +335,7 @@ impl Compaction {
     async fn discover_compactable_files(
         &self,
         collection_id: &str,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Vec<String>> {
         // Use provided collection config or return empty if not available
         let collection = match collection_config {
@@ -495,7 +495,7 @@ impl Compaction {
         &self,
         collection_id: &str,
         input_files: Vec<String>,
-        collection_config: Option<&crate::proto::proximadb::Collection>,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<ViperCompactionResult> {
         // Note: Files are already filtered in discover_compactable_files
         // Only AXIS-ready files reach this point
@@ -535,7 +535,7 @@ impl Compaction {
         collection_id: &str,
         input_files: Vec<String>,
         _vector_dimensions: usize,
-        collection_config: Option<crate::proto::proximadb::Collection>,
+        collection_config: Option<crate::proto::proximadb_v1::Collection>,
     ) -> Result<ViperCompactionResult> {
         info!(
             "Starting atomic Arrow/Parquet compaction for collection {}",
@@ -1125,7 +1125,7 @@ impl Compaction {
                     if let Some(ref config) = collection.config {
                         if let Some(ref storage_config) = config.storage_config {
                             if let Some(ref compression) = storage_config.compression {
-                                use crate::proto::proximadb::CompressionAlgorithm;
+                                use crate::proto::proximadb_v1::CompressionAlgorithm;
 
                                 debug!(
                                     "   ✅ Found compression config: algorithm={}, level={:?}",
@@ -1263,10 +1263,10 @@ impl Compaction {
                             .iter()
                             .filter(|(k, _)| *k != "vector")
                             .map(|(k, v)| {
-                                let mut item = crate::proto::proximadb::MetadataItem::default();
+                                let mut item = crate::proto::proximadb_v1::MetadataItem::default();
                                 item.key = k.clone();
                                 item.value = Some(
-                                    crate::proto::proximadb::metadata_item::Value::StringValue(
+                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                         v.to_string(),
                                     ),
                                 );

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::metadata::backends::universal_backend::{IncrementalOperation, OperationType};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
@@ -344,7 +344,7 @@ impl FilestoreCheckpoint {
         }
 
         // Create a wrapper message for all collections
-        let snapshot = crate::proto::proximadb::CollectionSnapshot {
+        let snapshot = crate::proto::proximadb_v1::CollectionSnapshot {
             collections,
             version: 1,
             timestamp: chrono::Utc::now().timestamp_micros(),

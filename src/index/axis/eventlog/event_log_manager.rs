@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 use super::event_log::{
     EventLogQueue, ExtractionMode, IndexEvent, IndexEventBuilder, StorageEngineType,
 };
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Configuration for metadata queue service

@@ -187,7 +187,7 @@ impl Default for IndexConfig {
 
 impl IndexConfig {
     /// Create IndexConfig from protobuf with smart defaults
-    pub fn from_proto(proto: &crate::proto::proximadb::IndexConfig) -> Result<Self> {
+    pub fn from_proto(proto: &crate::proto::proximadb_v1::IndexConfig) -> Result<Self> {
         let update_mode = match proto.update_mode {
             1 => IndexUpdateMode::Synchronous,
             2 => IndexUpdateMode::Asynchronous,
@@ -246,7 +246,7 @@ impl IndexConfig {
     }
 
     /// Convert to protobuf
-    pub fn to_proto(&self) -> crate::proto::proximadb::IndexConfig {
+    pub fn to_proto(&self) -> crate::proto::proximadb_v1::IndexConfig {
         let update_mode = match self.update_mode {
             IndexUpdateMode::Synchronous => 1,
             IndexUpdateMode::Asynchronous => 2,
@@ -256,7 +256,7 @@ impl IndexConfig {
         let hnsw_config = self
             .hnsw_config
             .as_ref()
-            .map(|h| crate::proto::proximadb::HnswConfig {
+            .map(|h| crate::proto::proximadb_v1::HnswConfig {
                 m: h.m as u32,
                 ef_construction: h.ef_construction as u32,
                 ef_search: h.ef_search as u32,
@@ -272,7 +272,7 @@ impl IndexConfig {
         let ivf_config = self
             .ivf_config
             .as_ref()
-            .map(|i| crate::proto::proximadb::IvfConfig {
+            .map(|i| crate::proto::proximadb_v1::IvfConfig {
                 n_lists: i.n_lists as u32,
                 n_probe: i.n_probe as u32,
                 quantization_bits: i.quantization_bits as u32,
@@ -285,7 +285,7 @@ impl IndexConfig {
         let lsh_config = self
             .lsh_config
             .as_ref()
-            .map(|l| crate::proto::proximadb::LshConfig {
+            .map(|l| crate::proto::proximadb_v1::LshConfig {
                 n_hash_tables: l.n_hash_tables,
                 n_hash_functions: l.n_hash_functions,
                 bucket_width: l.bucket_width,
@@ -298,15 +298,15 @@ impl IndexConfig {
                 },
             });
 
-        crate::proto::proximadb::IndexConfig {
+        crate::proto::proximadb_v1::IndexConfig {
             index_name: "default".to_string(), // Default index name
             algorithm: match &self.hnsw_config {
-                Some(_) => crate::proto::proximadb::IndexingAlgorithm::Hnsw as i32,
+                Some(_) => crate::proto::proximadb_v1::IndexingAlgorithm::Hnsw as i32,
                 None => match &self.ivf_config {
-                    Some(_) => crate::proto::proximadb::IndexingAlgorithm::Ivf as i32,
+                    Some(_) => crate::proto::proximadb_v1::IndexingAlgorithm::Ivf as i32,
                     None => match &self.lsh_config {
-                        Some(_) => crate::proto::proximadb::IndexingAlgorithm::Lsh as i32,
-                        None => crate::proto::proximadb::IndexingAlgorithm::Flat as i32,
+                        Some(_) => crate::proto::proximadb_v1::IndexingAlgorithm::Lsh as i32,
+                        None => crate::proto::proximadb_v1::IndexingAlgorithm::Flat as i32,
                     },
                 },
             },
@@ -794,7 +794,7 @@ impl IndexConfig {
 
     /// Create IndexConfig from protobuf with smart defaults and algorithm-aware filling
     pub fn from_proto_with_smart_defaults(
-        proto: &crate::proto::proximadb::IndexConfig,
+        proto: &crate::proto::proximadb_v1::IndexConfig,
         algorithm: &str,
         collection_size_hint: Option<usize>,
     ) -> Result<Self> {

@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::unified_handlers::*;
-    use crate::proto::proximadb::{
+    use crate::proto::proximadb_v1::{
         CollectionConfig, CollectionOperation, CollectionRequest, IncludeFields, SearchQuery,
         VectorBatchRequest, VectorOperation, VectorRecord, VectorSearchRequest,
     };
@@ -18,7 +18,7 @@ mod tests {
 
     /// Helper to create test collection config
     fn create_test_collection_config(name: &str) -> CollectionConfig {
-        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+        use crate::proto::proximadb_v1::{DistanceMetric, IndexingAlgorithm, StorageEngine};
 
         CollectionConfig {
             name: name.to_string(),
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn test_collection_config_creation() {
-        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+        use crate::proto::proximadb_v1::{DistanceMetric, IndexingAlgorithm, StorageEngine};
 
         // Test collection config creation helper
         let config = create_test_collection_config("test_collection");
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_collection_config_optional_fields() {
         // Test CollectionConfig with different optional field configurations
-        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+        use crate::proto::proximadb_v1::{DistanceMetric, IndexingAlgorithm, StorageEngine};
 
         let mut config = CollectionConfig {
             name: "test".to_string(),
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn test_collection_tags_handling() {
         // Test collection config with tags
-        use crate::proto::proximadb::{DistanceMetric, IndexingAlgorithm, StorageEngine};
+        use crate::proto::proximadb_v1::{DistanceMetric, IndexingAlgorithm, StorageEngine};
 
         let config = CollectionConfig {
             name: "metadata_test".to_string(),

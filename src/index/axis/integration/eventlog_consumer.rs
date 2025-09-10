@@ -20,7 +20,7 @@ use crate::index::axis::AxisManager;
 use crate::index::axis::eventlog::{
     EventLogService, EventType, ExtractionMode, IndexEvent, StorageEngineType,
 };
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// AXIS EventLog consumer configuration
@@ -643,7 +643,7 @@ impl AxisEventLogConsumer {
         extraction_mode: ExtractionMode,
         storage_engine: StorageEngineType,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         let start_time = std::time::Instant::now();
 
         debug!(
@@ -1253,7 +1253,7 @@ impl AxisEventLogConsumer {
 
                     if should_extract {
                         // Convert core::VectorRecord to proto::VectorRecord for AXIS
-                        let proto_record = crate::proto::proximadb::VectorRecord {
+                        let proto_record = crate::proto::proximadb_v1::VectorRecord {
                             id: vector_record.id.clone(),
                             vector: match extraction_mode {
                                 ExtractionMode::QuantizedOnly => vec![],
@@ -1381,7 +1381,7 @@ impl AxisEventLogConsumer {
                     //                                 };
                     //
                     //                                 // Create VectorRecord
-                    //                                 let vector_record = crate::proto::proximadb::VectorRecord {
+                    //                                 let vector_record = crate::proto::proximadb_v1::VectorRecord {
                     //                                     id: Some(id),
                     //                                     vector,
                     //                                     metadata: vec![], // Metadata extraction would be more complex

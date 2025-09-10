@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{Config, VectorRecord};
-use crate::proto::proximadb::{MetadataItem, metadata_item};
+use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
 use crate::storage::engine::StorageEngine;
 
 /// Create test vector record

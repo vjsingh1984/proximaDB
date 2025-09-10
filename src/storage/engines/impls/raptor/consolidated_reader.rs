@@ -502,7 +502,7 @@ impl RaptorReader {
         &mut self,
         file_path: &str,
         strategy: ScanStrategy,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         match strategy {
             ScanStrategy::FullScan => {
                 tracing::info!("🔄 Starting full file scan for {}", file_path);
@@ -528,7 +528,7 @@ impl RaptorReader {
     async fn full_scan_all_vectors(
         &mut self,
         file_path: &str,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         let start_time = std::time::Instant::now();
 
         // Load footer to get rowgroup count
@@ -600,7 +600,7 @@ impl RaptorReader {
         target_ids: Option<Vec<String>>,
         predicates: Option<Vec<super::common::Predicate>>,
         max_rowgroups: Option<usize>,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         let start_time = std::time::Instant::now();
 
         // Load footer and prepare for filtering
@@ -815,9 +815,9 @@ impl RaptorReader {
     /// Filter vectors by IDs within a rowgroup
     fn filter_vectors_by_ids(
         &self,
-        vectors: Vec<crate::proto::proximadb::VectorRecord>,
+        vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
         target_ids: &[String],
-    ) -> Vec<crate::proto::proximadb::VectorRecord> {
+    ) -> Vec<crate::proto::proximadb_v1::VectorRecord> {
         let target_set: std::collections::HashSet<&String> = target_ids.iter().collect();
 
         vectors
@@ -831,7 +831,7 @@ impl RaptorReader {
     fn extract_vector_records_from_batch(
         &self,
         batch: &RecordBatch,
-    ) -> Result<Vec<crate::proto::proximadb::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         use arrow_array::cast::AsArray;
         
 
@@ -882,7 +882,7 @@ impl RaptorReader {
 
         // Reconstruct VectorRecord for each row
         for row_idx in 0..num_rows {
-            let mut record = crate::proto::proximadb::VectorRecord::default();
+            let mut record = crate::proto::proximadb_v1::VectorRecord::default();
 
             // Extract ID (required field)
             let id_value = id_array.value(row_idx);
@@ -946,23 +946,23 @@ impl RaptorReader {
                         for (key, value) in metadata_map {
                             let metadata_value = match value {
                                 serde_json::Value::String(s) => {
-                                    crate::proto::proximadb::metadata_item::Value::StringValue(s)
+                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)
                                 }
                                 serde_json::Value::Number(n) => {
                                     // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
-                                    crate::proto::proximadb::metadata_item::Value::NumberValue(
+                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
                                         n.as_f64().unwrap_or(0.0),
                                     )
                                 }
                                 serde_json::Value::Bool(b) => {
-                                    crate::proto::proximadb::metadata_item::Value::BoolValue(b)
+                                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)
                                 }
-                                _ => crate::proto::proximadb::metadata_item::Value::StringValue(
+                                _ => crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                     value.to_string(),
                                 ),
                             };
 
-                            record.metadata.push(crate::proto::proximadb::MetadataItem {
+                            record.metadata.push(crate::proto::proximadb_v1::MetadataItem {
                                 key: key.clone(),
                                 value: Some(metadata_value),
                             });
@@ -977,7 +977,7 @@ impl RaptorReader {
                     let source_bytes = source_array.value(row_idx);
                     // Deserialize SourceContent from bytes
                     if let Ok(source_content) =
-                        bincode::deserialize::<crate::proto::proximadb::SourceContent>(source_bytes)
+                        bincode::deserialize::<crate::proto::proximadb_v1::SourceContent>(source_bytes)
                     {
                         record.source = Some(source_content);
                     }

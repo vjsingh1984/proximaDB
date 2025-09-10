@@ -16,7 +16,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
-use crate::proto::proximadb::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 
 /// Parallel WAL search coordinator
@@ -403,16 +403,16 @@ impl ParallelWALSearch {
         for entry in &record.metadata {
             if let Some(value) = &entry.value {
                 let json_value = match value {
-                    crate::proto::proximadb::metadata_item::Value::StringValue(s) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                         serde_json::Value::String(s.clone())
                     }
-                    crate::proto::proximadb::metadata_item::Value::NumberValue(n) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
                         serde_json::Value::Number(
                             serde_json::Number::from_f64(*n)
                                 .unwrap_or_else(|| serde_json::Number::from(0)),
                         )
                     }
-                    crate::proto::proximadb::metadata_item::Value::BoolValue(b) => {
+                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                         serde_json::Value::Bool(*b)
                     }
                 };
@@ -441,7 +441,7 @@ impl SearchCandidate {
             let mut metadata_map = std::collections::HashMap::new();
             for item in &self.record.metadata {
                 if let Some(value) = &item.value {
-                    use crate::proto::proximadb::metadata_item;
+                    use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
                         metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),

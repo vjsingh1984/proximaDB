@@ -25,7 +25,7 @@
 //! let proto_items = json_to_proto_metadata(json_obj);
 //! ```
 
-use crate::proto::proximadb::{MetadataItem, metadata_item};
+use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};

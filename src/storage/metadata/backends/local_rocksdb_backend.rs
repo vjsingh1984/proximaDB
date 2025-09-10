@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb::{
+use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
 };
 use crate::storage::metadata::backends::MetadataBackend;

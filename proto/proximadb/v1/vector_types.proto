@@ -100,6 +100,7 @@ message VectorRecord {
   optional int64 version = 7;
   bytes quantized_vector = 8;
   optional string source = 9;
+  optional string collection_id = 10; // Optional collection association
 }
 
 message VectorBatchRequest {
@@ -146,4 +147,94 @@ message VectorOperationResponse {
   repeated string vector_ids = 5;
   optional string error_message = 6;
   optional string error_code = 7;
+}
+
+// Operation enums
+enum VectorOperation {
+  VECTOR_OPERATION_UNSPECIFIED = 0;
+  VECTOR_BATCH = 1;      // Unified batch operation (insert/upsert/delete)
+  VECTOR_SEARCH = 2;     // Vector search operation  
+  VECTOR_GET = 3;        // Get single vector by ID
+}
+
+// Quantization configuration
+message QuantizationConfig {
+  bool enabled = 1;
+  Strategy strategy = 2;
+  repeated QuantizationLevel custom_levels = 3;
+  bool enable_progressive_search = 4;
+  float binary_filter_selectivity = 5;
+  float int8_ranking_selectivity = 6;
+  float pq_ranking_selectivity = 7;
+  uint32 training_sample_size = 8;
+  float quality_threshold = 9;
+  
+  enum Strategy {
+    SMART_DEFAULTS = 0;
+    CUSTOM_LEVELS = 1; 
+    MINIMAL = 2;
+    AGGRESSIVE = 3;
+  }
+}
+
+message QuantizationLevel {
+  string level_id = 1;
+  QuantizationType type = 2;
+  uint32 bits = 3;
+  
+  enum QuantizationType {
+    BINARY = 0;
+    SCALAR = 1;
+    PRODUCT = 2;
+    UNIFORM = 3;
+    NONE = 4;
+  }
+}
+
+// Compression algorithms
+enum CompressionAlgorithm {
+  COMPRESSION_NONE = 0;
+  COMPRESSION_ZSTD = 1;
+  COMPRESSION_LZ4 = 2;
+  COMPRESSION_SNAPPY = 3;
+  COMPRESSION_GZIP = 4;
+  COMPRESSION_BROTLI = 5;
+  COMPRESSION_BZIP2 = 6;
+  COMPRESSION_DEFLATE = 7;
+  COMPRESSION_XZ = 8;
+  COMPRESSION_ZLIB = 9;
+  COMPRESSION_LZO = 10;
+  COMPRESSION_LZ4HC = 11;
+  COMPRESSION_LZMA = 12;
+}
+
+// Filterable data types
+enum FilterableDataType {
+  FILTERABLE_DATA_TYPE_UNSPECIFIED = 0;
+  FILTERABLE_STRING = 1;
+  FILTERABLE_INTEGER = 2;
+  FILTERABLE_FLOAT = 3;
+  FILTERABLE_BOOLEAN = 4;
+  FILTERABLE_DATETIME = 5;
+  FILTERABLE_ARRAY_STRING = 6;
+  FILTERABLE_ARRAY_INTEGER = 7;
+  FILTERABLE_ARRAY_FLOAT = 8;
+}
+
+// Filterable column specification
+message FilterableColumnSpec {
+  string name = 1;
+  FilterableDataType data_type = 2;
+  bool indexed = 3;
+  bool supports_range = 4;
+  optional uint32 estimated_cardinality = 5;
+}
+
+// Source content for provenance tracking
+message SourceContent {
+  oneof data {
+    string text_content = 1;
+    bytes binary_content = 2;
+    string external_reference = 3;
+  }
 }

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::core::VectorRecord;
-use crate::proto::proximadb::MetadataItem;
+use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType, TransactionState,
@@ -25,7 +25,7 @@ fn create_test_vector(id: &str) -> VectorRecord {
         vector: vec![0.1; 128],
         metadata: vec![MetadataItem {
             key: "atomic_test".to_string(),
-            value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                 "true".to_string(),
             )),
         }],

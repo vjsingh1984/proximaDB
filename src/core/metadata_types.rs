@@ -214,9 +214,9 @@ impl TypedMetadata {
 }
 
 /// Convert from protobuf MetadataItem
-impl From<&crate::proto::proximadb::MetadataItem> for MetadataValue {
-    fn from(item: &crate::proto::proximadb::MetadataItem) -> Self {
-        use crate::proto::proximadb::metadata_item::Value;
+impl From<&crate::proto::proximadb_v1::MetadataItem> for MetadataValue {
+    fn from(item: &crate::proto::proximadb_v1::MetadataItem) -> Self {
+        use crate::proto::proximadb_v1::metadata_item::Value;
         
         match &item.value {
             Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
@@ -241,9 +241,9 @@ impl From<&crate::proto::proximadb_v1::SqlValue> for MetadataValue {
 }
 
 /// Convert to protobuf MetadataItem
-impl From<(&String, &MetadataValue)> for crate::proto::proximadb::MetadataItem {
+impl From<(&String, &MetadataValue)> for crate::proto::proximadb_v1::MetadataItem {
     fn from((key, value): (&String, &MetadataValue)) -> Self {
-        use crate::proto::proximadb::metadata_item::Value;
+        use crate::proto::proximadb_v1::metadata_item::Value;
         
         let proto_value = match value {
             MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
@@ -252,7 +252,7 @@ impl From<(&String, &MetadataValue)> for crate::proto::proximadb::MetadataItem {
             MetadataValue::Null => None,
         };
         
-        crate::proto::proximadb::MetadataItem {
+        crate::proto::proximadb_v1::MetadataItem {
             key: key.clone(),
             value: proto_value,
         }

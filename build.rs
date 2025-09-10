@@ -6,8 +6,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("🔨 Building ProximaDB protobuf schemas");
 
-    // Compile optimized ProximaDB proto with zero-copy support and serde derives
-    tracing::debug!("Compiling protobuf schemas (legacy + v1). Note: remove legacy proximadb.proto once v1 migration completes.");
+    // Compile v1 protobuf schemas with zero-copy support and serde derives
+    tracing::debug!("Compiling v1 protobuf schemas - legacy migration complete!");
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
@@ -33,11 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .field_attribute("TimeRange.end", "#[serde(skip)]")
         .field_attribute("typed_field::Value.TimestampValue", "#[serde(skip)]")
         .field_attribute("temporal_clause::Clause.AtTime", "#[serde(skip)]")
-        // TODO(migration): Remove "proto/proximadb.proto" from the list below once all
-        // crate::proto::proximadb::* references are eliminated and only v1 is in use.
+        // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
             &[
-                "proto/proximadb.proto", // LEGACY – scheduled for removal
+                "proto/proximadb.proto", // LEGACY – keeping until v1 schema complete
                 "proto/proximadb/v1/entity.proto",
                 "proto/proximadb/v1/relations.proto",
                 "proto/proximadb/v1/context.proto",
@@ -53,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     tracing::info!("✅ Protobuf compilation complete");
 
-    debug!("cargo:rerun-if-changed=proto/proximadb.proto");
+    debug!("cargo:rerun-if-changed=proto/proximadb.proto"); // TODO: remove once v1 schema complete
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/graph.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/vector.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/types.proto");

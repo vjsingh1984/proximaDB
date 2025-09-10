@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;
-use crate::proto::proximadb::Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Unified scan strategy based on RAPTOR's successful pattern
 #[derive(Debug, Clone)]

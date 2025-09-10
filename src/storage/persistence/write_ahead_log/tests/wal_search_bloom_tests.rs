@@ -16,7 +16,7 @@ mod tests {
     
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::{FilterExpression, SearchResult};
-    use crate::proto::proximadb::{VectorRecord, MetadataItem};
+    use crate::proto::proximadb_v1::{VectorRecord, MetadataItem};
     use crate::storage::persistence::write_ahead_log::{
         WriteAheadLogManager, WALConfig, BatchId
     };

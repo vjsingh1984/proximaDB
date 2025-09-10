@@ -45,15 +45,15 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 id: Some(format!("test_vector_{}", i)),
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
                 metadata: vec![
-                    crate::proto::proximadb::MetadataItem {
+                    crate::proto::proximadb_v1::MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             format!("category_{}", i % 3),
                         )),
                     },
-                    crate::proto::proximadb::MetadataItem {
+                    crate::proto::proximadb_v1::MetadataItem {
                         key: "priority".to_string(),
-                        value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                             i.to_string(),
                         )),
                     },

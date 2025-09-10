@@ -66,7 +66,7 @@ pub struct CompactionTask {
     /// Block size in KB for compacted output (uses server default if None)
     pub block_size_kb: Option<u32>,
     /// Compression configuration (uses server default if None)
-    pub compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+    pub compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
 }
 
 /// Priority levels for compaction tasks
@@ -640,7 +640,7 @@ impl Compaction {
         task: &CompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
-        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<EnhancedCompactionStats> {
         debug!(
             "🚀 UNIFIED COMPACTION: Single optimized path for {} files at level {}",
@@ -694,7 +694,7 @@ impl Compaction {
         task: &CompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
-        compression_config: Option<crate::proto::proximadb::CompressionConfig>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<EnhancedCompactionStats> {
         debug!(
             "🚀 UNIFIED COMPACTION: VectorRecord-only path with compression: {:?}",

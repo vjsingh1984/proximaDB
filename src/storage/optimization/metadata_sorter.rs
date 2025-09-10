@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 use crate::core::VectorRecord;
-use crate::proto::proximadb::FilterableColumnSpec;
+use crate::proto::proximadb_v1::FilterableColumnSpec;
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]
@@ -145,10 +145,10 @@ impl MetadataSorter {
         for item in &record.metadata {
             if item.key == key {
                 match &item.value {
-                    Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         return SortableValue::from_string(s);
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                         // Check if it's an integer
                         if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
                             return SortableValue::Number(*n as i64);
@@ -157,7 +157,7 @@ impl MetadataSorter {
                             return SortableValue::Float(n.to_string());
                         }
                     }
-                    Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         // Convert bool to string for sorting
                         return SortableValue::String(b.to_string());
                     }
@@ -335,7 +335,7 @@ impl SortConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
 
     fn create_test_record(id: &str, category: &str, priority: &str) -> VectorRecord {
         VectorRecord {
@@ -344,13 +344,13 @@ mod tests {
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         category.to_string(),
                     )),
                 },
                 MetadataItem {
                     key: "priority".to_string(),
-                    value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         priority.to_string(),
                     )),
                 },

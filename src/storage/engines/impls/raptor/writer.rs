@@ -70,7 +70,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::proto::proximadb::{VectorRecord, metadata_item};
+use crate::proto::proximadb_v1::{VectorRecord, metadata_item};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 

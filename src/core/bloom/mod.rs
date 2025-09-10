@@ -252,13 +252,13 @@ pub trait BloomFilterStrategy: Send + Sync + std::fmt::Debug {
 /// Trait for metadata-aware bloom filters with type-safe operations
 pub trait MetadataBloomFilter: BloomFilterStrategy {
     /// Insert a metadata item with proper type handling
-    fn insert_metadata(&mut self, column: &str, item: &crate::proto::proximadb::MetadataItem);
+    fn insert_metadata(&mut self, column: &str, item: &crate::proto::proximadb_v1::MetadataItem);
 
     /// Check if metadata might match with proper type handling
     fn might_match_metadata(
         &self,
         column: &str,
-        item: &crate::proto::proximadb::MetadataItem,
+        item: &crate::proto::proximadb_v1::MetadataItem,
     ) -> bool;
 
     /// Get the number of metadata columns tracked
@@ -267,8 +267,8 @@ pub trait MetadataBloomFilter: BloomFilterStrategy {
 
 /// Serialize metadata value for bloom filter hashing
 /// This ensures consistent serialization across all types
-pub fn serialize_metadata_value(item: &crate::proto::proximadb::MetadataItem) -> String {
-    use crate::proto::proximadb::metadata_item::Value;
+pub fn serialize_metadata_value(item: &crate::proto::proximadb_v1::MetadataItem) -> String {
+    use crate::proto::proximadb_v1::metadata_item::Value;
 
     match &item.value {
         Some(Value::StringValue(s)) => s.clone(),
@@ -291,8 +291,8 @@ pub fn serialize_metadata_value(item: &crate::proto::proximadb::MetadataItem) ->
 pub fn json_to_metadata_item(
     key: &str,
     value: &serde_json::Value,
-) -> crate::proto::proximadb::MetadataItem {
-    use crate::proto::proximadb::metadata_item::Value as ProtoValue;
+) -> crate::proto::proximadb_v1::MetadataItem {
+    use crate::proto::proximadb_v1::metadata_item::Value as ProtoValue;
 
     let proto_value = match value {
         serde_json::Value::String(s) => Some(ProtoValue::StringValue(s.clone())),
@@ -301,7 +301,7 @@ pub fn json_to_metadata_item(
         _ => None, // Null, Array, Object not supported in MetadataItem
     };
 
-    crate::proto::proximadb::MetadataItem {
+    crate::proto::proximadb_v1::MetadataItem {
         key: key.to_string(),
         value: proto_value,
     }
@@ -641,7 +641,7 @@ impl SstableBloomFilter {
     pub fn might_match_metadata(
         &self,
         _column: &str,
-        _item: &crate::proto::proximadb::MetadataItem,
+        _item: &crate::proto::proximadb_v1::MetadataItem,
     ) -> Result<bool> {
         if self.metadata_filter_data.is_empty() {
             return Ok(false);

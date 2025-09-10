@@ -1,7 +1,7 @@
 // Compact enum storage - save 3 bytes per enum (u8 vs i32)
 // All ProximaDB enums have < 20 values, so u8 is more than sufficient
 
-use crate::proto::proximadb::{
+use crate::proto::proximadb_v1::{
     DistanceMetric, StorageEngine, IndexingAlgorithm, 
     CollectionOperation, VectorOperation, CompressionAlgorithm
 };

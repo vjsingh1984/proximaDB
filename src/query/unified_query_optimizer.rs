@@ -18,7 +18,7 @@ use tracing::{debug, info, trace};
 
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::search::{FilterExpression, SearchParams};
-use crate::proto::proximadb::{Collection, CompressionAlgorithm};
+use crate::proto::proximadb_v1::{Collection, CompressionAlgorithm};
 use crate::storage::engines::core::formats::columnar::common::EarlyTerminationConfig;
 // Note: SearchStageContext from search_modes is for search stages, not query context - using StorageQueryContext instead
 

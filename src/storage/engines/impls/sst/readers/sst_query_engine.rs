@@ -1474,7 +1474,7 @@ impl UnifiedSstableReader {
     #[inline(always)]
     fn fast_metadata_match(
         &self,
-        metadata: &[crate::proto::proximadb::MetadataItem],
+        metadata: &[crate::proto::proximadb_v1::MetadataItem],
         filter_key: &str,
         filter_value: &serde_json::Value,
     ) -> bool {
@@ -1512,13 +1512,13 @@ impl UnifiedSstableReader {
     #[inline(always)]
     fn fast_value_comparison(
         &self,
-        item_value: &Option<crate::proto::proximadb::metadata_item::Value>,
+        item_value: &Option<crate::proto::proximadb_v1::metadata_item::Value>,
         filter_value: &serde_json::Value,
     ) -> bool {
         match (item_value, filter_value) {
             // Hot path: string comparisons (most common case)
             (
-                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)),
                 serde_json::Value::String(filter_s),
             ) => {
                 // Use ptr-based comparison first, then memcmp for equality
@@ -1526,7 +1526,7 @@ impl UnifiedSstableReader {
             }
             // Hot path: number comparisons
             (
-                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)),
                 serde_json::Value::Number(filter_n),
             ) => {
                 // Direct f64 comparison is very fast
@@ -1536,7 +1536,7 @@ impl UnifiedSstableReader {
             }
             // Less common paths
             (
-                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)),
+                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)),
                 serde_json::Value::Bool(filter_b),
             ) => *b == *filter_b,
             (None, serde_json::Value::Null) => true,
@@ -2349,7 +2349,7 @@ impl UnifiedSstableReader {
                 let mut metadata_map = std::collections::HashMap::new();
                 for item in &record.metadata {
                     if let Some(value) = &item.value {
-                        use crate::proto::proximadb::metadata_item;
+                        use crate::proto::proximadb_v1::metadata_item;
                         let typed_value = match value {
                             metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
                             metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
@@ -4034,21 +4034,21 @@ impl UnifiedSstableReader {
     #[inline(always)]
     fn metadata_items_to_json(
         &self,
-        items: &[crate::proto::proximadb::MetadataItem],
+        items: &[crate::proto::proximadb_v1::MetadataItem],
     ) -> HashMap<String, serde_json::Value> {
         // Pre-allocate HashMap to exact size to avoid reallocations
         let mut map = HashMap::with_capacity(items.len());
         for item in items {
             let value = match &item.value {
-                Some(crate::proto::proximadb::metadata_item::Value::StringValue(s)) => {
+                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                     serde_json::Value::String(s.clone())
                 }
-                Some(crate::proto::proximadb::metadata_item::Value::NumberValue(n)) => {
+                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                     serde_json::Number::from_f64(*n)
                         .map(serde_json::Value::Number)
                         .unwrap_or(serde_json::Value::Null)
                 }
-                Some(crate::proto::proximadb::metadata_item::Value::BoolValue(b)) => {
+                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                     serde_json::Value::Bool(*b)
                 }
                 None => serde_json::Value::Null,

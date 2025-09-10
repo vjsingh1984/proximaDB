@@ -563,7 +563,7 @@ pub mod protocol_conversions {
     /// Convert gRPC proto MetadataFilter to unified FilterExpression
     /// Used by gRPC handlers to convert incoming proto filters
     pub fn from_proto_metadata_filter(
-        proto_filter: &crate::proto::proximadb::MetadataFilter,
+        proto_filter: &crate::proto::proximadb_v1::MetadataFilter,
     ) -> Result<FilterExpression, String> {
         if proto_filter.conditions.is_empty() {
             return Ok(FilterExpression::And(vec![]));
@@ -580,36 +580,36 @@ pub mod protocol_conversions {
                 };
 
                 let operator =
-                    match crate::proto::proximadb::FilterOperation::try_from(condition.operation) {
-                        Ok(crate::proto::proximadb::FilterOperation::Equals) => {
+                    match crate::proto::proximadb_v1::FilterOperation::try_from(condition.operation) {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::Equals) => {
                             ComparisonOperator::Equals
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::NotEquals) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::NotEquals) => {
                             ComparisonOperator::NotEquals
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::GreaterThan) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::GreaterThan) => {
                             ComparisonOperator::GreaterThan
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::GreaterThanOrEqual) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::GreaterThanOrEqual) => {
                             ComparisonOperator::GreaterThanOrEqual
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::LessThan) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::LessThan) => {
                             ComparisonOperator::LessThan
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::LessThanOrEqual) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::LessThanOrEqual) => {
                             ComparisonOperator::LessThanOrEqual
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::In) => ComparisonOperator::In,
-                        Ok(crate::proto::proximadb::FilterOperation::NotIn) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::In) => ComparisonOperator::In,
+                        Ok(crate::proto::proximadb_v1::FilterOperation::NotIn) => {
                             ComparisonOperator::NotIn
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::Contains) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::Contains) => {
                             ComparisonOperator::Contains
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::StartsWith) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::StartsWith) => {
                             ComparisonOperator::StartsWith
                         }
-                        Ok(crate::proto::proximadb::FilterOperation::EndsWith) => {
+                        Ok(crate::proto::proximadb_v1::FilterOperation::EndsWith) => {
                             ComparisonOperator::EndsWith
                         }
                         _ => {

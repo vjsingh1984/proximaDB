@@ -67,7 +67,7 @@ impl UnifiedFilterEvaluator {
     }
 
     /// Evaluate against proto metadata items
-    pub fn evaluate_proto(&self, metadata: &[crate::proto::proximadb::MetadataItem]) -> bool {
+    pub fn evaluate_proto(&self, metadata: &[crate::proto::proximadb_v1::MetadataItem]) -> bool {
         let json_metadata = crate::core::proto_metadata_helper::proto_metadata_to_json(metadata);
         self.filter.evaluate(&json_metadata)
     }

@@ -208,7 +208,7 @@ impl MemtableManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb::MetadataItem;
+    use crate::proto::proximadb_v1::MetadataItem;
 
     fn create_test_config() -> MemtableConfig {
         MemtableConfig {
@@ -226,7 +226,7 @@ mod tests {
             vector: vec![0.1, 0.2, 0.3, 0.4],
             metadata: vec![MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                     "test".to_string(),
                 )),
             }],
