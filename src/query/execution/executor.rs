@@ -41,6 +41,7 @@ impl QueryExecutor {
         let start_time = Instant::now();
         let mut performance_metrics = QueryPerformanceMetrics::default();
         let mut all_rows = Vec::new();
+        let mut buffers: Vec<Vec<QueryRow>> = Vec::new();
 
         for operation in &plan.operations {
             match operation {
@@ -60,18 +61,34 @@ impl QueryExecutor {
                         distance_metric,
                         &mut performance_metrics,
                     ).await?;
-                    
-                    all_rows.extend(search_results);
+                    buffers.push(search_results);
                 },
                 ExecutionOperation::Project { columns, transformations } => {
-                    // Apply projection transformations
-                    self.apply_projections(&mut all_rows, columns, transformations);
+                    if let Some(last) = buffers.last_mut() {
+                        self.apply_projections(last, columns, transformations);
+                    } else {
+                        self.apply_projections(&mut all_rows, columns, transformations);
+                    }
                 },
                 ExecutionOperation::Aggregate { group_keys, aggs, having } => {
-                    self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
+                    if let Some(last) = buffers.last_mut() {
+                        self.apply_aggregate(last, group_keys, aggs, having)?;
+                    } else {
+                        self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
+                    }
                 }
-                ExecutionOperation::Join { .. } => {
-                    return Err(anyhow!("JOIN execution is not implemented yet"));
+                ExecutionOperation::Join { kind, on } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("JOIN requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    if let Some((lk, rk)) = Self::parse_join_on(on) {
+                        let joined = self.join_rows(&left, &right, &lk, &rk, kind)?;
+                        buffers.push(joined);
+                    } else {
+                        return Err(anyhow!("JOIN: unsupported ON clause; expected equality on two identifiers"));
+                    }
                 }
                 _ => {
                     return Err(anyhow!("Unsupported operation in vector plan: {:?}", operation));
@@ -80,10 +97,12 @@ impl QueryExecutor {
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let total_found = all_rows.len();
+        // Resolve final rows: prefer the last buffer if present
+        let final_rows = if let Some(last) = buffers.pop() { last } else { all_rows };
+        let total_found = final_rows.len();
 
         Ok(QueryResult {
-            rows: all_rows,
+            rows: final_rows,
             total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
@@ -97,6 +116,7 @@ impl QueryExecutor {
         let start_time = Instant::now();
         let mut performance_metrics = QueryPerformanceMetrics::default();
         let mut all_rows = Vec::new();
+        let mut buffers: Vec<Vec<QueryRow>> = Vec::new();
 
         for operation in &plan.operations {
             match operation {
@@ -114,17 +134,34 @@ impl QueryExecutor {
                         filters.as_ref(),
                         &mut performance_metrics,
                     ).await?;
-                    
-                    all_rows.extend(traversal_results);
+                    buffers.push(traversal_results);
                 },
                 ExecutionOperation::Project { columns, transformations } => {
-                    self.apply_projections(&mut all_rows, columns, transformations);
+                    if let Some(last) = buffers.last_mut() {
+                        self.apply_projections(last, columns, transformations);
+                    } else {
+                        self.apply_projections(&mut all_rows, columns, transformations);
+                    }
                 },
                 ExecutionOperation::Aggregate { group_keys, aggs, having } => {
-                    self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
+                    if let Some(last) = buffers.last_mut() {
+                        self.apply_aggregate(last, group_keys, aggs, having)?;
+                    } else {
+                        self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
+                    }
                 }
-                ExecutionOperation::Join { .. } => {
-                    return Err(anyhow!("JOIN execution is not implemented yet"));
+                ExecutionOperation::Join { kind, on } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("JOIN requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    if let Some((lk, rk)) = Self::parse_join_on(on) {
+                        let joined = self.join_rows(&left, &right, &lk, &rk, kind)?;
+                        buffers.push(joined);
+                    } else {
+                        return Err(anyhow!("JOIN: unsupported ON clause; expected equality on two identifiers"));
+                    }
                 }
                 _ => {
                     return Err(anyhow!("Unsupported operation in graph plan: {:?}", operation));
@@ -133,10 +170,11 @@ impl QueryExecutor {
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let total_found = all_rows.len();
+        let final_rows = if let Some(last) = buffers.pop() { last } else { all_rows };
+        let total_found = final_rows.len();
 
         Ok(QueryResult {
-            rows: all_rows,
+            rows: final_rows,
             total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
@@ -154,6 +192,7 @@ impl QueryExecutor {
         let mut vector_results = Vec::new();
         let mut graph_results = Vec::new();
         let mut fusion_strategy = None;
+        let mut join_request: Option<(crate::query::execution::JoinKind, String, String)> = None;
 
         for operation in &plan.operations {
             match operation {
@@ -174,15 +213,21 @@ impl QueryExecutor {
                     // For simplicity, aggregate only after fusion
                     // We'll process after we compute fused_results
                 }
-                ExecutionOperation::Join { .. } => {
-                    return Err(anyhow!("JOIN execution is not implemented yet"));
+                ExecutionOperation::Join { kind, on } => {
+                    if let Some((lk, rk)) = Self::parse_join_on(on) {
+                        join_request = Some((kind.clone(), lk, rk));
+                    } else {
+                        return Err(anyhow!("JOIN: unsupported ON clause; expected equality on two identifiers"));
+                    }
                 }
                 _ => {} // Handle other operations
             }
         }
 
-        // Apply fusion if we have both vector and graph results
-        let fused_results = if let Some((strategy, weights)) = fusion_strategy {
+        // Apply join or fusion if we have both vector and graph results
+        let fused_results = if let Some((kind, left_key, right_key)) = join_request {
+            self.join_rows(&vector_results, &graph_results, &left_key, &right_key, &kind)?
+        } else if let Some((strategy, weights)) = fusion_strategy {
             self.apply_fusion_algorithm(&vector_results, &graph_results, &strategy, &weights)?
         } else {
             // No fusion needed - combine results directly
@@ -271,6 +316,50 @@ impl QueryExecutor {
             .collect();
 
         Ok(rows)
+    }
+
+    fn join_rows(
+        &self,
+        left: &Vec<QueryRow>,
+        right: &Vec<QueryRow>,
+        left_key: &str,
+        right_key: &str,
+        _kind: &crate::query::execution::JoinKind,
+    ) -> Result<Vec<QueryRow>> {
+        use std::collections::HashMap;
+        let mut index: HashMap<String, Vec<&QueryRow>> = HashMap::new();
+        for r in right {
+            if let Some(v) = r.fields.get(right_key) {
+                let key = v.to_string();
+                index.entry(key).or_default().push(r);
+            }
+        }
+        let mut out = Vec::new();
+        for l in left {
+            if let Some(vl) = l.fields.get(left_key) {
+                let lk = vl.to_string();
+                if let Some(matches) = index.get(&lk) {
+                    for r in matches {
+                        let mut fields = l.fields.clone();
+                        for (k, v) in &r.fields {
+                            let key = if fields.contains_key(k) { format!("r_{}", k) } else { k.clone() };
+                            fields.insert(key, v.clone());
+                        }
+                        out.push(QueryRow { fields, similarity_score: l.similarity_score.or(r.similarity_score), graph_distance: l.graph_distance.or(r.graph_distance), provenance: None });
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn parse_join_on(on: &str) -> Option<(String, String)> {
+        let re = regex::Regex::new("Identifier\\(\"([^\"]+)\"\\).+Identifier\\(\"([^\"]+)\"\\)").ok()?;
+        if let Some(caps) = re.captures(on) {
+            let l = caps.get(1)?.as_str().to_string();
+            let r = caps.get(2)?.as_str().to_string();
+            Some((l, r))
+        } else { None }
     }
 
     fn apply_aggregate(
