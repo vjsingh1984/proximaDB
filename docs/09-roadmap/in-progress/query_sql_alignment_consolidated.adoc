@@ -1,4 +1,4 @@
- = ProximaDB Unified Query Layer Implementation Guide
+= ProximaDB Unified Query Layer Implementation Guide
  :toc:
  :status: in-progress
 
@@ -11,10 +11,11 @@
 == Current State (Verified 2025-09-10)
 
 Implemented:
-- REST SQL endpoints (`/api/v1/sql/execute`, `/api/v1/sql/explain`) returning typed rows
-- `sql_frontend/{parser,lowering}.rs` with sqlparser-rs integration
-- Unified execution: `query/execution/{mod,planner,executor}.rs` used by `execute_sql_frontend`
-- HashMap-based metadata filtering in the execution path
+- REST/gRPC SQL endpoints using the new frontend by default (`/api/v1/sql/execute`, SqlService/ExecuteSql)
+- `sql_frontend/{parser,lowering}.rs` with sqlparser-rs, placeholders → Expr::Param, SKS validation
+- Unified execution: `query/execution/{mod,planner,executor}.rs`; VOS HashMap-based metadata filtering
+- SKS functions: SIMILAR/FOLLOW lowered and mapped to VectorSearch/GraphTraversal; Hybrid uses RRF
+- GROUP BY/HAVING: Aggregate op + basic numeric aggregation in executor
 
 Completed:
 - AST lowering foundation (`lowering.rs`): SELECT/WHERE/ORDER BY/LIMIT, HashMap-friendly filter lowering
@@ -22,10 +23,10 @@ Completed:
 - Hybrid fusion algorithms available (RRF, Adaptive) in executor
 
 In Progress:
-- JOIN/GROUP BY/HAVING support in lowering
-- Parameter binding with type safety; streaming/pagination
-- SKS function parsing/validation (SIMILAR/FOLLOW/ASSEMBLE) beyond placeholders
-- Benchmarks comparing HashMap vs linear scans
+- JOIN execution (equality join for small/medium sets); JOIN op scaffolded in planner
+- UNION/CTE parse-only; execution pending
+- Richer HAVING and aggregate expressions (aliases/exprs)
+- Streaming/pagination for large results
 
 TODO:
 - Model registry integration for embedding validation
@@ -35,9 +36,9 @@ TODO:
 [cols="1,2,1,2",options="header"]
 |===
 | Priority | Component | Status | Implementation Focus
-| **P1** | AST Lowering | ✅ Core landed | `sql_frontend/lowering.rs` - SELECT/WHERE/ORDER BY/LIMIT; JOIN/GROUP BY pending
-| **P2** | Execution Engine | ✅ Integrated | `query/execution/{mod,planner,executor}.rs` - vector/graph/hybrid
-| **P3** | SKS Functions | 🔄 Partial | Parse placeholders; validation/execution wiring pending
+| **P1** | AST Lowering | ✅ Done | `sql_frontend/lowering.rs` - SELECT/WHERE/ORDER BY/LIMIT; JOIN/GROUP BY pending
+| **P2** | Execution Engine | ✅ Done | `query/execution/{mod,planner,executor}.rs` - vector/graph/hybrid
+| **P3** | SKS Functions | 🟡 In Progress | Parse placeholders; validation/execution wiring pending
 | **P4** | Integration | ✅ Done | `execute_sql_frontend()` in UnifiedHandlers
 |===
 
@@ -63,7 +64,7 @@ impl QueryLowering {
     pub async fn lower_sql(&self, sql: &str) -> Result<Query> {
         // 1. Parse SQL with sqlparser-rs
         let statements = sqlparser::Parser::parse_sql(
-            &sqlparser::dialect::GenericDialect {}, 
+            &sqlparser::dialect::GenericDialect {},
             sql
         )?;
         
@@ -423,8 +424,8 @@ impl QueryLowering {
                 
                 Ok(FilterExpression::Comparison {
                     field,
-                    operator, 
-                    value: serde_json::to_value(value)?, // Convert SqlValue to JSON for internal use
+                    operator,
+                    value: serde_json::to_value(value)?,
                 })
             }
             // TODO: Handle AND, OR, NOT operators
