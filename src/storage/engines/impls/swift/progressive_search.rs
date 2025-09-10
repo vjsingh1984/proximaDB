@@ -624,7 +624,7 @@ fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool
     let metadata_map: std::collections::HashMap<String, serde_json::Value> = record
         .metadata
         .iter()
-        .map(|item| (item.key.clone(), metadata_item_to_json(&item.value)))
+        .map(|(key, value)| (item.0.clone(), metadata_item_to_json(&value)))
         .collect();
 
     for condition in &filter.conditions {

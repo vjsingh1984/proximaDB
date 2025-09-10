@@ -74,11 +74,11 @@ async fn test_base_cache_trait_template_method() {
         }
 
         async fn promote_to_l1(&self, key: &Self::Key, value: &Self::Value) {
-            self.put_l1(key.clone(), value.clone()).await;
+            self.put_l1(item.clone(), item.clone()).await;
         }
 
         async fn promote_to_l2(&self, key: &Self::Key, value: &Self::Value) {
-            self.put_l2(key.clone(), value.clone()).await;
+            self.put_l2(item.clone(), item.clone()).await;
         }
 
         async fn select_tier(&self, _key: &Self::Key, value: &Self::Value) -> CacheTier {
@@ -108,7 +108,7 @@ async fn test_base_cache_trait_template_method() {
     };
 
     // Put value
-    cache.put_with_hooks(key.clone(), value.clone()).await;
+    cache.put_with_hooks(item.clone(), item.clone()).await;
 
     // Get should find it
     let retrieved = cache.get_with_hooks(&key).await;

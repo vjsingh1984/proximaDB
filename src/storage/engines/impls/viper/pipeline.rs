@@ -34,7 +34,7 @@ use tracing::{debug, info, warn};
 // Quantization now handled by unified compute module
 use crate::core::proto_metadata_helper;
 use crate::core::{String, VectorRecord};
-use crate::proto::proximadb_v1::metadata_item::Value as MetadataValue;
+use crate::proto::proximadb_v1::sql_value::Value as MetadataValue;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
@@ -791,13 +791,13 @@ impl VectorRecordProcessor {
             let a_val = a
                 .metadata
                 .iter()
-                .find(|item| &item.key == field)
-                .map(|item| &item.value);
+                .find(|item| &key == field)
+                .map(|(key, value)| &value);
             let b_val = b
                 .metadata
                 .iter()
-                .find(|item| &item.key == field)
-                .map(|item| &item.value);
+                .find(|item| &key == field)
+                .map(|(key, value)| &value);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
                     // Convert metadata values to JSON for comparison
@@ -3117,9 +3117,9 @@ impl CompactionEngine {
                     record
                         .metadata
                         .iter()
-                        .find(|item| &item.key == field)
-                        .map(|item| {
-                            let value_str = match &item.value {
+                        .find(|item| &key == field)
+                        .map(|(key, value)| {
+                            let value_str = match &value {
                                 Some(MetadataValue::StringValue(s)) => s.clone(),
                                 Some(MetadataValue::NumberValue(n)) => n.to_string(),
                                 Some(MetadataValue::BoolValue(b)) => b.to_string(),

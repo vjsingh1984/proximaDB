@@ -268,9 +268,9 @@ pub trait MetadataBloomFilter: BloomFilterStrategy {
 /// Serialize metadata value for bloom filter hashing
 /// This ensures consistent serialization across all types
 pub fn serialize_metadata_value(item: &crate::proto::proximadb_v1::MetadataItem) -> String {
-    use crate::proto::proximadb_v1::metadata_item::Value;
+    use crate::proto::proximadb_v1::sql_value::Value;
 
-    match &item.value {
+    match &value {
         Some(Value::StringValue(s)) => s.clone(),
         Some(Value::NumberValue(n)) => {
             // Use consistent number formatting to avoid precision issues
@@ -292,7 +292,7 @@ pub fn json_to_metadata_item(
     key: &str,
     value: &serde_json::Value,
 ) -> crate::proto::proximadb_v1::MetadataItem {
-    use crate::proto::proximadb_v1::metadata_item::Value as ProtoValue;
+    use crate::proto::proximadb_v1::sql_value::Value as ProtoValue;
 
     let proto_value = match value {
         serde_json::Value::String(s) => Some(ProtoValue::StringValue(s.clone())),

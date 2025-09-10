@@ -63,7 +63,7 @@ impl SqlFrontendParser {
     fn convert_select(&self, select: &SqlSelect, query: &SqlQuery) -> Result<Select> {
         // Convert projection
         let projection = select.projection.iter()
-            .map(|item| self.convert_select_item(item))
+            .map(|(key, value)| self.convert_select_item(item))
             .collect::<Result<Vec<_>>>()?;
 
         // Convert FROM clause
@@ -160,7 +160,7 @@ impl SqlFrontendParser {
         match table_factor {
             TableFactor::Table { name, alias, .. } => {
                 let table_name = name.to_string();
-                let alias_name = alias.as_ref().map(|a| a.name.value.clone());
+                let alias_name = alias.as_ref().map(|a| a.name.item.1.clone());
                 
                 Ok(TableRef {
                     name: Some(table_name),
@@ -170,7 +170,7 @@ impl SqlFrontendParser {
             },
             TableFactor::Derived { subquery, alias, .. } => {
                 let converted_subquery = self.convert_query(subquery)?;
-                let alias_name = alias.as_ref().map(|a| a.name.value.clone());
+                let alias_name = alias.as_ref().map(|a| a.name.item.1.clone());
                 
                 Ok(TableRef {
                     name: None,
@@ -214,7 +214,7 @@ impl SqlFrontendParser {
 
     fn convert_expr(&self, expr: &SqlExpr) -> Result<Expr> {
         match expr {
-            SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
+            SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.item.1.clone())),
             
             SqlExpr::Value(value) => Ok(Expr::Literal(self.convert_value(value)?)),
             

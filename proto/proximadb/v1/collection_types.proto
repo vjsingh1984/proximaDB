@@ -43,6 +43,26 @@ message IndexConfig {
   IndexingAlgorithm algorithm = 2;
   map<string, string> parameters = 3;
   bool enabled = 4;
+  // Additional fields for compatibility
+  int32 update_mode = 5;
+  optional uint32 async_update_timeout_ms = 6;
+  optional uint32 async_update_batch_size = 7;
+  bool enable_background_optimization = 8;
+  optional HnswConfig hnsw_config = 9;
+  optional IvfConfig ivf_config = 10;
+  optional LshConfig lsh_config = 11;
+  optional string flat_config = 12;
+  optional string pq_config = 13;
+  optional string annoy_config = 14;
+  uint32 build_concurrency = 15;
+  uint32 memory_limit_mb = 16;
+  uint32 checkpoint_interval_ms = 17;
+  bool is_primary = 18;
+  repeated string use_cases = 19;
+  float selectivity_threshold = 20;
+  bool use_quantization = 21;
+  optional QuantizationConfig quantization_override = 22;
+  string queue_representation = 23;
 }
 
 // Storage configuration
@@ -60,6 +80,9 @@ message StorageAssignment {
   repeated string backup_paths = 2;
   StorageEngine engine = 3;
   map<string, string> engine_config = 4;
+  // Additional fields for compatibility
+  string base_location = 5;
+  int64 assigned_at = 6;
 }
 
 message GetCollectionRequest {

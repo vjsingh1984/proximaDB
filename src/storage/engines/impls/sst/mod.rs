@@ -417,8 +417,8 @@ impl SstEntry {
             .record
             .metadata
             .iter()
-            .map(|item| {
-                let value = match &item.value {
+            .map(|(key, value)| {
+                let value = match &value {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
@@ -433,7 +433,7 @@ impl SstEntry {
                     }
                     None => serde_json::Value::Null,
                 };
-                (item.key.clone(), value)
+                (item.0.clone(), value)
             })
             .collect();
 
@@ -465,8 +465,8 @@ impl SstEntry {
                 .record
                 .metadata
                 .iter()
-                .map(|item| {
-                    let value = match &item.value {
+                .map(|(key, value)| {
+                    let value = match &value {
                         Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
@@ -481,7 +481,7 @@ impl SstEntry {
                         }
                         None => serde_json::Value::Null,
                     };
-                    (item.key.clone(), value)
+                    (item.0.clone(), value)
                 })
                 .collect(),
             debug_info: None,
@@ -1319,7 +1319,7 @@ mod block_utils {
 
             // Process metadata
             for item in &record.metadata {
-                let col_name = item.key.clone();
+                let col_name = item.0.clone();
                 metadata_columns.insert(col_name.clone(), ());
 
                 // Get or create column stats
@@ -1337,7 +1337,7 @@ mod block_utils {
                     });
 
                 // Convert to JSON value for min/max tracking
-                let value = match &item.value {
+                let value = match &value {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
@@ -1357,15 +1357,15 @@ mod block_utils {
 
                 // Update min/max values for this column
                 if col_stats.min_value.is_none() {
-                    col_stats.min_value = Some(value.clone());
+                    col_stats.min_value = Some(item.1.clone());
                 } else if let Some(ref mut min_val) = col_stats.min_value {
                     if compare_json_values(&value, min_val) == std::cmp::Ordering::Less {
-                        *min_val = value.clone();
+                        *min_val = item.1.clone();
                     }
                 }
 
                 if col_stats.max_value.is_none() {
-                    col_stats.max_value = Some(value.clone());
+                    col_stats.max_value = Some(item.1.clone());
                 } else if let Some(ref mut max_val) = col_stats.max_value {
                     if compare_json_values(&value, max_val) == std::cmp::Ordering::Greater {
                         *max_val = value;
@@ -4058,7 +4058,7 @@ impl SstStorage {
             // Add metadata values - already have MetadataItem
             for metadata_item in &record.metadata {
                 metadata_builder
-                    .add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                    .add_metadata_item(metadata_item.item.0.clone(), metadata_item.clone());
             }
         }
 
@@ -4116,14 +4116,14 @@ impl SstStorage {
             std::collections::HashMap::new();
         for vector in &sorted_vectors {
             for metadata_item in &vector.metadata {
-                *key_frequency.entry(metadata_item.key.clone()).or_insert(0) += 1;
+                *key_frequency.entry(metadata_item.item.0.clone()).or_insert(0) += 1;
             }
         }
 
         let primary_sort_key = key_frequency
             .iter()
             .max_by_key(|(_, count)| *count)
-            .map(|(key, _)| key.clone());
+            .map(|(key, _)| item.0.clone());
 
         let sort_start = std::time::Instant::now();
 
@@ -4217,7 +4217,7 @@ impl SstStorage {
             let record_size = std::mem::size_of::<VectorRecord>() + 
                 record.id.len() + 
                 record.vector.len() * 4 + // f32 size
-                record.metadata.iter().map(|item| item.key.len() + 50).sum::<usize>(); // Estimate metadata size (50 bytes per item)
+                record.metadata.iter().map(|(key, value)| key.len() + 50).sum::<usize>(); // Estimate metadata size (50 bytes per item)
 
             // If adding this record would exceed block size, finalize current block
             if current_block_size + record_size > block_size && !current_block_records.is_empty() {

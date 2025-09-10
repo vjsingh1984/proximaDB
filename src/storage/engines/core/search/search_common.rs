@@ -426,8 +426,8 @@ impl UniversalSearchPipeline {
             let metadata_map = record
                 .metadata
                 .into_iter()
-                .filter_map(|item| {
-                    item.value.map(|v| {
+                .filter_map(|(key, value)| {
+                    value.map(|v| {
                         let json_value = match v {
                             crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                 serde_json::Value::String(s)
@@ -442,7 +442,7 @@ impl UniversalSearchPipeline {
                                 serde_json::Value::Bool(b)
                             }
                         };
-                        (item.key, json_value)
+                        (key, json_value)
                     })
                 })
                 .collect::<HashMap<String, serde_json::Value>>();

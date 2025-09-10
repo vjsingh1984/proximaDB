@@ -776,8 +776,8 @@ impl UnifiedStorageEngine for SwiftEngine {
                 let metadata_map: HashMap<String, serde_json::Value> = record
                     .metadata
                     .into_iter()
-                    .map(|item| {
-                        let value = match &item.value {
+                    .map(|(key, value)| {
+                        let value = match &value {
                             Some(
                                 crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                             ) => serde_json::Value::String(s.clone()),
@@ -789,7 +789,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                             )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,
                         };
-                        (item.key, value)
+                        (key, value)
                     })
                     .collect();
 
@@ -1005,8 +1005,8 @@ impl SwiftEngine {
                 let metadata: std::collections::HashMap<String, serde_json::Value> = record
                     .metadata
                     .iter()
-                    .map(|item| {
-                        let value = match &item.value {
+                    .map(|(key, value)| {
+                        let value = match &value {
                             Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                                 serde_json::Value::String(s.clone())
                             }
@@ -1018,7 +1018,7 @@ impl SwiftEngine {
                             }
                             None => serde_json::Value::Null,
                         };
-                        (item.key.clone(), value)
+                        (item.0.clone(), value)
                     })
                     .collect();
 

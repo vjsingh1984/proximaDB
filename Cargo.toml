@@ -29,6 +29,7 @@ path = "src/bin/proximadb-bench-consolidated.rs"
 [dependencies]
 # Core async runtime
 tokio = { version = "1.37", features = ["full"] }
+tokio-stream = "0.1"
 # tokio-util = "0.7"  # Unused - no imports found in codebase
 # tokio-stream = "0.1"  # Unused - no imports found in codebase
 

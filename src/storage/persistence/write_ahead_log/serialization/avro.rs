@@ -92,8 +92,8 @@ impl super::VectorBatchSerializer for AvroSerializer {
                     let metadata_map: HashMap<String, String> = v
                         .metadata
                         .iter()
-                        .map(|item| {
-                            let value_str = match &item.value {
+                        .map(|(key, value)| {
+                            let value_str = match &value {
                                 Some(
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                                 ) => s.clone(),
@@ -105,7 +105,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 )) => b.to_string(),
                                 None => String::new(),
                             };
-                            (item.key.clone(), value_str)
+                            (item.0.clone(), value_str)
                         })
                         .collect();
 
@@ -423,7 +423,7 @@ mod tests {
         let keys: std::collections::HashSet<String> = deserialized[0]
             .metadata
             .iter()
-            .map(|item| item.key.clone())
+            .map(|(key, value)| item.0.clone())
             .collect();
         assert!(keys.contains_hash("key1"));
         assert!(keys.contains_hash("key2"));
@@ -432,12 +432,12 @@ mod tests {
         let key1_item = deserialized[0]
             .metadata
             .iter()
-            .find(|item| item.key == "key1")
+            .find(|item| key == "key1")
             .unwrap();
         let key2_item = deserialized[0]
             .metadata
             .iter()
-            .find(|item| item.key == "key2")
+            .find(|item| key == "key2")
             .unwrap();
         assert!(
             matches!(&key1_item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "value1")

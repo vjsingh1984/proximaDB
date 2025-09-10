@@ -230,7 +230,7 @@ impl VIPERColumnFilterEvaluator {
                             }
                             _ => {
                                 // Fall back to centralized evaluation for complex operators
-                                let metadata_map = [(field.clone(), column_value.clone())]
+                                let metadata_map = [(field.clone(), column_item.1.clone())]
                                     .into_iter()
                                     .collect();
                                 crate::storage::engines::core::evaluate_filter(

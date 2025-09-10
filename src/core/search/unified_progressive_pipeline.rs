@@ -714,7 +714,7 @@ impl UnifiedProgressiveSearchPipeline {
                     }
                     metadata_item::Value::BoolValue(b) => Value::Bool(*b),
                 };
-                map.insert(entry.key.clone(), json_value);
+                map.insert(entry.item.0.clone(), json_value);
             }
         }
 

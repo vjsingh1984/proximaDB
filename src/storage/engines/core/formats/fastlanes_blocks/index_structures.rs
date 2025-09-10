@@ -364,7 +364,7 @@ impl RowBasedIdIndex {
                 self.hash_index.insert(key, location);
             }
             Index::Hybrid => {
-                self.btree_index.insert(key.clone(), location.clone());
+                self.btree_index.insert(item.0.clone(), location.clone());
                 self.hash_index.insert(key, location);
             }
             Index::Dense(_) => {
@@ -483,7 +483,7 @@ impl RowBasedIdIndex {
         // Insert at leaf level first
         if let Some(leaf_level) = self.hierarchical_levels.first_mut() {
             if let HierarchicalLevelIndex::Leaf(ref mut leaf) = leaf_level.index {
-                leaf.entries.insert(key.clone(), location.clone());
+                leaf.entries.insert(item.0.clone(), location.clone());
             }
         }
 

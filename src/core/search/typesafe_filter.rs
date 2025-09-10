@@ -36,7 +36,7 @@ impl TypeSafeFilterEvaluator {
         // Convert MetadataItem slice to a HashMap for efficient lookup
         let metadata_map: HashMap<&str, &MetadataItem> = metadata
             .iter()
-            .map(|item| (item.key.as_str(), item))
+            .map(|(key, value)| (key.as_str(), item))
             .collect();
 
         self.evaluate_recursive(expr, &metadata_map)
@@ -69,41 +69,41 @@ impl TypeSafeFilterEvaluator {
 
                 match (metadata_item, operator) {
                     (Some(item), ComparisonOperator::Equals) => {
-                        self.compare_typed_values(&item.value, value, expected_type)
+                        self.compare_typed_values(&value, value, expected_type)
                             == Some(Ordering::Equal)
                     }
                     (Some(item), ComparisonOperator::NotEquals) => {
-                        self.compare_typed_values(&item.value, value, expected_type)
+                        self.compare_typed_values(&value, value, expected_type)
                             != Some(Ordering::Equal)
                     }
                     (Some(item), ComparisonOperator::LessThan) => {
                         matches!(
-                            self.compare_typed_values(&item.value, value, expected_type),
+                            self.compare_typed_values(&value, value, expected_type),
                             Some(Ordering::Less)
                         )
                     }
                     (Some(item), ComparisonOperator::LessThanOrEqual) => {
                         matches!(
-                            self.compare_typed_values(&item.value, value, expected_type),
+                            self.compare_typed_values(&value, value, expected_type),
                             Some(Ordering::Less) | Some(Ordering::Equal)
                         )
                     }
                     (Some(item), ComparisonOperator::GreaterThan) => {
                         matches!(
-                            self.compare_typed_values(&item.value, value, expected_type),
+                            self.compare_typed_values(&value, value, expected_type),
                             Some(Ordering::Greater)
                         )
                     }
                     (Some(item), ComparisonOperator::GreaterThanOrEqual) => {
                         matches!(
-                            self.compare_typed_values(&item.value, value, expected_type),
+                            self.compare_typed_values(&value, value, expected_type),
                             Some(Ordering::Greater) | Some(Ordering::Equal)
                         )
                     }
                     (Some(item), ComparisonOperator::In) => {
                         if let serde_json::Value::Array(values) = value {
                             values.iter().any(|v| {
-                                self.compare_typed_values(&item.value, v, expected_type)
+                                self.compare_typed_values(&value, v, expected_type)
                                     == Some(Ordering::Equal)
                             })
                         } else {
@@ -113,7 +113,7 @@ impl TypeSafeFilterEvaluator {
                     (Some(item), ComparisonOperator::NotIn) => {
                         if let serde_json::Value::Array(values) = value {
                             !values.iter().any(|v| {
-                                self.compare_typed_values(&item.value, v, expected_type)
+                                self.compare_typed_values(&value, v, expected_type)
                                     == Some(Ordering::Equal)
                             })
                         } else {
@@ -124,7 +124,7 @@ impl TypeSafeFilterEvaluator {
                         if let (
                             Some(MetadataValue::StringValue(s)),
                             serde_json::Value::String(pattern),
-                        ) = (&item.value, value)
+                        ) = (&value, value)
                         {
                             s.contains(pattern)
                         } else {
@@ -135,7 +135,7 @@ impl TypeSafeFilterEvaluator {
                         if let (
                             Some(MetadataValue::StringValue(s)),
                             serde_json::Value::String(pattern),
-                        ) = (&item.value, value)
+                        ) = (&value, value)
                         {
                             s.starts_with(pattern)
                         } else {
@@ -146,7 +146,7 @@ impl TypeSafeFilterEvaluator {
                         if let (
                             Some(MetadataValue::StringValue(s)),
                             serde_json::Value::String(pattern),
-                        ) = (&item.value, value)
+                        ) = (&value, value)
                         {
                             s.ends_with(pattern)
                         } else {
@@ -158,7 +158,7 @@ impl TypeSafeFilterEvaluator {
                             if bounds.len() == 2 {
                                 let ge_lower = matches!(
                                     self.compare_typed_values(
-                                        &item.value,
+                                        &value,
                                         &bounds[0],
                                         expected_type
                                     ),
@@ -166,7 +166,7 @@ impl TypeSafeFilterEvaluator {
                                 );
                                 let le_upper = matches!(
                                     self.compare_typed_values(
-                                        &item.value,
+                                        &value,
                                         &bounds[1],
                                         expected_type
                                     ),
@@ -284,7 +284,7 @@ impl TypeSafeFilterEvaluator {
 pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_json::Value> {
     let mut map = HashMap::new();
     for item in items {
-        let value = match &item.value {
+        let value = match &value {
             Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(MetadataValue::NumberValue(n)) => {
                 if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
@@ -299,7 +299,7 @@ pub fn metadata_items_to_json(items: &[MetadataItem]) -> HashMap<String, serde_j
             Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
             None => serde_json::Value::Null,
         };
-        map.insert(item.key.clone(), value);
+        map.insert(item.0.clone(), value);
     }
     map
 }

@@ -36,7 +36,7 @@ mod tests {
         // Test put and hit
         let block = DataBlock::new(1, vec![]);
         cache
-            .put(key.clone(), block.clone(), Some(CompressionAlgorithm::Zstd))
+            .put(item.0.clone(), block.clone(), Some(CompressionAlgorithm::Zstd))
             .await
             .unwrap();
 
@@ -325,7 +325,7 @@ mod tests {
         };
 
         let block = DataBlock::new(1, vec![]);
-        cache.put(key.clone(), block, None).await.unwrap();
+        cache.put(item.0.clone(), block, None).await.unwrap();
 
         // Verify it's cached
         assert!(cache.get(&key).await.is_some());

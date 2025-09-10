@@ -1264,8 +1264,8 @@ impl Compaction {
                             .filter(|(k, _)| *k != "vector")
                             .map(|(k, v)| {
                                 let mut item = crate::proto::proximadb_v1::MetadataItem::default();
-                                item.key = k.clone();
-                                item.value = Some(
+                                key = k.clone();
+                                value = Some(
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                         v.to_string(),
                                     ),
@@ -1818,7 +1818,7 @@ impl Compaction {
                             for value in values {
                                 if let Some(metadata_array) = value.as_array() {
                                     let struct_builder = list_builder.values();
-                                    for item in metadata_array {
+                                    for (key, value) in metadata_array {
                                         if let Some(obj) = item.as_object() {
                                             if let (Some(key), Some(val)) =
                                                 (obj.get("key"), obj.get("value"))

@@ -230,7 +230,7 @@ impl GraphMemoryPool {
         for (key, value) in &node.properties {
             let value_str = property_value_to_string(value);
             self.node_property_indexes
-                .entry(key.clone())
+                .entry(item.0.clone())
                 .or_insert_with(DashMap::new)
                 .entry(value_str)
                 .or_insert_with(Vec::new)
@@ -240,7 +240,7 @@ impl GraphMemoryPool {
             if matches!(value.value, Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))) {
                 let map_lock = self
                     .node_property_str_ordered
-                    .entry(key.clone())
+                    .entry(item.0.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(property_value_to_string(value))
@@ -256,7 +256,7 @@ impl GraphMemoryPool {
             } {
                 let map_lock = self
                     .node_property_num_indexes
-                    .entry(key.clone())
+                    .entry(item.0.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(num).or_insert_with(Vec::new).push(node.id.clone());
@@ -276,7 +276,7 @@ impl GraphMemoryPool {
         for (key, value) in &edge.properties {
             let value_str = property_value_to_string(value);
             self.edge_property_indexes
-                .entry(key.clone())
+                .entry(item.0.clone())
                 .or_insert_with(DashMap::new)
                 .entry(value_str)
                 .or_insert_with(Vec::new)
@@ -286,7 +286,7 @@ impl GraphMemoryPool {
             if matches!(value.value, Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))) {
                 let map_lock = self
                     .edge_property_str_ordered
-                    .entry(key.clone())
+                    .entry(item.0.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(property_value_to_string(value))
@@ -302,7 +302,7 @@ impl GraphMemoryPool {
             } {
                 let map_lock = self
                     .edge_property_num_indexes
-                    .entry(key.clone())
+                    .entry(item.0.clone())
                     .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(num).or_insert_with(Vec::new).push(edge.id.clone());

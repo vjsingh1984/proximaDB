@@ -190,7 +190,7 @@ where
             Some(n) => match n.as_ref() {
                 ArtNode::Leaf { value } => {
                     if depth >= key.len() {
-                        Ok(Some(value.clone()))
+                        Ok(Some(item.1.clone()))
                     } else {
                         Ok(None)
                     }

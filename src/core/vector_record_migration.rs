@@ -60,7 +60,7 @@ pub fn service_to_proto(
                 )),
             };
             crate::proto::proximadb_v1::MetadataItem {
-                key: key.clone(),
+                key: item.0.clone(),
                 value: metadata_value,
             }
         })
@@ -169,12 +169,12 @@ mod tests {
 
         // Check metadata items
         let metadata_items = &proto_record.metadata;
-        assert!(metadata_items.iter().any(|item| item.key == "category" && 
-            matches!(&item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "test")));
-        assert!(metadata_items.iter().any(|item| item.key == "score" && 
-            matches!(&item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) if *n == 42.0)));
-        assert!(metadata_items.iter().any(|item| item.key == "active" && 
-            matches!(&item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) if *b)));
+        assert!(metadata_items.iter().any(|item| key == "category" && 
+            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "test")));
+        assert!(metadata_items.iter().any(|item| key == "score" && 
+            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) if *n == 42.0)));
+        assert!(metadata_items.iter().any(|item| key == "active" && 
+            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) if *b)));
     }
 
     #[test]

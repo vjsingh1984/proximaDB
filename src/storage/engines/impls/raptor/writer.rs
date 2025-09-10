@@ -2559,8 +2559,8 @@ impl RaptorWriter {
         let metadata: Vec<(String, Vec<u8>)> = vector
             .metadata
             .iter()
-            .map(|item| {
-                let value_bytes = match &item.value {
+            .map(|(key, value)| {
+                let value_bytes = match &value {
                     Some(val) => {
                         // Serialize metadata value to bytes
                         match val {
@@ -2582,7 +2582,7 @@ impl RaptorWriter {
                     }
                     None => Vec::new(),
                 };
-                (item.key.clone(), value_bytes)
+                (item.0.clone(), value_bytes)
             })
             .collect();
 
@@ -2810,7 +2810,7 @@ impl RaptorWriter {
                     .append(&self.file_path, &meta_compressed)
                     .await?;
                 column_pages.insert(
-                    ColumnType::Metadata(key.clone()),
+                    ColumnType::Metadata(item.0.clone()),
                     ColumnPageMetadata {
                         column_type: ColumnType::Metadata(key),
                         offset: meta_offset,
@@ -2953,7 +2953,7 @@ impl RaptorWriter {
         let mut all_keys = HashSet::new();
         for row in &page.rows {
             for (key, _) in &row.metadata {
-                all_keys.insert(key.clone());
+                all_keys.insert(item.0.clone());
             }
         }
 
@@ -3146,8 +3146,8 @@ impl RaptorWriter {
             for (key, _) in &row.metadata {
                 if !key_to_index.contains_key(key) {
                     let idx = key_dictionary.len() as u16;
-                    key_dictionary.push(key.clone());
-                    key_to_index.insert(key.clone(), idx);
+                    key_dictionary.push(item.0.clone());
+                    key_to_index.insert(item.0.clone(), idx);
                 }
             }
         }
@@ -4381,11 +4381,11 @@ impl RaptorWriter {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
             for item in &vector.metadata {
-                let key = &item.key;
-                let value = &item.value;
+                let key = &key;
+                let value = &value;
                 self.column_projections
                     .metadata_columns
-                    .entry(key.clone())
+                    .entry(item.0.clone())
                     .or_insert_with(Vec::new)
                     .push(bincode::serialize(&value).expect("Failed to serialize metadata value"));
             }
@@ -4744,8 +4744,8 @@ impl RaptorWriter {
                 for (key, value_bytes) in &row.metadata {
                     let value = String::from_utf8_lossy(value_bytes).to_string();
                     metadata_schema
-                        .entry(key.clone())
-                        .or_insert_with(|| MetadataColumn::new(key.clone()))
+                        .entry(item.0.clone())
+                        .or_insert_with(|| MetadataColumn::new(item.0.clone()))
                         .add_value(value);
                 }
             }

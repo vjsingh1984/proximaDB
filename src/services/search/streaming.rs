@@ -439,8 +439,8 @@ impl StreamingSearchService {
                     // Create OptimizedSearchRecord directly with all VectorRecord information
                     let mut metadata_map = HashMap::new();
                     for item in &record.metadata {
-                        if let Some(value) = &item.value {
-                            metadata_map.insert(item.key.clone(), convert_proto_value_to_typed(value.clone()));
+                        if let Some(value) = &value {
+                            metadata_map.insert(item.0.clone(), convert_proto_value_to_typed(item.1.clone()));
                         }
                     }
                     

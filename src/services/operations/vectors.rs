@@ -1905,7 +1905,7 @@ impl VectorOperationsService {
             .iter()
             .map(|(key, value)| {
                 use crate::core::metadata_types::MetadataValue;
-                use crate::proto::proximadb_v1::metadata_item::Value;
+                use crate::proto::proximadb_v1::sql_value::Value;
                 
                 let proto_value = match value {
                     MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
@@ -1915,7 +1915,7 @@ impl VectorOperationsService {
                 };
                 
                 MetadataItem {
-                    key: key.clone(),
+                    key: item.0.clone(),
                     value: proto_value,
                 }
             })
@@ -1981,7 +1981,7 @@ impl VectorOperationsService {
                 },
                 MetadataValue::Null => crate::proto::proximadb_v1::SqlValue { value: None },
             };
-            metadata.insert(key.clone(), sql_value);
+            metadata.insert(item.0.clone(), sql_value);
         }
 
         crate::proto::proximadb_v1::SearchVectorRecord {

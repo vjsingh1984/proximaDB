@@ -823,9 +823,9 @@ pub mod protocol_conversions {
         let conditions: Vec<FilterExpression> = filters
             .iter()
             .map(|(key, value)| FilterExpression::Comparison {
-                field: key.clone(),
+                field: item.0.clone(),
                 operator: ComparisonOperator::Equals,
-                value: value.clone(),
+                value: item.1.clone(),
             })
             .collect();
 
@@ -997,7 +997,7 @@ pub mod filter_extraction {
             } => {
                 // Only extract equality conditions for metadata filtering
                 if matches!(operator, ComparisonOperator::Equals) {
-                    conditions.insert(field.clone(), value.clone());
+                    conditions.insert(field.clone(), item.1.clone());
                 }
             }
             FilterExpression::And(exprs) => {

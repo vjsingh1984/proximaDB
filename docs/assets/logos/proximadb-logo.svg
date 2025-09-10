@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="300" height="120" xmlns="http://www.w3.org/2000/svg">
+<svg width="320" height="120" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <!-- Logo gradients -->
     <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -14,6 +14,11 @@
       <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1" />
     </linearGradient>
 
+    <linearGradient id="cloudGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0ea5e9;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0284c7;stop-opacity:1" />
+    </linearGradient>
+
     <!-- Glow effect -->
     <filter id="logoGlow">
       <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
@@ -24,75 +29,108 @@
     </filter>
   </defs>
 
-  <!-- Logo Symbol: Unified Intelligence Hub -->
+  <!-- Logo Symbol: Unified Intelligence Platform -->
   <g transform="translate(60, 60)">
-    <!-- Central hub representing unified platform -->
-    <circle cx="0" cy="0" r="25" fill="url(#logoGradient)" filter="url(#logoGlow)"/>
+    <!-- Central unified intelligence hub -->
+    <circle cx="0" cy="0" r="28" fill="url(#logoGradient)" filter="url(#logoGlow)"/>
     
-    <!-- Vector search rays emanating from center (representing speed/processing) -->
-    <g stroke="url(#logoGradient)" stroke-width="3" opacity="0.8">
-      <line x1="0" y1="-35" x2="0" y2="-45" stroke-linecap="round"/>
-      <line x1="25" y1="-18" x2="32" y2="-23" stroke-linecap="round"/>
-      <line x1="25" y1="18" x2="32" y2="23" stroke-linecap="round"/>
-      <line x1="0" y1="35" x2="0" y2="45" stroke-linecap="round"/>
-      <line x1="-25" y1="18" x2="-32" y2="23" stroke-linecap="round"/>
-      <line x1="-25" y1="-18" x2="-32" y2="-23" stroke-linecap="round"/>
+    <!-- Vector representation (mathematical arrows) -->
+    <g stroke="white" stroke-width="2.5" opacity="0.8">
+      <line x1="-15" y1="-15" x2="-8" y2="-8" stroke-linecap="round"/>
+      <line x1="8" y1="-8" x2="15" y2="-15" stroke-linecap="round"/>
+      <line x1="-15" y1="15" x2="-8" y2="8" stroke-linecap="round"/>
+      <line x1="8" y1="8" x2="15" y2="15" stroke-linecap="round"/>
+      <!-- Vector arrow heads -->
+      <polygon points="-6,-6 -10,-10 -4,-10" fill="white" opacity="0.8"/>
+      <polygon points="6,-6 10,-10 4,-10" fill="white" opacity="0.8"/>
     </g>
     
-    <!-- Graph nodes around the hub (representing connectivity) -->
+    <!-- Graph network nodes -->
     <g fill="#ffffff" opacity="0.9">
-      <circle cx="0" cy="-40" r="4"/> <!-- Top -->
-      <circle cx="35" cy="-20" r="4"/> <!-- Top right -->
-      <circle cx="35" cy="20" r="4"/>  <!-- Bottom right -->
-      <circle cx="0" cy="40" r="4"/>   <!-- Bottom -->
-      <circle cx="-35" cy="20" r="4"/> <!-- Bottom left -->
-      <circle cx="-35" cy="-20" r="4"/><!-- Top left -->
+      <circle cx="0" cy="-22" r="3"/>
+      <circle cx="19" cy="-11" r="3"/>
+      <circle cx="19" cy="11" r="3"/>
+      <circle cx="0" cy="22" r="3"/>
+      <circle cx="-19" cy="11" r="3"/>
+      <circle cx="-19" cy="-11" r="3"/>
     </g>
     
-    <!-- Connection lines (representing graph relationships and data flow) -->
-    <g stroke="#ffffff" stroke-width="2" opacity="0.6">
-      <line x1="0" y1="-25" x2="0" y2="-36"/>
-      <line x1="18" y1="-13" x2="31" y2="-16"/>
-      <line x1="18" y1="13" x2="31" y2="16"/>
-      <line x1="0" y1="25" x2="0" y2="36"/>
-      <line x1="-18" y1="13" x2="-31" y2="16"/>
-      <line x1="-18" y1="-13" x2="-31" y2="-16"/>
+    <!-- Graph connections -->
+    <g stroke="#ffffff" stroke-width="1.5" opacity="0.7">
+      <path d="M 0,-22 Q 15,-18 19,-11"/>
+      <path d="M 19,-11 Q 15,0 19,11"/>
+      <path d="M 19,11 Q 8,18 0,22"/>
+      <path d="M 0,22 Q -15,15 -19,11"/>
+      <path d="M -19,11 Q -15,0 -19,-11"/>
+      <path d="M -19,-11 Q -8,-18 0,-22"/>
     </g>
     
-    <!-- Central multimodal icon -->
-    <g fill="white">
-      <!-- Simplified representation of different data types -->
-      <rect x="-6" y="-8" width="4" height="6" rx="1"/> <!-- Text/Doc -->
-      <rect x="-1" y="-8" width="6" height="6" rx="1" fill="none" stroke="white" stroke-width="1"/> <!-- Image -->
-      <polygon points="2,-5 2,1 7,-2" fill="white"/> <!-- Video play -->
-      <circle cx="0" cy="5" r="3" fill="none" stroke="white" stroke-width="1"/> <!-- Audio wave -->
-      <path d="M -2,5 Q 0,2 2,5" fill="none" stroke="white" stroke-width="1"/>
+    <!-- SKS database/storage representation (cylinder) -->
+    <g fill="white" opacity="0.6" stroke="white" stroke-width="1">
+      <ellipse cx="0" cy="-5" rx="8" ry="3"/>
+      <rect x="-8" y="-5" width="16" height="10"/>
+      <ellipse cx="0" cy="5" rx="8" ry="3"/>
+    </g>
+    
+    <!-- Cloud serverless icon (top-right) -->
+    <g transform="translate(35, -35)">
+      <path d="M -8,-2 Q -8,-6 -4,-6 Q -2,-8 2,-6 Q 6,-8 8,-4 Q 10,-2 8,0 Q 6,2 2,2 L -6,2 Q -8,2 -8,-2 Z" 
+            fill="url(#cloudGradient)" opacity="0.8" stroke="white" stroke-width="0.5"/>
+    </g>
+    
+    <!-- Multi-cloud indicators (small cloud icons) -->
+    <g opacity="0.6">
+      <g transform="translate(-38, -25) scale(0.5)">
+        <path d="M -6,-2 Q -6,-4 -3,-4 Q -1,-5 1,-4 Q 3,-5 4,-3 Q 5,-2 4,0 L -4,0 Q -6,0 -6,-2 Z" 
+              fill="#0ea5e9"/>
+      </g>
+      <g transform="translate(38, 25) scale(0.5)">
+        <path d="M -6,-2 Q -6,-4 -3,-4 Q -1,-5 1,-4 Q 3,-5 4,-3 Q 5,-2 4,0 L -4,0 Q -6,0 -6,-2 Z" 
+              fill="#0ea5e9"/>
+      </g>
+    </g>
+    
+    <!-- Performance/speed indicators -->
+    <g fill="white" opacity="0.3">
+      <circle cx="-12" cy="0" r="1.5"/>
+      <circle cx="-8" cy="0" r="1"/>
+      <circle cx="-4" cy="0" r="0.5"/>
     </g>
   </g>
 
   <!-- Company Name -->
-  <text x="140" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="url(#textGradient)">
+  <text x="140" y="42" font-family="Arial, sans-serif" font-size="26" font-weight="bold" fill="url(#textGradient)">
     Proxima
   </text>
-  <text x="240" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="300" fill="url(#textGradient)">
+  <text x="230" y="42" font-family="Arial, sans-serif" font-size="26" font-weight="300" fill="url(#textGradient)">
     DB
   </text>
   
-  <!-- Tagline -->
-  <text x="140" y="65" font-family="Arial, sans-serif" font-size="11" fill="#64748b" font-weight="400">
+  <!-- Enhanced Tagline -->
+  <text x="140" y="60" font-family="Arial, sans-serif" font-size="10" fill="#64748b" font-weight="500">
     Unified Intelligence Platform
   </text>
   
-  <!-- Capability indicators -->
-  <text x="140" y="80" font-family="Arial, sans-serif" font-size="9" fill="#94a3b8">
-    Vector • Graph • SKS • Serverless • Multimodal AI
+  <!-- Core Capabilities -->
+  <text x="140" y="75" font-family="Arial, sans-serif" font-size="8.5" fill="#94a3b8">
+    Vector • Graph • SKS • Multicloud Serverless
   </text>
+  
+  <!-- Performance and cloud indicators -->
+  <g transform="translate(140, 90)">
+    <text x="0" y="0" font-family="Arial, sans-serif" font-size="8" fill="#10b981">⚡ 20M+ ops/sec</text>
+    <text x="70" y="0" font-family="Arial, sans-serif" font-size="8" fill="#0ea5e9">☁️ Zero Infrastructure</text>
+  </g>
 
-  <!-- Speed indicator -->
-  <g transform="translate(260, 90)">
-    <circle cx="0" cy="0" r="8" fill="#fbbf24" opacity="0.2"/>
-    <text x="0" y="3" font-family="Arial, sans-serif" font-size="8" font-weight="bold" text-anchor="middle" fill="#f59e0b">
-      ⚡
-    </text>
+  <!-- Multicloud provider icons -->
+  <g transform="translate(260, 85)" opacity="0.7">
+    <!-- AWS icon -->
+    <rect x="0" y="0" width="8" height="6" rx="1" fill="#ff9900"/>
+    <!-- Azure icon -->  
+    <rect x="10" y="0" width="8" height="6" rx="1" fill="#0078d4"/>
+    <!-- GCP icon -->
+    <rect x="20" y="0" width="8" height="6" rx="1" fill="#4285f4"/>
+    <!-- Generic cloud -->
+    <rect x="30" y="0" width="8" height="6" rx="1" fill="#6b7280"/>
   </g>
 </svg>

@@ -1833,14 +1833,14 @@ impl UnifiedStorageEngine for ViperEngine {
         let all_results: Vec<OptimizedSearchRecord> = search_results
             .into_iter()
             .map(|r| {
-                let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|item| {
-                    let value = match item.value {
+                let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|(key, value)| {
+                    let value = match value {
                         Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s),
                         Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
                         Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
                         None => serde_json::Value::Null,
                     };
-                    (item.key, value)
+                    (key, value)
                 }).collect();
 
                 let mut record = OptimizedSearchRecord::new(r.id, r.score)

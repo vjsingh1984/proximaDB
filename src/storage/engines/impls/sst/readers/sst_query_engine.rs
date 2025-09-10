@@ -821,8 +821,8 @@ impl ModularBlockReader {
         }
 
         // Build SstableIndex
-        let min_key = entries.first().map(|e| e.key.clone()).unwrap_or_default();
-        let max_key = entries.last().map(|e| e.key.clone()).unwrap_or_default();
+        let min_key = entries.first().map(|e| e.item.0.clone()).unwrap_or_default();
+        let max_key = entries.last().map(|e| e.item.0.clone()).unwrap_or_default();
 
         let index = SstableIndex {
             entries,
@@ -1485,9 +1485,9 @@ impl UnifiedSstableReader {
 
         // Linear search is often faster than HashMap lookup for small metadata sets (< 16 items)
         // which is typical for vector metadata
-        for item in metadata.iter() {
-            if item.key == filter_key {
-                return self.fast_value_comparison(&item.value, filter_value);
+        for (key, value) in metadata.iter() {
+            if key == filter_key {
+                return self.fast_value_comparison(&value, filter_value);
             }
         }
         false
@@ -2348,14 +2348,14 @@ impl UnifiedSstableReader {
                 // Convert metadata to TypedMetadata
                 let mut metadata_map = std::collections::HashMap::new();
                 for item in &record.metadata {
-                    if let Some(value) = &item.value {
+                    if let Some(value) = &value {
                         use crate::proto::proximadb_v1::metadata_item;
                         let typed_value = match value {
                             metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
                             metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
                             metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
                         };
-                        metadata_map.insert(item.key.clone(), typed_value);
+                        metadata_map.insert(item.0.clone(), typed_value);
                     }
                 }
                 
@@ -2628,11 +2628,11 @@ impl UnifiedSstableReader {
                     .iter()
                     .map(|e| {
                         crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
-                            key: e.key.clone(),
+                            key: e.item.0.clone(),
                             block_offset: e.offset,
                             block_size: e.size as usize,
-                            min_key: e.key.clone(), // Would need to track actual min/max
-                            max_key: e.key.clone(),
+                            min_key: e.item.0.clone(), // Would need to track actual min/max
+                            max_key: e.item.0.clone(),
                             vector_count: 1, // Approximation
                             bloom_filter_offset: None,
                         }
@@ -2643,10 +2643,10 @@ impl UnifiedSstableReader {
                 let mut cache_metadata_stats = std::collections::HashMap::new();
                 for (key, stats) in loaded_index.metadata_stats.iter() {
                     cache_metadata_stats.insert(
-                        key.clone(),
+                        item.0.clone(),
                         crate::storage::cache::specialized::index_node_cache::MetadataStats {
-                            min_value: stats.min_value.clone(),
-                            max_value: stats.max_value.clone(),
+                            min_value: stats.min_item.1.clone(),
+                            max_value: stats.max_item.1.clone(),
                             null_count: stats.null_count,
                             distinct_count: stats.distinct_count,
                         },
@@ -3974,7 +3974,7 @@ impl UnifiedSstableReader {
                             record
                                 .metadata
                                 .iter()
-                                .map(|item| &item.key)
+                                .map(|(key, value)| &key)
                                 .collect::<Vec<_>>()
                         );
                     }
@@ -4039,7 +4039,7 @@ impl UnifiedSstableReader {
         // Pre-allocate HashMap to exact size to avoid reallocations
         let mut map = HashMap::with_capacity(items.len());
         for item in items {
-            let value = match &item.value {
+            let value = match &value {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                     serde_json::Value::String(s.clone())
                 }
@@ -4053,7 +4053,7 @@ impl UnifiedSstableReader {
                 }
                 None => serde_json::Value::Null,
             };
-            map.insert(item.key.clone(), value);
+            map.insert(item.0.clone(), value);
         }
         map
     }
@@ -4094,7 +4094,7 @@ impl UnifiedSstableReader {
                 let cache_index = crate::storage::cache::specialized::index_node_cache::SstableIndex {
                     file_path: file_path.to_string(),
                     entries: entries.iter().map(|e| crate::storage::cache::specialized::index_node_cache::SstIndexEntry {
-                        key: e.key.clone(),
+                        key: e.item.0.clone(),
                         block_offset: e.offset,
                         block_size: e.size as usize,
                         min_key: e.metadata_min_values.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -4114,8 +4114,8 @@ impl UnifiedSstableReader {
                     entries: entries.clone(),
                     metadata_stats: HashMap::new(),
                     vector_count: entries.len(),
-                    min_key: entries.first().map(|e| e.key.clone()).unwrap_or_default(),
-                    max_key: entries.last().map(|e| e.key.clone()).unwrap_or_default(),
+                    min_key: entries.first().map(|e| e.item.0.clone()).unwrap_or_default(),
+                    max_key: entries.last().map(|e| e.item.0.clone()).unwrap_or_default(),
                 }
             };
 

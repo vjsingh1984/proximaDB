@@ -109,7 +109,7 @@ impl NativeMetadataHandler {
         // Collect statistics for each field
         for metadata in metadata_samples {
             for (key, value) in metadata {
-                let stats = self.field_stats.entry(key.clone()).or_default();
+                let stats = self.field_stats.entry(item.0.clone()).or_default();
                 Self::update_field_statistics(stats, value);
             }
         }
@@ -164,7 +164,7 @@ impl NativeMetadataHandler {
             JsonValue::Object(map) => {
                 stats.object_count += 1;
                 for key in map.keys() {
-                    stats.distinct_keys.insert(key.clone());
+                    stats.distinct_keys.insert(item.0.clone());
                 }
 
                 // Check if map has uniform value types
@@ -539,7 +539,7 @@ impl NativeMetadataHandler {
             let mut unmapped = JsonMap::new();
             for (key, value) in metadata {
                 if !self.field_types.contains_key(key) {
-                    unmapped.insert(key.clone(), value.clone());
+                    unmapped.insert(item.0.clone(), item.1.clone());
                 }
             }
 
@@ -634,7 +634,7 @@ impl NativeMetadataQueryOptimizer {
                         native_predicates.push(NativePredicate {
                             field: field.clone(),
                             operator: PredicateOperator::Equals,
-                            value: value.clone(),
+                            value: item.1.clone(),
                         });
                     }
                     MetadataFieldType::List(_) => {
@@ -642,17 +642,17 @@ impl NativeMetadataQueryOptimizer {
                         native_predicates.push(NativePredicate {
                             field: field.clone(),
                             operator: PredicateOperator::Contains,
-                            value: value.clone(),
+                            value: item.1.clone(),
                         });
                     }
                     _ => {
                         // Fallback to JSON predicate
-                        json_predicates.push((field.clone(), value.clone()));
+                        json_predicates.push((field.clone(), item.1.clone()));
                     }
                 }
             } else {
                 // Unknown field - check in JSON fallback
-                json_predicates.push((field.clone(), value.clone()));
+                json_predicates.push((field.clone(), item.1.clone()));
             }
         }
 

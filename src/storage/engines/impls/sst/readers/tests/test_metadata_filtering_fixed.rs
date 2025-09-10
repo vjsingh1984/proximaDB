@@ -21,8 +21,8 @@ fn get_metadata_string(
 ) -> Option<String> {
     metadata
         .iter()
-        .find(|item| item.key == key)
-        .and_then(|item| match &item.value {
+        .find(|item| key == key)
+        .and_then(|item| match &value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => Some(s.clone()),
             _ => None,
         })
@@ -35,8 +35,8 @@ fn get_metadata_number(
 ) -> Option<f64> {
     metadata
         .iter()
-        .find(|item| item.key == key)
-        .and_then(|item| match &item.value {
+        .find(|item| key == key)
+        .and_then(|item| match &value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => Some(*n),
             _ => None,
         })

@@ -305,8 +305,8 @@ pub mod metadata {
         }
 
         let mut map = HashMap::new();
-        for item in metadata {
-            if let Some(value) = item.value {
+        for (key, value) in metadata {
+            if let Some(value) = value {
                 let json_value = match value {
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                         JsonValue::String(s)
@@ -320,7 +320,7 @@ pub mod metadata {
                         JsonValue::Bool(b)
                     }
                 };
-                map.insert(item.key, json_value);
+                map.insert(key, json_value);
             }
         }
         Some(map)
@@ -346,7 +346,7 @@ pub mod metadata {
                     };
 
                     proto_value.map(|value| MetadataItem {
-                        key: key.clone(),
+                        key: item.0.clone(),
                         value: Some(value),
                     })
                 })

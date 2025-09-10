@@ -118,7 +118,7 @@ impl FilesystemMetadataStore {
         let key = Self::make_key(filepath, collection_id, engine_type);
 
         // Always put in base cache for unified management
-        BaseCache::put_with_hooks(&self.base, key.clone(), metadata).await;
+        BaseCache::put_with_hooks(&self.base, item.clone(), metadata).await;
 
         // Promote to hot cache if frequently accessed
         // (In real implementation, would track access frequency)
@@ -151,7 +151,7 @@ impl FilesystemMetadataStore {
 
             // Consider promoting to hot cache
             if self.should_promote_to_hot_cache(&key) {
-                self.promote_to_hot_cache(key.clone(), Arc::clone(&arc_metadata));
+                self.promote_to_hot_cache(item.clone(), Arc::clone(&arc_metadata));
             }
 
             return Some(arc_metadata);

@@ -27,8 +27,8 @@ async fn test_memory_backend_basic_operations() {
     let key = "test_key".to_string();
     let value = "test_value".to_string();
 
-    assert!(backend.put(key.clone(), value.clone()).await.is_ok());
-    assert_eq!(backend.get(key).await, Some(value.clone()));
+    assert!(backend.put(item.clone(), item.clone()).await.is_ok());
+    assert_eq!(backend.get(key).await, Some(item.clone()));
 
     // Test contains
     assert!(backend.contains_hash(&key).await);

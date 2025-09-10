@@ -194,8 +194,8 @@ impl OptimizedVectorWriter {
                 } else {
                     // Convert MetadataItem to JSON
                     let json_map: serde_json::Map<String, serde_json::Value> = r.metadata.iter()
-                        .map(|item| {
-                            let value = match &item.value {
+                        .map(|(key, value)| {
+                            let value = match &value {
                                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
                                 Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                                     serde_json::Number::from_f64(*n)
@@ -205,7 +205,7 @@ impl OptimizedVectorWriter {
                                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                                 None => serde_json::Value::Null,
                             };
-                            (item.key.clone(), value)
+                            (item.0.clone(), value)
                         })
                         .collect();
                     let json_metadata = serde_json::Value::Object(json_map);

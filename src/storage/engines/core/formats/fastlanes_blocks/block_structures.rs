@@ -746,7 +746,7 @@ impl FastLanesDataBlock {
         let mut metadata_keys = HashSet::new();
         for record in &self.records {
             for item in &record.metadata {
-                metadata_keys.insert(item.key.clone());
+                metadata_keys.insert(item.0.clone());
             }
         }
 
@@ -769,7 +769,7 @@ impl FastLanesDataBlock {
                     presence_bitmap[idx / 8] |= 1 << (idx % 8);
 
                     // Serialize value
-                    if let Some(value) = &item.value {
+                    if let Some(value) = &value {
                         
                         // Encode the metadata value based on its type
                         let value_bytes = match value {

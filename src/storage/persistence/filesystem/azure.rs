@@ -184,7 +184,7 @@ impl AzureFileSystem {
         match &config.provider {
             AzureCredentialProviderType::AccountKey => {
                 if let Some(account_key) = &config.account_key {
-                    Ok(Box::new(AccountKeyProvider::new(account_key.clone())))
+                    Ok(Box::new(AccountKeyProvider::new(account_item.0.clone())))
                 } else {
                     Err(FilesystemError::Config(
                         "Account key provider requires account_key".to_string(),

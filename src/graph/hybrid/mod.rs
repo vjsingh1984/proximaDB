@@ -313,7 +313,7 @@ pub struct HybridDebugInfo {
 }
 
 /// Vector candidate in debug info
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct VectorCandidate {
     pub node_id: NodeId,
     pub similarity: f32,
@@ -321,7 +321,7 @@ pub struct VectorCandidate {
 }
 
 /// Graph candidate in debug info
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GraphCandidate {
     pub node_id: NodeId,
     pub distance: u32,
@@ -1291,14 +1291,14 @@ impl HybridQueryEngine {
         for item in proto_metadata {
             // Convert protobuf metadata values to strings for simplicity
             // In a production system, this would preserve type information
-            let value_str = match &item.value {
+            let value_str = match &value {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => s.clone(),
                 Some(crate::proto::proximadb_v1::metadata_item::Value::IntValue(i)) => i.to_string(),
                 Some(crate::proto::proximadb_v1::metadata_item::Value::FloatValue(f)) => f.to_string(),
                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => b.to_string(),
                 None => "null".to_string(),
             };
-            metadata.insert(item.key.clone(), value_str);
+            metadata.insert(item.0.clone(), value_str);
         }
         
         metadata
@@ -1346,7 +1346,7 @@ impl HybridQueryEngine {
                 }
                 None => "null".to_string(),
             };
-            metadata.insert(key.clone(), value_str);
+            metadata.insert(item.0.clone(), value_str);
         }
         
         metadata

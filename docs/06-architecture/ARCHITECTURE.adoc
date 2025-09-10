@@ -1,378 +1,144 @@
-= ProximaDB: Unified Intelligence Platform Architecture
-:toc:
-:toclevels: 3
-:icons: font
-:imagesdir: ../docs/assets
-:source-highlighter: rouge
+= ProximaDB Architecture Overview
+:toc: macro
+:toclevels: 2
 
-== System Overview
+This document provides a detailed overview of the ProximaDB architecture, illustrating its key components and data flows.
 
-ProximaDB is the world's first **Unified Intelligence Platform** combining vector search, graph relationships, and semantic knowledge in a single, serverless-ready system. It pioneers a new category of AI infrastructure that eliminates the complexity of managing multiple specialized databases.
-
-== Revolutionary Design Principles
-
-. **Unified Intelligence**: Vector + Graph + SKS in one coherent system
-. **Multimodal Native**: Text, image, video, audio processing built-in  
-. **Serverless Architecture**: API-first with automated orchestration
-. **Proto-First**: Zero serialization overhead with native protobuf flow
-. **Hardware Accelerated**: Automatic SIMD/GPU detection and optimization
-. **Category Creating**: Enables AI applications impossible with fragmented systems
+toc::[]
 
 == System Architecture
 
-[plantuml, system-architecture, svg]
+=== Detailed Component Diagram
+
+[source,mermaid]
 ----
-@startuml
-!theme plain
+graph TD
+    subgraph API Layer
+        A[MultiServer] --> B(REST API)
+        A --> C(gRPC API)
+    end
 
-package "Client Applications" {
-  [REST Clients]
-  [gRPC Clients]
-}
+    subgraph Service Layer
+        D[SharedServices] --> E(CollectionService)
+        D --> F(VectorOperationsService)
+    end
 
-package "ProximaDB Server" {
-  package "API Layer" {
-    [REST API] #LightBlue
-    [gRPC API] #LightBlue
-  }
-  
-  package "Service Layer" {
-    [VectorOperationsService] #LightGreen
-    note right: Optimized for low-latency operations
-  }
-  
-  package "Storage Engine Router" {
-    [Engine Selection] #Yellow
-  }
-  
-  package "Storage Engines" {
-    [VIPER] #Orange
-    [SST] #Orange
-    [RAPTOR] #Orange
-    [NOVA] #LightGray
-    [SWIFT] #LightGray
-    [PRISM] #LightGray
-  }
-  
-  package "Hardware Layer" {
-    [SIMD AVX2] #Pink
-    [GPU Acceleration] #Pink
-    [ARM NEON] #Pink
-  }
-  
-  package "Storage Layer" {
-    [Parquet] #Cyan
-    [SSTable] #Cyan
-    [mmap] #Cyan
-  }
-}
+    subgraph Storage Layer
+        G[StorageEngine] --> H(Write-Ahead Log)
+        G --> I(Memtable)
+        G --> J(SSTables/Parquet Files)
+        G --> K(Pluggable Storage Backends)
+    end
 
-[REST Clients] --> [REST API]
-[gRPC Clients] --> [gRPC API]
-[REST API] --> [VectorOperationsService]
-[gRPC API] --> [VectorOperationsService]
-[VectorOperationsService] --> [Engine Selection]
-[Engine Selection] --> [VIPER]
-[Engine Selection] --> [SST]
-[Engine Selection] --> [RAPTOR]
-[VIPER] --> [SIMD AVX2]
-[SST] --> [GPU Acceleration]
-[RAPTOR] --> [ARM NEON]
-[VIPER] --> [Parquet]
-[SST] --> [SSTable]
-[RAPTOR] --> [mmap]
+    B --> D
+    C --> D
+    E --> G
+    F --> G
 
-@enduml
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#bbf,stroke:#333,stroke-width:2px
+    style D fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#bbf,stroke:#333,stroke-width:2px
+    style G fill:#f9f,stroke:#333,stroke-width:2px
+    style H fill:#bbf,stroke:#333,stroke-width:2px
+    style I fill:#bbf,stroke:#333,stroke-width:2px
+    style J fill:#bbf,stroke:#333,stroke-width:2px
+    style K fill:#bbf,stroke:#333,stroke-width:2px
 ----
-
-== Storage Engines
-
-=== Production Engines
-
-[cols="1,2,3,3", options="header"]
-|===
-| Engine | Architecture | Optimal Use Case | Status
-
-| *VIPER*
-| Columnar (Parquet)
-| Analytics, batch operations
-| Optimized for data compression and efficient column pruning
-
-| *SST*
-| Row-based (SSTable)
-| High-throughput writes
-| Leverages bloom filters and LSM-tree for rapid data ingestion
-
-| *RAPTOR*
-| Row + HNSW
-| Graph similarity search
-| Integrates HNSW for efficient approximate nearest neighbor search with bloom filters for fast ID lookups
-|===
-
-==== Advanced Engines
-
-[cols="1,2,3,1", options="header"]
-|===
-| Engine | Architecture | Optimal Use Case | Status
-
-| *NOVA*
-| Enhanced columnar
-| Zone maps, statistics
-| Actively Developed
-
-| *SWIFT*
-| High-perf row-based
-| Adaptive blocks
-| Actively Developed
-
-| *PRISM*
-| Metadata-first
-| Progressive quantization
-| Actively Developed
-|===
-
-[NOTE]
-====
-For detailed engine documentation, see:
-
-* link:04-storage-engines/viper.adoc[VIPER Engine]
-* link:04-storage-engines/sst.adoc[SST Engine]
-* link:04-storage-engines/raptor.adoc[RAPTOR Engine]
-* link:04-storage-engines/nova.adoc[NOVA Engine]
-* link:04-storage-engines/swift.adoc[SWIFT Engine]
-* link:04-storage-engines/prism.adoc[PRISM Engine]
-====
-
-== Key Components
-
-=== 1. Vector Operations Service
-
-* Direct memtable access for **significantly reduced latency**
-* Bypasses storage layer for hot data
-* Automatic cache management
-
-=== 2. EventLog Queue System
-
-* Lightweight async indexing queue
-* Metadata-only with **minimal write amplification**
-* Queue-aware compaction
-
-=== 3. Hardware Acceleration
-
-[source,rust]
-----
-// Automatic detection and routing
-HardwareCapabilities {
-    SIMD: AVX2/SSE2/NEON detection
-    GPU: Lazy initialization
-    Cache: L1/L2/L3 optimization
-}
-----
-
-=== 4. Distance Computation
-
-* *Metrics*: Cosine, Euclidean, DotProduct, Manhattan, Hamming, Jaccard
-* *Performance*: **High throughput** for various dimensions
-* *Optimization*: Direct SIMD bypass, zero allocations
-
-=== 5. Quantization Pipeline
-
-....
-Binary → INT8 → PQ4/8/16 → Hybrid → Full Precision
-....
-
-* Progressive refinement
-* Hardware-accelerated
-* Auto-configuration based on dimensions
 
 == Data Flow
 
-=== Write Path
+=== Vector Ingestion Data Flow
 
-[plantuml, write-path, svg]
+[source,mermaid]
 ----
-@startuml
-!theme plain
+sequenceDiagram
+    participant Client
+    participant API
+    participant ServiceLayer
+    participant WAL
+    participant Memtable
+    participant StorageEngine
 
-start
-:Client Request;
-:VectorOperationsService;
-:Memtable (Direct Write);
-:EventLog Queue (Async);
-:Storage Engine;
-:AXIS Index (Background);
-stop
-
-@enduml
-----
-
-=== Read Path
-
-[plantuml, read-path, svg]
-----
-@startuml
-!theme plain
-
-start
-:Search Request;
-:Query Preprocessing;
-:Progressive Search;
-note right
-  1. Bloom Filter Check
-  2. Binary Search
-  3. INT8 Refinement
-  4. PQ Refinement
-  5. Full Precision
-end note
-:Result Ranking;
-:Response;
-stop
-
-@enduml
+    Client->>API: Insert Vector(s)
+    API->>ServiceLayer: Call VectorOperationsService
+    ServiceLayer->>WAL: Write to WAL (durability)
+    WAL->>Memtable: Append to Memtable (in-memory)
+    Memtable->>StorageEngine: Flush (periodically/on-threshold)
+    StorageEngine->>StorageEngine: Write to SSTable/Parquet File
+    StorageEngine-->>Memtable: Clear flushed data
+    ServiceLayer-->>API: Acknowledge
+    API-->>Client: Success Response
 ----
 
-== Performance Optimizations
+=== Vector Search Data Flow
 
-=== Memory Management
-
-* *Zero-Copy*: Direct proto serialization
-* *Memory Pools*: Pre-allocated vector buffers
-* *Chunked Processing*: Prevents stack overflow
-* *mmap*: Memory-mapped file access
-
-=== Caching Strategy
-
-* *Hierarchical*: L1 → L2 → L3 → RAM → Disk
-* *Integrated*: Query, metadata, vector caches
-* *Adaptive*: LRU with frequency tracking
-* *Hit Rate*: **High hit rates** observed in typical workloads
-
-=== SIMD Optimization
-
-[source,rust]
+[source,mermaid]
 ----
-// Platform-specific implementations
-#[cfg(target_arch = "x86_64")]
-AVX2: 8-wide float operations
+sequenceDiagram
+    participant Client
+    participant API
+    participant ServiceLayer
+    participant QueryOptimizer
+    participant StorageEngine
+    participant Indexes
+    participant Cache
 
-#[cfg(target_arch = "aarch64")]  
-NEON: 4-wide float operations
-----
+    Client->>API: Search Vector(s)
+    API->>ServiceLayer: Call VectorOperationsService
+    ServiceLayer->>QueryOptimizer: Optimize Query Plan
+    QueryOptimizer->>Cache: Check Cache (e.g., Query Cache, Metadata Cache)
+    Cache-->>QueryOptimizer: Cached Results / Miss
 
-== Indexing Algorithms
+    alt Cache Miss / No Cache
+        QueryOptimizer->>Indexes: Query Indexes (e.g., HNSW, IVF)
+        Indexes-->>QueryOptimizer: Candidate Vectors
+        QueryOptimizer->>StorageEngine: Fetch Data (e.g., SSTables, Parquet)
+        StorageEngine-->>QueryOptimizer: Full Vectors / Metadata
+    end
 
-[cols="1,2,2,1", options="header"]
-|===
-| Algorithm | Use Case | Performance | Memory
-
-| *HNSW*
-| High recall
-| Efficient for high-dimensional data
-| High
-
-| *IVF*
-| Large scale
-| Scalable for large datasets
-| Medium
-
-| *LSH*
-| Approximate
-| Fast approximate search
-| Low
-
-| *PQ*
-| Compression
-| Optimized for significant memory reduction
-| Very Low
-
-| *FLAT*
-| Exact search
-| Guarantees precise results
-| High
-|===
-
-== Configuration
-
-=== Storage Engine Selection
-
-[source,rust]
-----
-// Automatic selection based on workload
-match workload {
-    Analytics => VIPER,      // Columnar for scanning
-    Streaming => SST,        // Write-optimized
-    GraphSearch => RAPTOR,   // HNSW integration
-    _ => VIPER,             // Default
-}
+    QueryOptimizer->>ServiceLayer: Processed Results
+    ServiceLayer-->>API: Return Search Results
+    API-->>Client: Search Results
 ----
 
-=== Hardware Detection
+== Storage Layer Details
 
-[source,rust]
+=== LSM-tree Architecture
+
+[source,mermaid]
 ----
-// Global initialization (once at startup)
-initialize_hardware_capabilities_default();
+graph TD
+    subgraph Write Path
+        A[Client Write] --> B(Write-Ahead Log)
+        B --> C(Memtable)
+    end
 
-// Automatic routing
-if dimension > 1024 && has_gpu() {
-    use_gpu_acceleration()
-} else if has_avx2() {
-    use_simd_avx2()
-} else {
-    use_scalar_fallback()
-}
+    subgraph Read Path
+        D[Client Read] --> C
+        C --> E{Search Memtable}
+        E -- No Match --> F[Search SSTables (L0)]
+        F -- No Match --> G[Search SSTables (L1)]
+        G -- No Match --> H[Search SSTables (Ln)]
+    end
+
+    subgraph Background Operations
+        C -- Flush --> I(SSTable L0)
+        I -- Compaction --> J(SSTable L1)
+        J -- Compaction --> K(SSTable Ln)
+    end
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#bbf,stroke:#333,stroke-width:2px
+    style D fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#bbf,stroke:#333,stroke-width:2px
+    style G fill:#bbf,stroke:#333,stroke-width:2px
+    style H fill:#bbf,stroke:#333,stroke-width:2px
+    style I fill:#bbf,stroke:#333,stroke-width:2px
+    style J fill:#bbf,stroke:#333,stroke-width:2px
+    style K fill:#bbf,stroke:#333,stroke-width:2px
 ----
-
-== Deployment Patterns
-
-=== Single Node
-
-* All engines available
-* Local disk storage
-* In-process caching
-
-=== Distributed (Planned)
-
-* Sharded by vector ID
-* Replicated indexes
-* Consistent hashing
-
-== Monitoring & Observability
-
-=== Metrics
-
-* Operations per second
-* Latency percentiles (P50, P95, P99)
-* Cache hit rates
-* Memory usage
-* Index statistics
-
-=== Health Checks
-
-=== Health Checks
-
-[source,json]
-----
-GET /health
-{
-  "status": "healthy",
-  "version": "<version_string>",
-  "uptime": "<uptime_string>",
-  "metrics": {
-    "qps": "<qps_value>",
-    "latency_p99": "<latency_value>"
-  }
-}
-----
-
-== Security
-
-* *Authentication*: JWT tokens
-* *Authorization*: RBAC per collection
-* *Encryption*: TLS for transport
-* *Audit*: Query and modification logs
-
----
-
-_For implementation details, see link:../CLAUDE.md[CLAUDE.md]_ +
-_For performance metrics, see link:../05-operations/BENCHMARKS.adoc[BENCHMARKS.adoc]_

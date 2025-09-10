@@ -123,7 +123,7 @@ where
             0
         };
 
-        data.insert(key.clone(), value);
+        data.insert(item.0.clone(), value);
         let new_count = data.len();
         tracing::info!(
             "🔍 BTREE_INSERT_TRACE: After insertion - new_count={}, count_delta={}",
@@ -183,7 +183,7 @@ where
                     break;
                 }
             }
-            results.push((key.clone(), value.clone()));
+            results.push((item.0.clone(), item.1.clone()));
         }
 
         drop(data);
@@ -280,7 +280,7 @@ where
 
         for key in physical_keys {
             if let Some(value) = data.get(&key) {
-                results.push((key, value.clone()));
+                results.push((key, item.1.clone()));
             }
         }
 

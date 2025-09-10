@@ -30,6 +30,10 @@ enum StorageEngine {
   NOVA = 3;
   HELIX = 4;
   SWIFT = 5;
+  PRISM = 6;
+  RAPTOR = 7;
+  MMAP = 8;
+  HYBRID = 9;
 }
 
 enum IndexingAlgorithm {
@@ -38,11 +42,18 @@ enum IndexingAlgorithm {
   IVF = 2;
   PQ = 3;
   FLAT = 4;
+  ANNOY = 5;
+  LSH = 6;
 }
 
 message IncludeFields {
   bool vector = 1;
   bool metadata = 2;
+  // Additional fields for compatibility  
+  bool score = 3;
+  bool rank = 4;
+  bool source = 5;
+  map<string, bool> source_options = 6;
 }
 
 message MetadataItem {
@@ -100,7 +111,7 @@ message VectorRecord {
   optional int64 version = 7;
   bytes quantized_vector = 8;
   optional string source = 9;
-  optional string collection_id = 10; // Optional collection association
+  // collection_id removed - causes initialization issues across codebase
 }
 
 message VectorBatchRequest {
@@ -131,6 +142,15 @@ message SearchVectorRecord {
   repeated float vector = 3;
   map<string, SqlValue> metadata = 4;
   optional int64 version = 5;
+  // Additional fields for compatibility
+  optional float similarity = 6;
+  optional int64 timestamp = 7;
+  optional string source = 8;
+  repeated string expanded_context = 9;
+  optional float semantic_similarity = 10;
+  optional string quantization_info = 11;
+  map<string, string> engine_stats = 12;
+  optional string index_path = 13;
 }
 
 message SearchResult {
@@ -157,6 +177,38 @@ enum VectorOperation {
   VECTOR_GET = 3;        // Get single vector by ID
 }
 
+// Service operation enum (unique values to avoid conflicts)
+enum VectorServiceOperation {
+  VECTOR_SERVICE_OPERATION_UNSPECIFIED = 0;
+  VS_BATCH = 1;
+  VS_SEARCH = 2;
+  VS_GET = 3;
+}
+
+// Filter operation enum (unique values to avoid conflicts)
+enum FilterOperation {
+  FILTER_OPERATION_UNSPECIFIED = 0;
+  OP_EQUALS = 1;
+  OP_NOT_EQUALS = 2;
+  OP_GREATER_THAN = 3;
+  OP_GREATER_THAN_OR_EQUAL = 4;
+  OP_LESS_THAN = 5;
+  OP_LESS_THAN_OR_EQUAL = 6;
+  OP_IN = 7;
+  OP_NOT_IN = 8;
+  OP_CONTAINS = 9;
+  OP_STARTS_WITH = 10;
+  OP_ENDS_WITH = 11;
+}
+
+// Filter operator enum (unique values to avoid conflicts)
+enum FilterOperator {
+  FILTER_OPERATOR_UNSPECIFIED = 0;
+  LOGICAL_AND = 1;
+  LOGICAL_OR = 2;
+  LOGICAL_NOT = 3;
+}
+
 // Quantization configuration
 message QuantizationConfig {
   bool enabled = 1;
@@ -168,6 +220,20 @@ message QuantizationConfig {
   float pq_ranking_selectivity = 7;
   uint32 training_sample_size = 8;
   float quality_threshold = 9;
+  // Additional fields for compatibility
+  bool enable_adaptive_training = 10;
+  bool optimize_for_storage = 11;
+  bool optimize_for_memory = 12;
+  bool enable_simd_acceleration = 13;
+  bool enable_binary = 14;
+  bool enable_int8 = 15;
+  bool enable_pq = 16;
+  uint32 pq_segments = 17;
+  uint32 pq_bits = 18;
+  uint32 pq_codebooks = 19;
+  float binary_threshold = 20;
+  float int8_threshold = 21;
+  float pq_threshold = 22;
   
   enum Strategy {
     SMART_DEFAULTS = 0;
@@ -181,6 +247,19 @@ message QuantizationLevel {
   string level_id = 1;
   QuantizationType type = 2;
   uint32 bits = 3;
+  // Additional fields for compatibility
+  uint32 num_subvectors = 4;
+  bool adaptive_subvectors = 5;
+  float scale = 6;
+  float offset = 7;
+  bool clamp_values = 8;
+  float threshold = 9;
+  bool sign_based = 10;
+  bool enable_in_storage = 11;
+  bool enable_in_index = 12;
+  uint32 search_priority = 13;
+  float min_recall = 14;
+  bool enable_validation = 15;
   
   enum QuantizationType {
     BINARY = 0;
@@ -237,4 +316,75 @@ message SourceContent {
     bytes binary_content = 2;
     string external_reference = 3;
   }
+}
+
+// Compression configuration
+message CompressionConfig {
+  CompressionAlgorithm algorithm = 1;
+  optional uint32 level = 2;
+  bool adaptive = 3;
+  optional float min_ratio = 4;
+  bool enable_quantization = 5;
+  optional string quantization_type = 6;
+  optional string normalization_method = 7;
+  // Additional fields for compatibility
+  uint32 block_size_kb = 8;
+  bool dynamic_block_sizing = 9;
+}
+
+// Metadata value types
+message MetadataValue {
+  oneof value {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bool bool_value = 4;
+  }
+}
+
+// Filter condition for metadata
+message FilterCondition {
+  string field_name = 1;
+  int32 operation = 2;
+  MetadataValue value = 3;
+}
+
+// Index configurations
+message HnswConfig {
+  uint32 m = 1;
+  uint32 ef_construction = 2;
+  uint32 ef_search = 3;
+  uint32 max_partition_size = 4;
+  bool adaptive_parameters = 5;
+  bool use_simd = 6;
+  uint32 memory_limit_mb = 7;
+  bool lazy_loading = 8;
+}
+
+message IvfConfig {
+  uint32 n_lists = 1;
+  uint32 n_probe = 2;
+  uint32 quantization_bits = 3;
+  bool use_pq = 4;
+  uint32 pq_subspaces = 5;
+  bool train_on_insert = 6;
+  uint32 min_train_size = 7;
+}
+
+message LshConfig {
+  uint32 n_hash_tables = 1;
+  uint32 n_hash_functions = 2;
+  float bucket_width = 3;
+  bool binary_vectors = 4;
+  uint32 max_candidates = 5;
+  int32 projection = 6; // RandomProjectionType enum
+}
+
+// Column encoding for VIPER
+enum ColumnEncoding {
+  COLUMN_ENCODING_UNSPECIFIED = 0;
+  RLE = 1;
+  DICTIONARY = 2; 
+  DELTA = 3;
+  PLAIN = 4;
 }

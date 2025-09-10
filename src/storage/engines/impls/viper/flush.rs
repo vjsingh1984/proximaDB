@@ -663,8 +663,8 @@ impl Flush {
                 let value = record
                     .metadata
                     .iter()
-                    .find(|item| item.key == filterable_column.name)
-                    .map(|item| match &item.value {
+                    .find(|item| key == filterable_column.name)
+                    .map(|(key, value)| match &value {
                         Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
@@ -686,9 +686,9 @@ impl Flush {
             let mut extra_kvs = Vec::new();
             for item in &record.metadata {
                 // Skip filterable fields - they're handled dynamically above
-                if !filterable_field_names.contains(&item.key) {
+                if !filterable_field_names.contains(&key) {
                     // Convert metadata value to string for storage
-                    let value_str = match &item.value {
+                    let value_str = match &value {
                         Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             s.clone()
                         }
@@ -700,7 +700,7 @@ impl Flush {
                         }
                         None => String::new(),
                     };
-                    extra_kvs.push((item.key.clone(), value_str));
+                    extra_kvs.push((item.0.clone(), value_str));
                 }
             }
             extra_metadata_data.push(extra_kvs);

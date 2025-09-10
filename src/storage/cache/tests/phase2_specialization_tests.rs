@@ -112,7 +112,7 @@ async fn test_query_result_cache_specialization() {
 
     // Cache result
     cache
-        .put_with_hooks(query_key.clone(), query_result.clone())
+        .put_with_hooks(query_item.clone(), query_result.clone())
         .await;
 
     // Test approximate matching

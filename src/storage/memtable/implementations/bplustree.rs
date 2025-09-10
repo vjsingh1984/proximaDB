@@ -213,7 +213,7 @@ where
                     break;
                 }
             }
-            results.push((key.clone(), value.clone()));
+            results.push((item.0.clone(), item.1.clone()));
             count += 1;
         }
 
@@ -243,7 +243,7 @@ where
         // Collect keys to remove (B+Tree provides efficient range access)
         let keys_to_remove: Vec<K> = data
             .range(..=threshold)
-            .map(|(key, _)| key.clone())
+            .map(|(key, _)| item.0.clone())
             .collect();
 
         // Remove entries
@@ -280,7 +280,7 @@ where
         // B+Tree provides naturally ordered iteration through leaf nodes
         let results: Vec<(K, V)> = data
             .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
+            .map(|(key, value)| (item.0.clone(), item.1.clone()))
             .collect();
 
         Ok(results)
@@ -364,7 +364,7 @@ where
         let mut removed_size = 0;
 
         // B+Tree provides efficient range access
-        let keys_to_remove: Vec<K> = data.range(from..=to).map(|(key, _)| key.clone()).collect();
+        let keys_to_remove: Vec<K> = data.range(from..=to).map(|(key, _)| item.0.clone()).collect();
 
         for key in keys_to_remove {
             if let Some(value) = data.remove(&key) {
@@ -389,7 +389,7 @@ where
         // B+Tree excels at bounded range queries
         let results: Vec<(K, V)> = data
             .range(from..=to)
-            .map(|(key, value)| (key.clone(), value.clone()))
+            .map(|(key, value)| (item.0.clone(), item.1.clone()))
             .collect();
 
         Ok(results)

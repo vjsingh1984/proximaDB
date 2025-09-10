@@ -70,7 +70,7 @@ mod tests {
         // Calculate min/max metadata values
         for record in &records {
             for item in &record.metadata {
-                if let Some(value) = &item.value {
+                if let Some(value) = &value {
                     let value_str = match value {
                         crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => s.clone(),
                         _ => continue, // Skip non-string values for this test
@@ -78,7 +78,7 @@ mod tests {
 
                     metadata_stats
                         .min_values
-                        .entry(item.key.clone())
+                        .entry(item.0.clone())
                         .and_modify(|v| {
                             if let (Ok(existing), Ok(new)) = (
                                 v.as_deref().unwrap().parse::<f32>(),
@@ -93,7 +93,7 @@ mod tests {
 
                     metadata_stats
                         .max_values
-                        .entry(item.key.clone())
+                        .entry(item.0.clone())
                         .and_modify(|v| {
                             if let (Ok(existing), Ok(new)) = (
                                 v.as_deref().unwrap().parse::<f32>(),

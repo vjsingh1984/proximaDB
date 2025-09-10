@@ -245,10 +245,10 @@ impl RowGroups {
                 let metadata_map: HashMap<String, serde_json::Value> = vector
                     .metadata
                     .iter()
-                    .map(|item| {
+                    .map(|(key, value)| {
                         (
-                            item.key.clone(),
-                            match &item.value {
+                            item.0.clone(),
+                            match &value {
                                 Some(
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                                 ) => serde_json::Value::String(s.clone()),

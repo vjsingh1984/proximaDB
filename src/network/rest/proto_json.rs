@@ -231,8 +231,8 @@ pub mod utils {
     pub fn metadata_to_json(items: &[proximadb::MetadataItem]) -> serde_json::Map<String, serde_json::Value> {
         let mut map = serde_json::Map::new();
         for item in items {
-            if let Some(value) = &item.value {
-                map.insert(item.key.clone(), metadata_value_to_json(value));
+            if let Some(value) = &value {
+                map.insert(item.0.clone(), metadata_value_to_json(value));
             }
         }
         map

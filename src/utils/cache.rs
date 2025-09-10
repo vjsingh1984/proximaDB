@@ -258,7 +258,7 @@ where
         }
 
         // Create new node
-        let new_node = Box::into_raw(Box::new(Node::new(key.clone(), value, ttl)));
+        let new_node = Box::into_raw(Box::new(Node::new(item.clone(), value, ttl)));
         
         // Add to map
         self.map.insert(key, new_node);
@@ -353,7 +353,7 @@ where
                 let node = &*node_ptr;
                 if let Some(expires_at) = node.expires_at {
                     if now > expires_at {
-                        expired_keys.push(key.clone());
+                        expired_keys.push(item.clone());
                     }
                 }
             }
@@ -394,7 +394,7 @@ where
         while let Some(node_ptr) = current {
             unsafe {
                 let node = &*node_ptr;
-                keys.push(node.key.clone());
+                keys.push(node.item.clone());
                 current = node.next;
             }
         }
@@ -407,8 +407,8 @@ where
         if let Some(tail_ptr) = self.tail {
             unsafe {
                 let node = &*tail_ptr;
-                let key = node.key.clone();
-                let value = node.value.clone();
+                let key = node.item.clone();
+                let value = node.item.clone();
                 self.remove(&key);
                 Some((key, value))
             }
@@ -422,7 +422,7 @@ where
         if let Some(&node_ptr) = self.map.get(key) {
             unsafe {
                 let node = &*node_ptr;
-                let value = node.value.clone();
+                let value = node.item.clone();
                 self.remove(key);
                 Some(value)
             }

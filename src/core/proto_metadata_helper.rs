@@ -10,8 +10,8 @@ use std::collections::HashMap;
 pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, serde_json::Value> {
     metadata
         .iter()
-        .map(|item| {
-            let value = match &item.value {
+        .map(|(key, value)| {
+            let value = match &value {
                 Some(metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
                 Some(metadata_item::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
                     .map(serde_json::Value::Number)
@@ -19,7 +19,7 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, serd
                 Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                 None => serde_json::Value::Null,
             };
-            (item.key.clone(), value)
+            (item.0.clone(), value)
         })
         .collect()
 }
@@ -56,14 +56,14 @@ pub fn json_metadata_to_proto(metadata: &HashMap<String, serde_json::Value>) -> 
 pub fn proto_metadata_to_hashmap(metadata: &[MetadataItem]) -> HashMap<String, String> {
     metadata
         .iter()
-        .map(|item| {
-            let value_str = match &item.value {
+        .map(|(key, value)| {
+            let value_str = match &value {
                 Some(metadata_item::Value::StringValue(s)) => s.clone(),
                 Some(metadata_item::Value::NumberValue(n)) => n.to_string(),
                 Some(metadata_item::Value::BoolValue(b)) => b.to_string(),
                 None => String::new(),
             };
-            (item.key.clone(), value_str)
+            (item.0.clone(), value_str)
         })
         .collect()
 }

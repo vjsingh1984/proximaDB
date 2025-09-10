@@ -126,7 +126,7 @@ impl SingleCollectionIndex {
             .unwrap_or_else(|| "unnamed".to_string());
 
         // Check if this is an update (collection exists)
-        let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
+        let old_name = self.entries.get(&uuid).map(|e| e.name_item.0.clone());
 
         // Update primary index
         let entry = CollectionIndexEntry::new(record);

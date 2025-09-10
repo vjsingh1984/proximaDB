@@ -416,7 +416,7 @@ impl ParallelWALSearch {
                         serde_json::Value::Bool(*b)
                     }
                 };
-                map.insert(entry.key.clone(), json_value);
+                map.insert(entry.item.0.clone(), json_value);
             }
         }
 
@@ -440,14 +440,14 @@ impl SearchCandidate {
         let metadata = if self.include_metadata {
             let mut metadata_map = std::collections::HashMap::new();
             for item in &self.record.metadata {
-                if let Some(value) = &item.value {
+                if let Some(value) = &value {
                     use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
                         metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
                         metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
                     };
-                    metadata_map.insert(item.key.clone(), typed_value);
+                    metadata_map.insert(item.0.clone(), typed_value);
                 }
             }
             TypedMetadata::from_map(metadata_map)

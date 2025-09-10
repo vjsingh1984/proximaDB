@@ -217,9 +217,9 @@ impl InternalSearchResult {
         let metadata = record
             .metadata
             .iter()
-            .filter_map(|item| {
-                use crate::proto::proximadb_v1::metadata_item::Value;
-                let value = match &item.value {
+            .filter_map(|(key, sql_value)| {
+                use crate::proto::proximadb_v1::sql_value::Value;
+                let value = match &sql_value.value {
                     Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
                     Some(Value::NumberValue(n)) => serde_json::Value::Number(
                         serde_json::Number::from_f64(*n)
@@ -228,7 +228,7 @@ impl InternalSearchResult {
                     Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                     None => return None,
                 };
-                Some((item.key.clone(), value))
+                Some((item.0.clone(), value))
             })
             .collect();
 
@@ -300,11 +300,11 @@ impl InternalSearchResult {
                         _ => None, // Skip complex types for now
                     };
                     MetadataItem {
-                        key: key.clone(),
+                        key: item.0.clone(),
                         value: proto_value,
                     }
                 })
-                .filter(|item| item.value.is_some())
+                .filter(|(key, value)| value.is_some())
                 .collect()
         } else {
             Vec::new()
@@ -370,7 +370,7 @@ impl InternalSearchResult {
                     },
                     _ => crate::proto::proximadb_v1::SqlValue { value: None },
                 };
-                metadata.insert(key.clone(), sql_value);
+                metadata.insert(item.0.clone(), sql_value);
             }
         }
 

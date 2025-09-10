@@ -350,8 +350,8 @@ impl StreamingParquetWriter {
                     let metadata_map: serde_json::Map<String, serde_json::Value> = record
                         .metadata
                         .iter()
-                        .filter_map(|item| {
-                            item.value.as_ref().map(|v| {
+                        .filter_map(|(key, value)| {
+                            value.as_ref().map(|v| {
                                 let json_value = match v {
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                                         s,
@@ -366,7 +366,7 @@ impl StreamingParquetWriter {
                                         serde_json::Value::Bool(*b)
                                     }
                                 };
-                                (item.key.clone(), json_value)
+                                (item.0.clone(), json_value)
                             })
                         })
                         .collect();
@@ -403,8 +403,8 @@ impl StreamingParquetWriter {
                 let metadata_map: serde_json::Map<String, serde_json::Value> = record
                     .metadata
                     .iter()
-                    .filter_map(|item| {
-                        item.value.as_ref().map(|v| {
+                    .filter_map(|(key, value)| {
+                        value.as_ref().map(|v| {
                             let json_value = match v {
                                 crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                                     serde_json::Value::String(s.clone())
@@ -419,7 +419,7 @@ impl StreamingParquetWriter {
                                     serde_json::Value::Bool(*b)
                                 }
                             };
-                            (item.key.clone(), json_value)
+                            (item.0.clone(), json_value)
                         })
                     })
                     .collect();
@@ -567,7 +567,7 @@ impl StreamingParquetWriter {
                         let mut map = serde_json::Map::new();
                         for item in &r.metadata {
                             // Convert MetadataItem to JSON value
-                            let json_value = match &item.value {
+                            let json_value = match &value {
                                 Some(metadata_item::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
@@ -583,7 +583,7 @@ impl StreamingParquetWriter {
                                 }
                                 None => serde_json::Value::Null,
                             };
-                            map.insert(item.key.clone(), json_value);
+                            map.insert(item.0.clone(), json_value);
                         }
                         map
                     })
@@ -792,7 +792,7 @@ impl StreamingParquetWriter {
                 // Convert Vec<MetadataItem> to serde_json::Map
                 let mut metadata_map = serde_json::Map::new();
                 for item in &record.metadata {
-                    let json_value = match &item.value {
+                    let json_value = match &value {
                         Some(metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
@@ -806,7 +806,7 @@ impl StreamingParquetWriter {
                         Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                         None => serde_json::Value::Null,
                     };
-                    metadata_map.insert(item.key.clone(), json_value);
+                    metadata_map.insert(item.0.clone(), json_value);
                 }
                 self.add_metadata_to_bloom_filters(&metadata_map)?;
             }

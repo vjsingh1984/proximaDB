@@ -28,7 +28,7 @@ async fn test_basic_get_put() {
     };
 
     // Put value
-    cache.put_with_hooks(key.clone(), value.clone()).await;
+    cache.put_with_hooks(item.clone(), item.clone()).await;
 
     // Get value
     let retrieved = cache.get_with_hooks(&key).await;
@@ -61,7 +61,7 @@ async fn test_invalidation() {
     };
 
     // Put value
-    cache.put_with_hooks(key.clone(), value).await;
+    cache.put_with_hooks(item.clone(), value).await;
 
     // Verify it exists
     assert!(cache.get_with_hooks(&key).await.is_some());
@@ -111,7 +111,7 @@ async fn test_metrics_recording() {
     };
 
     // Put and get
-    cache.put_with_hooks(key1.clone(), value.clone()).await;
+    cache.put_with_hooks(key1.clone(), item.clone()).await;
     let _ = cache.get_with_hooks(&key1).await; // Hit
     let _ = cache.get_with_hooks(&key2).await; // Miss
 

@@ -139,14 +139,14 @@ pub async fn search_sstable(
             if let Some(f) = filter.as_ref() {
                 // Convert metadata to HashMap<String, String> for filter
                 let metadata_map: HashMap<String, String> = record.metadata.iter()
-                    .filter_map(|item| {
-                        if let Some(value) = &item.value {
+                    .filter_map(|(key, value)| {
+                        if let Some(value) = &value {
                             let value_str = match value {
                                 crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => s.clone(),
                                 crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => n.to_string(),
                                 crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => b.to_string(),
                             };
-                            Some((item.key.clone(), value_str))
+                            Some((item.0.clone(), value_str))
                         } else {
                             None
                         }

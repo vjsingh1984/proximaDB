@@ -590,14 +590,14 @@ impl ProgressiveSearchExecutor {
             // Convert metadata to TypedMetadata
             let mut metadata_map = std::collections::HashMap::new();
             for item in record.metadata {
-                if let Some(value) = item.value {
+                if let Some(value) = value {
                     use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
                         metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
                         metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
                     };
-                    metadata_map.insert(item.key, typed_value);
+                    metadata_map.insert(key, typed_value);
                 }
             }
             

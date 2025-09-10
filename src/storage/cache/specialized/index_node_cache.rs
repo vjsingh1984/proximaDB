@@ -111,7 +111,7 @@ impl IndexNodeCache {
         let node = IndexNode {
             id: format!("sst_index_{}", file_path),
             level: 0, // SSTable indices are flat
-            children: index.entries.iter().map(|e| e.key.clone()).collect(),
+            children: index.entries.iter().map(|e| e.item.clone()).collect(),
             data: index_data,
         };
 
@@ -189,7 +189,7 @@ impl IndexNodeCache {
                         let entry_data = bincode::serialize(&entry)?;
 
                         let node = IndexNode {
-                            id: entry_key.clone(),
+                            id: entry_item.clone(),
                             level: 1, // Individual entries are level 1
                             children: vec![],
                             data: entry_data,

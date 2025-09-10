@@ -222,7 +222,7 @@ where
 
         for key in keys {
             let value = data.get(key).cloned();
-            results.push((key.clone(), value));
+            results.push((item.0.clone(), value));
         }
 
         Ok(results)

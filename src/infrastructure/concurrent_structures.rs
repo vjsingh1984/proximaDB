@@ -85,7 +85,7 @@ struct StoredItem<V> {
 impl<V: Clone> Clone for StoredItem<V> {
     fn clone(&self) -> Self {
         Self {
-            value: self.value.clone(),
+            value: self.item.clone(),
             timestamp: self.timestamp,
             last_accessed: self.last_accessed,
             access_count: AtomicUsize::new(self.access_count.load(Ordering::Relaxed)),
@@ -175,7 +175,7 @@ where
 
         let now = Instant::now();
         let item = StoredItem {
-            value: value.clone(),
+            value: item.clone(),
             timestamp: now,
             last_accessed: now,
             access_count: AtomicUsize::new(1),
@@ -207,7 +207,7 @@ where
             entry.last_accessed = Instant::now();
             entry.access_count.fetch_add(1, Ordering::Relaxed);
 
-            let value = entry.value.clone();
+            let value = entry.item.clone();
 
             self.metrics.record_hit();
             self.metrics.record_success(start.elapsed());
@@ -228,7 +228,7 @@ where
             self.metrics.decrement_entries();
             self.metrics.add_memory_bytes(-(item.size_bytes as i64));
             self.metrics.record_success(start.elapsed());
-            Some(item.value)
+            Some(value)
         } else {
             self.metrics.record_success(start.elapsed());
             None

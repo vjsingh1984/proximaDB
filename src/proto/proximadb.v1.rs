@@ -2163,6 +2163,18 @@ pub struct IncludeFields {
     pub vector: bool,
     #[prost(bool, tag = "2")]
     pub metadata: bool,
+    /// Additional fields for compatibility
+    #[prost(bool, tag = "3")]
+    pub score: bool,
+    #[prost(bool, tag = "4")]
+    pub rank: bool,
+    #[prost(bool, tag = "5")]
+    pub source: bool,
+    #[prost(map = "string, bool", tag = "6")]
+    pub source_options: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        bool,
+    >,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -2276,11 +2288,9 @@ pub struct VectorRecord {
     pub version: ::core::option::Option<i64>,
     #[prost(bytes = "vec", tag = "8")]
     pub quantized_vector: ::prost::alloc::vec::Vec<u8>,
+    /// collection_id removed - causes initialization issues across codebase
     #[prost(string, optional, tag = "9")]
     pub source: ::core::option::Option<::prost::alloc::string::String>,
-    /// Collection association
-    #[prost(string, optional, tag = "10")]
-    pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -2337,6 +2347,26 @@ pub struct SearchVectorRecord {
     pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
     #[prost(int64, optional, tag = "5")]
     pub version: ::core::option::Option<i64>,
+    /// Additional fields for compatibility
+    #[prost(float, optional, tag = "6")]
+    pub similarity: ::core::option::Option<f32>,
+    #[prost(int64, optional, tag = "7")]
+    pub timestamp: ::core::option::Option<i64>,
+    #[prost(string, optional, tag = "8")]
+    pub source: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, repeated, tag = "9")]
+    pub expanded_context: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(float, optional, tag = "10")]
+    pub semantic_similarity: ::core::option::Option<f32>,
+    #[prost(string, optional, tag = "11")]
+    pub quantization_info: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(map = "string, string", tag = "12")]
+    pub engine_stats: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(string, optional, tag = "13")]
+    pub index_path: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -2391,6 +2421,33 @@ pub struct QuantizationConfig {
     pub training_sample_size: u32,
     #[prost(float, tag = "9")]
     pub quality_threshold: f32,
+    /// Additional fields for compatibility
+    #[prost(bool, tag = "10")]
+    pub enable_adaptive_training: bool,
+    #[prost(bool, tag = "11")]
+    pub optimize_for_storage: bool,
+    #[prost(bool, tag = "12")]
+    pub optimize_for_memory: bool,
+    #[prost(bool, tag = "13")]
+    pub enable_simd_acceleration: bool,
+    #[prost(bool, tag = "14")]
+    pub enable_binary: bool,
+    #[prost(bool, tag = "15")]
+    pub enable_int8: bool,
+    #[prost(bool, tag = "16")]
+    pub enable_pq: bool,
+    #[prost(uint32, tag = "17")]
+    pub pq_segments: u32,
+    #[prost(uint32, tag = "18")]
+    pub pq_bits: u32,
+    #[prost(uint32, tag = "19")]
+    pub pq_codebooks: u32,
+    #[prost(float, tag = "20")]
+    pub binary_threshold: f32,
+    #[prost(float, tag = "21")]
+    pub int8_threshold: f32,
+    #[prost(float, tag = "22")]
+    pub pq_threshold: f32,
 }
 /// Nested message and enum types in `QuantizationConfig`.
 pub mod quantization_config {
@@ -2448,6 +2505,31 @@ pub struct QuantizationLevel {
     pub r#type: i32,
     #[prost(uint32, tag = "3")]
     pub bits: u32,
+    /// Additional fields for compatibility
+    #[prost(uint32, tag = "4")]
+    pub num_subvectors: u32,
+    #[prost(bool, tag = "5")]
+    pub adaptive_subvectors: bool,
+    #[prost(float, tag = "6")]
+    pub scale: f32,
+    #[prost(float, tag = "7")]
+    pub offset: f32,
+    #[prost(bool, tag = "8")]
+    pub clamp_values: bool,
+    #[prost(float, tag = "9")]
+    pub threshold: f32,
+    #[prost(bool, tag = "10")]
+    pub sign_based: bool,
+    #[prost(bool, tag = "11")]
+    pub enable_in_storage: bool,
+    #[prost(bool, tag = "12")]
+    pub enable_in_index: bool,
+    #[prost(uint32, tag = "13")]
+    pub search_priority: u32,
+    #[prost(float, tag = "14")]
+    pub min_recall: f32,
+    #[prost(bool, tag = "15")]
+    pub enable_validation: bool,
 }
 /// Nested message and enum types in `QuantizationLevel`.
 pub mod quantization_level {
@@ -2536,6 +2618,126 @@ pub mod source_content {
         ExternalReference(::prost::alloc::string::String),
     }
 }
+/// Compression configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CompressionConfig {
+    #[prost(enumeration = "CompressionAlgorithm", tag = "1")]
+    pub algorithm: i32,
+    #[prost(uint32, optional, tag = "2")]
+    pub level: ::core::option::Option<u32>,
+    #[prost(bool, tag = "3")]
+    pub adaptive: bool,
+    #[prost(float, optional, tag = "4")]
+    pub min_ratio: ::core::option::Option<f32>,
+    #[prost(bool, tag = "5")]
+    pub enable_quantization: bool,
+    #[prost(string, optional, tag = "6")]
+    pub quantization_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "7")]
+    pub normalization_method: ::core::option::Option<::prost::alloc::string::String>,
+    /// Additional fields for compatibility
+    #[prost(uint32, tag = "8")]
+    pub block_size_kb: u32,
+    #[prost(bool, tag = "9")]
+    pub dynamic_block_sizing: bool,
+}
+/// Metadata value types
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetadataValue {
+    #[prost(oneof = "metadata_value::Value", tags = "1, 2, 3, 4")]
+    pub value: ::core::option::Option<metadata_value::Value>,
+}
+/// Nested message and enum types in `MetadataValue`.
+pub mod metadata_value {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(string, tag = "1")]
+        StringValue(::prost::alloc::string::String),
+        #[prost(int64, tag = "2")]
+        IntValue(i64),
+        #[prost(double, tag = "3")]
+        DoubleValue(f64),
+        #[prost(bool, tag = "4")]
+        BoolValue(bool),
+    }
+}
+/// Filter condition for metadata
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FilterCondition {
+    #[prost(string, tag = "1")]
+    pub field_name: ::prost::alloc::string::String,
+    #[prost(int32, tag = "2")]
+    pub operation: i32,
+    #[prost(message, optional, tag = "3")]
+    pub value: ::core::option::Option<MetadataValue>,
+}
+/// Index configurations
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HnswConfig {
+    #[prost(uint32, tag = "1")]
+    pub m: u32,
+    #[prost(uint32, tag = "2")]
+    pub ef_construction: u32,
+    #[prost(uint32, tag = "3")]
+    pub ef_search: u32,
+    #[prost(uint32, tag = "4")]
+    pub max_partition_size: u32,
+    #[prost(bool, tag = "5")]
+    pub adaptive_parameters: bool,
+    #[prost(bool, tag = "6")]
+    pub use_simd: bool,
+    #[prost(uint32, tag = "7")]
+    pub memory_limit_mb: u32,
+    #[prost(bool, tag = "8")]
+    pub lazy_loading: bool,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct IvfConfig {
+    #[prost(uint32, tag = "1")]
+    pub n_lists: u32,
+    #[prost(uint32, tag = "2")]
+    pub n_probe: u32,
+    #[prost(uint32, tag = "3")]
+    pub quantization_bits: u32,
+    #[prost(bool, tag = "4")]
+    pub use_pq: bool,
+    #[prost(uint32, tag = "5")]
+    pub pq_subspaces: u32,
+    #[prost(bool, tag = "6")]
+    pub train_on_insert: bool,
+    #[prost(uint32, tag = "7")]
+    pub min_train_size: u32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LshConfig {
+    #[prost(uint32, tag = "1")]
+    pub n_hash_tables: u32,
+    #[prost(uint32, tag = "2")]
+    pub n_hash_functions: u32,
+    #[prost(float, tag = "3")]
+    pub bucket_width: f32,
+    #[prost(bool, tag = "4")]
+    pub binary_vectors: bool,
+    #[prost(uint32, tag = "5")]
+    pub max_candidates: u32,
+    /// RandomProjectionType enum
+    #[prost(int32, tag = "6")]
+    pub projection: i32,
+}
 /// Strongly-typed enums for metrics and engines
 #[derive(serde::Serialize, serde::Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -2610,6 +2812,10 @@ pub enum StorageEngine {
     Nova = 3,
     Helix = 4,
     Swift = 5,
+    Prism = 6,
+    Raptor = 7,
+    Mmap = 8,
+    Hybrid = 9,
 }
 impl StorageEngine {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2624,6 +2830,10 @@ impl StorageEngine {
             StorageEngine::Nova => "NOVA",
             StorageEngine::Helix => "HELIX",
             StorageEngine::Swift => "SWIFT",
+            StorageEngine::Prism => "PRISM",
+            StorageEngine::Raptor => "RAPTOR",
+            StorageEngine::Mmap => "MMAP",
+            StorageEngine::Hybrid => "HYBRID",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2635,6 +2845,10 @@ impl StorageEngine {
             "NOVA" => Some(Self::Nova),
             "HELIX" => Some(Self::Helix),
             "SWIFT" => Some(Self::Swift),
+            "PRISM" => Some(Self::Prism),
+            "RAPTOR" => Some(Self::Raptor),
+            "MMAP" => Some(Self::Mmap),
+            "HYBRID" => Some(Self::Hybrid),
             _ => None,
         }
     }
@@ -2648,6 +2862,8 @@ pub enum IndexingAlgorithm {
     Ivf = 2,
     Pq = 3,
     Flat = 4,
+    Annoy = 5,
+    Lsh = 6,
 }
 impl IndexingAlgorithm {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2661,6 +2877,8 @@ impl IndexingAlgorithm {
             IndexingAlgorithm::Ivf => "IVF",
             IndexingAlgorithm::Pq => "PQ",
             IndexingAlgorithm::Flat => "FLAT",
+            IndexingAlgorithm::Annoy => "ANNOY",
+            IndexingAlgorithm::Lsh => "LSH",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -2671,6 +2889,8 @@ impl IndexingAlgorithm {
             "IVF" => Some(Self::Ivf),
             "PQ" => Some(Self::Pq),
             "FLAT" => Some(Self::Flat),
+            "ANNOY" => Some(Self::Annoy),
+            "LSH" => Some(Self::Lsh),
             _ => None,
         }
     }
@@ -2708,6 +2928,132 @@ impl VectorOperation {
             "VECTOR_BATCH" => Some(Self::VectorBatch),
             "VECTOR_SEARCH" => Some(Self::VectorSearch),
             "VECTOR_GET" => Some(Self::VectorGet),
+            _ => None,
+        }
+    }
+}
+/// Service operation enum (unique values to avoid conflicts)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum VectorServiceOperation {
+    Unspecified = 0,
+    VsBatch = 1,
+    VsSearch = 2,
+    VsGet = 3,
+}
+impl VectorServiceOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            VectorServiceOperation::Unspecified => "VECTOR_SERVICE_OPERATION_UNSPECIFIED",
+            VectorServiceOperation::VsBatch => "VS_BATCH",
+            VectorServiceOperation::VsSearch => "VS_SEARCH",
+            VectorServiceOperation::VsGet => "VS_GET",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "VECTOR_SERVICE_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "VS_BATCH" => Some(Self::VsBatch),
+            "VS_SEARCH" => Some(Self::VsSearch),
+            "VS_GET" => Some(Self::VsGet),
+            _ => None,
+        }
+    }
+}
+/// Filter operation enum (unique values to avoid conflicts)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FilterOperation {
+    Unspecified = 0,
+    OpEquals = 1,
+    OpNotEquals = 2,
+    OpGreaterThan = 3,
+    OpGreaterThanOrEqual = 4,
+    OpLessThan = 5,
+    OpLessThanOrEqual = 6,
+    OpIn = 7,
+    OpNotIn = 8,
+    OpContains = 9,
+    OpStartsWith = 10,
+    OpEndsWith = 11,
+}
+impl FilterOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            FilterOperation::Unspecified => "FILTER_OPERATION_UNSPECIFIED",
+            FilterOperation::OpEquals => "OP_EQUALS",
+            FilterOperation::OpNotEquals => "OP_NOT_EQUALS",
+            FilterOperation::OpGreaterThan => "OP_GREATER_THAN",
+            FilterOperation::OpGreaterThanOrEqual => "OP_GREATER_THAN_OR_EQUAL",
+            FilterOperation::OpLessThan => "OP_LESS_THAN",
+            FilterOperation::OpLessThanOrEqual => "OP_LESS_THAN_OR_EQUAL",
+            FilterOperation::OpIn => "OP_IN",
+            FilterOperation::OpNotIn => "OP_NOT_IN",
+            FilterOperation::OpContains => "OP_CONTAINS",
+            FilterOperation::OpStartsWith => "OP_STARTS_WITH",
+            FilterOperation::OpEndsWith => "OP_ENDS_WITH",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FILTER_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "OP_EQUALS" => Some(Self::OpEquals),
+            "OP_NOT_EQUALS" => Some(Self::OpNotEquals),
+            "OP_GREATER_THAN" => Some(Self::OpGreaterThan),
+            "OP_GREATER_THAN_OR_EQUAL" => Some(Self::OpGreaterThanOrEqual),
+            "OP_LESS_THAN" => Some(Self::OpLessThan),
+            "OP_LESS_THAN_OR_EQUAL" => Some(Self::OpLessThanOrEqual),
+            "OP_IN" => Some(Self::OpIn),
+            "OP_NOT_IN" => Some(Self::OpNotIn),
+            "OP_CONTAINS" => Some(Self::OpContains),
+            "OP_STARTS_WITH" => Some(Self::OpStartsWith),
+            "OP_ENDS_WITH" => Some(Self::OpEndsWith),
+            _ => None,
+        }
+    }
+}
+/// Filter operator enum (unique values to avoid conflicts)
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum FilterOperator {
+    Unspecified = 0,
+    LogicalAnd = 1,
+    LogicalOr = 2,
+    LogicalNot = 3,
+}
+impl FilterOperator {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            FilterOperator::Unspecified => "FILTER_OPERATOR_UNSPECIFIED",
+            FilterOperator::LogicalAnd => "LOGICAL_AND",
+            FilterOperator::LogicalOr => "LOGICAL_OR",
+            FilterOperator::LogicalNot => "LOGICAL_NOT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "FILTER_OPERATOR_UNSPECIFIED" => Some(Self::Unspecified),
+            "LOGICAL_AND" => Some(Self::LogicalAnd),
+            "LOGICAL_OR" => Some(Self::LogicalOr),
+            "LOGICAL_NOT" => Some(Self::LogicalNot),
             _ => None,
         }
     }
@@ -2818,6 +3164,43 @@ impl FilterableDataType {
             "FILTERABLE_ARRAY_STRING" => Some(Self::FilterableArrayString),
             "FILTERABLE_ARRAY_INTEGER" => Some(Self::FilterableArrayInteger),
             "FILTERABLE_ARRAY_FLOAT" => Some(Self::FilterableArrayFloat),
+            _ => None,
+        }
+    }
+}
+/// Column encoding for VIPER
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ColumnEncoding {
+    Unspecified = 0,
+    Rle = 1,
+    Dictionary = 2,
+    Delta = 3,
+    Plain = 4,
+}
+impl ColumnEncoding {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            ColumnEncoding::Unspecified => "COLUMN_ENCODING_UNSPECIFIED",
+            ColumnEncoding::Rle => "RLE",
+            ColumnEncoding::Dictionary => "DICTIONARY",
+            ColumnEncoding::Delta => "DELTA",
+            ColumnEncoding::Plain => "PLAIN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "COLUMN_ENCODING_UNSPECIFIED" => Some(Self::Unspecified),
+            "RLE" => Some(Self::Rle),
+            "DICTIONARY" => Some(Self::Dictionary),
+            "DELTA" => Some(Self::Delta),
+            "PLAIN" => Some(Self::Plain),
             _ => None,
         }
     }
@@ -5945,6 +6328,45 @@ pub struct IndexConfig {
     >,
     #[prost(bool, tag = "4")]
     pub enabled: bool,
+    /// Additional fields for compatibility
+    #[prost(int32, tag = "5")]
+    pub update_mode: i32,
+    #[prost(uint32, optional, tag = "6")]
+    pub async_update_timeout_ms: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "7")]
+    pub async_update_batch_size: ::core::option::Option<u32>,
+    #[prost(bool, tag = "8")]
+    pub enable_background_optimization: bool,
+    #[prost(message, optional, tag = "9")]
+    pub hnsw_config: ::core::option::Option<HnswConfig>,
+    #[prost(message, optional, tag = "10")]
+    pub ivf_config: ::core::option::Option<IvfConfig>,
+    #[prost(message, optional, tag = "11")]
+    pub lsh_config: ::core::option::Option<LshConfig>,
+    #[prost(string, optional, tag = "12")]
+    pub flat_config: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "13")]
+    pub pq_config: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "14")]
+    pub annoy_config: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "15")]
+    pub build_concurrency: u32,
+    #[prost(uint32, tag = "16")]
+    pub memory_limit_mb: u32,
+    #[prost(uint32, tag = "17")]
+    pub checkpoint_interval_ms: u32,
+    #[prost(bool, tag = "18")]
+    pub is_primary: bool,
+    #[prost(string, repeated, tag = "19")]
+    pub use_cases: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(float, tag = "20")]
+    pub selectivity_threshold: f32,
+    #[prost(bool, tag = "21")]
+    pub use_quantization: bool,
+    #[prost(message, optional, tag = "22")]
+    pub quantization_override: ::core::option::Option<QuantizationConfig>,
+    #[prost(string, tag = "23")]
+    pub queue_representation: ::prost::alloc::string::String,
 }
 /// Storage configuration
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -5978,6 +6400,11 @@ pub struct StorageAssignment {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+    /// Additional fields for compatibility
+    #[prost(string, tag = "5")]
+    pub base_location: ::prost::alloc::string::String,
+    #[prost(int64, tag = "6")]
+    pub assigned_at: i64,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]

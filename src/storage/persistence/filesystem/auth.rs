@@ -94,7 +94,7 @@ impl CredentialProvider for StaticCredentialProvider {
     async fn get_credentials(&self) -> FsResult<AwsCredentials> {
         Ok(AwsCredentials {
             access_key_id: self.access_key_id.clone(),
-            secret_access_key: self.secret_access_key.clone(),
+            secret_access_key: self.secret_access_item.0.clone(),
             session_token: self.session_token.clone(),
             expiration: None, // Static credentials don't expire
         })

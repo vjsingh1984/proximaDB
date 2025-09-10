@@ -130,27 +130,27 @@ impl CompiledFilter {
                 match operator {
                     ComparisonOperator::Equals => Ok(CompiledFilter::Equals {
                         field: field.clone(),
-                        value: value.clone(),
+                        value: item.1.clone(),
                     }),
                     ComparisonOperator::NotEquals => Ok(CompiledFilter::NotEquals {
                         field: field.clone(),
-                        value: value.clone(),
+                        value: item.1.clone(),
                     }),
                     ComparisonOperator::GreaterThan => Ok(CompiledFilter::GreaterThan {
                         field: field.clone(),
-                        value: value.clone(),
+                        value: item.1.clone(),
                     }),
                     ComparisonOperator::GreaterThanOrEqual => Ok(CompiledFilter::GreaterThanOrEqual {
                         field: field.clone(),
-                        value: value.clone(),
+                        value: item.1.clone(),
                     }),
                     ComparisonOperator::LessThan => Ok(CompiledFilter::LessThan {
                         field: field.clone(),
-                        value: value.clone(),
+                        value: item.1.clone(),
                     }),
                     ComparisonOperator::LessThanOrEqual => Ok(CompiledFilter::LessThanOrEqual {
                         field: field.clone(),
-                        value: value.clone(),
+                        value: item.1.clone(),
                     }),
                     ComparisonOperator::Contains => {
                         let substring = value.as_str()
@@ -197,7 +197,7 @@ impl CompiledFilter {
                                 .map(|v| Value::String(v.trim().to_string()))
                                 .collect()
                         } else {
-                            vec![value.clone()]
+                            vec![item.1.clone()]
                         };
                         Ok(CompiledFilter::In {
                             field: field.clone(),
@@ -212,7 +212,7 @@ impl CompiledFilter {
                                 .map(|v| Value::String(v.trim().to_string()))
                                 .collect()
                         } else {
-                            vec![value.clone()]
+                            vec![item.1.clone()]
                         };
                         Ok(CompiledFilter::NotIn {
                             field: field.clone(),

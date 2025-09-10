@@ -263,7 +263,7 @@ pub fn convert_metadata_from_proto(
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     for item in items {
-        if let Some(value) = item.value {
+        if let Some(value) = value {
             let json_value = match value {
                 crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                     serde_json::Value::String(s)
@@ -279,7 +279,7 @@ pub fn convert_metadata_from_proto(
                 // Note: ListValue and MapValue were removed from proto
                 // Arrays and objects can be stored as JSON strings if needed
             };
-            map.insert(item.key, json_value);
+            map.insert(key, json_value);
         }
     }
     map
@@ -471,7 +471,7 @@ pub fn metadata_items_to_sql_values(
 ) -> std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> {
     let mut out = std::collections::HashMap::new();
     for item in meta {
-        let val = match item.value {
+        let val = match value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                 crate::proto::proximadb_v1::SqlValue {
                     value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
@@ -489,7 +489,7 @@ pub fn metadata_items_to_sql_values(
             }
             None => crate::proto::proximadb_v1::SqlValue { value: None },
         };
-        out.insert(item.key, val);
+        out.insert(key, val);
     }
     out
 }
@@ -516,6 +516,40 @@ pub fn sql_values_to_metadata_items(
             crate::proto::proximadb_v1::MetadataItem { key: k, value: val }
         })
         .collect()
+}
+
+// ============================================================================
+// Zero-Cost HashMap Metadata Access Patterns (Compile-Time Optimized)
+// ============================================================================
+
+/// Zero-cost inline helper for HashMap metadata iteration with .key/.value pattern
+/// Compiler optimizes this away to direct tuple destructuring
+#[inline(always)]
+pub fn iter_metadata_optimized<'a>(
+    metadata: &'a std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>
+) -> impl Iterator<Item = (&'a String, &'a crate::proto::proximadb_v1::SqlValue)> + 'a {
+    metadata.iter()
+}
+
+/// Zero-cost inline key access from HashMap tuple
+#[inline(always)] 
+pub fn get_key<'a>(tuple: (&'a String, &'a crate::proto::proximadb_v1::SqlValue)) -> &'a String {
+    tuple.0
+}
+
+/// Zero-cost inline value access from HashMap tuple  
+#[inline(always)]
+pub fn get_value<'a>(tuple: (&'a String, &'a crate::proto::proximadb_v1::SqlValue)) -> &'a crate::proto::proximadb_v1::SqlValue {
+    tuple.1
+}
+
+/// Zero-cost inline metadata lookup (O(1) vs O(n) scan)
+#[inline(always)]
+pub fn get_metadata_value<'a>(
+    metadata: &'a std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    key: &str
+) -> Option<&'a crate::proto::proximadb_v1::SqlValue> {
+    metadata.get(key)
 }
 
 #[cfg(test)]

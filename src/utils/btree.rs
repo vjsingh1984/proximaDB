@@ -272,7 +272,7 @@ impl LeafNode {
                 }
             }
             
-            result.push((key.clone(), value.clone()));
+            result.push((item.clone(), item.clone()));
         }
         
         result
@@ -688,7 +688,7 @@ impl BPlusTree {
                 current_leaf = LeafNode::new();
                 self.stats.leaf_nodes += 1;
             }
-            current_leaf.entries.push((key.clone(), value.clone()));
+            current_leaf.entries.push((item.clone(), item.clone()));
             self.stats.entries += 1;
         }
         
@@ -721,7 +721,7 @@ impl BPlusTree {
                     // Get the first key of this node as the separator
                     if let Ok(node_guard) = node_ref.read() {
                         if let Some(first_key) = node_guard.first_key() {
-                            current_internal.keys.push(first_key.clone());
+                            current_internal.keys.push(first_item.clone());
                         }
                     }
                     current_internal.children.push(node_ref);

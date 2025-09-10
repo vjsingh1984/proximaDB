@@ -237,7 +237,7 @@ where
 
         for key in keys {
             let value = self.data.get(key).map(|entry| entry.value().clone());
-            results.push((key.clone(), value));
+            results.push((item.0.clone(), value));
         }
 
         Ok(results)

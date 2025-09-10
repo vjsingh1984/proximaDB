@@ -564,7 +564,7 @@ impl QueryPlanner {
             PlanStep {
                 step_type: PlanStepType::IndexSeek {
                     index_name: format!("property_index_{}", property_name),
-                    key_value: property_value.clone(),
+                    key_value: property_item.1.clone(),
                 },
                 parameters: HashMap::new(),
                 cost: CostEstimate::new(
@@ -582,7 +582,7 @@ impl QueryPlanner {
                     property_filters: vec![PropertyFilter {
                         property_name: property_name.to_string(),
                         operator: FilterOperator::Equal,
-                        value: property_value.clone(),
+                        value: property_item.1.clone(),
                     }],
                 },
                 parameters: HashMap::new(),

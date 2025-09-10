@@ -4,7 +4,7 @@
 :imagesdir: .
 
 [.text-center]
-image::proximadb_cover.svg[ProximaDB Unified Platform, width=100%, align="center"]
+image::docs/assets/proximadb_cover.svg[ProximaDB Unified Platform, width=100%, align="center"]
 
 [.text-center]
 image::docs/assets/logos/proximadb-logo.svg[ProximaDB Logo, 600, align="center"]

@@ -221,12 +221,12 @@ impl MetadataIndex {
             if !record.metadata.is_empty() {
                 for item in &record.metadata {
                     // Only index filterable columns
-                    if !self.filterable_columns.contains(&item.key) {
+                    if !self.filterable_columns.contains(&key) {
                         continue;
                     }
 
                     // Convert MetadataItem value to serde_json::Value
-                    let json_value = match &item.value {
+                    let json_value = match &value {
                         Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
@@ -240,18 +240,18 @@ impl MetadataIndex {
                     };
 
                     // Get or create column index
-                    let new_index = if !self.column_indexes.contains_key(&item.key) {
+                    let new_index = if !self.column_indexes.contains_key(&key) {
                         Some(self.create_column_index(&json_value))
                     } else {
                         None
                     };
                     
                     if let Some(idx) = new_index {
-                        self.column_indexes.insert(item.key.clone(), idx);
+                        self.column_indexes.insert(item.0.clone(), idx);
                     }
                     
                     // Update index with this value
-                    if let Some(column_index) = self.column_indexes.get_mut(&item.key) {
+                    if let Some(column_index) = self.column_indexes.get_mut(&key) {
                         Self::update_column_index_static(column_index, &json_value, block_id)?;
                     }
                 }
@@ -301,7 +301,7 @@ impl MetadataIndex {
                 value_to_blocks,
                 cardinality,
             } => {
-                let bitset = value_to_blocks.entry(value.clone()).or_insert_with(|| {
+                let bitset = value_to_blocks.entry(item.1.clone()).or_insert_with(|| {
                     *cardinality += 1;
                     BitSet::new(10000) // Assume max 10k blocks
                 });
@@ -317,7 +317,7 @@ impl MetadataIndex {
                     *min = min.min(num);
                     *max = max.max(num);
 
-                    let ordered = OrderedValue::from(value.clone());
+                    let ordered = OrderedValue::from(item.1.clone());
                     let bitset = tree.entry(ordered).or_insert_with(|| BitSet::new(10000));
                     bitset.set(block_id);
 
@@ -414,7 +414,7 @@ impl MetadataIndex {
                     .cloned()
                     .unwrap_or_else(|| BitSet::new(self.table_stats.total_blocks as usize))),
                 ColumnIndex::BTree { tree, .. } => {
-                    let ordered = OrderedValue::from(value.clone());
+                    let ordered = OrderedValue::from(item.1.clone());
                     Ok(tree
                         .get(&ordered)
                         .cloned()

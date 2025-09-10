@@ -1104,7 +1104,7 @@ impl UnifiedHandlers {
                 map.iter()
                     .map(|(key, value)| {
                         let type_name = self.infer_json_type(value);
-                        (key.clone(), type_name)
+                        (item.0.clone(), type_name)
                     })
                     .collect()
             } else {

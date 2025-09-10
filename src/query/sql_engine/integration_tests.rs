@@ -282,7 +282,7 @@ use tracing::{debug, error, info};
                             let result_data = format!("result_{}_{}", thread_id, query_id).into_bytes();
                             
                             // Cache the result
-                            cache_query_result(key.clone(), result_data.clone(), 
+                            cache_query_result(item.0.clone(), result_data.clone(), 
                                 format!("SELECT * FROM test_{}", query_id));
                             
                             // Retrieve it

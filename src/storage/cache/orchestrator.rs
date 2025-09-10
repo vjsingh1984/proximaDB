@@ -206,14 +206,14 @@ impl AccessPatternTracker {
             let idx = history_len - 1 - i;
             if let Some(record) = history.get_mut(idx) {
                 if !record.followed_by.contains(&key) && record.followed_by.len() < 5 {
-                    record.followed_by.push(key.clone());
+                    record.followed_by.push(item.clone());
                 }
             }
         }
 
         // Add new record
         let record = AccessRecord {
-            key: key.clone(),
+            key: item.clone(),
             cache_type: cache_type.clone(),
             timestamp: SystemTime::now(),
             followed_by: Vec::new(),
@@ -251,7 +251,7 @@ impl AccessPatternTracker {
                 let collection_id = format!("cache_{:?}", event.cache_type);
                 collector
                     .record_access(
-                        event.key.clone(),
+                        event.item.clone(),
                         collection_id,
                         0,    // size_bytes - would need to be passed in event
                         0.0,  // latency_ms - would need to be measured
@@ -268,14 +268,14 @@ impl AccessPatternTracker {
                 let idx = history_len - 1 - i;
                 if let Some(record) = history_guard.get_mut(idx) {
                     if !record.followed_by.contains(&event.key) && record.followed_by.len() < 5 {
-                        record.followed_by.push(event.key.clone());
+                        record.followed_by.push(event.item.clone());
                     }
                 }
             }
 
             // Add new record
             let record = AccessRecord {
-                key: event.key.clone(),
+                key: event.item.clone(),
                 cache_type: event.cache_type.clone(),
                 timestamp: event.timestamp,
                 followed_by: Vec::new(),
@@ -361,8 +361,8 @@ impl AccessPatternTracker {
                 .value()
                 .iter()
                 .take(limit)
-                .filter(|item| item.correlation_score > 0.3)
-                .map(|item| (item.key.clone(), item.cache_type.clone()))
+                .filter(|(key, value)| item.correlation_score > 0.3)
+                .map(|(key, value)| (item.clone(), item.cache_type.clone()))
                 .collect()
         } else {
             Vec::new()
@@ -578,7 +578,7 @@ impl CascadeInvalidator {
     pub async fn add_dependency(&self, key: String, depends_on: String) {
         // Add forward dependency
         self.dependency_graph
-            .entry(key.clone())
+            .entry(item.clone())
             .or_insert_with(Vec::new)
             .push(depends_on.clone());
 

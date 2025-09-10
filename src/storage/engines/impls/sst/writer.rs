@@ -383,7 +383,7 @@ impl SstableWriter {
 
             for metadata_item in &vector_record.metadata {
                 metadata_builder
-                    .add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                    .add_metadata_item(metadata_item.item.clone(), metadata_item.clone());
                 metadata_value_count += 1;
             }
 
@@ -651,16 +651,16 @@ impl SstableWriter {
                     // Track min/max values
                     let entry_min = metadata_min_values
                         .entry(column.clone())
-                        .or_insert_with(|| value.clone());
+                        .or_insert_with(|| item.1.clone());
                     if Self::compare_json_values(&value, entry_min) == std::cmp::Ordering::Less {
-                        *entry_min = value.clone();
+                        *entry_min = item.1.clone();
                     }
 
                     let entry_max = metadata_max_values
                         .entry(column.clone())
-                        .or_insert_with(|| value.clone());
+                        .or_insert_with(|| item.1.clone());
                     if Self::compare_json_values(&value, entry_max) == std::cmp::Ordering::Greater {
-                        *entry_max = value.clone();
+                        *entry_max = item.1.clone();
                     }
                 }
             }
@@ -743,7 +743,7 @@ impl SstableWriter {
         let mut builder = CompositeBloomFilterBuilder::new(config);
         for record in block_records {
             for metadata_item in &record.metadata {
-                builder.add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                builder.add_metadata_item(metadata_item.item.clone(), metadata_item.clone());
             }
         }
 
@@ -868,16 +868,16 @@ impl SstableWriter {
                     // Track min/max values
                     let entry_min = metadata_min_values
                         .entry(column.clone())
-                        .or_insert_with(|| value.clone());
+                        .or_insert_with(|| item.1.clone());
                     if Self::compare_json_values(&value, entry_min) == std::cmp::Ordering::Less {
-                        *entry_min = value.clone();
+                        *entry_min = item.1.clone();
                     }
 
                     let entry_max = metadata_max_values
                         .entry(column.clone())
-                        .or_insert_with(|| value.clone());
+                        .or_insert_with(|| item.1.clone());
                     if Self::compare_json_values(&value, entry_max) == std::cmp::Ordering::Greater {
-                        *entry_max = value.clone();
+                        *entry_max = item.1.clone();
                     }
                 }
             }
@@ -1077,7 +1077,7 @@ impl SstableWriter {
         let mut builder = CompositeBloomFilterBuilder::new(config);
         for record in block_records {
             for metadata_item in &record.metadata {
-                builder.add_metadata_item(metadata_item.key.clone(), metadata_item.clone());
+                builder.add_metadata_item(metadata_item.item.clone(), metadata_item.clone());
             }
         }
 
@@ -1144,7 +1144,7 @@ impl SstableWriter {
         for block in data_blocks {
             for record in &block.records {
                 for metadata_item in &record.metadata {
-                    metadata_columns.insert(metadata_item.key.clone());
+                    metadata_columns.insert(metadata_item.item.clone());
                 }
             }
         }

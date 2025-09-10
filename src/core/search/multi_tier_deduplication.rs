@@ -208,10 +208,10 @@ impl MultiTierDeduplicator {
                 // Apply each filter
                 let metadata = &vector_record.metadata;
                 for (key, expected_value) in filters {
-                    match metadata.iter().find(|item| &item.key == key) {
+                    match metadata.iter().find(|item| &key == key) {
                         Some(item) => {
                             // Convert metadata value to JSON for comparison
-                            let actual_json = match &item.value {
+                            let actual_json = match &value {
                                 Some(
                                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
                                 ) => serde_json::Value::String(s.clone()),
