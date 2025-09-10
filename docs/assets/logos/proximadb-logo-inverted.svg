@@ -9,6 +9,9 @@
     </style>
   </defs>
 
+  <!-- Dark background for inverted variant -->
+  <rect width="320" height="120" fill="#0f172a"/>
+
   <g transform="translate(60,60)">
     <circle cx="0" cy="0" r="34" class="ring"/>
     <!-- Q1 cloud -->
