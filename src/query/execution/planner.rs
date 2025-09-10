@@ -141,11 +141,21 @@ impl ExecutionPlanner {
 
         match strategy {
             ExecutionStrategy::VectorOnly => {
-                // Generate vector search with HashMap metadata filtering
-                if let Some(table) = select.from.first() {
+                // Prefer SKS SIMILAR() when present; otherwise fallback to generic extraction
+                if let Some(sim) = self.find_sks_similar(select) {
+                    if let Some(table) = select.from.first() {
+                        let collection_id = table.name.as_ref().ok_or_else(|| anyhow!("Missing collection name"))?;
+                        operations.push(ExecutionOperation::VectorSearch {
+                            collection_id: collection_id.clone(),
+                            query_vector: self.try_parse_query_vector(&sim.query),
+                            filters: self.convert_where_to_filter(&select.selection)?,
+                            top_k: select.limit.unwrap_or(100) as usize,
+                            distance_metric: sim.metric.unwrap_or_else(|| "cosine".to_string()),
+                        });
+                    }
+                } else if let Some(table) = select.from.first() {
                     let collection_id = table.name.as_ref()
                         .ok_or_else(|| anyhow!("Missing collection name"))?;
-
                     operations.push(ExecutionOperation::VectorSearch {
                         collection_id: collection_id.clone(),
                         query_vector: self.extract_query_vector(select)?,
@@ -157,18 +167,48 @@ impl ExecutionPlanner {
             },
             
             ExecutionStrategy::GraphOnly => {
-                // Generate graph traversal operations
-                operations.push(ExecutionOperation::GraphTraversal {
-                    start_nodes: self.extract_start_nodes(select)?,
-                    edge_types: self.extract_edge_types(select)?,
-                    max_depth: self.extract_max_depth(select).unwrap_or(3),
-                    filters: self.convert_where_to_filter(&select.selection)?,
-                });
+                // Prefer SKS FOLLOW() when present; otherwise fallback to generic extraction
+                if let Some(fol) = self.find_sks_follow(select) {
+                    operations.push(ExecutionOperation::GraphTraversal {
+                        start_nodes: self.expr_to_start_nodes(&fol.start),
+                        edge_types: vec![fol.edge],
+                        max_depth: fol.max_depth,
+                        filters: self.convert_where_to_filter(&select.selection)?,
+                    });
+                } else {
+                    operations.push(ExecutionOperation::GraphTraversal {
+                        start_nodes: self.extract_start_nodes(select)?,
+                        edge_types: self.extract_edge_types(select)?,
+                        max_depth: self.extract_max_depth(select).unwrap_or(3),
+                        filters: self.convert_where_to_filter(&select.selection)?,
+                    });
+                }
             },
             
             ExecutionStrategy::Hybrid => {
                 // Generate both vector and graph operations with fusion
-                // TODO: Implement hybrid operation generation
+                if let Some(table) = select.from.first() {
+                    let collection_id = table.name.as_ref().ok_or_else(|| anyhow!("Missing collection name"))?;
+                    // Vector leg
+                    if let Some(sim) = self.find_sks_similar(select) {
+                        operations.push(ExecutionOperation::VectorSearch {
+                            collection_id: collection_id.clone(),
+                            query_vector: self.try_parse_query_vector(&sim.query),
+                            filters: self.convert_where_to_filter(&select.selection)?,
+                            top_k: select.limit.unwrap_or(100) as usize,
+                            distance_metric: sim.metric.unwrap_or_else(|| "cosine".to_string()),
+                        });
+                    }
+                    // Graph leg
+                    if let Some(fol) = self.find_sks_follow(select) {
+                        operations.push(ExecutionOperation::GraphTraversal {
+                            start_nodes: self.expr_to_start_nodes(&fol.start),
+                            edge_types: vec![fol.edge],
+                            max_depth: fol.max_depth,
+                            filters: self.convert_where_to_filter(&select.selection)?,
+                        });
+                    }
+                }
                 operations.push(ExecutionOperation::Fusion {
                     strategy: FusionStrategy::ReciprocalRankFusion { k: 60.0 },
                     weights: vec![0.6, 0.4], // Vector, Graph weights
@@ -196,6 +236,60 @@ impl ExecutionPlanner {
             self.expr_to_filter_expression(expr)
         } else {
             Ok(None)
+        }
+    }
+
+    /// Find first SKS SIMILAR occurrence in selection or order_by
+    fn find_sks_similar(&self, select: &Select) -> Option<SksSimilarArgs> {
+        if let Some(expr) = &select.selection {
+            if let Some(sim) = self.walk_find_similar(expr) { return Some(sim); }
+        }
+        for ob in &select.order_by {
+            if let Some(sim) = self.walk_find_similar(&ob.expr) { return Some(sim); }
+        }
+        None
+    }
+
+    fn walk_find_similar(&self, expr: &Expr) -> Option<SksSimilarArgs> {
+        match expr {
+            Expr::SksSimilar { field: _, query, metric, threshold } => Some(SksSimilarArgs { query: query.as_ref().clone(), metric: metric.clone(), threshold: *threshold }),
+            Expr::Unary { expr, .. } => self.walk_find_similar(expr),
+            Expr::Binary { left, right, .. } => self.walk_find_similar(left).or_else(|| self.walk_find_similar(right)),
+            Expr::AggCall { args, .. } | Expr::FuncCall { args, .. } => args.iter().find_map(|e| self.walk_find_similar(e)),
+            _ => None,
+        }
+    }
+
+    /// Find first SKS FOLLOW occurrence in selection
+    fn find_sks_follow(&self, select: &Select) -> Option<SksFollowArgs> {
+        if let Some(expr) = &select.selection {
+            return self.walk_find_follow(expr);
+        }
+        None
+    }
+
+    fn walk_find_follow(&self, expr: &Expr) -> Option<SksFollowArgs> {
+        match expr {
+            Expr::SksFollow { start, edge, max_depth } => Some(SksFollowArgs { start: start.as_ref().clone(), edge: edge.clone(), max_depth: *max_depth }),
+            Expr::Unary { expr, .. } => self.walk_find_follow(expr),
+            Expr::Binary { left, right, .. } => self.walk_find_follow(left).or_else(|| self.walk_find_follow(right)),
+            Expr::AggCall { args, .. } | Expr::FuncCall { args, .. } => args.iter().find_map(|e| self.walk_find_follow(e)),
+            _ => None,
+        }
+    }
+
+    /// Try to parse a query vector from an expression (best-effort)
+    fn try_parse_query_vector(&self, _expr: &Expr) -> Option<Vec<f32>> {
+        // TODO: Support VECTOR([...]) literals and bound parameters
+        None
+    }
+
+    /// Convert an expression into start node IDs for FOLLOW
+    fn expr_to_start_nodes(&self, expr: &Expr) -> Vec<String> {
+        match expr {
+            Expr::Literal(crate::query::ast::Literal::String(s)) => vec![s.clone()],
+            Expr::Identifier(s) => vec![s.clone()],
+            _ => vec![],
         }
     }
 
@@ -445,6 +539,21 @@ struct QueryAnalysis {
     has_sks_functions: bool,
     metadata_fields: Vec<String>,
     filter_complexity: f64,
+}
+
+/// Extracted args for SKS functions
+#[derive(Debug, Clone)]
+struct SksSimilarArgs {
+    pub query: Expr,
+    pub metric: Option<String>,
+    pub threshold: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct SksFollowArgs {
+    pub start: Expr,
+    pub edge: String,
+    pub max_depth: u32,
 }
 
 /// Cost model for execution planning optimization
