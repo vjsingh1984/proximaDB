@@ -1,5 +1,5 @@
 = ProximaDB: The Unified Vector + Graph + Knowledge Platform for Enterprise RAG
-:imagesdir: .
+:imagesdir: images
 :toc: macro
 
 toc::[]
