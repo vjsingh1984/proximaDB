@@ -62,9 +62,16 @@
       </g>
     </g>
 
-    <!-- Q4: SKS (bottom-right) as disk outline only -->
-    <g transform="translate(14,14)">
-      <ellipse cx="0" cy="0" rx="7" ry="3" fill="none" stroke="#7c3aed" stroke-width="1.6"/>
+    <!-- Q4: SKS (bottom-right) as knowledge page with accuracy check (outline only) -->
+    <g transform="translate(14,14)" fill="none" stroke="#7c3aed" stroke-width="1.6">
+      <!-- Page outline -->
+      <rect x="-7" y="-9" width="14" height="18" rx="1.8"/>
+      <!-- Folded corner -->
+      <line x1="7" y1="-9" x2="3" y2="-5"/>
+      <line x1="3" y1="-5" x2="7" y2="-5"/>
+      <!-- Accuracy checkmark -->
+      <line x1="-3" y1="2" x2="-1" y2="4"/>
+      <line x1="-1" y1="4" x2="3" y2="0"/>
     </g>
 
     <!-- Center DB cylinder at grid origin (0,0), outline only -->
