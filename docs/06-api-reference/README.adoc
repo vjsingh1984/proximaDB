@@ -8,7 +8,7 @@
 [cols="1,3", frame=none, grid=none]
 |===
 | link:01-sql-api.adoc[SQL API]
-| Execute SQL and EXPLAIN plans over REST; gRPC ExecuteSql planned
+| Execute SQL and EXPLAIN over REST and gRPC (SqlService/ExecuteSql)
 
 | link:03-graph-api.adoc[Graph API]
 | Native graph database CRUD, traversal, shortest path, streaming

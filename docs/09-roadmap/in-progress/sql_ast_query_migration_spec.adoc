@@ -17,10 +17,10 @@
  - Optimizer: `src/query/unified_query_optimizer.rs` provides cost modeling, filter/search planning, and combined steps.
  - REST: `src/network/rest/v1/handlers.rs` exposes JSON vector search endpoints; a prior `handlers.rs.backup2` shows an `/api/v1/sql/execute` endpoint pattern.
 
-Limitations:
+Limitations (updated):
  - Multiple syntaxes (JSON + bespoke SQL) increase client and server complexity.
- - Missing standard SQL grammar coverage; no formal parameter binding; ad hoc SKS parsing.
- - REST endpoints not aligned to SQL-first flow; gRPC lacks an ExecuteSql RPC.
+ - Missing standard SQL grammar coverage; no formal parameter binding; ad hoc SKS parsing in places.
+ - REST aligned with SQL-first flow; gRPC ExecuteSql is implemented (SqlService). Streaming still pending.
 
 == Implementation Status (Reviewed: 2025-09-10)
 
