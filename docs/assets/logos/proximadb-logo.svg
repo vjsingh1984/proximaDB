@@ -102,7 +102,8 @@
   <text x="140" y="42" font-family="Arial, sans-serif" font-size="26" font-weight="bold" fill="url(#textGradient)">
     Proxima
   </text>
-  <text x="230" y="42" font-family="Arial, sans-serif" font-size="26" font-weight="300" fill="url(#textGradient)">
+  <!-- Shifted right to avoid overlap with 'Proxima' -->
+  <text x="252" y="42" font-family="Arial, sans-serif" font-size="26" font-weight="300" fill="url(#textGradient)">
     DB
   </text>
   
@@ -112,8 +113,9 @@
   </text>
   
   <!-- Core Capabilities -->
+  <!-- Updated to reflect current capabilities -->
   <text x="140" y="75" font-family="Arial, sans-serif" font-size="8.5" fill="#94a3b8">
-    Vector • Graph • SKS • Multicloud Serverless
+    Vector • Graph • SKS • SQL
   </text>
   
   <!-- Performance and cloud indicators -->
@@ -123,7 +125,8 @@
   </g>
 
   <!-- Multicloud provider icons -->
-  <g transform="translate(260, 85)" opacity="0.7">
+  <!-- Moved down to avoid overlapping with 'Zero Infrastructure' text -->
+  <g transform="translate(260, 102)" opacity="0.7">
     <!-- AWS icon -->
     <rect x="0" y="0" width="8" height="6" rx="1" fill="#ff9900"/>
     <!-- Azure icon -->  

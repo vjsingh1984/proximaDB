@@ -74,7 +74,8 @@
   <text x="140" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="url(#textGradient)">
     Proxima
   </text>
-  <text x="240" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="300" fill="url(#textGradient)">
+  <!-- Shifted right to avoid overlap with 'Proxima' -->
+  <text x="252" y="45" font-family="Arial, sans-serif" font-size="28" font-weight="300" fill="url(#textGradient)">
     DB
   </text>
   
@@ -85,7 +86,7 @@
   
   <!-- Capability indicators -->
   <text x="140" y="80" font-family="Arial, sans-serif" font-size="9" fill="#94a3b8">
-    Vector • Graph • SKS • Serverless • Multimodal AI
+    Vector • Graph • SKS • SQL
   </text>
 
   <!-- Speed indicator -->
