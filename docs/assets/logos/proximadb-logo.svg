@@ -68,6 +68,13 @@
       <rect x="-6" y="-3" width="12" height="8"/>
       <ellipse cx="0" cy="5" rx="6" ry="2.2"/>
     </g>
+
+    <!-- Center DB disk at grid origin (0,0) -->
+    <g transform="translate(0,0)" fill="#ffffff" opacity="0.95" stroke="white" stroke-width="0.8">
+      <ellipse cx="0" cy="-2" rx="5" ry="2"/>
+      <rect x="-5" y="-2" width="10" height="6"/>
+      <ellipse cx="0" cy="4" rx="5" ry="2"/>
+    </g>
   </g>
 
   <!-- Company Name -->
