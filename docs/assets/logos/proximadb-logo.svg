@@ -34,46 +34,44 @@
     <!-- Enclosing ring around the grid -->
     <circle cx="0" cy="0" r="34" fill="none" stroke="url(#logoGradient)" stroke-width="3" filter="url(#logoGlow)"/>
 
-    <!-- Q1: Cloud (top-left) -->
+    <!-- Q1: Cloud (top-left) outline only -->
     <g transform="translate(-14,-14)">
       <path d="M -8,2 Q -8,-4 -4,-4 Q -2,-6 2,-4 Q 6,-6 8,-2 Q 10,0 8,2 Q 6,4 2,4 L -6,4 Q -8,4 -8,2 Z"
-            fill="url(#cloudGradient)" stroke="white" stroke-width="0.6" opacity="0.95"/>
+            fill="none" stroke="#0ea5e9" stroke-width="1.6" opacity="1"/>
     </g>
 
-    <!-- Q2: Graph (top-right) -->
+    <!-- Q2: Graph (top-right) outline only -->
     <g transform="translate(14,-14)">
-      <g fill="#ffffff" opacity="0.95">
-        <circle cx="-6" cy="-4" r="2.2"/>
-        <circle cx="6" cy="-4" r="2.2"/>
-        <circle cx="0" cy="6" r="2.2"/>
-      </g>
-      <g stroke="#ffffff" stroke-width="1.2" opacity="0.85">
+      <g fill="none" stroke="#ef4444" stroke-width="1.6" opacity="1">
+        <circle cx="-6" cy="-4" r="2.4"/>
+        <circle cx="6" cy="-4" r="2.4"/>
+        <circle cx="0" cy="6" r="2.4"/>
         <line x1="-6" y1="-4" x2="6" y2="-4"/>
         <line x1="-6" y1="-4" x2="0" y2="6"/>
         <line x1="6" y1="-4" x2="0" y2="6"/>
       </g>
     </g>
 
-    <!-- Q3: Vector (bottom-left) -->
-    <g transform="translate(-14,14)" opacity="0.95">
-      <g stroke="#ffffff" stroke-width="1.6">
+    <!-- Q3: Vector (bottom-left) outline only -->
+    <g transform="translate(-14,14)">
+      <g stroke="#059669" stroke-width="1.8" fill="none">
         <line x1="-6" y1="6" x2="6" y2="-6" stroke-linecap="round"/>
+        <!-- Arrow head as outline -->
+        <line x1="6" y1="-6" x2="2" y2="-6"/>
+        <line x1="6" y1="-6" x2="6" y2="-2"/>
       </g>
-      <polygon points="6,-6 1,-6 6,-1" fill="#ffffff"/>
     </g>
 
-    <!-- Q4: SKS (bottom-right, cylinder) -->
-    <g transform="translate(14,14)" fill="white" opacity="0.9" stroke="white" stroke-width="0.8">
+    <!-- Q4: SKS (bottom-right) as disk outline only -->
+    <g transform="translate(14,14)">
+      <ellipse cx="0" cy="0" rx="7" ry="3" fill="none" stroke="#7c3aed" stroke-width="1.6"/>
+    </g>
+
+    <!-- Center DB cylinder at grid origin (0,0), outline only -->
+    <g transform="translate(0,0)" fill="none" stroke="#1e40af" stroke-width="1.6">
       <ellipse cx="0" cy="-3" rx="6" ry="2.2"/>
       <rect x="-6" y="-3" width="12" height="8"/>
       <ellipse cx="0" cy="5" rx="6" ry="2.2"/>
-    </g>
-
-    <!-- Center DB disk at grid origin (0,0) -->
-    <g transform="translate(0,0)" fill="#ffffff" opacity="0.95" stroke="white" stroke-width="0.8">
-      <ellipse cx="0" cy="-2" rx="5" ry="2"/>
-      <rect x="-5" y="-2" width="10" height="6"/>
-      <ellipse cx="0" cy="4" rx="5" ry="2"/>
     </g>
   </g>
 
