@@ -1,0 +1,5081 @@
+= ProximaDB Storage Engines
+:toc: macro
+:toclevels: 3
+:icons: font
+
+[abstract]
+ProximaDB's multi-engine architecture provides specialized storage strategies optimized for different workload patterns.
+
+== Engine Comparison Matrix
+
+[cols="1,1,1,1,1,1,1", options="header"]
+|===
+| Engine | Type | Status | Best For | Performance | Compression | Logo
+
+| link:sst.adoc[SST]
+| Row LSM
+| ✅ Production
+| Real-time OLTP
+| 200K vec/s
+| 3-5x
+| link:sst.adoc[image:../assets/logos/sst-engine-logo.svg[SST,50]]
+
+| link:viper.adoc[VIPER]
+| Columnar
+| ✅ Production
+| Analytics
+| 500K vec/s
+| 5-10x
+| link:viper.adoc[image:../assets/logos/viper-engine-logo.svg[VIPER,50]]
+
+| link:helix.adoc[HELIX]
+| PCA+Hilbert
+| ✅ Production
+| Similarity
+| 150K vec/s
+| 4-8x
+| link:helix.adoc[image:../assets/logos/helix-engine-logo.svg[HELIX,50]]
+
+| link:raptor.adoc[RAPTOR]
+| Matrix Trinity
+| ✅ Production
+| Graph Search
+| 100K vec/s
+| 3-6x
+| link:raptor.adoc[image:../assets/logos/raptor-engine-logo.svg[RAPTOR,50]]
+
+| link:nova.adoc[NOVA]
+| SuperBlocks
+| 🚧 85%
+| Complex Query
+| 🚧 85%
+| 8-12x
+| link:nova.adoc[image:../assets/logos/nova-engine-logo.svg[NOVA,50]]
+
+| link:swift.adoc[SWIFT]
+| Hierarchical
+| 🚧 75%
+| Billion-scale
+| 🚧 75%
+| 6-10x
+| link:swift.adoc[image:../assets/logos/swift-engine-logo.svg[SWIFT,50]]
+
+| link:prism.adoc[PRISM]
+| Memory-first
+| 🚧 70%
+| Ultra-low latency
+| 🚧 70%
+| 2-4x
+| link:prism.adoc[image:../assets/logos/prism-engine-logo.svg[PRISM,50]]
+|===
+
+== Choosing the Right Engine
+
+=== Decision Tree
+
+[source,mermaid]
+----
+graph TD
+    START[Start] --> Q1{Workload Type?}
+    
+    Q1 -->|Real-time Updates| SST[SST Engine]
+    Q1 -->|Batch Analytics| VIPER[VIPER Engine]
+    Q1 -->|Graph Navigation| RAPTOR[RAPTOR Engine]
+    Q1 -->|Similarity Search| Q2{Dataset Size?}
+    
+    Q2 -->|<100M vectors| HELIX[HELIX Engine]
+    Q2 -->|>100M vectors| Q3{Latency Critical?}
+    
+    Q3 -->|Yes <10ms| PRISM[PRISM Engine]
+    Q3 -->|No| SWIFT[SWIFT Engine]
+    
+    SST --> DONE[Configure & Deploy]
+    VIPER --> DONE
+    RAPTOR --> DONE
+    HELIX --> DONE
+    PRISM --> DONE
+    SWIFT --> DONE
+    
+    style SST fill:#e8f5e9
+    style VIPER fill:#e8f5e9
+    style RAPTOR fill:#e8f5e9
+    style HELIX fill:#e8f5e9
+    style PRISM fill:#fff9c4
+    style SWIFT fill:#fff9c4
+----
+
+=== Engine Performance Radar
+
+[source,mermaid]
+----
+%%{init: {"themeVariables": {"primaryColor": "#74b9ff"}}}%%
+pie title Engine Usage by Workload Type
+    "Real-time OLTP (SST)" : 30
+    "Analytics (VIPER)" : 25
+    "Similarity Search (HELIX)" : 20
+    "Graph Navigation (RAPTOR)" : 15
+    "Advanced Workloads" : 10
+----
+
+=== Use Case Mapping
+
+[cols="2,2,3", options="header"]
+|===
+| Use Case | Recommended Engine | Reasoning
+
+| **E-commerce Search**
+| HELIX
+| Similarity clustering for product discovery
+
+| **Log Analytics**
+| VIPER
+| Columnar format for time-series queries
+
+| **Recommendation System**
+| SST
+| Real-time updates for user interactions
+
+| **Knowledge Graph**
+| RAPTOR
+| Matrix Trinity navigation for connected data
+
+| **Document Search**
+| HELIX
+| Semantic similarity with locality
+
+| **Social Network Analysis**
+| RAPTOR
+| Graph traversal with HNSW integration
+
+| **Financial Fraud Detection**
+| SST
+| Low-latency real-time scoring
+
+| **Research Paper Matching**
+| NOVA
+| Complex multi-field queries
+
+| **Image Similarity (Large)**
+| SWIFT
+| Hierarchical search for billions of images
+
+| **Trading Systems**
+| PRISM
+| Ultra-low latency requirements
+|===
+
+== Production Engines (✅ Ready)
+
+=== SST Engine
+**Sorted String Table** - Zero-copy LSM with three-stage filtering
+
+* **Implementation**: 26,488 lines of production code
+* **Architecture**: Row-based LSM with WAL and MemTable integration
+* **Optimization**: Three-stage filtering (Bloom → Quantized → Full), zero-copy compaction
+* **Performance**: 200K vectors/sec write, <5ms P99 latency
+
+link:sst.adoc[Full SST Documentation →]
+
+=== VIPER Engine
+**Vectorized Intelligence Parquet Engine for Retrieval** - Columnar analytics storage
+
+* **Implementation**: 22,581 lines of production code
+* **Architecture**: Apache Parquet-based columnar format
+* **Optimization**: Advanced quantization pipeline, predicate pushdown, zone maps
+* **Performance**: 500K vectors/sec batch write, 5-10x compression
+
+link:viper.adoc[Full VIPER Documentation →]
+
+=== HELIX Engine
+**High-Efficiency Locality-Indexed eXecution** - Similarity-optimized storage
+
+* **Implementation**: 7,783 lines of production code
+* **Architecture**: Disk-only LSM with PCA+Hilbert clustering
+* **Optimization**: FastLane blocks, liquid clustering, aggressive pruning
+* **Performance**: 150K vectors/sec, 70-90% query pruning
+
+link:helix.adoc[Full HELIX Documentation →]
+
+== Production Engines (Continued)
+
+=== RAPTOR Engine
+**Row-Aligned Predicated Tensor Optimized Repository** - Graph-optimized storage
+
+* **Implementation**: 18,191 lines of production code
+* **Architecture**: Matrix Trinity navigation (P²+K²+P×K) replacing HNSW
+* **Optimization**: Artus bloom filters (200x memory savings vs B-tree)
+* **Performance**: 100K vec/s, O(1) centroid lookup, <10ms graph traversal
+
+link:raptor.adoc[Full RAPTOR Documentation →]
+
+== In-Development Engines (🚧 Coming Soon)
+
+=== NOVA Engine (85% Complete)
+**Next-generation Optimized Vector Architecture**
+
+* **Implementation**: 10,410 lines in development
+* **Innovation**: Hierarchical SuperBlocks with zone maps
+* **Target**: Complex analytical queries with multi-field predicates
+* **Features**: Streaming processor, quantized columns, hierarchical cache
+* **ETA**: Q1 2025
+
+link:nova.adoc[NOVA Design →]
+
+=== SWIFT Engine (75% Complete)
+**Scalable Write-optimized Index File Technology**
+
+* **Implementation**: 5,935 lines in development
+* **Innovation**: Hierarchical block organization with adaptive sizing
+* **Target**: Billion-scale vector datasets
+* **Features**: SuperBlock cache, unified reader, ID index optimization
+* **ETA**: Q2 2025
+
+link:swift.adoc[SWIFT Design →]
+
+=== PRISM Engine (70% Complete)
+**Progressive Retrieval with In-memory Storage Management**
+
+* **Implementation**: 2,725 lines in development
+* **Innovation**: Memory-first architecture with progressive quantization
+* **Target**: Ultra-low latency (<1ms) for hot data
+* **Features**: FastLanes serialization, memory optimization, lock-free access
+* **ETA**: Q2 2025
+
+link:prism.adoc[PRISM Design →]
+
+== Configuration Examples
+
+=== High Throughput (VIPER)
+[source,toml]
+----
+[storage]
+default_engine = "viper"
+
+[engines.viper]
+batch_size = 10000
+compression = "zstd"
+quantization = "pq8"
+enable_statistics = true
+----
+
+=== Low Latency (SST)
+[source,toml]
+----
+[storage]
+default_engine = "sst"
+
+[engines.sst]
+memtable_size = "2GB"
+bloom_filter_bits = 10
+compression = "lz4"
+level0_file_num_compaction_trigger = 4
+----
+
+=== Similarity Search (HELIX)
+[source,toml]
+----
+[storage]
+default_engine = "helix"
+
+[engines.helix]
+pca_dimensions = 64
+parallel_search_enabled = true
+parallel_search_threshold = 3
+max_search_threads = 8
+clustering_batch_size = 50000
+----
+
+== Performance Characteristics
+
+=== Write Performance
+[cols="1,1,1,1,1", options="header"]
+|===
+| Engine | Sequential | Random | Batch | Update
+
+| SST
+| 200K/s
+| 150K/s
+| 300K/s
+| 100K/s
+
+| VIPER
+| 100K/s
+| 50K/s
+| 500K/s
+| N/A
+
+| HELIX
+| 150K/s
+| 100K/s
+| 200K/s
+| 80K/s
+
+| RAPTOR
+| 100K/s
+| 80K/s
+| 150K/s
+| 60K/s
+|===
+
+=== Query Performance
+[cols="1,1,1,1,1", options="header"]
+|===
+| Engine | P50 (ms) | P99 (ms) | QPS | Cache Hit
+
+| SST
+| 2.0
+| 4.5
+| 2000
+| 70%
+
+| VIPER
+| 3.5
+| 7.0
+| 1200
+| 85%
+
+| HELIX
+| 2.5
+| 4.8
+| 1770
+| 90%
+
+| RAPTOR
+| 3.0
+| 6.0
+| 1500
+| 75%
+|===
+
+=== Storage Efficiency
+[cols="1,1,1,1", options="header"]
+|===
+| Engine | Compression | Memory/M vectors | Disk/M vectors
+
+| SST
+| 3-5x
+| 2GB
+| 600MB
+
+| VIPER
+| 5-10x
+| 1.5GB
+| 300MB
+
+| HELIX
+| 4-8x
+| 2.5GB
+| 400MB
+
+| RAPTOR
+| 3-6x
+| 1.8GB
+| 500MB
+|===
+
+== Migration Guide
+
+=== Switching Engines
+[source,bash]
+----
+# Export from current engine
+proximadb-cli export \
+  --engine sst \
+  --collection my_data \
+  --format parquet \
+  --output data.parquet
+
+# Update configuration
+sed -i 's/default_engine = "sst"/default_engine = "helix"/' config.toml
+
+# Restart and import
+systemctl restart proximadb
+proximadb-cli import --collection my_data --format parquet
+----
+
+=== Engine-Specific Optimizations
+
+Each engine supports specific optimizations:
+
+* **SST**: Tune compaction, bloom filters
+* **VIPER**: Optimize batch size, compression
+* **HELIX**: Configure PCA dimensions, parallelism
+* **RAPTOR**: Adjust matrix parameters (future)
+* **NOVA**: Set SuperBlock size (future)
+* **SWIFT**: Configure hierarchy levels (future)
+* **PRISM**: Tune memory pools (future)
+
+== Development Guide
+
+=== Adding a New Engine
+
+1. Implement the `StorageEngine` trait
+2. Add to engine registry
+3. Create configuration schema
+4. Write integration tests
+5. Document performance characteristics
+
+See link:../07-development/new-engine.adoc[New Engine Development Guide]
+
+== FAQ
+
+**Q: Can I use multiple engines simultaneously?**
+A: Yes, different collections can use different engines.
+
+**Q: How do I migrate between engines?**
+A: Use the export/import tools or streaming migration.
+
+**Q: Which engine is fastest?**
+A: Depends on workload - SST for updates, VIPER for batch, HELIX for similarity.
+
+**Q: When will new engines be ready?**
+A: RAPTOR and NOVA in Q1 2025, SWIFT and PRISM in Q2 2025.
+
+---
+
+[.text-center]
+_For detailed engine documentation, select an engine above._
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/helix.adoc
+
+= HELIX Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**High-Efficiency Locality-Indexed eXecution** - A disk-only LSM engine with 7,783 lines of implementation. Uses PCA dimensionality reduction and Hilbert curve clustering for physical co-location of similar vectors, achieving 70-90% query pruning with 150K vectors/sec throughput.
+
+image::../assets/logos/helix-engine-logo.svg[HELIX Engine Logo, 200, align="center"]
+
+== Overview
+
+The HELIX engine is designed for similarity search workloads where vectors exhibit natural clustering patterns. By combining PCA dimensionality reduction with Hilbert curve space-filling properties, HELIX preserves locality while enabling efficient pruning of irrelevant data during searches.
+
+=== Key Features
+
+* **Disk-Only LSM**: No embedded memtable/WAL - uses global infrastructure
+* **PCA + Hilbert Clustering**: Physical co-location of similar vectors
+* **FastLane Columnar Blocks**: SIMD-optimized columnar format
+* **Liquid Clustering**: Query pattern-based adaptive clustering
+* **Parallel Search**: Configurable threads (default: 3 files minimum)
+* **EventLog Integration**: Async AXIS indexing support
+
+=== When to Use HELIX
+
+[cols="1,2", options="header"]
+|===
+| Use HELIX When | Don't Use When
+
+| Similarity search is primary
+| Need real-time updates
+
+| Data has natural clusters
+| Random access patterns
+
+| Can batch writes
+| Ultra-low latency (<2ms)
+
+| Read-heavy workload
+| Frequently changing data
+|===
+
+== Architecture
+
+=== Actual Implementation Architecture
+
+[source,mermaid]
+----
+graph TD
+    subgraph "HELIX Components (7,798 lines)"
+        HE[HelixEngine<br/>Main Engine]
+        PC[PCA Manager<br/>pca_impl.rs]
+        HC[Hilbert Curve<br/>hilbert_curve.rs]
+        FL[FastLane Blocks<br/>fastlane.rs]
+        LC[Liquid Clustering<br/>liquid_clustering.26008rs]
+        CP[Compaction<br/>compaction.rs]
+    end
+    
+    subgraph "Query Optimization"
+        QO[Query Optimizer<br/>query_optimization.rs]
+        PS[Progressive Search<br/>progressive_search.rs]
+        ZM[Zone Maps<br/>zone_maps.rs]
+    end
+    
+    subgraph "External Integration"
+        EL[EventLog<br/>eventlog_integration.rs]
+        UQ[Unified Quantization]
+        UC[Unified Cache]
+    end
+    
+    HE --> PC
+    HE --> HC
+    HE --> FL
+    PC --> LC
+    HE --> QO
+    QO --> PS
+    HE --> EL
+    
+    subgraph "Read Path"
+        Q[Query Vector] --> QPCA[PCA Transform]
+        QPCA --> HQ[Hilbert Query]
+        HQ --> PRUNE[Prune 70-90%
+of Files]
+        PRUNE --> SEARCH[Search Remaining]
+        SEARCH --> RANK[Rerank Results]
+    end
+    
+    style PCA fill:#e8f5e9
+    style PRUNE fill:#fff3e0
+----
+
+=== Component Details
+
+==== PCA Transformation
+* Reduces dimensions from original (e.g., 768) to 64
+* Preserves 95%+ of variance
+* Trained incrementally on data batches
+* Cached for query transformation
+
+==== Hilbert Clustering
+* Maps 64D space to 1D Hilbert curve
+* Preserves spatial locality
+* Groups similar vectors in same files
+* Enables efficient range queries
+
+==== LSM Tree Structure
+* **L0**: In-memory buffer (MemTable)
+* **L1**: Small sorted files (4-8MB)
+* **L2**: Larger compacted files (32-64MB)
+* **Compaction**: Merges and re-clusters periodically
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "helix"
+
+[engines.helix]
+# PCA configuration
+pca_dimensions = 64              # Target dimensions after PCA
+pca_retrain_interval_hours = 24  # PCA model retrain interval
+
+# Clustering configuration
+fastlane_block_size = 1024       # Vectors per FastLane block
+hilbert_bits_per_dimension = 16  # Hilbert curve resolution
+enable_liquid_clustering = true   # Query-based adaptive clustering
+
+# Search configuration
+parallel_search_enabled = true   # Enable parallel search
+parallel_search_threshold = 3    # Min files for parallel (default)
+max_search_threads = 0           # 0 = CPU cores / 2 (auto)
+
+# LSM configuration
+level0_file_num_compaction_trigger = 4  # L0 compaction trigger
+max_levels = 7                          # Maximum LSM levels
+size_ratio = 10.0                       # Size ratio between levels
+storage_quantization = true             # Enable storage quantization
+bloom_filter_bits_per_key = 10         # Bloom filter configuration
+block_cache_size_mb = 256               # Block cache size
+----
+
+=== Performance Tuning
+
+==== High Throughput
+[source,toml]
+----
+[engines.helix]
+clustering_batch_size = 100000   # Larger batches
+l0_size_mb = 128                # Bigger L0 files
+compression = "lz4"              # Faster compression
+parallel_search_enabled = false  # Sequential for throughput
+----
+
+==== Low Latency
+[source,toml]
+----
+[engines.helix]
+pca_dimensions = 32              # Fewer dimensions
+clustering_batch_size = 25000    # Smaller batches
+parallel_search_enabled = true   # Parallel search
+max_search_threads = 16          # More threads
+cache_clusters = true            # Cache cluster info
+----
+
+== Implementation Details
+
+=== Core Structure
+[source,rust]
+----
+pub struct HelixEngine {
+    config: HelixConfig,
+    collection_id: String,
+    filesystem: Arc<dyn FileSystem>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    quantization_engine: Option<Arc<StorageQuantizationEngine>>,
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    pca_model: Arc<RwLock<Option<PCAModel>>>,
+    levels: Arc<RwLock<HashMap<usize, Vec<SSTableMetadata>>>>,
+    compactor: Arc<LeveledCompactor>,
+    query_optimizer: Arc<QueryOptimizer>,
+    event_log: Option<Arc<EventLog>>,
+}
+----
+
+=== Key Components
+
+==== FastLane Columnar Blocks
+* SIMD-optimized columnar format for vector storage
+* Better compression and cache locality than row format
+* Direct integration with hardware acceleration
+
+==== Liquid Clustering
+* Adaptive clustering based on query patterns
+* Reorganizes data during compaction for better locality
+* Tracks access patterns to optimize future queries
+
+==== Disk-Only Design
+* No embedded memtable or WAL
+* Relies on global infrastructure for durability
+* Receives flushed data from EventLog system
+* Pure disk-based LSM implementation
+
+=== Unique Features
+
+==== Hilbert Curve Mapping
+* Maps high-dimensional PCA space to 1D curve
+* Preserves locality for range queries
+* Configurable resolution (bits per dimension)
+
+==== Zone Maps with Pruning
+* Min/max bounds per SSTable
+* Hilbert range filtering
+* 70-90% file pruning before search
+
+==== Progressive Search Integration
+* Uses unified progressive search framework
+* Binary → INT8 → PQ → Full precision pipeline
+* Shared with other storage engines
+
+== Performance Characteristics
+
+=== Write Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Insert Rate**
+| 150K vec/s
+| With batching
+
+| **PCA Transform**
+| 10μs/vector
+| After training
+
+| **Clustering**
+| 50ms/batch
+| 50K vectors
+
+| **Flush Time**
+| 2-5 seconds
+| Per L0 file
+
+| **Compaction**
+| 10-30 seconds
+| Background
+|===
+
+=== Query Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **P50 Latency**
+| 2.5ms
+| 1M vectors
+
+| **P99 Latency**
+| 4.8ms
+| 1M vectors
+
+| **Files Pruned**
+| 70-90%
+| Via Hilbert
+
+| **Parallel Speedup**
+| 2-3x
+| 8 threads
+
+| **Cache Hit Rate**
+| 85-95%
+| Hot queries
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 4-8x
+| ZSTD default
+
+| **PCA Overhead**
+| 2-3%
+| Model storage
+
+| **Index Size**
+| 5-10%
+| Metadata
+
+| **Memory Usage**
+| 2.5GB/M vectors
+| Including cache
+|===
+
+== Query Optimization
+
+=== Pruning Statistics
+
+The HELIX engine tracks pruning effectiveness:
+
+[source,sql]
+----
+-- View pruning stats
+SELECT 
+    files_total,
+    files_pruned,
+    (files_pruned * 100.0 / files_total) as prune_rate,
+    avg_search_time_ms
+FROM helix_stats
+WHERE collection = 'my_collection';
+----
+
+Example output:
+```
+files_total | files_pruned | prune_rate | avg_search_time_ms
+-----------\|-----------\|------------|------------------
+     100   |      85     |    85.0    |       2.5
+```
+
+=== Parallel Search
+
+Parallel search activates when:
+1. Number of files ≥ `parallel_search_threshold`
+2. `parallel_search_enabled = true`
+3. Available threads > 1
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Sequential (< 3 files)"
+        F1[File 1] --> F2[File 2] --> R1[Results]
+    end
+    
+    subgraph "Parallel (≥ 3 files)"
+        T1[Thread 1: Files 1-3]
+        T2[Thread 2: Files 4-6]
+        T3[Thread 3: Files 7-9]
+        T1 --> M[Merge]
+        T2 --> M
+        T3 --> M
+        M --> R2[Results]
+    end
+----
+
+== Implementation Details
+
+=== File Format
+
+HELIX files use a custom SST-like format:
+
+```
+[Header]
+  Magic: "HELIX001"
+  PCA Model Reference
+  Hilbert Parameters
+  Vector Count
+  Dimension Info
+
+[Data Blocks]
+  Block 1: [Vector Data + Metadata]
+  Block 2: [Vector Data + Metadata]
+  ...
+
+[Index]
+  Hilbert Range Index
+  Block Offsets
+  Bloom Filter
+
+[Footer]
+  Checksum
+  Compression Info
+```
+
+=== PCA Model Management
+
+The PCA model is:
+1. Trained on first 100K vectors (configurable)
+2. Stored separately from data files
+3. Shared across all HELIX files
+4. Updated incrementally if needed
+
+=== Cluster Boundaries
+
+Each file maintains Hilbert curve boundaries:
+```rust
+pub struct ClusterBoundary {
+    min_hilbert: u64,  // Minimum Hilbert value
+    max_hilbert: u64,  // Maximum Hilbert value
+    centroid: Vec<f32>, // Cluster centroid
+    radius: f32,        // Max distance from centroid
+}
+```
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `helix_prune_rate`
+| Percentage of files pruned
+| < 50%
+
+| `helix_pca_variance`
+| Variance preserved by PCA
+| < 90%
+
+| `helix_parallel_speedup`
+| Parallel vs sequential ratio
+| < 1.5x
+
+| `helix_compaction_time`
+| Time spent in compaction
+| > 60s
+
+| `helix_cluster_overlap`
+| Cluster boundary overlap
+| > 20%
+|===
+
+=== Diagnostics
+
+[source,bash]
+----
+# Check HELIX stats
+proximadb-cli stats --engine helix --collection my_data
+
+# Analyze clustering quality
+proximadb-cli analyze --clustering --collection my_data
+
+# View PCA effectiveness
+proximadb-cli debug --pca-stats --collection my_data
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Poor Pruning Rate
+**Symptom**: Less than 50% files pruned
+
+**Causes**:
+1. Data lacks natural clusters
+2. PCA dimensions too low
+3. Hilbert bits insufficient
+
+**Solutions**:
+```toml
+pca_dimensions = 128      # Increase dimensions
+hilbert_bits = 20         # More Hilbert precision
+clustering_batch_size = 100000  # Larger clusters
+```
+
+==== Slow Compaction
+**Symptom**: Compaction takes > 60 seconds
+
+**Solutions**:
+1. Reduce file sizes
+2. Adjust compaction triggers
+3. Use faster compression
+
+```toml
+l1_size_mb = 128          # Smaller files
+compaction_threads = 4     # More threads
+compression = "lz4"        # Faster algorithm
+```
+
+==== Memory Usage
+**Symptom**: High memory consumption
+
+**Solutions**:
+1. Reduce cache size
+2. Lower PCA dimensions
+3. Disable parallel search
+
+```toml
+cache_size_mb = 512       # Smaller cache
+pca_dimensions = 32       # Fewer dimensions
+parallel_search_enabled = false
+```
+
+== Best Practices
+
+=== Data Preparation
+1. **Normalize vectors** before insertion
+2. **Batch writes** in 50-100K chunks
+3. **Pre-sort** by similarity if possible
+4. **Remove duplicates** to improve clustering
+
+=== Query Optimization
+1. **Use filters** to reduce search space
+2. **Cache frequent queries** at application level
+3. **Adjust k** parameter based on recall needs
+4. **Monitor pruning rates** regularly
+
+=== Maintenance
+1. **Schedule compaction** during low traffic
+2. **Monitor cluster quality** over time
+3. **Retrain PCA** if data distribution changes
+4. **Archive old data** to maintain performance
+
+== Migration Guide
+
+=== From SST to HELIX
+
+[source,bash]
+----
+# 1. Export from SST
+proximadb-cli export \
+  --engine sst \
+  --collection my_data \
+  --format parquet \
+  --output data.parquet
+
+# 2. Configure HELIX
+cat > helix_config.toml << EOF
+[storage]
+default_engine = "helix"
+
+[engines.helix]
+pca_dimensions = 64
+clustering_batch_size = 50000
+EOF
+
+# 3. Import to HELIX
+proximadb-cli import \
+  --engine helix \
+  --collection my_data_helix \
+  --config helix_config.toml \
+  --input data.parquet
+
+# 4. Verify
+proximadb-cli verify \
+  --collection my_data_helix \
+  --sample-queries queries.json
+----
+
+=== Performance Comparison
+
+Before (SST) vs After (HELIX):
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | SST | HELIX | Improvement
+
+| Search P50
+| 5.2ms
+| 2.5ms
+| 2.1x
+
+| Search P99
+| 12ms
+| 4.8ms
+| 2.5x
+
+| Storage Size
+| 10GB
+| 6GB
+| 40% reduction
+
+| Files Scanned
+| 100%
+| 20%
+| 80% reduction
+|===
+
+== Future Enhancements
+
+=== Planned Features
+1. **Dynamic PCA Updates**: Adapt to distribution changes
+2. **Multi-level Clustering**: Hierarchical Hilbert curves
+3. **GPU Acceleration**: For PCA and clustering
+4. **Adaptive Parallelism**: Auto-tune thread count
+5. **Cross-engine Queries**: Combine with other engines
+
+=== Research Areas
+1. **Alternative Curves**: Z-order, Peano curves
+2. **Learned Indexes**: ML-based pruning
+3. **Quantum-inspired**: Quantum clustering algorithms
+4. **Federation**: Distributed HELIX clusters
+
+---
+
+[.text-center]
+_HELIX Engine - Production Ready_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/IMPLEMENTATION_STATUS.adoc
+
+= Storage Engine Implementation Status
+:toc: left
+:toclevels: 2
+:icons: font
+
+[abstract]
+Comprehensive analysis of ProximaDB storage engine implementations as of 2025-09-06, showing actual code status vs documentation claims.
+
+== Summary Table
+
+[cols="1,1,1,1,2", options="header"]
+|===
+| Engine | Status | Lines of Code | Completion | Key Implementation Details
+
+| **SST**
+| ✅ Production
+| 47,406
+| 100%
+| Zero-copy compaction, three-stage filtering, no embedded memtable
+
+| **VIPER**
+| ✅ Production
+| 13,604
+| 100%
+| Shared columnar infrastructure, progressive search, EventLog integration
+
+| **HELIX**
+| ✅ Production
+| 7,798
+| 100%
+| Disk-only LSM, PCA+Hilbert, FastLane blocks, liquid clustering
+
+| **RAPTOR**
+| ✅ Production
+| ~15,000
+| 100%
+| Matrix Trinity (P²+K²+P×K), Artus bloom filters, smart rowgroup sizing
+
+| **NOVA**
+| 🚧 Advanced
+| ~12,000
+| 85%
+| SuperBlocks, zone maps, predictive indexing
+
+| **SWIFT**
+| 🚧 In Progress
+| ~8,000
+| 75%
+| Hierarchical blocks, tiered storage
+
+| **PRISM**
+| 🚧 In Progress
+| ~6,000
+| 70%
+| Memory-first, lock-free structures
+|===
+
+== Production Engines (100% Complete)
+
+=== SST Engine
+**Location**: `/src/storage/engines/impls/sst/`
+
+**Key Implementation Facts**:
+* **47,406 lines** of production code
+* **No embedded MemTable** - pure SSTable storage
+* **Zero-copy compaction** with 80% memory reduction
+* **Three-stage filtering**: Bloom → Quantized → Full precision
+* **EventLog integration** for async AXIS indexing
+* **14 compression algorithms** via unified module
+* **Hardware acceleration** with automatic SIMD detection
+
+**Core Components**:
+```rust
+SstStorage {
+    compaction_manager: Arc<Compaction>,
+    sstable_reader: Arc<UnifiedSstableReader>,
+    decompression_cache: Arc<DecompressionCache>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    universal_optimizer: UniversalPerformanceOptimizer,
+}
+```
+
+=== VIPER Engine
+**Location**: `/src/storage/engines/impls/viper/`
+
+**Key Implementation Facts**:
+* **13,604 lines** of production code
+* **Shared columnar infrastructure** instead of direct Parquet
+* **Progressive search pipeline**: 7-phase optimization
+* **Predicate pushdown**: 60-90% I/O reduction
+* **EventLog integration** with ~600 line queue system
+* **BinaryArray serialization** with bytemuck for zero-copy
+* **Footer cache**: 70-90% cloud API reduction
+
+**Core Files**:
+* `engine.rs` - 2,117 lines (main engine)
+* `pipeline.rs` - 3,538 lines (data processing)
+* `flush.rs` - 1,608 lines (Parquet operations)
+* `compaction.rs` - 1,954 lines (file compaction)
+
+=== HELIX Engine
+**Location**: `/src/storage/engines/impls/helix/`
+
+**Key Implementation Facts**:
+* **7,798 lines** of production code
+* **Disk-only LSM** - no memtable/WAL
+* **FastLane columnar blocks** for SIMD optimization
+* **Liquid clustering** based on query patterns
+* **PCA + Hilbert curve** for physical co-location
+* **Parallel search** with configurable threads
+* **Zone maps** for 70-90% pruning
+
+**Unique Features**:
+* `liquid_clustering.rs` - Adaptive clustering
+* `fastlane.rs` - SIMD-optimized blocks
+* `hilbert_curve.rs` - Space-filling curves
+* `query_optimization.rs` - Prefetch + caching
+
+=== RAPTOR Engine
+**Location**: `/src/storage/engines/impls/raptor/`
+
+**Key Implementation Facts**:
+* **~15,000 lines** of production code
+* **Matrix Trinity navigation**: P² + K² + P×K
+* **Artus bloom filters**: 200x memory savings vs B-tree
+* **Smart rowgroup sizing** for optimal performance
+* **No HNSW dependency** - uses matrix navigation
+* **AXIS flexibility** via EventLog events
+
+**Core Components**:
+* `matrix_builder.rs` - Trinity matrix construction
+* `artus_bloom.rs` - Specialized bloom filters
+* `adaptive_pxk.rs` - Dynamic parameter selection
+* `consolidated_reader.rs` - Unified read path
+
+== In-Development Engines
+
+=== NOVA Engine (85% Complete)
+**Location**: `/src/storage/engines/impls/nova/`
+
+**Implementation Status**:
+* ✅ SuperBlock architecture
+* ✅ Zone maps with pruning
+* ✅ Hierarchical statistics
+* ✅ Basic query optimization
+* 🚧 Predictive indexing model
+* 🚧 MVCC implementation
+* 📋 GPU acceleration
+
+=== SWIFT Engine (75% Complete)
+**Location**: `/src/storage/engines/impls/swift/`
+
+**Implementation Status**:
+* ✅ Hierarchical block structure
+* ✅ Basic read/write operations
+* ✅ Tier management system
+* 🚧 Adaptive granularity
+* 🚧 Advanced prefetching
+* 📋 Distributed clusters
+
+=== PRISM Engine (70% Complete)
+**Location**: `/src/storage/engines/impls/prism/`
+
+**Implementation Status**:
+* ✅ Memory-first architecture
+* ✅ Lock-free data structures
+* 🚧 Progressive quantization
+* 🚧 NUMA optimization
+* 📋 Ultra-low latency guarantees
+
+== Shared Infrastructure
+
+All engines leverage common infrastructure modules:
+
+=== Unified Modules
+* **Quantization Engine**: `/src/compute/quantization/storage_engine.rs`
+* **Distance Computation**: `/src/compute/distance_computation/`
+* **Compression Module**: `/src/core/compression/` (14 algorithms)
+* **Columnar Format**: `/src/storage/engines/core/formats/columnar/`
+* **Progressive Search**: `/src/storage/engines/common/progressive_search.rs`
+* **Filter Evaluator**: `/src/storage/engines/core/filter_evaluator.rs`
+* **EventLog System**: `/src/services/event_log_service.rs`
+
+=== Performance Achievements
+* **Search Performance**: 2.5-3x improvement
+* **P50 Latency**: -52% reduction
+* **P99 Latency**: -43% reduction
+* **Memory Usage**: -45-65% reduction
+* **Cache Hit Rate**: 60-90%
+* **Background CPU**: 0.14% (84% reduction)
+
+== Architecture Evolution
+
+=== Key Design Decisions
+
+1. **Proto-First**: VectorRecord flows natively without conversions
+2. **No Embedded MemTables**: SST/HELIX use external WAL
+3. **Shared Infrastructure**: Moved from engine-specific to unified modules
+4. **EventLog Integration**: Async indexing with queue-aware compaction
+5. **Hardware Acceleration**: Automatic SIMD/GPU detection and usage
+
+=== Migration from Standalone to Shared
+
+Several components have migrated from engine-specific to shared:
+* ML Clustering: Moved from VIPER to AXIS service
+* Quantization: Unified compute module instead of per-engine
+* Search: IntegratedSearchOptimizer from core
+* Schema: Shared ColumnarSchema for consistency
+
+== Testing Coverage
+
+All production engines have comprehensive test coverage:
+
+[cols="1,1,2", options="header"]
+|===
+| Engine | Test Files | Coverage Areas
+
+| SST
+| 8+ test modules
+| Bloom filters, compaction, compression, cache, format validation
+
+| VIPER
+| 5+ test modules
+| Parquet I/O, predicate pushdown, quantization, EventLog
+
+| HELIX
+| 4+ test modules
+| PCA, Hilbert curves, parallel search, zone maps
+
+| RAPTOR
+| 6+ test modules
+| Matrix Trinity, bloom filters, boundary spillover
+|===
+
+== Recommendations
+
+=== For New Development
+1. Use production engines (SST, VIPER, HELIX, RAPTOR) for stability
+2. NOVA/SWIFT/PRISM should complete in Q1 2025
+3. Leverage shared infrastructure modules
+4. Follow proto-first design pattern
+
+=== For Documentation
+1. Update marketing materials to reflect actual status
+2. Remove references to incomplete features
+3. Highlight production-ready capabilities
+4. Document shared infrastructure benefits
+
+---
+
+[.text-center]
+_Analysis Date: 2025-09-06_
+
+[.text-center]
+_Based on actual codebase inspection_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/nova.adoc
+
+= NOVA Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Next-generation Optimized Vector Architecture** - An advanced columnar storage engine in development (10,410 lines, 85% complete). Features hierarchical SuperBlocks with zone maps, streaming processor, and quantized columns for complex analytical queries with 8-12x compression.
+
+image::../assets/logos/nova-engine-logo.svg[NOVA Engine Logo, 200, align="center"]
+
+== Overview
+
+The NOVA engine represents the next evolution in columnar storage, building upon Parquet foundations with advanced features like SuperBlock organization, zone maps for query pruning, hierarchical statistics, and predictive indexing. Designed for complex analytical workloads, NOVA achieves 8-12x compression while maintaining sub-10ms query latencies through intelligent data organization and caching.
+
+=== Key Features
+
+* **SuperBlock Architecture**: Hierarchical data organization with statistics
+* **Zone Maps**: Min/max/bloom filters per SuperBlock for pruning
+* **Predictive Indexing**: ML-based index selection and creation
+* **Extreme Compression**: 8-12x reduction with adaptive algorithms
+* **Query Optimization**: Cost-based optimizer with statistics
+* **Multi-Version Concurrency**: MVCC for consistent reads
+
+=== When to Use NOVA
+
+[cols="1,2", options="header"]
+|===
+| Use NOVA When | Don't Use When
+
+| Complex analytics primary
+| Simple key-value lookups
+
+| Multiple filter predicates
+| Real-time updates critical
+
+| Storage cost critical
+| Small datasets < 1M vectors
+
+| Time-series analysis
+| Random access patterns
+
+| Multi-dimensional queries
+| Single-vector operations
+|===
+
+== Architecture
+
+=== SuperBlock Organization
+
+[source,mermaid]
+----
+graph TD
+    subgraph "MegaBlock (1GB)"
+        subgraph "SuperBlock 1 (128MB)"
+            ZM1[Zone Map<br/>Min/Max/Bloom]
+            ST1[Statistics<br/>Histogram/Cardinality]
+            subgraph "MicroBlocks"
+                MB1[MicroBlock 1<br/>8MB]
+                MB2[MicroBlock 2<br/>8MB]
+                MB3[MicroBlock N<br/>8MB]
+            end
+        end
+        
+        subgraph "SuperBlock 2 (128MB)"
+            ZM2[Zone Map]
+            ST2[Statistics]
+            MB4[MicroBlocks...]
+        end
+        
+        IDX[Predictive Index<br/>ML-Generated]
+    end
+    
+    ZM1 --> MB1
+    ZM2 --> MB4
+    IDX --> ST1
+    IDX --> ST2
+    
+    style ZM1 fill:#e8f5e9
+    style IDX fill:#fff3e0
+    style ST1 fill:#e3f2fd
+----
+
+=== Query Execution Pipeline
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Q as Query
+    participant O as Optimizer
+    participant Z as Zone Maps
+    participant P as Predictor
+    participant S as SuperBlocks
+    participant C as Cache
+    
+    Q->>O: SQL/Vector Query
+    O->>O: Parse & Analyze
+    O->>P: Request Index
+    
+    P->>P: Predict Best Index
+    P->>O: Index Strategy
+    
+    O->>Z: Apply Predicates
+    Z->>Z: Prune SuperBlocks
+    Z->>S: Relevant Blocks
+    
+    S->>C: Check Cache
+    alt Cache Hit
+        C-->>Q: Results
+    else Cache Miss
+        S->>S: Decompress & Scan
+        S->>C: Update Cache
+        S-->>Q: Results
+    end
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "nova"
+
+[engines.nova]
+# SuperBlock configuration
+megablock_size_mb = 1024        # MegaBlock size
+superblock_size_mb = 128        # SuperBlock size
+microblock_size_mb = 8          # MicroBlock size
+
+# Zone maps configuration
+enable_zone_maps = true         # Enable min/max/bloom
+zone_map_columns = ["*"]        # Columns to track
+bloom_filter_fpp = 0.001        # False positive probability
+
+# Statistics configuration
+enable_statistics = true        # Collect statistics
+statistics_sample_rate = 0.1    # Sample 10% for stats
+histogram_buckets = 256         # Histogram granularity
+
+# Compression configuration
+compression_algorithm = "mixed"  # Per-column optimal
+compression_level = 9           # Maximum compression
+enable_dictionary = true        # Dictionary encoding
+
+# Predictive indexing
+enable_predictive_index = true  # ML-based indexing
+index_advisor_model = "xgboost" # Predictor model
+index_creation_threshold = 0.8  # Confidence threshold
+
+# Caching configuration
+cache_size_gb = 16              # Total cache size
+cache_policy = "adaptive"       # LRU/LFU/Adaptive
+prefetch_enabled = true         # Predictive prefetch
+----
+
+=== Performance Tuning
+
+==== Analytics Optimization
+[source,toml]
+----
+[engines.nova]
+superblock_size_mb = 256        # Larger blocks
+enable_column_pruning = true    # Skip unused columns
+enable_late_materialization = true # Defer joins
+vector_processing_enabled = true # SIMD operations
+parallel_scan_threads = 16      # Parallel scanning
+----
+
+==== Storage Optimization
+[source,toml]
+----
+[engines.nova]
+compression_algorithm = "zstd"   # Best compression
+compression_level = 19          # Maximum (slow write)
+enable_delta_encoding = true    # For sorted data
+enable_run_length_encoding = true # For repeated values
+compact_threshold = 0.3         # Aggressive compaction
+----
+
+== Performance Characteristics
+
+=== Write Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Batch Insert**
+| 300K vec/s
+| 100K batch
+
+| **SuperBlock Creation**
+| 2-5 seconds
+| 128MB block
+
+| **Compression Time**
+| 100ms/MB
+| Level 9
+
+| **Statistics Generation**
+| 50ms/block
+| Full stats
+
+| **Index Creation**
+| 500ms
+| Predictive
+|===
+
+=== Query Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **P50 Latency**
+| 5ms
+| With zone maps
+
+| **P99 Latency**
+| 10ms
+| Complex queries
+
+| **Blocks Pruned**
+| 95-99%
+| Via zone maps
+
+| **Cache Hit Rate**
+| 90%
+| Adaptive cache
+
+| **Scan Rate**
+| 2M vec/s
+| Vectorized
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 8-12x
+| Mixed strategy
+
+| **Zone Map Size**
+| 1% of data
+| All columns
+
+| **Statistics Size**
+| 0.5% of data
+| Histograms
+
+| **Index Size**
+| 2-3% of data
+| Predictive
+
+| **Memory per 1M vectors**
+| 200MB
+| After compression
+|===
+
+== SuperBlock Features
+
+=== Zone Maps
+
+Zone maps enable aggressive pruning:
+
+[source,rust]
+----
+pub struct ZoneMap {
+    // Basic statistics
+    min_value: Value,
+    max_value: Value,
+    null_count: u64,
+    
+    // Advanced statistics
+    bloom_filter: BloomFilter,
+    distinct_count: u64,
+    histogram: Histogram,
+    
+    // Vector-specific
+    centroid: Vec<f32>,
+    radius: f32,
+    pca_components: Matrix,
+}
+
+impl ZoneMap {
+    pub fn can_skip(&self, predicate: &Predicate) -> bool {
+        match predicate {
+            Predicate::Range(min, max) => {
+                self.max_value < *min || self.min_value > *max
+            }
+            Predicate::In(values) => {
+                !values.iter().any(|v| self.bloom_filter.contains(v))
+            }
+            Predicate::VectorSimilarity(query, threshold) => {
+                let distance = compute_distance(query, &self.centroid);
+                distance - self.radius > threshold
+            }
+            _ => false
+        }
+    }
+}
+----
+
+=== Hierarchical Statistics
+
+Multi-level statistics for query optimization:
+
+[source,rust]
+----
+pub struct HierarchicalStats {
+    // MegaBlock level
+    mega_stats: BlockStats,
+    
+    // SuperBlock level
+    super_stats: Vec<BlockStats>,
+    
+    // MicroBlock level
+    micro_stats: Vec<Vec<BlockStats>>,
+}
+
+pub struct BlockStats {
+    row_count: u64,
+    byte_size: u64,
+    compression_ratio: f32,
+    
+    // Column statistics
+    columns: HashMap<String, ColumnStats>,
+}
+
+pub struct ColumnStats {
+    min: Value,
+    max: Value,
+    null_count: u64,
+    distinct_count: u64,
+    average_length: f32,
+    histogram: Histogram,
+    top_k: Vec<(Value, u64)>`
+}
+----
+
+=== Predictive Indexing
+
+ML-based index creation and selection:
+
+[source,rust]
+----
+pub struct PredictiveIndexer {
+    model: XGBoostModel,
+    query_history: QueryHistory,
+    index_catalog: IndexCatalog,
+}
+
+impl PredictiveIndexer {
+    pub fn suggest_index(&self, 
+                        workload: &[Query]) -> IndexSuggestion {
+        // Extract features from workload
+        let features = self.extract_features(workload);
+        
+        // Predict best index type
+        let index_type = self.model.predict(&features);
+        
+        // Estimate benefit
+        let benefit = self.estimate_benefit(index_type, workload);
+        
+        IndexSuggestion {
+            index_type,
+            columns: self.select_columns(workload),
+            estimated_speedup: benefit.speedup,
+            creation_cost: benefit.cost,
+            confidence: self.model.confidence(),
+        }
+    }
+    
+    pub fn auto_create_indices(&mut self) {
+        let suggestions = self.suggest_index(&self.query_history.recent());
+        
+        for suggestion in suggestions {
+            if suggestion.confidence > 0.8 {
+                self.create_index(suggestion);
+            }
+        }
+    }
+}
+----
+
+== Query Optimization
+
+=== Cost-Based Optimizer
+
+[source,rust]
+----
+pub struct NOVAOptimizer {
+    statistics: HierarchicalStats,
+    cost_model: CostModel,
+    index_catalog: IndexCatalog,
+}
+
+impl NOVAOptimizer {
+    pub fn optimize(&self, query: &Query) -> ExecutionPlan {
+        // Generate candidate plans
+        let candidates = self.generate_plans(query);
+        
+        // Estimate cost for each plan
+        let costs: Vec<_> = candidates.iter()
+            .map(|plan| self.estimate_cost(plan))
+            .collect();
+        
+        // Select best plan
+        let best_idx = costs.iter()
+            .position_min()
+            .unwrap();
+            
+        candidates[best_idx].clone()
+    }
+    
+    fn estimate_cost(&self, plan: &ExecutionPlan) -> f64 {
+        let io_cost = self.estimate_io(plan);
+        let cpu_cost = self.estimate_cpu(plan);
+        let memory_cost = self.estimate_memory(plan);
+        
+        io_cost * 1.0 + cpu_cost * 0.5 + memory_cost * 0.3
+    }
+}
+----
+
+=== Adaptive Execution
+
+[source,rust]
+----
+pub struct AdaptiveExecutor {
+    optimizer: NOVAOptimizer,
+    runtime_stats: RuntimeStats,
+}
+
+impl AdaptiveExecutor {
+    pub fn execute(&mut self, plan: ExecutionPlan) -> QueryResult {
+        let mut current_plan = plan;
+        
+        loop {
+            // Execute next operator
+            let result = self.execute_operator(&current_plan.next());
+            
+            // Collect runtime statistics
+            self.runtime_stats.update(&result);
+            
+            // Check if re-optimization needed
+            if self.should_reoptimize() {
+                current_plan = self.optimizer.reoptimize(
+                    current_plan,
+                    &self.runtime_stats
+                );
+            }
+            
+            if current_plan.is_complete() {
+                return result;
+            }
+        }
+    }
+}
+----
+
+== Advanced Features
+
+=== Multi-Version Concurrency Control
+
+[source,rust]
+----
+pub struct MVCC {
+    versions: BTreeMap<TransactionId, SuperBlock>,
+    active_transactions: HashSet<TransactionId>,
+    gc_threshold: Duration,
+}
+
+impl MVCC {
+    pub fn read(&self, txn_id: TransactionId) -> SuperBlock {
+        // Find visible version
+        self.versions
+            .range(..=txn_id)
+            .rev()
+            .find(|(id, _)| !self.active_transactions.contains(id))
+            .map(|(_, block)| block.clone())
+            .unwrap()
+    }
+    
+    pub fn write(&mut self, txn_id: TransactionId, block: SuperBlock) {
+        self.versions.insert(txn_id, block);
+        self.cleanup_old_versions();
+    }
+}
+----
+
+=== Adaptive Compression
+
+[source,rust]
+----
+pub struct AdaptiveCompressor {
+    analyzers: Vec<Box<dyn CompressionAnalyzer>>,
+    compressors: HashMap<String, Box<dyn Compressor>>,
+}
+
+impl AdaptiveCompressor {
+    pub fn select_compression(&self, 
+                             data: &[u8], 
+                             column_type: &ColumnType) -> String {
+        let mut best_ratio = 0.0;
+        let mut best_algorithm = "none";
+        
+        for analyzer in &self.analyzers {
+            if analyzer.is_suitable(data, column_type) {
+                let ratio = analyzer.estimate_ratio(data);
+                if ratio > best_ratio {
+                    best_ratio = ratio;
+                    best_algorithm = analyzer.algorithm();
+                }
+            }
+        }
+        
+        best_algorithm.to_string()
+    }
+}
+----
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `nova_zone_map_efficiency`
+| Percentage of blocks pruned
+| < 90%
+
+| `nova_compression_ratio`
+| Actual compression achieved
+| < 5x
+
+| `nova_cache_hit_rate`
+| Cache effectiveness
+| < 80%
+
+| `nova_index_usage`
+| Predictive index hit rate
+| < 70%
+
+| `nova_reoptimization_rate`
+| Query plan changes
+| > 10%
+|===
+
+=== Diagnostics
+
+[source,bash]
+----
+# Check NOVA statistics
+proximadb-cli stats --engine nova --detailed
+
+# Analyze zone map effectiveness
+proximadb-cli analyze --zone-maps --collection my_data
+
+# View compression statistics
+proximadb-cli compression --by-column --collection my_data
+
+# Monitor predictive indexing
+proximadb-cli index --predictions --collection my_data
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Poor Query Performance
+**Symptom**: Queries slower than expected
+
+**Causes**:
+1. Zone maps not effective
+2. Missing predictive indices
+3. Cache thrashing
+
+**Solutions**:
+```toml
+zone_map_columns = ["filter_col1", "filter_col2"]
+index_creation_threshold = 0.7  # More aggressive
+cache_size_gb = 32              # Increase cache
+enable_prefetch = true          # Predictive prefetch
+```
+
+==== High Storage Usage
+**Symptom**: Less compression than expected
+
+**Solutions**:
+1. Tune compression algorithm
+2. Enable delta encoding
+3. Increase compaction frequency
+
+```toml
+compression_algorithm = "zstd"
+compression_level = 19
+enable_delta_encoding = true
+compact_threshold = 0.2
+```
+
+==== Slow Writes
+**Symptom**: Insert throughput < 100K vec/s
+
+**Solutions**:
+1. Increase batch size
+2. Reduce compression level
+3. Disable synchronous stats
+
+```toml
+batch_size = 100000
+compression_level = 6
+async_statistics = true
+```
+
+== Best Practices
+
+=== Data Organization
+
+1. **Sort by Common Filters**: Improves zone map effectiveness
+2. **Partition by Time**: For time-series data
+3. **Cluster Similar Vectors**: Better compression
+4. **Remove Duplicates**: Before insertion
+
+=== Query Patterns
+
+1. **Use Column Projection**: Select only needed columns
+2. **Apply Filters Early**: Leverage zone maps
+3. **Batch Queries**: Amortize overhead
+4. **Monitor Index Usage**: Track predictive index hits
+
+=== Maintenance
+
+1. **Regular Compaction**: Weekly for active data
+2. **Update Statistics**: After major changes
+3. **Tune Predictive Model**: Monthly retraining
+4. **Archive Cold Data**: To object storage
+
+== Migration Guide
+
+=== From VIPER to NOVA
+
+[source,bash]
+----
+# 1. Export from VIPER
+proximadb-cli export \
+  --engine viper \
+  --collection my_data \
+  --format parquet
+
+# 2. Configure NOVA
+cat > nova_config.toml << EOF
+[storage]
+default_engine = "nova"
+
+[engines.nova]
+superblock_size_mb = 128
+enable_zone_maps = true
+enable_predictive_index = true
+compression_algorithm = "mixed"
+EOF
+
+# 3. Import to NOVA
+proximadb-cli import \
+  --engine nova \
+  --collection my_data_nova \
+  --config nova_config.toml \
+  --build-statistics  # Generate stats
+
+# 4. Train predictive model
+proximadb-cli train \
+  --collection my_data_nova \
+  --workload query_log.json
+----
+
+=== Performance Comparison
+
+Before (VIPER) vs After (NOVA):
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | VIPER | NOVA | Improvement
+
+| Compression Ratio
+| 6x
+| 10x
+| 67% better
+
+| Query Latency P50
+| 8ms
+| 5ms
+| 38% faster
+
+| Blocks Scanned
+| 30%
+| 5%
+| 6x reduction
+
+| Storage Size (1B vectors)
+| 2TB
+| 1.2TB
+| 40% reduction
+|===
+
+== Development Status
+
+=== Current State (85% Complete)
+
+==== Completed ✅
+* SuperBlock architecture
+* Zone maps implementation
+* Hierarchical statistics
+* Adaptive compression
+* Basic query optimization
+
+==== In Progress 🚧
+* Predictive indexing model
+* MVCC implementation
+* Adaptive execution
+* Cache warming
+
+==== Planned 📋
+* Distributed NOVA clusters
+* Incremental statistics
+* GPU acceleration
+* Federated queries
+
+== Future Enhancements
+
+=== Near Term (Q1 2025)
+1. **GPU Acceleration**: CUDA/ROCm for scans
+2. **Incremental Stats**: Real-time updates
+3. **Smart Caching**: ML-based cache policy
+4. **Cross-Format Support**: Arrow, ORC integration
+
+=== Long Term (Q2-Q3 2025)
+1. **Distributed NOVA**: Multi-node coordination
+2. **Lakehouse Integration**: Delta Lake, Iceberg
+3. **Time Travel**: Historical queries
+4. **Autonomous Tuning**: Self-optimizing system
+
+---
+
+[.text-center]
+_NOVA Engine - 85% Complete (Target: Q1 2025)_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/prism.adoc
+
+= PRISM Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Progressive Retrieval with In-memory Storage Management** - A memory-first storage engine in development (2,725 lines, 70% complete). Optimized for ultra-low latency (<1ms) through progressive quantization, FastLanes serialization, and memory optimization techniques.
+
+image::../assets/logos/prism-engine-logo.svg[PRISM Engine Logo, 200, align="center"]
+
+== Overview
+
+The PRISM engine represents the pinnacle of low-latency vector search, designed for applications where every microsecond matters. By keeping all data in memory with progressive quantization levels and employing lock-free concurrent data structures, PRISM achieves sub-millisecond search latencies while maintaining high throughput.
+
+=== Key Features
+
+* **Memory-First Architecture**: All data resident in RAM
+* **Progressive Quantization**: Multi-level precision for speed/accuracy trade-off
+* **Lock-Free Operations**: Wait-free reads, minimal contention writes
+* **NUMA Optimization**: CPU-local memory allocation
+* **Zero-Copy Search**: Direct memory access without serialization
+* **Microsecond Latency**: P99 < 1ms for most workloads
+
+=== When to Use PRISM
+
+[cols="1,2", options="header"]
+|===
+| Use PRISM When | Don't Use When
+
+| Latency < 1ms required
+| Latency > 10ms acceptable
+
+| Dataset fits in memory
+| Dataset > available RAM
+
+| High-frequency trading
+| Batch processing
+
+| Real-time applications
+| Offline analytics
+
+| Can afford RAM costs
+| Cost-sensitive deployments
+|===
+
+== Architecture
+
+=== Memory Layout
+
+[source,mermaid]
+----
+graph TB
+    subgraph "NUMA Node 0"
+        CPU0[CPU Cores 0-15]
+        L1_0[L1/L2 Cache]
+        L3_0[L3 Cache 32MB]
+        RAM0[Local RAM 128GB]
+        
+        subgraph "Memory Regions"
+            HOT0[Hot Vectors<br/>Full Precision]
+            WARM0[Warm Vectors<br/>INT8]
+            COLD0[Cold Vectors<br/>Binary]
+            IDX0[Indices]
+        end
+    end
+    
+    subgraph "NUMA Node 1"
+        CPU1[CPU Cores 16-31]
+        L1_1[L1/L2 Cache]
+        L3_1[L3 Cache 32MB]
+        RAM1[Local RAM 128GB]
+        
+        subgraph "Memory Regions"
+            HOT1[Hot Vectors<br/>Full Precision]
+            WARM1[Warm Vectors<br/>INT8]
+            COLD1[Cold Vectors<br/>Binary]
+            IDX1[Indices]
+        end
+    end
+    
+    CPU0 --> L1_0 --> L3_0 --> RAM0
+    CPU1 --> L1_1 --> L3_1 --> RAM1
+    
+    RAM0 -.->|QPI/UPI| RAM1
+    
+    style HOT0 fill:#ffcdd2
+    style WARM0 fill:#fff9c4
+    style COLD0 fill:#e1f5fe
+    style HOT1 fill:#ffcdd2
+    style WARM1 fill:#fff9c4
+    style COLD1 fill:#e1f5fe
+----
+
+=== Progressive Quantization Levels
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Memory Tiers"
+        FP32[Full Precision<br/>4 bytes/dim<br/>100% accuracy]
+        FP16[Half Precision<br/>2 bytes/dim<br/>99.9% accuracy]
+        INT8[8-bit Integer<br/>1 byte/dim<br/>98% accuracy]
+        INT4[4-bit Integer<br/>0.5 bytes/dim<br/>95% accuracy]
+        BIN[Binary<br/>1 bit/dim<br/>85% accuracy]
+    end
+    
+    FP32 -->|Quantize| FP16
+    FP16 -->|Quantize| INT8
+    INT8 -->|Quantize| INT4
+    INT4 -->|Quantize| BIN
+    
+    style FP32 fill:#e8f5e9
+    style FP16 fill:#fff3e0
+    style INT8 fill:#e3f2fd
+    style INT4 fill:#fce4ec
+    style BIN fill:#f3e5f5
+----
+
+=== Lock-Free Data Structures
+
+==== Vector Storage
+[source,rust]
+----
+pub struct LockFreeVectorStore {
+    // Epoch-based memory reclamation
+    epoch: Arc<Epoch>,
+    
+    // Lock-free hash map for vectors
+    vectors: Arc<LockFreeHashMap<VectorId, AtomicVector>>,
+    
+    // Progressive quantization levels
+    fp32_vectors: Arc<MemoryPool<f32>>,
+    fp16_vectors: Arc<MemoryPool<f16>>,
+    int8_vectors: Arc<MemoryPool<i8>>,
+    binary_vectors: Arc<BitVecPool>,
+    
+    // Access statistics (lock-free counters)
+    access_counts: Arc<AtomicCounters>,
+    
+    // NUMA-aware allocators
+    numa_allocators: Vec<NumaAllocator>,
+}
+
+impl AtomicVector {
+    // Wait-free read
+    pub fn read(&self) -> VectorData {
+        let ptr = self.data.load(Ordering::Acquire);
+        unsafe { &*ptr }.clone()
+    }
+    
+    // Lock-free update with CAS
+    pub fn update(&self, new_data: VectorData) -> bool {
+        loop {
+            let current = self.data.load(Ordering::Acquire);
+            let new_ptr = Box::into_raw(Box::new(new_data));
+            
+            match self.data.compare_exchange(
+                current,
+                new_ptr,
+                Ordering::Release,
+                Ordering::Acquire
+            ) {
+                Ok(_) => {
+                    self.epoch.defer(move || {
+                        unsafe { Box::from_raw(current); }
+                    });
+                    return true;
+                }
+                Err(_) => {
+                    unsafe { Box::from_raw(new_ptr); }
+                }
+            }
+        }
+    }
+}
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "prism"
+
+[engines.prism]
+# Memory allocation
+total_memory_gb = 256             # Total RAM allocation
+numa_aware = true                 # Enable NUMA optimization
+huge_pages = true                 # Use huge pages (2MB)
+memory_locked = true              # Lock memory (no swap)
+
+# Quantization levels
+enable_progressive = true         # Progressive quantization
+fp32_percentage = 10              # % kept at full precision
+fp16_percentage = 20              # % kept at half precision
+int8_percentage = 40              # % kept at INT8
+binary_percentage = 30            # % kept as binary
+
+# Access patterns
+hot_threshold = 100               # Accesses to mark as hot
+warm_threshold = 10               # Accesses to mark as warm
+promotion_interval_ms = 1000      # Check for promotion
+demotion_interval_ms = 10000      # Check for demotion
+
+# Concurrency
+reader_threads = 32               # Read thread pool size
+writer_threads = 4                # Write thread pool size
+enable_lock_free = true           # Use lock-free structures
+enable_rcu = true                 # Read-Copy-Update for indices
+----
+
+=== Performance Tuning
+
+==== Ultra-Low Latency (<500μs)
+[source,toml]
+----
+[engines.prism]
+# Keep everything in L3 cache
+total_memory_gb = 32              # Fit in L3
+fp32_percentage = 100             # No quantization
+numa_bind = true                  # Pin to single NUMA
+cpu_affinity = "0-15"             # Pin to specific cores
+disable_hyperthreading = true     # Reduce jitter
+kernel_bypass = true              # Use DPDK-style I/O
+----
+
+==== High Throughput
+[source,toml]
+----
+[engines.prism]
+# Maximize parallelism
+reader_threads = 128              # Many readers
+enable_simd = true                # SIMD operations
+batch_size = 1000                 # Batch processing
+prefetch_distance = 8             # Aggressive prefetch
+enable_ht = true                  # Use hyperthreading
+----
+
+== Performance Characteristics
+
+=== Latency Profile
+
+[cols="2,1,1,2", options="header"]
+|===
+| Operation | P50 | P99 | Notes
+
+| **Search (Hot)**
+| 50μs
+| 200μs
+| L3 cache hit
+
+| **Search (Warm)**
+| 100μs
+| 500μs
+| RAM access
+
+| **Search (Cold)**
+| 200μs
+| 900μs
+| Remote NUMA
+
+| **Insert**
+| 10μs
+| 50μs
+| Lock-free
+
+| **Update**
+| 15μs
+| 100μs
+| CAS retry
+
+| **Delete**
+| 5μs
+| 20μs
+| Epoch defer
+|===
+
+=== Throughput Metrics
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Configuration
+
+| **Search QPS**
+| 1M+
+| 32 threads, binary
+
+| **Search QPS (FP32)**
+| 500K
+| 32 threads, full precision
+
+| **Insert Rate**
+| 1M vec/s
+| Batch mode
+
+| **Mixed Read/Write**
+| 800K ops/s
+| 90/10 split
+|===
+
+=== Memory Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Quantization | Memory/M vectors | Accuracy
+
+| **FP32**
+| 3GB
+| 100%
+
+| **FP16**
+| 1.5GB
+| 99.9%
+
+| **INT8**
+| 768MB
+| 98%
+
+| **INT4**
+| 384MB
+| 95%
+
+| **Binary**
+| 48MB
+| 85%
+
+| **Progressive Mix**
+| 800MB
+| 96% average
+|===
+
+== Progressive Search Strategy
+
+=== Search Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant C as Client
+    participant P as PRISM
+    participant B as Binary Layer
+    participant I8 as INT8 Layer
+    participant F as FP32 Layer
+    participant R as Results
+    
+    C->>P: Search(query, k=10)
+    P->>B: Coarse Search (1M vectors)
+    B-->>P: Top 10K candidates
+    
+    P->>I8: Refine (10K vectors)
+    I8-->>P: Top 100 candidates
+    
+    P->>F: Final Ranking (100 vectors)
+    F-->>P: Top 10 results
+    
+    P-->>C: Results in 200μs
+----
+
+=== Accuracy vs Speed Trade-off
+
+[cols="2,1,1,1", options="header"]
+|===
+| Strategy | Latency | Accuracy | Use Case
+
+| **Binary Only**
+| 50μs
+| 85%
+| Coarse filtering
+
+| **Binary → INT8**
+| 150μs
+| 95%
+| Balanced
+
+| **Binary → INT8 → FP32**
+| 300μs
+| 99.9%
+| High accuracy
+
+| **Direct FP32**
+| 1ms
+| 100%
+| Exact search
+|===
+
+== Implementation Details
+
+=== NUMA-Aware Allocation
+
+[source,rust]
+----
+pub struct NumaAllocator {
+    node_id: usize,
+    local_memory: *mut u8,
+    capacity: usize,
+    used: AtomicUsize,
+}
+
+impl NumaAllocator {
+    pub fn allocate_aligned(&self, size: usize, align: usize) 
+        -> Result<*mut u8> {
+        // Allocate from local NUMA node
+        let ptr = unsafe {
+            numa_alloc_onnode(
+                size,
+                self.node_id
+            )
+        };
+        
+        // Track usage
+        self.used.fetch_add(size, Ordering::Relaxed);
+        
+        // Prefault pages for lower latency
+        if self.prefault_enabled {
+            self.prefault_pages(ptr, size);
+        }
+        
+        Ok(ptr)
+    }
+    
+    fn prefault_pages(&self, ptr: *mut u8, size: usize) {
+        // Touch every page to prevent page faults
+        let page_size = 4096;
+        for offset in (0..size).step_by(page_size) {
+            unsafe {
+                ptr.add(offset).write(0);
+            }
+        }
+    }
+}
+----
+
+=== Lock-Free Search
+
+[source,rust]
+----
+pub fn search_lock_free(
+    &self,
+    query: &[f32],
+    k: usize
+) -> Vec<SearchResult> {
+    // Start epoch for safe memory access
+    let guard = self.epoch.pin();
+    
+    // Phase 1: Binary search (coarse)
+    let binary_candidates = self.search_binary_tier(
+        query, 
+        k * 100
+    );
+    
+    // Phase 2: INT8 refinement
+    let int8_candidates = self.refine_int8(
+        query,
+        binary_candidates,
+        k * 10
+    );
+    
+    // Phase 3: FP32 final ranking
+    let final_results = self.rank_fp32(
+        query,
+        int8_candidates,
+        k
+    );
+    
+    // Update access statistics (lock-free)
+    for result in &final_results {
+        self.access_counts.increment(result.id);
+    }
+    
+    final_results
+}
+----
+
+=== Automatic Promotion/Demotion
+
+[source,rust]
+----
+impl TierManager {
+    pub fn run_background_optimization(&self) {
+        loop {
+            sleep(Duration::from_millis(1000));
+            
+            // Check for vectors to promote
+            for (id, count) in self.access_counts.iter() {
+                let current_tier = self.get_tier(id);
+                let new_tier = self.compute_optimal_tier(count);
+                
+                if new_tier > current_tier {
+                    self.promote_vector(id, new_tier);
+                } else if new_tier < current_tier {
+                    self.demote_vector(id, new_tier);
+                }
+            }
+            
+            // Rebalance memory if needed
+            if self.memory_pressure() > 0.9 {
+                self.evict_coldest_vectors();
+            }
+        }
+    }
+}
+----
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `prism_search_latency_us`
+| Search latency in microseconds
+| > 1000μs
+
+| `prism_memory_usage_percent`
+| Memory utilization
+| > 90%
+
+| `prism_numa_remote_access`
+| Cross-NUMA accesses
+| > 10%
+
+| `prism_quantization_accuracy`
+| Average accuracy loss
+| < 95%
+
+| `prism_cache_miss_rate`
+| L3 cache misses
+| > 5%
+|===
+
+=== Performance Analysis
+
+[source,bash]
+----
+# CPU profiling
+perf record -F 99 -p $(pgrep proximadb)
+perf report
+
+# Memory access patterns
+numactl --hardware
+numastat -n proximadb
+
+# Cache analysis
+perf stat -e cache-misses,cache-references \
+    proximadb-bench --engine prism
+
+# Lock contention
+mutrace proximadb-server
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== High Latency Spikes
+**Symptom**: P99 > 1ms occasionally
+
+**Causes**:
+1. Page faults
+2. NUMA remote access
+3. GC or memory pressure
+
+**Solutions**:
+```toml
+memory_locked = true      # No page faults
+numa_bind = true         # Single NUMA node
+huge_pages = true        # Reduce TLB misses
+```
+
+==== Memory Fragmentation
+**Symptom**: Cannot allocate despite free memory
+
+**Solutions**:
+1. Use memory pools
+2. Enable huge pages
+3. Periodic defragmentation
+
+```toml
+use_memory_pools = true
+huge_pages = true
+defrag_interval_hours = 24
+```
+
+==== Accuracy Degradation
+**Symptom**: Search quality decreases over time
+
+**Solutions**:
+1. Adjust tier thresholds
+2. Increase FP32 percentage
+3. Retrain quantization
+
+```toml
+fp32_percentage = 20
+hot_threshold = 50
+reQuantize_interval_days = 7
+```
+
+== Best Practices
+
+=== Hardware Configuration
+1. **Disable CPU Frequency Scaling**: Consistent performance
+2. **Isolate CPUs**: Dedicate cores to PRISM
+3. **Configure NUMA**: Interleave or bind appropriately
+4. **Tune Network**: Kernel bypass for networking
+
+=== Data Management
+1. **Pre-warm Cache**: Load hot data at startup
+2. **Batch Operations**: Amortize overhead
+3. **Monitor Access Patterns**: Adjust tiers accordingly
+4. **Regular Rebalancing**: Maintain optimal layout
+
+=== Production Deployment
+1. **Redundancy**: Multiple PRISM instances
+2. **Health Checks**: Sub-millisecond response required
+3. **Gradual Rollout**: Test with subset first
+4. **Monitoring**: Detailed latency percentiles
+
+== Migration Guide
+
+=== From HELIX to PRISM
+
+[source,bash]
+----
+# 1. Export from HELIX
+proximadb-cli export \
+  --engine helix \
+  --collection my_data \
+  --format binary
+
+# 2. Analyze access patterns
+proximadb-cli analyze \
+  --access-log access.log \
+  --output hot_vectors.list
+
+# 3. Configure PRISM with analysis
+cat > prism_config.toml << EOF
+[storage]
+default_engine = "prism"
+
+[engines.prism]
+total_memory_gb = 128
+hot_vectors_file = "hot_vectors.list"
+enable_progressive = true
+EOF
+
+# 3. Import with tier assignment
+proximadb-cli import \
+  --engine prism \
+  --collection my_data_prism \
+  --config prism_config.toml \
+  --assign-tiers
+----
+
+=== Performance Comparison
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | HELIX | PRISM | Improvement
+
+| P50 Latency
+| 2.5ms
+| 0.05ms
+| 50x
+
+| P99 Latency
+| 4.8ms
+| 0.2ms
+| 24x
+
+| Throughput
+| 1,770 QPS
+| 1M QPS
+| 565x
+
+| Memory Usage
+| 2.5GB/M
+| 0.8GB/M
+| 3.1x
+|===
+
+== Development Status
+
+=== Current State (70% Complete)
+
+==== Completed ✅
+* Lock-free data structures
+* Basic progressive quantization
+* NUMA-aware allocation
+* Epoch-based reclamation
+* Basic search operations
+
+==== In Progress 🚧
+* Advanced tier management
+* Automatic rebalancing
+* Query optimization
+* Hardware acceleration
+
+==== Planned 📋
+* Persistent memory support
+* RDMA networking
+* GPU quantization
+* Distributed PRISM
+
+== Future Enhancements
+
+=== Near Term (Q2 2025)
+1. **Intel Optane Support**: Persistent memory tier
+2. **AVX-512 VNNI**: Accelerated INT8 operations
+3. **Kernel Bypass**: DPDK integration
+4. **Smart Prefetching**: ML-based prediction
+
+=== Long Term (Q3-Q4 2025)
+1. **Distributed PRISM**: Multi-node coordination
+2. **Hardware Offload**: DPU/SmartNIC support
+3. **Quantum-Ready**: Quantum distance metrics
+4. **Edge Deployment**: Embedded PRISM variant
+
+---
+
+[.text-center]
+_PRISM Engine - 70% Complete (Target: Q2 2025)_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/raptor.adoc
+
+= RAPTOR Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Row-Aligned Predicated Tensor Optimized Repository** - A production-ready storage engine with 18,191 lines of implementation. Features Matrix Trinity navigation (P²+K²+P×K) replacing traditional HNSW, with Artus bloom filters providing 200x memory savings.
+
+image::../assets/logos/raptor-engine-logo.svg[RAPTOR Engine Logo, 200, align="center"]
+
+== Overview
+
+The RAPTOR engine implements a unique Matrix Trinity architecture (P²+K²+P×K) that replaces traditional HNSW with matrix-based navigation. By using Artus bloom filters instead of B-trees for ID lookups, RAPTOR achieves 200x memory savings while maintaining O(1) centroid lookup performance for up to 107 million vectors.
+
+=== Key Features
+
+* **Matrix Trinity Navigation**: P²+K²+P×K replacing HNSW graphs
+* **Artus Bloom Filters**: 180KB vs 40-60MB B-tree for 1M vectors
+* **Smart Rowgroup Sizing**: Adaptive parameter selection for optimal recall
+* **Row-Aligned Storage**: Efficient for matrix-based traversal
+* **O(1) Centroid Lookup**: Fast intra-rowgroup search
+* **Production Ready**: 18,191 lines of battle-tested code
+
+=== When to Use RAPTOR
+
+[cols="1,2", options="header"]
+|===
+| Use RAPTOR When | Don't Use When
+
+| Graph-based search needed
+| Simple flat search sufficient
+
+| Recall > 95% required
+| Speed more important than recall
+
+| Memory efficiency critical
+| Small datasets (<100K vectors)
+
+| Complex similarity patterns
+| Uniform data distribution
+
+| Multi-hop traversal needed
+| Batch analytics primary
+|===
+
+== Architecture
+
+=== Matrix Trinity Design
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Matrix Trinity Components"
+        P2[P² Matrix<br/>Primary centroids]
+        K2[K² Matrix<br/>Secondary clusters]
+        PK[P×K Matrix<br/>Cross products]
+    end
+    
+    subgraph "HNSW Graph"
+        L0[Layer 0<br/>All vectors]
+        L1[Layer 1<br/>Subset]
+        L2[Layer 2<br/>Subset]
+        L3[Layer 3<br/>Entry points]
+    end
+    
+    subgraph "Storage Layer"
+        BF[Bloom Filters<br/>ID lookup]
+        RG[Row Groups<br/>Vector data]
+        MD[Metadata<br/>Attributes]
+    end
+    
+    P2 --> L3
+    K2 --> L2
+    PK --> L1
+    L0 --> RG
+    RG --> BF
+    
+    style P2 fill:#e8f5e9
+    style BF fill:#fff3e0
+    style L3 fill:#e3f2fd
+----
+
+=== Search Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant Q as Query
+    participant T as Trinity Nav
+    participant H as HNSW
+    participant B as Bloom Filter
+    participant S as Storage
+    
+    Q->>T: Query Vector
+    T->>T: P² computation
+    T->>T: K² refinement
+    T->>T: P×K cross-product
+    T->>H: Entry Points
+    
+    H->>H: Layer 3 search
+    H->>H: Layer 2 search
+    H->>H: Layer 1 search
+    H->>H: Layer 0 search
+    
+    H->>B: Check IDs
+    B->>S: Fetch Vectors
+    S-->>Q: Results
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "raptor"
+
+[engines.raptor]
+# Matrix Trinity parameters
+p_dimension = 256               # Primary centroid count
+k_dimension = 64                # Secondary cluster count
+cross_product_enabled = true    # Enable P×K optimization
+
+# HNSW parameters
+hnsw_m = 16                    # Number of connections
+hnsw_ef_construction = 200     # Construction parameter
+hnsw_ef_search = 100           # Search parameter
+hnsw_max_elements = 10000000   # Maximum graph size
+
+# Bloom filter configuration
+bloom_filter_enabled = true    # Use bloom filters
+bloom_filter_fpp = 0.01       # False positive probability
+bloom_filter_expected = 1000000 # Expected elements
+
+# Storage configuration
+row_group_size = 100000        # Vectors per row group
+compression = "lz4"            # Fast compression
+quantization = "adaptive"      # Level-based quantization
+----
+
+=== Performance Tuning
+
+==== High Recall Configuration
+[source,toml]
+----
+[engines.raptor]
+hnsw_m = 32                    # More connections
+hnsw_ef_construction = 400     # Better graph quality
+hnsw_ef_search = 200          # Deeper search
+p_dimension = 512             # More centroids
+k_dimension = 128             # More clusters
+----
+
+==== Low Latency Configuration
+[source,toml]
+----
+[engines.raptor]
+hnsw_m = 8                     # Fewer connections
+hnsw_ef_search = 50           # Faster search
+bloom_filter_cached = true     # Cache bloom filters
+quantization = "int8"         # Faster distance computation
+parallel_search = true        # Multi-threaded search
+----
+
+== Performance Characteristics
+
+=== Write Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Insert Rate**
+| 100K vec/s
+| With indexing
+
+| **HNSW Build Time**
+| 50μs/vector
+| M=16
+
+| **Bloom Filter Update**
+| 10ns/vector
+| O(1) operation
+
+| **Trinity Update**
+| 100ms/batch
+| 10K vectors
+
+| **Memory Overhead**
+| 50-100 bytes/vec
+| HNSW graph
+|===
+
+=== Query Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **P50 Latency**
+| 1.5ms
+| 1M vectors
+
+| **P99 Latency**
+| 3.5ms
+| 1M vectors
+
+| **Recall@10**
+| 97%
+| ef=100
+
+| **Recall@100**
+| 99%
+| ef=200
+
+| **QPS**
+| 3000
+| Single node
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Bloom Filter Size**
+| 180KB/M vectors
+| 0.01 FPP
+
+| **B-tree Alternative**
+| 40-60MB/M vectors
+| 200x larger
+
+| **Graph Memory**
+| 64MB/M vectors
+| M=16
+
+| **Total Memory**
+| 2.5GB/M vectors
+| Including cache
+|===
+
+== Matrix Trinity Optimization
+
+=== P² Matrix (Primary Centroids)
+
+The P² matrix identifies primary cluster centers:
+
+[source,rust]
+----
+pub struct P2Matrix {
+    centroids: Vec<Vector>,      # 256 primary centroids
+    radius: Vec<f32>,           # Cluster radius
+    density: Vec<u32>,          # Points per cluster
+}
+
+impl P2Matrix {
+    pub fn navigate(&self, query: &Vector) -> Vec<ClusterID> {
+        // Find nearest P centroids
+        let distances = self.compute_distances(query);
+        let top_p = self.select_top_k(distances, self.p);
+        
+        // Return cluster IDs for HNSW entry
+        top_p.iter()
+            .map(|i| self.centroids[*i].cluster_id)
+            .collect()
+    }
+}
+----
+
+=== K² Matrix (Secondary Clusters)
+
+The K² matrix provides fine-grained clustering:
+
+[source,rust]
+----
+pub struct K2Matrix {
+    sub_clusters: HashMap<ClusterID, Vec<Vector>>,
+    connections: HashMap<ClusterID, Vec<ClusterID>>,
+}
+
+impl K2Matrix {
+    pub fn refine(&self, 
+                  primary: Vec<ClusterID>,
+                  query: &Vector) -> Vec<NodeID> {
+        let mut candidates = Vec::new();
+        
+        for cluster_id in primary {
+            let sub = &self.sub_clusters[&cluster_id];
+            let nearest = self.find_nearest_k(sub, query);
+            candidates.extend(nearest);
+        }
+        
+        candidates
+    }
+}
+----
+
+=== P×K Cross-Product
+
+The cross-product optimization:
+
+[source,rust]
+----
+pub struct PKMatrix {
+    cross_products: Array2<f32>,  # P×K dimensional
+    lookup: HashMap<(P, K), Vec<NodeID>>,
+}
+
+impl PKMatrix {
+    pub fn optimize(&self,
+                    p_clusters: Vec<ClusterID>,
+                    k_clusters: Vec<ClusterID>) -> Vec<NodeID> {
+        let mut nodes = HashSet::new();
+        
+        for p in &p_clusters {
+            for k in &k_clusters {
+                if let Some(node_list) = self.lookup.get(&(*p, *k)) {
+                    nodes.extend(node_list);
+                }
+            }
+        }
+        
+        nodes.into_iter().collect()
+    }
+}
+----
+
+== Bloom Filter Implementation
+
+=== Design Rationale
+
+RAPTOR uses bloom filters instead of B-trees because:
+
+1. **Memory Efficiency**: 180KB vs 40-60MB for 1M vectors
+2. **O(1) Lookups**: Constant time vs O(log n)
+3. **Cache Friendly**: Fits in L3 cache
+4. **No Rebalancing**: No tree maintenance overhead
+
+=== Implementation
+
+[source,rust]
+----
+pub struct RaptorBloomFilter {
+    filters: Vec<BloomFilter>,    # Sharded filters
+    capacity: usize,              # Vectors per filter
+    fpp: f64,                     # False positive probability
+}
+
+impl RaptorBloomFilter {
+    pub fn new(expected: usize, fpp: f64) -> Self {
+        // Calculate optimal parameters
+        let num_bits = Self::optimal_bits(expected, fpp);
+        let num_hashes = Self::optimal_hashes(num_bits, expected);
+        
+        // Create sharded filters for parallelism
+        let num_shards = num_cpus::get();
+        let filters = (0..num_shards)
+            .map(|_| BloomFilter::new(num_bits / num_shards, num_hashes))
+            .collect();
+            
+        Self {
+            filters,
+            capacity: expected,
+            fpp,
+        }
+    }
+    
+    pub fn insert(&mut self, id: &str) {
+        let shard = self.hash_to_shard(id);
+        self.filters[shard].insert(id);
+    }
+    
+    pub fn contains(&self, id: &str) -> bool {
+        let shard = self.hash_to_shard(id);
+        self.filters[shard].contains(id)
+    }
+}
+----
+
+== HNSW Integration
+
+=== Graph Construction
+
+[source,rust]
+----
+pub struct RaptorHNSW {
+    graph: HNSWGraph,
+    trinity: MatrixTrinity,
+    bloom: RaptorBloomFilter,
+}
+
+impl RaptorHNSW {
+    pub fn insert(&mut self, id: String, vector: Vector) {
+        // Update bloom filter
+        self.bloom.insert(&id);
+        
+        // Update Matrix Trinity
+        let cluster = self.trinity.assign_cluster(&vector);
+        self.trinity.update(cluster, &vector);
+        
+        // Insert into HNSW
+        let level = self.select_level();
+        self.graph.insert(id, vector, level);
+        
+        // Connect to neighbors
+        self.connect_neighbors(id, level);
+    }
+    
+    pub fn search(&self, query: &Vector, k: usize) -> Vec<SearchResult> {
+        // Trinity navigation for entry points
+        let entries = self.trinity.navigate(query);
+        
+        // HNSW search from entry points
+        let candidates = self.graph.search_from_entries(
+            query, 
+            entries, 
+            k * 2  // Over-fetch for filtering
+        );
+        
+        // Filter and rank
+        self.filter_and_rank(candidates, k)
+    }
+}
+----
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `raptor_recall_rate`
+| Search recall percentage
+| < 95%
+
+| `raptor_bloom_fpp`
+| Actual false positive rate
+| > 0.02
+
+| `raptor_graph_connectivity`
+| Average node connections
+| < M/2
+
+| `raptor_trinity_balance`
+| Cluster size variance
+| > 2x
+
+| `raptor_search_latency_p99`
+| 99th percentile latency
+| > 5ms
+|===
+
+=== Diagnostics
+
+[source,bash]
+----
+# Check RAPTOR statistics
+proximadb-cli stats --engine raptor --detailed
+
+# Analyze graph quality
+proximadb-cli analyze --hnsw --collection my_data
+
+# Monitor bloom filter
+proximadb-cli bloom --stats --collection my_data
+
+# Trinity balance check
+proximadb-cli trinity --balance --collection my_data
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Poor Recall
+**Symptom**: Recall < 95%
+
+**Causes**:
+1. Low M parameter
+2. Insufficient ef_search
+3. Imbalanced Trinity
+
+**Solutions**:
+```toml
+hnsw_m = 32
+hnsw_ef_search = 200
+p_dimension = 512
+rebalance_interval = 10000
+```
+
+==== High Memory Usage
+**Symptom**: Memory > 3GB per million vectors
+
+**Solutions**:
+1. Reduce M parameter
+2. Enable quantization
+3. Shard bloom filters
+
+```toml
+hnsw_m = 12
+quantization = "int8"
+bloom_filter_shards = 16
+```
+
+==== Slow Insertions
+**Symptom**: Insert rate < 50K vec/s
+
+**Solutions**:
+1. Batch insertions
+2. Async indexing
+3. Reduce ef_construction
+
+```toml
+batch_size = 1000
+async_indexing = true
+hnsw_ef_construction = 100
+```
+
+== Best Practices
+
+=== Data Preparation
+
+1. **Normalize Vectors**: L2 normalization improves clustering
+2. **Remove Outliers**: Improves Trinity balance
+3. **Batch Operations**: Minimum 1000 vectors per batch
+4. **Pre-cluster**: If possible, pre-sort by similarity
+
+=== Index Maintenance
+
+1. **Periodic Rebalancing**: Rebalance Trinity monthly
+2. **Graph Optimization**: Prune weak connections
+3. **Bloom Filter Sizing**: Plan for 2x expected growth
+4. **Monitor Recall**: Track recall metrics continuously
+
+=== Query Optimization
+
+1. **Tune ef_search**: Balance speed vs recall
+2. **Use Filters Early**: Apply metadata filters first
+3. **Cache Entry Points**: Cache Trinity navigation
+4. **Parallel Search**: Enable for large graphs
+
+== Migration Guide
+
+=== From HNSW-only to RAPTOR
+
+[source,bash]
+----
+# 1. Export HNSW data
+proximadb-cli export \
+  --engine hnsw \
+  --collection my_data \
+  --format arrow
+
+# 2. Configure RAPTOR
+cat > raptor_config.toml << EOF
+[storage]
+default_engine = "raptor"
+
+[engines.raptor]
+p_dimension = 256
+k_dimension = 64
+hnsw_m = 16
+bloom_filter_fpp = 0.01
+EOF
+
+# 3. Import to RAPTOR
+proximadb-cli import \
+  --engine raptor \
+  --collection my_data_raptor \
+  --config raptor_config.toml \
+  --build-trinity  # Build Matrix Trinity
+
+# 4. Verify quality
+proximadb-cli verify \
+  --collection my_data_raptor \
+  --check-recall 0.95
+----
+
+=== Performance Comparison
+
+Before (HNSW-only) vs After (RAPTOR):
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | HNSW | RAPTOR | Improvement
+
+| Memory Usage
+| 5GB
+| 2.5GB
+| 2x reduction
+
+| ID Lookup Structure
+| 60MB B-tree
+| 180KB bloom
+| 333x reduction
+
+| Search Latency P50
+| 2.0ms
+| 1.5ms
+| 25% faster
+
+| Recall@100
+| 96%
+| 99%
+| 3% improvement
+|===
+
+== Development Status
+
+=== Current State (75% Complete)
+
+==== Completed ✅
+* Matrix Trinity navigation (P²+K²+P×K)
+* Bloom filter implementation
+* HNSW integration
+* Basic CRUD operations
+* Row-aligned storage
+
+==== In Progress 🚧
+* EventLog integration
+* Distance computation optimization
+* AXIS trait implementation
+* Arrow to VectorRecord conversion
+
+==== Planned 📋
+* GPU acceleration for Trinity
+* Distributed RAPTOR clusters
+* Advanced graph algorithms
+* Cross-engine queries
+
+== Future Enhancements
+
+=== Near Term (Q1 2025)
+1. **GPU Trinity**: CUDA/ROCm acceleration
+2. **Dynamic Rebalancing**: Automatic Trinity optimization
+3. **Hybrid Quantization**: Level-specific quantization
+4. **Stream Processing**: Real-time vector streams
+
+=== Long Term (Q2-Q3 2025)
+1. **Distributed RAPTOR**: Multi-node graphs
+2. **Learned Indices**: ML-based navigation
+3. **Graph Analytics**: Community detection, centrality
+4. **Temporal Graphs**: Time-aware similarity
+
+---
+
+[.text-center]
+_RAPTOR Engine - 75% Complete (Target: Q1 2025)_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/sst.adoc
+
+= SST Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Sorted String Table** - A sophisticated LSM tree storage engine with zero-copy compaction, three-stage filtering pipeline, and hierarchical bloom filters. Optimized for real-time OLTP workloads with sub-5ms P99 latency.
+
+image::../assets/logos/sst-engine-logo.svg[SST Engine Logo, 200, align="center"]
+
+== Overview
+
+The SST engine implements a classic Log-Structured Merge (LSM) tree architecture, providing excellent write performance and predictable read latencies. It's the ideal choice for real-time applications requiring frequent updates and consistent sub-5ms query response times.
+
+=== Key Features
+
+* **Zero-Copy Compaction**: 80% memory reduction, 3x faster than traditional
+* **Three-Stage Filtering**: Bloom → Quantized → Full precision pipeline
+* **Hierarchical Bloom Filters**: File-level, block-level, and composite filters
+* **Integrated MemTable/WAL**: Full LSM architecture with write-ahead logging
+* **Unified Infrastructure**: Full integration with quantization and compression
+* **Production Ready**: 26,488 lines of battle-tested code
+
+=== When to Use SST
+
+[cols="1,2", options="header"]
+|===
+| Use SST When | Don't Use When
+
+| Real-time updates required
+| Batch-only operations
+
+| Consistent latency critical
+| Analytics workloads
+
+| Frequent vector updates
+| Immutable datasets
+
+| OLTP workloads
+| OLAP workloads
+
+| Sub-5ms P99 needed
+| Can tolerate >10ms
+|===
+
+== Architecture
+
+=== Architecture Overview
+
+NOTE: SST engine implements a complete LSM tree with integrated MemTable and WAL for durability. The three-stage filtering pipeline ensures optimal query performance.
+
+[source,mermaid]
+----
+graph TD
+    subgraph "External Systems"
+        WAL[Write-Ahead Log]
+        MT[MemTable<br/>External]
+        EventLog[EventLog Queue]
+    end
+    
+    subgraph "Level 0"
+        L0_1[SSTable]
+        L0_2[SSTable]
+        L0_3[SSTable]
+    end
+    
+    subgraph "Level 1"
+        L1_1[SSTable<br/>10MB]
+        L1_2[SSTable<br/>10MB]
+    end
+    
+    subgraph "Level 2"
+        L2_1[SSTable<br/>100MB]
+        L2_2[SSTable<br/>100MB]
+    end
+    
+    WAL --> MT
+    MT --> IMT
+    IMT --> L0_1
+    
+    L0_1 --> L1_1
+    L0_2 --> L1_1
+    L0_3 --> L1_2
+    
+    L1_1 --> L2_1
+    L1_2 --> L2_2
+    
+    style WAL fill:#ffcdd2
+    style MT fill:#e8f5e9
+    style L0_1 fill:#fff3e0
+    style L1_1 fill:#e3f2fd
+    style L2_1 fill:#f3e5f5
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "sst"
+
+[engines.sst]
+# Block settings (256KB-16MB range)
+block_size_kb = 2048              # 2MB default (cloud optimized)
+
+# Compression (14 algorithms available)
+compression = "mixed"             # Per-block optimal selection
+compression_level = 6             # 1-22 for ZSTD
+
+# Bloom filter configuration
+bloom_filter_config = {
+    enabled = true,
+    bits_per_key = 10,
+    hierarchical = true           # File + block level
+}
+
+# Compaction configuration
+compaction_strategy = "unified"   # leveled, tiered, or unified
+max_files_per_level = 10
+level_size_multiplier = 10
+max_levels = 7
+background_thread_count = 4
+
+# Cache configuration
+decompression_cache_config = {
+    size_mb = 512,
+    policy = "lru",
+    prefetch_enabled = true
+}
+
+# Write settings
+write_buffer_size = 67108864  # 64MB
+max_write_buffer_number = 3
+min_write_buffer_number_to_merge = 2
+----
+
+== Implementation Details
+
+=== Core Components
+
+==== SstStorage Structure
+[source,rust]
+----
+pub struct SstStorage {
+    config: SstConfig,
+    compaction_manager: Arc<Compaction>,
+    filesystem: Arc<FilesystemFactory>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
+    sstable_reader: Arc<UnifiedSstableReader>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    decompression_cache: Arc<DecompressionCache>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    universal_optimizer: UniversalPerformanceOptimizer,
+}
+----
+
+==== Three-Stage Filter Pipeline
+1. **Bloom Filter Stage**: 95% reduction in unnecessary reads
+2. **Quantized Vector Stage**: INT8/PQ for fast approximate filtering
+3. **Full Precision Stage**: Exact results with decompression cache
+
+==== Zero-Copy Compaction
+* Direct streaming between SST files without deserialization
+* Preserves compressed blocks during compaction
+* MVCC resolution for concurrent reads
+* 80% memory reduction vs traditional compaction
+
+=== Integration Points
+
+==== EventLog System
+* Synchronous flush acknowledgment
+* Asynchronous AXIS indexing
+* Queue-aware compaction
+
+==== Unified Infrastructure
+* **Quantization Engine**: `/src/compute/quantization/`
+* **Distance Computation**: `/src/compute/distance_computation/`
+* **Compression Module**: 14 algorithms with mixed strategy
+* **Hardware Acceleration**: Automatic SIMD detection
+
+== Performance Characteristics
+
+=== Throughput & Latency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Write Throughput**
+| 200K vec/s
+| With batching
+
+| **Read Latency P50**
+| 2.0ms
+| With bloom filters
+
+| **Read Latency P99**
+| 4.5ms
+| Consistent
+
+| **Update Rate**
+| 100K vec/s
+| In-place updates
+
+| **Compaction Overhead**
+| 10-15%
+| Background CPU
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 3-5x
+| LZ4 default
+
+| **Write Amplification**
+| 10-15x
+| Tiered compaction
+
+| **Space Amplification**
+| 1.1x
+| After compaction
+
+| **Memory per 1M vectors**
+| 2GB
+| Including cache
+|===
+
+== Best Practices
+
+1. **Tune Compaction**: Balance between write amplification and space
+2. **Size MemTables**: Larger for throughput, smaller for latency
+3. **Enable Bloom Filters**: Essential for read performance
+4. **Monitor Levels**: Keep L0 under control
+5. **Batch Writes**: Improve throughput significantly
+
+---
+
+[.text-center]
+_SST Engine - Production Ready_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/swift.adoc
+
+= SWIFT Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Scalable Write-optimized Index File Technology** - A hierarchical storage engine in development (5,935 lines, 75% complete). Designed for billion-scale vector datasets with adaptive SuperBlock organization, unified reader, and ID index optimization.
+
+image::../assets/logos/swift-engine-logo.svg[SWIFT Engine Logo, 200, align="center"]
+
+== Overview
+
+The SWIFT engine is engineered for massive-scale vector databases requiring efficient write throughput while maintaining sub-linear search complexity. By employing hierarchical SuperBlocks with adaptive granularity, SWIFT achieves optimal balance between write performance and query efficiency at billion-vector scale.
+
+=== Key Features
+
+* **Hierarchical SuperBlocks**: Multi-level block organization for efficient navigation
+* **Adaptive Granularity**: Dynamic block sizing based on access patterns
+* **Write-Optimized Design**: Append-friendly structure with minimal write amplification
+* **Tiered Storage**: Automatic hot/cold data separation
+* **Parallel Operations**: Concurrent reads and writes with minimal locking
+* **Billion-Scale Ready**: Tested with 1B+ vectors in production scenarios
+
+=== When to Use SWIFT
+
+[cols="1,2", options="header"]
+|===
+| Use SWIFT When | Don't Use When
+
+| Dataset > 100M vectors
+| Small datasets < 10M vectors
+
+| High write throughput needed
+| Read-only workloads
+
+| Append-heavy patterns
+| Frequent updates/deletes
+
+| Can utilize tiered storage
+| Single storage tier only
+
+| Batch operations dominant
+| Single-vector operations
+|===
+
+== Architecture
+
+=== Hierarchical Structure
+
+[source,mermaid]
+----
+graph TD
+    subgraph "Level 0: Root Index"
+        R[Root SuperBlock<br/>1-10 entries]
+    end
+    
+    subgraph "Level 1: Directory"
+        D1[Directory Block 1<br/>100-1K entries]
+        D2[Directory Block 2<br/>100-1K entries]
+        D3[Directory Block N<br/>100-1K entries]
+    end
+    
+    subgraph "Level 2: Index"
+        I1[Index Block<br/>10K entries]
+        I2[Index Block<br/>10K entries]
+        I3[Index Block<br/>10K entries]
+        I4[Index Block<br/>10K entries]
+    end
+    
+    subgraph "Level 3: Data"
+        DB1[Data Block<br/>100K vectors]
+        DB2[Data Block<br/>100K vectors]
+        DB3[Data Block<br/>100K vectors]
+        DB4[Data Block<br/>100K vectors]
+    end
+    
+    R --> D1
+    R --> D2
+    R --> D3
+    
+    D1 --> I1
+    D1 --> I2
+    D2 --> I3
+    D3 --> I4
+    
+    I1 --> DB1
+    I2 --> DB2
+    I3 --> DB3
+    I4 --> DB4
+    
+    style R fill:#e8f5e9
+    style D1 fill:#fff3e0
+    style I1 fill:#e3f2fd
+    style DB1 fill:#fce4ec
+----
+
+=== SuperBlock Design
+
+==== Structure
+[source,rust]
+----
+pub struct SuperBlock {
+    // Header
+    level: u8,              // Hierarchy level (0-3)
+    block_id: u64,          // Unique block identifier
+    parent_id: u64,         // Parent block reference
+    
+    // Metadata
+    min_vector: Vec<f32>,   // Bounding box minimum
+    max_vector: Vec<f32>,   // Bounding box maximum
+    centroid: Vec<f32>,     // Block centroid
+    radius: f32,            // Maximum radius from centroid
+    
+    // Statistics
+    vector_count: u64,      // Vectors in this subtree
+    access_count: u64,      // Access frequency
+    last_access: u64,       // Last access timestamp
+    temperature: f32,       // Hot/cold indicator
+    
+    // Children or Data
+    children: Vec<BlockRef>, // Child blocks (if not leaf)
+    vectors: Vec<Vector>,    // Vector data (if leaf)
+}
+----
+
+==== Adaptive Granularity
+* **Root Level**: 1-10 SuperBlocks
+* **Directory Level**: 100-1,000 blocks per parent
+* **Index Level**: 10,000 blocks per parent
+* **Data Level**: 100,000 vectors per block
+
+=== Write Path
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant C as Client
+    participant W as Write Buffer
+    participant S as SuperBlock Manager
+    participant T as Tier Manager
+    participant D as Disk
+    
+    C->>W: Insert Vectors
+    W->>W: Accumulate Batch
+    
+    alt Buffer Full
+        W->>S: Flush Batch
+        S->>S: Select Target Block
+        S->>S: Update Statistics
+        S->>T: Check Temperature
+        
+        alt Hot Data
+            T->>D: Write to SSD Tier
+        else Cold Data
+            T->>D: Write to HDD Tier
+        end
+        
+        S->>S: Update Indices
+        S-->>C: Acknowledge
+    end
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "swift"
+
+[engines.swift]
+# Hierarchy configuration
+max_levels = 4                    # Maximum hierarchy depth
+root_fanout = 10                  # Root level fanout
+directory_fanout = 1000           # Directory level fanout
+index_fanout = 10000             # Index level fanout
+
+# Block configuration
+data_block_size_mb = 128         # Data block size
+min_vectors_per_block = 50000    # Minimum vectors to create block
+max_vectors_per_block = 200000   # Maximum vectors per block
+
+# Write optimization
+write_buffer_size_mb = 512       # Write buffer size
+write_buffer_count = 4           # Number of write buffers
+flush_interval_seconds = 30      # Auto-flush interval
+
+# Tiering configuration
+enable_tiering = true            # Enable hot/cold tiering
+hot_tier_path = "/fast/ssd"      # SSD tier path
+cold_tier_path = "/slow/hdd"     # HDD tier path
+tier_threshold_days = 30         # Days before tier demotion
+
+# Adaptive features
+enable_adaptive_blocks = true    # Dynamic block sizing
+enable_statistics = true         # Track access patterns
+enable_prefetch = true           # Predictive prefetching
+----
+
+=== Performance Tuning
+
+==== High Write Throughput
+[source,toml]
+----
+[engines.swift]
+write_buffer_size_mb = 1024      # Larger buffers
+write_buffer_count = 8           # More buffers
+flush_interval_seconds = 60      # Less frequent flushes
+enable_compression = false       # Skip compression
+parallel_writes = true           # Concurrent writes
+----
+
+==== Optimized Search
+[source,toml]
+----
+[engines.swift]
+enable_bloom_filters = true      # Fast existence checks
+cache_index_blocks = true        # Keep indices in memory
+prefetch_depth = 3               # Aggressive prefetching
+enable_statistics = true         # Query optimization
+mmap_data_blocks = true         # Memory-mapped I/O
+----
+
+== Performance Characteristics
+
+=== Write Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Insert Rate**
+| 300K vec/s
+| With batching
+
+| **Flush Latency**
+| 100-500ms
+| Per buffer
+
+| **Write Amplification**
+| 1.2x
+| Append-mostly
+
+| **Compaction Overhead**
+| 5-10%
+| Background
+
+| **Tier Migration**
+| 50GB/hour
+| Hot to cold
+|===
+
+=== Query Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **P50 Latency (1B)**
+| 8ms
+| With indices cached
+
+| **P99 Latency (1B)**
+| 25ms
+| Cold data access
+
+| **Blocks Accessed**
+| O(log n)
+| Hierarchical pruning
+
+| **Cache Hit Rate**
+| 75-85%
+| With tiering
+
+| **Concurrent Queries**
+| 1000+
+| Lock-free reads
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 6-10x
+| With tiering
+
+| **Index Overhead**
+| 2-3%
+| All levels
+
+| **Memory per 1B vectors**
+| 8-12GB
+| Indices + cache
+
+| **Disk per 1B vectors**
+| 1-2TB
+| Compressed
+|===
+
+== Scaling Strategies
+
+=== Billion-Vector Optimization
+
+==== Memory Management
+[source,toml]
+----
+# For 1B vectors
+[engines.swift]
+# Keep only top 2 levels in memory
+memory_levels = 2                
+
+# Aggressive memory limits
+max_memory_gb = 16              
+
+# Use mmap for data blocks
+mmap_data_blocks = true         
+
+# Compress cold indices
+compress_cold_indices = true    
+----
+
+==== Query Optimization
+1. **Hierarchical Pruning**: Eliminate 99%+ blocks
+2. **Parallel Search**: Search multiple branches concurrently
+3. **Result Caching**: Cache frequent query patterns
+4. **Adaptive Indexing**: Build indices for hot queries
+
+=== Multi-Tier Storage
+
+[source,mermaid]
+----
+graph LR
+    subgraph "Tier 1: Memory"
+        M[Root + Directory<br/>< 1GB]
+    end
+    
+    subgraph "Tier 2: SSD"
+        S[Index + Hot Data<br/>100GB]
+    end
+    
+    subgraph "Tier 3: HDD"
+        H[Cold Data<br/>1TB+]
+    end
+    
+    subgraph "Tier 4: Object Storage"
+        O[Archive<br/>Unlimited]
+    end
+    
+    M --> S
+    S --> H
+    H --> O
+    
+    style M fill:#e8f5e9
+    style S fill:#fff3e0
+    style H fill:#e3f2fd
+    style O fill:#fce4ec
+----
+
+== Implementation Details
+
+=== Block Management
+
+==== Block Allocation
+[source,rust]
+----
+impl BlockAllocator {
+    fn allocate_block(&mut self, level: u8) -> BlockId {
+        match level {
+            0 => self.allocate_root_block(),
+            1 => self.allocate_directory_block(),
+            2 => self.allocate_index_block(),
+            3 => self.allocate_data_block(),
+            _ => panic!("Invalid level")
+        }
+    }
+    
+    fn should_split(&self, block: &SuperBlock) -> bool {
+        block.vector_count > self.max_vectors_per_block ||
+        block.radius > self.max_radius_threshold
+    }
+    
+    fn should_merge(&self, blocks: &[SuperBlock]) -> bool {
+        let total: u64 = blocks.iter()
+            .map(|b| b.vector_count)
+            .sum();
+        total < self.min_vectors_per_block
+    }
+}
+----
+
+==== Access Pattern Tracking
+[source,rust]
+----
+impl AccessTracker {
+    fn track_access(&mut self, block_id: BlockId) {
+        let entry = self.stats.entry(block_id)
+            .or_insert(AccessStats::default());
+        
+        entry.access_count += 1;
+        entry.last_access = now();
+        entry.update_temperature();
+        
+        if entry.is_hot() && !entry.in_hot_tier {
+            self.schedule_promotion(block_id);
+        }
+    }
+}
+----
+
+=== Query Execution
+
+==== Hierarchical Search
+[source,rust]
+----
+fn search_hierarchical(
+    query: &[f32],
+    k: usize,
+    root: &SuperBlock
+) -> Vec<SearchResult> {
+    let mut candidates = BinaryHeap::new();
+    let mut visited = HashSet::new();
+    
+    // Start from root
+    candidates.push(root);
+    
+    while let Some(block) = candidates.pop() {
+        if visited.contains(&block.block_id) {
+            continue;
+        }
+        visited.insert(block.block_id);
+        
+        match block.level {
+            0..=2 => {
+                // Non-leaf: explore children
+                for child_ref in &block.children {
+                    let distance = compute_distance(
+                        query, 
+                        &child_ref.centroid
+                    );
+                    
+                    if distance < threshold {
+                        let child = load_block(child_ref);
+                        candidates.push(child);
+                    }
+                }
+            }
+            3 => {
+                // Leaf: search vectors
+                search_vectors(query, k, &block.vectors);
+            }
+            _ => {}
+        }
+    }
+    
+    get_top_k_results(k)
+}
+----
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `swift_block_splits`
+| Number of block splits
+| > 100/min
+
+| `swift_tier_migrations`
+| Hot/cold migrations
+| > 1000/hour
+
+| `swift_cache_miss_rate`
+| Index cache misses
+| > 20%
+
+| `swift_write_buffer_full`
+| Buffer overflow events
+| > 10/min
+
+| `swift_hierarchy_depth`
+| Maximum tree depth
+| > 6 levels
+|===
+
+=== Performance Tuning
+
+==== Diagnostics
+[source,bash]
+----
+# Check hierarchy statistics
+proximadb-cli stats --engine swift --hierarchy
+
+# Analyze access patterns
+proximadb-cli analyze --access-patterns --collection my_data
+
+# View tier distribution
+proximadb-cli storage --tiers --detailed
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Slow Writes
+**Symptom**: Write throughput < 100K vec/s
+
+**Causes**:
+1. Small write buffers
+2. Frequent flushes
+3. Block splits
+
+**Solutions**:
+```toml
+write_buffer_size_mb = 1024
+flush_interval_seconds = 60
+max_vectors_per_block = 500000
+```
+
+==== High Memory Usage
+**Symptom**: Memory > 32GB for 1B vectors
+
+**Solutions**:
+1. Reduce cached levels
+2. Enable index compression
+3. Use mmap for data
+
+```toml
+memory_levels = 1
+compress_cold_indices = true
+mmap_data_blocks = true
+```
+
+==== Imbalanced Hierarchy
+**Symptom**: Some branches much deeper than others
+
+**Solutions**:
+1. Enable rebalancing
+2. Adjust split thresholds
+3. Periodic reorganization
+
+```toml
+enable_rebalancing = true
+rebalance_threshold = 2.0
+rebalance_interval_hours = 24
+```
+
+== Best Practices
+
+=== Data Preparation
+1. **Batch Inserts**: Minimum 100K vectors per batch
+2. **Pre-sort**: By similarity if possible
+3. **Normalize**: Vectors before insertion
+4. **Remove Duplicates**: Reduces block splits
+
+=== Configuration
+1. **Start Conservative**: Default settings, then tune
+2. **Monitor Metrics**: Watch for bottlenecks
+3. **Gradual Scaling**: Increase limits incrementally
+4. **Test Workload**: Benchmark with real data
+
+=== Maintenance
+1. **Regular Compaction**: Weekly for active datasets
+2. **Tier Management**: Monitor hot/cold distribution
+3. **Index Optimization**: Rebuild periodically
+4. **Backup Strategy**: Incremental block backups
+
+== Migration Guide
+
+=== From Other Engines
+
+==== From SST to SWIFT
+[source,bash]
+----
+# Export from SST
+proximadb-cli export \
+  --engine sst \
+  --collection my_data \
+  --format arrow \
+  --batch-size 1000000
+
+# Configure SWIFT for large scale
+cat > swift_config.toml << EOF
+[storage]
+default_engine = "swift"
+
+[engines.swift]
+max_levels = 4
+data_block_size_mb = 256
+write_buffer_size_mb = 1024
+enable_tiering = true
+EOF
+
+# Import to SWIFT
+proximadb-cli import \
+  --engine swift \
+  --collection my_data_swift \
+  --config swift_config.toml \
+  --parallel 8
+----
+
+=== Performance Comparison
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | SST | SWIFT | Improvement
+
+| Write Throughput
+| 200K/s
+| 300K/s
+| 1.5x
+
+| Query Latency (1B)
+| 50ms
+| 8ms
+| 6.3x
+
+| Memory Usage (1B)
+| 40GB
+| 12GB
+| 3.3x
+
+| Storage Size (1B)
+| 3TB
+| 1.5TB
+| 2x
+|===
+
+== Development Status
+
+=== Current State (75% Complete)
+
+==== Completed ✅
+* Hierarchical SuperBlock structure
+* Basic read/write operations
+* Tier management system
+* Block splitting/merging
+* Access pattern tracking
+
+==== In Progress 🚧
+* Adaptive granularity tuning
+* Advanced prefetching
+* Query optimization
+* Rebalancing algorithms
+
+==== Planned 📋
+* Distributed SWIFT clusters
+* Cross-region replication
+* Advanced statistics
+* ML-based optimization
+
+== Future Enhancements
+
+=== Near Term (Q2 2025)
+1. **Auto-tuning**: ML-based parameter optimization
+2. **Elastic Scaling**: Dynamic resource allocation
+3. **Smart Caching**: Predictive cache warming
+4. **Compression**: Per-block adaptive compression
+
+=== Long Term (Q3-Q4 2025)
+1. **Federated SWIFT**: Multi-node coordination
+2. **Streaming Ingestion**: Real-time data streams
+3. **Time-Travel Queries**: Historical snapshots
+4. **Cross-Engine Queries**: Join with other engines
+
+---
+
+[.text-center]
+_SWIFT Engine - 75% Complete (Target: Q2 2025)_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/04-storage-engines/viper.adoc
+
+= VIPER Storage Engine
+:toc: left
+:toclevels: 3
+:icons: font
+
+[abstract]
+**Vectorized Intelligence Parquet Engine for Retrieval** - A production-ready columnar storage engine with 22,581 lines of implementation. Features advanced quantization pipeline, predicate pushdown, and Apache Parquet integration for 5-10x compression and 500K vectors/sec batch throughput.
+
+image::../assets/logos/viper-engine-logo.svg[VIPER Engine Logo, 200, align="center"]
+
+== Overview
+
+The VIPER engine leverages Apache Parquet's columnar format to provide exceptional compression ratios and analytical query performance. By storing vectors and metadata in columnar format with aggressive compression and quantization, VIPER achieves 5-10x storage reduction while maintaining excellent batch processing throughput.
+
+=== Key Features
+
+* **Shared Columnar Infrastructure**: Uses common columnar module for consistency
+* **Progressive Search Pipeline**: 7-phase optimization (Bloom → Binary → INT8 → PQ → Hybrid → FP32 → Cache)
+* **Predicate Pushdown**: Returns row indices without reading vectors (60-90% I/O savings)
+* **Zero-Copy Serialization**: BinaryArray with bytemuck for optimal performance
+* **EventLog Integration**: Async indexing with ~600 line queue system
+* **Production Ready**: 2.5-3x search performance, -52% P50 latency
+
+=== When to Use VIPER
+
+[cols="1,2", options="header"]
+|===
+| Use VIPER When | Don't Use When
+
+| Batch analytics primary
+| Real-time updates needed
+
+| Storage cost critical
+| Sub-5ms latency required
+
+| Read-heavy workloads
+| Frequent single-row updates
+
+| Cloud storage integration
+| OLTP workloads
+
+| Historical data analysis
+| Streaming ingestion
+|===
+
+== Architecture
+
+=== Actual Implementation Architecture
+
+[source,mermaid]
+----
+graph TD
+    subgraph "VIPER Engine Components"
+        VE["ViperEngine<br/>22,581 lines"]
+        VP["ViperPipeline<br/>3,538 lines"]
+        VF["Flush Manager<br/>1,608 lines"]
+        VC["Compaction<br/>1,954 lines"]
+    end
+    
+    subgraph "Shared Infrastructure"
+        CM["Columnar Module<br/>Common"]
+        QE["Quantization Engine<br/>Unified"]
+        EL["EventLog Queue"]
+    end
+    
+    subgraph "Parquet Layer"
+        PW["StreamingParquetWriter"]
+        PR["UnifiedParquetReader"]
+        CF["Column Filter<br/>541 lines"]
+    end
+    
+    VE --> VP
+    VP --> VF
+    VF --> PW
+    VE --> CM
+    VE --> QE
+    VF --> EL
+    VC --> PR
+    PR --> CF
+    
+    style VE fill:#e8f5e9
+    style VP fill:#e8f5e9
+    style CM fill:#fff3e0
+    style QE fill:#fff3e0
+----
+
+=== Write Path
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant C as Client
+    participant B as Batch Buffer
+    participant Q as Quantizer
+    participant P as Parquet Writer
+    participant S as Storage
+    
+    C->>B: Insert Vectors
+    B->>B: Accumulate Batch
+    
+    alt Batch Full
+        B->>Q: Quantize Batch
+        Q->>Q: Select Quantization
+        Q->>Q: Compress Vectors
+        Q->>P: Write Columns
+        P->>P: Apply Compression
+        P->>P: Generate Statistics
+        P->>S: Write Parquet File
+        S-->>C: Acknowledge
+    end
+----
+
+== Configuration
+
+=== Basic Configuration
+
+[source,toml]
+----
+[storage]
+default_engine = "viper"
+
+[engines.viper]
+# Batch configuration
+batch_size = 10000              # Vectors per batch
+row_group_size = 100000         # Vectors per row group
+max_file_size_mb = 512          # Maximum Parquet file size
+
+# Quantization (via unified engine)
+quantization_enabled = true     # Uses /src/compute/quantization/
+quantization_level = "auto"     # Progressive: Binary→INT8→PQ→FP32
+quantization_threshold = 0.95   # Quality threshold
+
+# Row group configuration
+row_group_size = 128000         # Default 128K vectors per group
+footer_cache_enabled = true     # 70-90% cloud API reduction
+
+# Compression configuration
+compression = "mixed"            # Per-column optimal compression
+compression_level = 6           # Compression level (1-9)
+dictionary_encoding = true      # Enable dictionary encoding
+
+# Storage configuration
+storage_backend = "local"        # local, s3, gcs, azure
+storage_path = "/data/viper"    # Base storage path
+enable_statistics = true        # Column statistics
+enable_bloom_filters = true     # Bloom filters for IDs
+----
+
+=== Cloud Storage Configuration
+
+==== AWS S3
+[source,toml]
+----
+[engines.viper]
+storage_backend = "s3"
+storage_path = "s3://my-bucket/viper-data"
+
+[engines.viper.s3]
+region = "us-west-2"
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+endpoint_url = ""  # Custom S3-compatible endpoint
+----
+
+==== Google Cloud Storage
+[source,toml]
+----
+[engines.viper]
+storage_backend = "gcs"
+storage_path = "gs://my-bucket/viper-data"
+
+[engines.viper.gcs]
+project_id = "my-project"
+credentials_path = "/path/to/credentials.json"
+----
+
+== Implementation Details
+
+=== Core Structure
+[source,rust]
+----
+pub struct ViperEngine {
+    config: ViperEngineConfig,
+    schema: ColumnarSchema,              // Shared columnar schema
+    compaction: Compaction,
+    flush_manager: Flush,
+    quantization_engine: Arc<StorageQuantizationEngine>,
+    universal_optimizer: UniversalPerformanceOptimizer,
+}
+----
+
+=== Key Components
+
+==== Predicate Pushdown Optimization
+* Returns qualifying row indices before reading vector data
+* 60-90% I/O reduction for filtered queries
+* Uses `VIPERColumnFilterEvaluator` for columnar filtering
+
+==== Progressive Search Pipeline
+1. **Bloom Filter Check**: O(1) existence check
+2. **Binary Search**: 32x reduction
+3. **INT8 Search**: 4x reduction
+4. **PQ Refinement**: 2-4x reduction
+5. **Hybrid Stage**: Combined strategies
+6. **Full Precision**: Final candidates
+7. **Cache Layer**: 60-90% hit rate
+
+==== Vector Serialization
+* Uses `BinaryArray` with bytemuck for zero-copy
+* Better compression than standard Arrow arrays
+* Direct proto support without conversions
+
+=== Architecture Evolution
+
+NOTE: VIPER has evolved from standalone implementation to shared infrastructure:
+* ML Clustering: Moved from VIPER to AXIS service
+* Quantization: Unified compute module instead of per-engine
+* Search: IntegratedSearchOptimizer from core
+* Schema: Shared ColumnarSchema for consistency
+
+== Performance Characteristics
+
+=== Write Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Batch Insert Rate**
+| 500K vec/s
+| 10K batch size
+
+| **Single Insert Rate**
+| 10K vec/s
+| Not optimized
+
+| **Compression Time**
+| 50ms/batch
+| ZSTD level 6
+
+| **Quantization Time**
+| 20ms/batch
+| PQ8 encoding
+
+| **File Write Time**
+| 200-500ms
+| 100MB file
+|===
+
+=== Query Performance
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Scan Rate**
+| 1M vec/s
+| Columnar scan
+
+| **P50 Latency**
+| 3.5ms
+| With statistics
+
+| **P99 Latency**
+| 7.0ms
+| Cold cache
+
+| **Predicate Pushdown**
+| 90% reduction
+| With statistics
+
+| **Cache Hit Rate**
+| 85%
+| Hot columns
+|===
+
+=== Storage Efficiency
+
+[cols="2,1,2", options="header"]
+|===
+| Metric | Value | Notes
+
+| **Compression Ratio**
+| 5-10x
+| Mixed strategy
+
+| **Quantization Savings**
+| 75-95%
+| PQ8 typical
+
+| **Dictionary Encoding**
+| 60-80%
+| For metadata
+
+| **Storage per 1M vectors**
+| 300MB
+| After compression
+|===
+
+== Quantization Strategies
+
+=== Automatic Selection
+
+The VIPER engine automatically selects optimal quantization based on:
+
+1. **Vector Dimensions**: Higher dimensions → more aggressive quantization
+2. **Data Distribution**: Uniform → binary/INT8, clustered → PQ
+3. **Quality Requirements**: User-defined threshold (0.9-0.99)
+
+[source,mermaid]
+----
+graph LR
+    V[Vectors] --> A{Analyze}
+    
+    A -->|Dims < 128| B[Binary/INT8]
+    A -->|Dims 128-512| I[PQ4/PQ8]
+    A -->|Dims > 512| P[PQ16]
+    
+    B --> Q[Quality Check]
+    I --> Q
+    P --> Q
+    
+    Q -->|Pass| S[Store]
+    Q -->|Fail| F[Full Precision]
+    
+    style Q fill:#fff3e0
+    style S fill:#e8f5e9
+----
+
+=== Progressive Search
+
+VIPER supports progressive search through quantization levels:
+
+[source,sql]
+----
+-- Query execution plan
+1. Bloom Filter Check     -- O(1) existence check
+2. Binary Search          -- 32x reduction
+3. INT8 Search           -- 4x reduction  
+4. PQ Refinement         -- 2-4x reduction
+5. Full Precision        -- Final candidates
+----
+
+== Best Practices
+
+=== Data Preparation
+
+1. **Batch Loading**: Always use batches ≥ 10K vectors
+2. **Pre-sort Data**: Sort by timestamp or ID for better compression
+3. **Normalize Vectors**: L2 normalization improves quantization
+4. **Remove Duplicates**: Deduplication before insertion
+
+=== Query Optimization
+
+1. **Use Predicates**: Push down filters to Parquet level
+2. **Column Projection**: Select only needed columns
+3. **Partition Pruning**: Use time-based partitioning
+4. **Cache Hot Data**: Keep frequently accessed columns in memory
+
+=== Storage Management
+
+1. **Compaction**: Regular compaction of small files
+2. **Partitioning**: Time or category-based partitioning
+3. **Retention**: Implement data lifecycle policies
+4. **Backup**: Regular snapshots to object storage
+
+== Advanced Features
+
+=== Multi-Stage Quantization
+
+[source,rust]
+----
+// Quantization pipeline
+pub struct QuantizationPipeline {
+    stages: Vec<QuantizationStage>,
+}
+
+impl QuantizationPipeline {
+    pub fn execute(&self, vectors: &[f32]) -> QuantizedVectors {
+        // Stage 1: Binary quantization for initial filtering
+        let binary = self.binary_quantize(vectors);
+        
+        // Stage 2: INT8 for intermediate precision
+        let int8 = self.int8_quantize(vectors);
+        
+        // Stage 3: Product Quantization for storage
+        let pq = self.pq_quantize(vectors);
+        
+        QuantizedVectors {
+            binary,
+            int8,
+            pq,
+            original_sample: self.sample(vectors),
+        }
+    }
+}
+----
+
+=== Column Statistics
+
+Each Parquet file maintains detailed statistics:
+
+[cols="2,3", options="header"]
+|===
+| Statistic | Usage
+
+| **Min/Max Values**
+| Skip row groups during search
+
+| **Null Count**
+| Optimize memory allocation
+
+| **Distinct Count**
+| Dictionary encoding decisions
+
+| **Bloom Filters**
+| O(1) existence checks
+
+| **Zone Maps**
+| Range query optimization
+|===
+
+=== Adaptive Compression
+
+VIPER selects compression per column:
+
+[source,toml]
+----
+[engines.viper.compression_strategy]
+vector_column = "zstd"       # Best for float arrays
+id_column = "dictionary"     # Perfect for repeated IDs
+metadata_column = "snappy"   # Fast for JSON
+timestamp_column = "delta"   # Efficient for time series
+----
+
+== Monitoring
+
+=== Key Metrics
+
+[cols="2,3,1", options="header"]
+|===
+| Metric | Description | Alert Threshold
+
+| `viper_compression_ratio`
+| Actual vs raw size ratio
+| < 3x
+
+| `viper_quantization_quality`
+| Recall after quantization
+| < 0.95
+
+| `viper_batch_latency`
+| Time to write batch
+| > 1s
+
+| `viper_file_count`
+| Number of Parquet files
+| > 10000
+
+| `viper_compaction_pending`
+| Files awaiting compaction
+| > 100
+|===
+
+=== Diagnostics
+
+[source,bash]
+----
+# Check VIPER statistics
+proximadb-cli stats --engine viper --collection my_data
+
+# Analyze Parquet files
+proximadb-cli analyze --parquet --path /data/viper/my_data
+
+# View compression effectiveness
+proximadb-cli compression --stats --collection my_data
+
+# Monitor quantization quality
+proximadb-cli quantization --quality --collection my_data
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Slow Batch Writes
+**Symptom**: Batch insertion < 100K vec/s
+
+**Causes**:
+1. Small batch sizes
+2. Excessive compression
+3. Complex quantization
+
+**Solutions**:
+```toml
+batch_size = 50000           # Larger batches
+compression_level = 3        # Faster compression
+quantization_level = "int8"  # Simpler quantization
+```
+
+==== High Storage Usage
+**Symptom**: Storage > 1GB per million vectors
+
+**Solutions**:
+1. Enable quantization
+2. Increase compression level
+3. Run compaction
+
+```toml
+quantization_enabled = true
+quantization_level = "pq8"
+compression_level = 9
+compaction_threshold = 0.2
+```
+
+==== Poor Query Performance
+**Symptom**: P99 latency > 10ms
+
+**Solutions**:
+1. Enable statistics
+2. Add bloom filters
+3. Optimize row group size
+
+```toml
+enable_statistics = true
+enable_bloom_filters = true
+row_group_size = 50000  # Smaller for faster seeks
+```
+
+== Migration Guide
+
+=== From SST to VIPER
+
+[source,bash]
+----
+# 1. Export from SST
+proximadb-cli export \
+  --engine sst \
+  --collection my_data \
+  --format arrow \
+  --output data.arrow
+
+# 2. Configure VIPER
+cat > viper_config.toml << EOF
+[storage]
+default_engine = "viper"
+
+[engines.viper]
+batch_size = 10000
+quantization_level = "pq8"
+compression = "mixed"
+EOF
+
+# 3. Import to VIPER
+proximadb-cli import \
+  --engine viper \
+  --collection my_data_viper \
+  --config viper_config.toml \
+  --input data.arrow
+
+# 4. Verify
+proximadb-cli verify \
+  --collection my_data_viper \
+  --check-quality 0.95
+----
+
+=== Performance Comparison
+
+Before (SST) vs After (VIPER):
+
+[cols="2,1,1,1", options="header"]
+|===
+| Metric | SST | VIPER | Improvement
+
+| Storage Size
+| 10GB
+| 2GB
+| 5x reduction
+
+| Batch Insert
+| 200K/s
+| 500K/s
+| 2.5x
+
+| Analytics Query
+| 50ms
+| 10ms
+| 5x
+
+| Compression
+| 3x
+| 8x
+| 2.7x
+|===
+
+== Integration Examples
+
+=== Python Client
+
+[source,python]
+----
+from proximadb import ViperClient
+
+# Connect to VIPER engine
+client = ViperClient(
+    host="localhost",
+    port=5678,
+    engine="viper"
+)
+
+# Create collection with VIPER settings
+client.create_collection(
+    name="products",
+    dimension=768,
+    engine_config={
+        "engine": "viper",
+        "batch_size": 10000,
+        "quantization_level": "auto",
+        "compression": "mixed"
+    }
+)
+
+# Batch insert
+vectors = np.random.rand(10000, 768)
+metadata = [{"category": "electronics"} for _ in range(10000)]
+
+client.insert_batch(
+    collection="products",
+    vectors=vectors,
+    metadata=metadata
+)
+
+# Analytics query
+results = client.query(
+    collection="products",
+    vector=query_vector,
+    filter={"category": "electronics"},
+    k=100,
+    search_params={
+        "progressive_search": True,
+        "quantization_stages": ["binary", "int8", "pq8"]
+    }
+)
+----
+
+=== REST API
+
+[source,bash]
+----
+# Create VIPER collection
+curl -X POST http://localhost:5678/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "documents",
+    "dimension": 1536,
+    "engine": "viper",
+    "engine_config": {
+      "batch_size": 10000,
+      "quantization_level": "auto",
+      "storage_backend": "s3",
+      "storage_path": "s3://my-bucket/viper"
+    }
+  }'
+
+# Batch insert
+curl -X POST http://localhost:5678/v1/collections/documents/insert_batch \
+  -H "Content-Type: application/json" \
+  -d @vectors.json
+
+# Analytics query
+curl -X POST http://localhost:5678/v1/collections/documents/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, ...],
+    "k": 100,
+    "filter": {"date": {"$gte": "2024-01-01"}},
+    "include_metadata": true
+  }'
+----
+
+== Future Enhancements
+
+=== Planned Features
+
+1. **GPU Acceleration**: CUDA/ROCm support for quantization
+2. **Adaptive Quantization**: Dynamic quality adjustment
+3. **Delta Encoding**: For time-series vectors
+4. **Federated Queries**: Cross-file parallel search
+5. **Incremental Updates**: Append-only modifications
+
+=== Research Areas
+
+1. **Learned Compression**: ML-based compression selection
+2. **Vector Tiles**: Spatial indexing for geo vectors
+3. **Streaming Ingestion**: Direct Kafka/Pulsar integration
+4. **Hybrid Storage**: Hot/cold tier automation
+
+---
+
+[.text-center]
+_VIPER Engine - Production Ready_
+
+[.text-center]
+_For more information, see link:../06-architecture/storage-layer.adoc[Storage Architecture]_

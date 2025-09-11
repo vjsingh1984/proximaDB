@@ -1,3 +1,264 @@
+= ProximaDB Development and Contribution Guide
+:toc: macro
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide is for developers who want to contribute to ProximaDB or build custom extensions.
+
+== Development Workflow
+
+[plantuml, dev-workflow, svg]
+----
+@startuml
+start
+:Fork Repository;
+:Clone Locally;
+:Create Feature Branch;
+:Write Code;
+:Add Tests;
+:Run Tests Locally;
+if (Tests Pass?) then (yes)
+  :Commit Changes;
+  :Push to Fork;
+  :Create Pull Request;
+  if (CI Passes?) then (yes)
+    :Code Review;
+    if (Approved?) then (yes)
+      :Merge to Main;
+      stop
+    else (no)
+      :Address Feedback;
+    endif
+  else (no)
+    :Fix CI Issues;
+  endif
+else (no)
+  :Fix Tests;
+endif
+@enduml
+----
+
+== Project Structure
+
+[source]
+----
+proximadb/
+├── src/
+│   ├── api/               # API handlers
+│   ├── compute/           # Distance computation
+│   ├── core/              # Core types and utilities
+│   ├── index/             # Indexing algorithms
+│   ├── proto/             # Protocol buffers
+│   ├── services/          # Business logic
+│   └── storage/           # Storage engines
+├── benches/               # Benchmarks
+├── tests/                 # Integration tests
+├── docs/                  # Documentation
+├── examples/              # Example code
+└── clients/               # Client libraries
+----
+
+---
+_For architecture details, see link:../../06-architecture/README.adoc[Architecture Documentation]_ +
+_For contribution guidelines, see link:../../CONTRIBUTING.adoc[Contributing Guide]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/agents-sks-hybrid-guide.adoc
+
+= Agent Guide: Implementing SKS + Hybrid Query
+:toc:
+
+== Purpose
+Concrete steps for coding agents to implement Semantic Knowledge Store (SKS) and federated Hybrid Query in a modular, testable way.
+
+== Prerequisites
+- Build: `make build` or `make build-server`
+- Tests: `make test`
+- Style: `make fmt && make clippy`
+
+== Tasks (Ordered)
+1) Hybrid Orchestrator (Federated)
+   - Files: `src/query/execution/{planner.rs,executor.rs,mod.rs}`
+   - Actions: Parallel VectorSearch + GraphTraversal; seed handoff both ways; Fusion (RRF) with weights; pagination/streaming; EXPLAIN.
+2) SQL Frontend Wiring
+   - Files: `src/query/sql_frontend/{parser.rs,lowering.rs}`
+   - Actions: Ensure SIMILAR/FOLLOW lower to ExecutionOperation; add tests in `sql_frontend/tests.rs`.
+3) SKS v1 Storage Coupling
+   - Files: `src/storage/entity_store.rs`
+   - Actions: Implement persistence for headers/embeddings; add `CsrRelationsStore`; add `InMemoryProvenanceRegistry`.
+4) API Exposure
+   - Files: `src/api_handlers/unified_handlers.rs`, `src/network/rest/v1/entities.rs`, `src/network/grpc/entity_service.rs`
+   - Actions: Expose pagination/streaming; add SKS routes as needed.
+
+== Design Patterns
+- Interfaces first: Traits (`EntityStore`, `RelationsStore`) with minimal stable methods
+- Zero-copy: Share headers via Arc; avoid cloning large vectors in hot paths
+- Fusion strategy pattern: Enum + pluggable scoring functions
+- Backpressure: Stream fused rows with bounded buffers
+- Seeding strategy: Control graph→vector seeding via SQL hints or REST field (AVERAGE | PER_SEED | NONE)
+
+== Tests
+- Unit: fusion, CSR adjacency, keying
+- Integration: SIMILAR→FOLLOW and FOLLOW→SIMILAR pipelines; pagination stability
+- Bench: Compare federated vs SKS on sample datasets
+- Deep traversal (feature `deep_traversal_tests`): BFS up to `max_depth` for richer coverage
+
+== Feature Flags
+- `sql_frontend` (default on): use new frontend path
+- `sks_coupled` (future): route hybrid to SKS when available; fallback to federated
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/building.adoc
+
+= Building ProximaDB from Source
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to build ProximaDB from source code.
+
+=== Prerequisites
+
+Details on required tools and dependencies.
+
+=== Build Options
+
+Various build configurations and options.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/coding-standards.adoc
+
+= ProximaDB Coding Standards
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document outlines the coding standards and best practices for ProximaDB development.
+
+=== Code Style
+
+Details on code formatting, naming conventions, and other style guidelines.
+
+=== Best Practices
+
+General recommendations for writing high-quality, maintainable code.
+
+=== Conventions
+
+Project-specific conventions and patterns.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/contributing.adoc
+
+= Contributing to ProximaDB
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide outlines how to contribute to the ProximaDB project.
+
+=== Code Contributions
+
+Guidelines for submitting code changes.
+
+=== Documentation Contributions
+
+Guidelines for contributing to the documentation.
+
+=== Testing Contributions
+
+Guidelines for contributing tests.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/debugging.adoc
+
+= ProximaDB Debugging Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides techniques and tools for debugging ProximaDB.
+
+=== Debugging Tools
+
+Details on recommended debugging tools.
+
+=== Common Debugging Scenarios
+
+Solutions for common debugging problems.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/index-development.adoc
+
+= Index Development Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides information on how to develop new index algorithms for ProximaDB.
+
+=== Index Trait
+
+Details on the `Index` trait and its methods.
+
+=== Configuration
+
+How to configure new index algorithms.
+
+=== Testing
+
+How to test new index algorithms.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/profiling.adoc
+
+= ProximaDB Profiling Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides techniques and tools for profiling ProximaDB performance.
+
+=== Profiling Tools
+
+Details on recommended profiling tools.
+
+=== Performance Optimization
+
+Techniques for optimizing ProximaDB performance.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/release-process.adoc
+
+= ProximaDB Release Process
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes the release process for ProximaDB.
+
+=== Versioning
+
+Details on versioning scheme.
+
+=== Release Cadence
+
+Information on release frequency.
+
+=== Deployment
+
+Steps for deploying new releases.
+
+== Original File: /home/vsingh/code/proximaDB/docs/07-development/setup.adoc
+
 = Development Setup
 :toc:
 :toclevels: 3
@@ -18,7 +279,7 @@ This guide will help you set up a complete ProximaDB development environment.
 
 | Rust
 | 1.75+
-| `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`
+| `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
 | Git
 | 2.25+
@@ -73,7 +334,7 @@ This guide will help you set up a complete ProximaDB development environment.
 [source,bash]
 ----
 # Clone the repository
-git clone https://github.com/proximadb/proximadb.git
+git clone https://github.com/proximadb/proximadb
 cd proximadb
 
 # Add upstream remote
@@ -333,21 +594,21 @@ cargo fmt --all -- --check
 if [ $? -ne 0 ]; then
     echo "Please run 'cargo fmt --all' before committing"
     exit 1
-fi
+}
 
 # Run clippy
 cargo clippy --all-targets --all-features -- -D warnings
 if [ $? -ne 0 ]; then
     echo "Please fix clippy warnings before committing"
     exit 1
-fi
+}
 
 # Run tests
 cargo test --lib --bins
 if [ $? -ne 0 ]; then
     echo "Tests failed. Please fix before committing"
     exit 1
-fi
+}
 ----
 
 === Branch Naming
@@ -430,7 +691,7 @@ volumes:
 | Ensure `protoc` is in PATH and version 3.20+
 
 | SIMD compilation errors
-| Add `RUSTFLAGS="-C target-cpu=native"`
+| Add `RUSTFLAGS=\"-C target-cpu=native\"`
 
 | Linking errors
 | Install `pkg-config` and development libraries
@@ -468,6 +729,5 @@ cargo tree
 cargo bloat --release
 ----
 
----
-_Next: link:building.adoc[Building from Source]_ +
+--- _Next: link:building.adoc[Building from Source]_ +
 _Back to: link:README.adoc[Development Guide]_

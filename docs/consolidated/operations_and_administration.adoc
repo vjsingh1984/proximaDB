@@ -1,3 +1,206 @@
+= ProximaDB Operations and Administration Guide
+:toc: macro
+:toclevels: 3
+:icons: font
+
+[abstract]
+This guide covers operational aspects of ProximaDB including deployment, monitoring, backup, recovery, and maintenance.
+
+== Overview
+
+This guide covers operational aspects of ProximaDB including deployment, monitoring, backup, recovery, and maintenance.
+
+---
+_For development setup, see link:../../07-development/README.adoc[Development Guide]_ +
+_For user documentation, see link:../../03-user-guide/README.adoc[User Guide]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/BENCHMARKS.adoc
+
+= ProximaDB Performance Benchmarks
+:toc:
+:toclevels: 3
+:icons: font
+:imagesdir: ../docs/assets
+:source-highlighter: rouge
+
+*Last Updated*: September 6, 2025
+
+== Executive Summary
+
+ProximaDB is engineered for **exceptional performance and efficiency** in vector search. Our innovative architecture and hardware-aware optimizations enable high throughput and low latency across diverse workloads and vector dimensions.
+
+== Performance Overview
+
+ProximaDB is designed to deliver **high throughput** for distance computations and **low latency** for search queries across a wide range of vector dimensions and metrics. Our system performance is characterized by efficient vector operations, optimized indexing, robust memory management, and rapid hardware detection.
+
+Our architecture ensures that operations are performed with **minimal overhead**, leveraging underlying hardware capabilities for maximum efficiency.
+
+== Benchmark Configuration
+
+=== Test Environment
+
+* *OS*: Linux 5.15.167.4-microsoft-standard-WSL2
+* *CPU*: x86_64 with AVX2 support
+* *Build*: Release mode with full optimizations
+* *Iterations*: 10,000 per metric per dimension
+
+=== Test Methodology
+
+[source,bash]
+----
+# Benchmark execution
+./target/release/proximadb-bench --iterations 10000 --dimensions 128,512,1536 distance
+
+# Key optimizations measured:
+- SIMD utilization (AVX2, SSE2, NEON)
+- Memory allocation patterns
+- Cache efficiency
+- Hardware acceleration
+----
+
+== Performance Analysis
+
+=== Scaling Characteristics
+
+ProximaDB demonstrates **efficient scaling** with increasing vector dimensions and dataset sizes. The system is designed to maintain strong performance characteristics even as data complexity grows, showcasing its ability to handle real-world AI workloads.
+
+=== Hardware Utilization
+
+ProximaDB intelligently leverages available hardware capabilities to maximize performance:
+
+|===
+| Feature | Status | Impact
+
+| AVX2 SIMD
+| ✅ Utilized
+| Significantly accelerates distance computations
+
+| Memory Prefetch
+| ✅ Optimized
+| Improves data access patterns and reduces latency
+
+| Cache Alignment
+| ✅ Optimized
+| Enhances CPU cache efficiency for faster processing
+
+| Zero-Copy
+| ✅ Implemented
+| Reduces memory overhead and improves data throughput
+
+| Lazy GPU
+| ✅ On-demand activation
+| Ensures minimal overhead when GPU resources are not actively used
+|===
+
+=== Visual Summary
+
+[source,mermaid]
+----
+xychart-beta
+    title "Throughput vs. Traditional Stack"
+    x-axis ["Vector", "Graph", "Combined"]
+    y-axis "Ops/sec (K)" 0 --> 25
+    bar [20.8, 15.3, 18.5]
+    line [8.2, 6.1, 3.2]
+----
+
+== Optimization Timeline
+
+=== Recent Improvements (September 2025)
+
+. *Stack Overflow Fix*: Resolved UnifiedDistanceCompute circular dependency
+. *PQ Distance*: Zero-allocation with direct 2D codebook access
+. *Hardware Caching*: 1000x faster capability detection
+. *SIMD Consolidation*: Unified all implementations in single module
+
+=== Performance Gains
+
+ProximaDB has seen **significant improvements in stability and performance** through continuous optimization efforts. Recent updates have led to robust operation and enhanced efficiency across all core functionalities.
+
+
+
+== Running Benchmarks
+
+[source,bash]
+----
+# Full benchmark suite
+cargo bench --all
+
+# Distance computation only
+./target/release/proximadb-bench distance
+
+# With custom parameters
+./target/release/proximadb-bench \
+  --iterations 100000 \
+  --dimensions 128,768,1536 \
+  distance
+
+# Storage engine benchmarks
+cargo bench --bench engine_comparison_bench
+----
+
+== Future Optimizations
+
+. *GPU Acceleration*: Full CUDA/ROCm integration (Q4 2025)
+. *Quantization*: 4-bit and 2-bit quantization support
+. *Distributed*: Multi-node clustering support
+. *Streaming*: Real-time vector stream processing
+
+---
+
+_All benchmarks are reproducible using the provided commands_ +
+_Performance may vary based on hardware configuration_
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/backup-recovery.adoc
+
+= ProximaDB Backup and Recovery
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to perform backup and recovery operations for ProximaDB.
+
+=== Backup Procedures
+
+Details on how to back up your ProximaDB data.
+
+=== Recovery Procedures
+
+Details on how to recover your ProximaDB data.
+
+=== Disaster Recovery
+
+Strategies for recovering from major data loss or system failures.
+
+=== Verification
+
+How to verify the integrity of your backups.
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/cloud/README.adoc
+
+= Cloud Deployment Guides
+
+This section provides detailed guides for deploying ProximaDB on popular cloud platforms.
+
+== AWS
+
+* <<aws-ec2,Deploying on EC2>>
+* <<aws-eks,Deploying on EKS>>
+
+== GCP
+
+* <<gcp-gce,Deploying on GCE>>
+* <<gcp-gke,Deploying on GKE>>
+
+== Azure
+
+* <<azure-vm,Deploying on Azure VMs>>
+* <<azure-aks,Deploying on AKS>>
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/deployment.adoc
+
 = Deployment Guide
 :toc:
 :toclevels: 3
@@ -61,15 +264,6 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-----
-
-[source,bash]
-----
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable proximadb
-sudo systemctl start proximadb
-sudo systemctl status proximadb
 ----
 
 === Docker Deployment
@@ -147,7 +341,7 @@ volumes:
 [source,yaml]
 ----
 # proximadb-deployment.yaml
-apiVersion: apps/v1
+apiversion: apps/v1
 kind: Deployment
 metadata:
   name: proximadb
@@ -206,26 +400,6 @@ spec:
       - name: config
         configMap:
           name: proximadb-config
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: proximadb
-  namespace: proximadb
-spec:
-  selector:
-    app: proximadb
-  ports:
-  - name: rest
-    port: 5678
-    targetPort: 5678
-  - name: grpc
-    port: 5679
-    targetPort: 5679
-  - name: metrics
-    port: 9090
-    targetPort: 9090
-  type: LoadBalancer
 ----
 
 ==== StatefulSet for Persistent Storage
@@ -233,7 +407,7 @@ spec:
 [source,yaml]
 ----
 # proximadb-statefulset.yaml
-apiVersion: apps/v1
+apiversion: apps/v1
 kind: StatefulSet
 metadata:
   name: proximadb
@@ -302,7 +476,7 @@ aws ec2 run-instances \
   --key-name my-key \
   --security-group-ids sg-xxxxxx \
   --subnet-id subnet-xxxxxx \
-  --block-device-mappings '[
+  --block-device-mappings '[ 
     {
       "DeviceName": "/dev/sda1",
       "Ebs": {
@@ -562,7 +736,7 @@ sudo ufw enable
 
 [source,yaml]
 ----
-# prometheus.yml
+prometheus.yml
 scrape_configs:
   - job_name: 'proximadb'
     static_configs:
@@ -650,3 +824,90 @@ client.delete_collection("smoke_test")
 ---
 _Next: link:monitoring.adoc[Monitoring & Observability]_ +
 _Back to: link:README.adoc[Operations Guide]_
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/enterprise-readiness.adoc
+
+== Enterprise Readiness Checklist
+
+=== Reliability & SLOs
+- Health endpoints, Prometheus metrics, structured logs
+- Backups/snapshots (storage-engine specific) and restore playbooks
+- Capacity planning: memory, CPU, storage, index sizes
+
+=== Security & Governance
+- TLS in transit; at-rest encryption (engine-dependent)
+- Role-based data access (roadmap), audit logs, provenance
+- Data lifecycle: TTLs/expiry, retention buckets
+
+=== Operations
+- Rollout plan: canary first, blue-green supported by stateless services
+- Incident runbooks: hot shard, index rebuild, compaction tuning
+- Cost controls: progressive search thresholds, SIMD/GPU utilization
+
+=== Adoption Playbook
+- Phase 1: Pilot metrics and success criteria
+- Phase 2: Expand scope, add governance, set SLOs
+- Phase 3: Production SLAs and scale-out
+
+See also link:../01-overview/roi-guide.adoc[ROI Guide] and link:../02-getting-started/low-friction-demos.adoc[Low-Friction Demos].
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/high-availability.adoc
+
+= ProximaDB High Availability
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to deploy ProximaDB in a high-availability configuration.
+
+=== Failover Procedures
+
+Details on how to handle failover scenarios.
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/monitoring.adoc
+
+= Monitoring ProximaDB
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document describes how to monitor ProximaDB instances.
+
+=== Health Checks
+
+ProximaDB provides a health endpoint to check the status of the service.
+
+=== Metrics
+
+ProximaDB exposes various metrics for performance monitoring.
+
+=== Logs
+
+ProximaDB logs important events to standard output or a configured log file.
+
+== Original File: /home/vsingh/code/proximaDB/docs/05-operations/troubleshooting.adoc
+
+= ProximaDB Troubleshooting Guide
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This guide provides solutions to common issues encountered when operating ProximaDB.
+
+=== Common Issues
+
+Details on frequently asked questions and their solutions.
+
+=== Emergency Response
+
+Steps to take during critical system failures.
+
+=== Getting Support
+
+How to get help from the ProximaDB team.
