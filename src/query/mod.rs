@@ -302,6 +302,10 @@ impl QueryEngine {
                 candidates: hints.candidates,
                 progressive_stages: hints.progressive_stages,
                 recall_estimates: hints.recall_estimates,
+                index_type: None, // TODO: Extract from hints if available
+                quantization_level: None, // TODO: Extract from hints if available
+                estimated_io_cost: None, // TODO: Extract from hints if available
+                estimated_compute_cost: None, // TODO: Extract from hints if available
             });
         }
 

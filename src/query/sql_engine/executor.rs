@@ -190,19 +190,20 @@ impl SqlExecutor {
                         // Convert TypedMetadata to JSON
                         let mut metadata_map = serde_json::Map::new();
                         for (k, v) in result.metadata.iter() {
-                            let json_value = match v {
-                                crate::core::metadata_types::MetadataValue::String(s) => {
-                                    serde_json::Value::String(s.to_string())
+                            let json_value = match &v.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                    serde_json::Value::String(s.clone())
                                 }
-                                crate::core::metadata_types::MetadataValue::Number(n) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                                     serde_json::json!(n)
                                 }
-                                crate::core::metadata_types::MetadataValue::Bool(b) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                crate::core::metadata_types::MetadataValue::Null => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                     serde_json::Value::Null
                                 }
+                                _ => serde_json::Value::Null,
                             };
                             metadata_map.insert(k.clone(), json_value);
                         }
@@ -214,19 +215,20 @@ impl SqlExecutor {
                     field if field.starts_with("metadata.") => {
                         let key = &field[9..];
                         if let Some(val) = result.metadata.get(key) {
-                            let json_value = match val {
-                                crate::core::metadata_types::MetadataValue::String(s) => {
-                                    serde_json::Value::String(s.to_string())
+                            let json_value = match &val.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                    serde_json::Value::String(s.clone())
                                 }
-                                crate::core::metadata_types::MetadataValue::Number(n) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                                     serde_json::json!(n)
                                 }
-                                crate::core::metadata_types::MetadataValue::Bool(b) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                crate::core::metadata_types::MetadataValue::Null => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                     serde_json::Value::Null
                                 }
+                                _ => serde_json::Value::Null,
                             };
                             data.insert(field.to_string(), json_value);
                         }
@@ -276,7 +278,7 @@ fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlVa
             }
         }
         serde_json::Value::Object(map) => {
-            let mut fields = std::collections::BTreeMap::new();
+            let mut fields = std::collections::HashMap::new();
             for (k, sv) in map.iter() {
                 fields.insert(k.clone(), json_to_sql_value(sv));
             }

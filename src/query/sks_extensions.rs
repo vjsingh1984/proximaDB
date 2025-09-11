@@ -116,6 +116,7 @@ impl SksExecutor {
         let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
             optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
             progressive_search: similar.progressive,
+            progressive_recalls: None, // Use default progressive recall targets
             include_vectors: false,
             include_metadata: true, // Enable HashMap metadata access
             scenario: Some("sks_similar".to_string()),
@@ -125,7 +126,7 @@ impl SksExecutor {
             .vector_service
             .unified_search_v1(
                 collection_id,
-                &query_vector,
+                query_vector,
                 similar.top_k,
                 None, // TODO: Convert filters to FilterExpression
                 Some(search_config),
@@ -167,7 +168,7 @@ impl SksExecutor {
 
         // 2. Configure traversal with ORION engine
         let traversal_config = crate::graph::engines::orion::traversal::TraversalConfig {
-            max_depth: Some(follow.max_depth as usize),
+            max_depth: Some(follow.max_depth as u32),
             max_nodes: Some(1000), // Default limit
             edge_types: Some(vec![follow.relation_type.clone()]),
             node_filter: None, // TODO: Convert filters
@@ -222,17 +223,8 @@ impl SksExecutor {
         }
 
         // 2. Apply assembly strategy (temporal, semantic, relevance-based)
-        match assemble.assembly_strategy.as_deref().unwrap_or("default") {
-            AssemblyStrategy::TemporalOrdering => {
-                // TODO: Sort by temporal relevance
-            }
-            AssemblyStrategy::SemanticClustering => {
-                // TODO: Group by semantic similarity
-            }
-            AssemblyStrategy::RelevanceRanking => {
-                // TODO: Rank by relevance scores
-            }
-        }
+        // TODO: Implement assembly strategies based on the operator configuration
+        // Default: preserve discovery order for now
 
         // 3. Build result rows with provenance
         let rows = assembled_context

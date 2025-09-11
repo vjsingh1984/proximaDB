@@ -135,23 +135,22 @@ impl QueryLowering {
     }
 
     /// Lower projection list with column validation and vector function recognition
-    async fn lower_projection(&self, projection: &[SelectItem]) -> Result<Vec<Expr>> {
-        let mut exprs = Vec::new();
+    async fn lower_projection(&self, projection: &[SelectItem]) -> Result<Vec<crate::query::ast::ProjectionItem>> {
+        let mut items = Vec::new();
 
         for item in projection {
-            let expr = match item {
-                SelectItem::UnnamedExpr(expr) => self.lower_expr(expr).await?,
-                SelectItem::ExprWithAlias { expr, alias: _ } => {
-                    // TODO: Handle aliases in future implementation
-                    self.lower_expr(expr).await?
+            let (expr, alias) = match item {
+                SelectItem::UnnamedExpr(expr) => (self.lower_expr(expr).await?, None),
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    (self.lower_expr(expr).await?, Some(alias.value.clone()))
                 }
-                SelectItem::Wildcard(_) => Expr::Identifier("*".to_string()),
+                SelectItem::Wildcard(_) => (Expr::Identifier("*".to_string()), None),
                 _ => return Err(anyhow!("Unsupported select item: {:?}", item)),
             };
-            exprs.push(expr);
+            items.push(crate::query::ast::ProjectionItem { expr, alias });
         }
 
-        Ok(exprs)
+        Ok(items)
     }
 
     /// Lower FROM clause with collection name resolution and validation
@@ -288,7 +287,8 @@ impl QueryLowering {
     }
 
     /// Lower expressions recursively with type preservation
-    async fn lower_expr(&self, expr: &SqlExpr) -> Result<Expr> {
+    fn lower_expr<'a>(&'a self, expr: &'a SqlExpr) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Expr>> + Send + 'a>> {
+        Box::pin(async move {
         match expr {
             SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
             SqlExpr::Value(value) => Ok(Expr::Literal(self.convert_value(value)?)),
@@ -306,6 +306,7 @@ impl QueryLowering {
             SqlExpr::Function(func) => self.lower_function_call(func).await,
             _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
         }
+        })
     }
 
     /// Convert SQL binary operators to internal representation
@@ -319,7 +320,7 @@ impl QueryLowering {
             BinaryOperator::GtEq => Ok(BinaryOp::Ge),
             BinaryOperator::And => Ok(BinaryOp::And),
             BinaryOperator::Or => Ok(BinaryOp::Or),
-            BinaryOperator::Like => Ok(BinaryOp::Like),
+            // Note: Like is handled separately in sqlparser as SqlExpr::Like, not BinaryOperator
             BinaryOperator::Plus => Ok(BinaryOp::Add),
             BinaryOperator::Minus => Ok(BinaryOp::Sub),
             BinaryOperator::Multiply => Ok(BinaryOp::Mul),
@@ -402,14 +403,8 @@ impl QueryLowering {
     }
 }
 
-impl Default for QueryLowering {
-    fn default() -> Self {
-        // Create with a mock collection service for testing
-        Self::new(Arc::new(crate::services::collection::manager::CollectionService::new(
-            Arc::new(crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new())
-        )))
-    }
-}
+// Note: Default impl removed because CollectionService requires async initialization
+// Use QueryLowering::new() directly or create a proper async constructor
 
 #[cfg(test)]
 mod lowering_tests {
