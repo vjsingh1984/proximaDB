@@ -462,6 +462,18 @@ impl SstEntry {
                                 serde_json::Number::from(*i)
                             )
                         }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                            serde_json::Value::String("[binary]".to_string())
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                            serde_json::Value::Null
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                            serde_json::Value::String("[array]".to_string())
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                            serde_json::Value::String("[object]".to_string())
+                        }
                         None => serde_json::Value::Null,
                     };
                     (key.clone(), value)
@@ -1369,6 +1381,19 @@ mod block_utils {
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                        serde_json::Value::String("[binary]".to_string())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        col_stats.null_count += 1;
+                        continue;
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        serde_json::Value::String("[array]".to_string())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        serde_json::Value::String("[object]".to_string())
                     }
                     None => {
                         col_stats.null_count += 1;

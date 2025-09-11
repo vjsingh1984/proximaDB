@@ -767,8 +767,8 @@ impl SstableWriter {
 
         let mut builder = CompositeBloomFilterBuilder::new(config);
         for record in block_records {
-            for metadata_item in &record.metadata {
-                builder.add_metadata_item(metadata_item.item.clone(), metadata_item.clone());
+            for (key, sql_value) in &record.metadata {
+                builder.add_metadata_item(key.clone(), sql_value.clone());
             }
         }
 
@@ -1108,8 +1108,8 @@ impl SstableWriter {
 
         let mut builder = CompositeBloomFilterBuilder::new(config);
         for record in block_records {
-            for metadata_item in &record.metadata {
-                builder.add_metadata_item(metadata_item.item.clone(), metadata_item.clone());
+            for (key, sql_value) in &record.metadata {
+                builder.add_metadata_item(key.clone(), sql_value.clone());
             }
         }
 
@@ -1175,8 +1175,8 @@ impl SstableWriter {
 
         for block in data_blocks {
             for record in &block.records {
-                for metadata_item in &record.metadata {
-                    metadata_columns.insert(metadata_item.item.clone());
+                for (key, _sql_value) in &record.metadata {
+                    metadata_columns.insert(key.clone());
                 }
             }
         }

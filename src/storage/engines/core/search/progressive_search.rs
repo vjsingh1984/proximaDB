@@ -596,13 +596,24 @@ impl ProgressiveSearchExecutor {
             for (key, item) in record.metadata {
                 let value = item.value;
                 if let Some(value) = value {
-                    use crate::proto::proximadb_v1::metadata_item;
+                    use crate::proto::proximadb_v1::sql_value;
                     let typed_value = match value {
-                        metadata_item::Value::StringValue(s) => {
+                        sql_value::Value::StringValue(s) => {
                             MetadataValue::String(std::sync::Arc::from(s.as_str()))
                         }
-                        metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
-                        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
+                        sql_value::Value::NumberValue(f) => MetadataValue::Number(f),
+                        sql_value::Value::BoolValue(b) => MetadataValue::Bool(b),
+                        sql_value::Value::Int64Value(i) => MetadataValue::Number(i as f64),
+                        sql_value::Value::BytesValue(_) => {
+                            MetadataValue::String(std::sync::Arc::from("[binary]"))
+                        }
+                        sql_value::Value::NullValue(_) => MetadataValue::Null,
+                        sql_value::Value::ArrayValue(_) => {
+                            MetadataValue::String(std::sync::Arc::from("[array]"))
+                        }
+                        sql_value::Value::ObjectValue(_) => {
+                            MetadataValue::String(std::sync::Arc::from("[object]"))
+                        }
                     };
                     metadata_map.insert(key, typed_value);
                 }
