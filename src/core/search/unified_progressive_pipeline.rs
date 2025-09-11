@@ -762,14 +762,9 @@ impl UnifiedProgressiveSearchPipeline {
             .enumerate()
             .map(|(rank, candidate)| {
                 let json_metadata = self.convert_metadata(&candidate.record);
-                let typed_metadata: std::collections::HashMap<
-                    String,
-                    crate::core::metadata_types::MetadataValue,
-                > = json_metadata
-                    .into_iter()
-                    .map(|(k, v)| (k, crate::core::metadata_types::MetadataValue::from_json(v)))
-                    .collect();
-                let metadata = TypedMetadata::from_map(typed_metadata);
+                // Convert metadata directly to SqlValue format
+                let metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = 
+                    candidate.record.metadata.clone();
 
                 OptimizedSearchRecord::new(candidate.record.id.clone(), candidate.score)
                     .with_similarity(candidate.score)

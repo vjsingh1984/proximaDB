@@ -946,32 +946,29 @@ impl Flush {
         let compression_algorithm = if let Some(collection) = collection_config {
             if let Some(ref config) = collection.config {
                 if let Some(ref storage_config) = config.storage_config {
-                    if let Some(ref compression) = storage_config.compression {
-                        use crate::proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
+                    let compression_value = storage_config.compression;
+                    use crate::proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
 
-                        // Convert proto compression to core compression algorithm
-                        match ProtoAlgorithm::try_from(compression.algorithm) {
-                            Ok(ProtoAlgorithm::CompressionZstd) => {
-                                crate::core::compression::CompressionAlgorithm::Zstd
-                            }
-                            Ok(ProtoAlgorithm::CompressionLz4) => {
-                                crate::core::compression::CompressionAlgorithm::Lz4
-                            }
-                            Ok(ProtoAlgorithm::CompressionSnappy) => {
-                                crate::core::compression::CompressionAlgorithm::Snappy
-                            }
-                            Ok(ProtoAlgorithm::CompressionGzip) => {
-                                crate::core::compression::CompressionAlgorithm::Gzip
-                            }
-                            Ok(ProtoAlgorithm::CompressionBrotli) => {
-                                crate::core::compression::CompressionAlgorithm::Brotli
-                            }
-                            // CompressionMixed not available in proto, using Mixed from our enum
-                            // This case should not occur with current proto definitions
-                            _ => crate::core::compression::CompressionAlgorithm::None,
+                    // Convert proto compression to core compression algorithm
+                    match ProtoAlgorithm::try_from(compression_value) {
+                        Ok(ProtoAlgorithm::CompressionZstd) => {
+                            crate::core::compression::CompressionAlgorithm::Zstd
                         }
-                    } else {
-                        crate::core::compression::CompressionAlgorithm::Zstd // Default
+                        Ok(ProtoAlgorithm::CompressionLz4) => {
+                            crate::core::compression::CompressionAlgorithm::Lz4
+                        }
+                        Ok(ProtoAlgorithm::CompressionSnappy) => {
+                            crate::core::compression::CompressionAlgorithm::Snappy
+                        }
+                        Ok(ProtoAlgorithm::CompressionGzip) => {
+                            crate::core::compression::CompressionAlgorithm::Gzip
+                        }
+                        Ok(ProtoAlgorithm::CompressionBrotli) => {
+                            crate::core::compression::CompressionAlgorithm::Brotli
+                        }
+                        // CompressionMixed not available in proto, using Mixed from our enum
+                        // This case should not occur with current proto definitions
+                        _ => crate::core::compression::CompressionAlgorithm::None,
                     }
                 } else {
                     crate::core::compression::CompressionAlgorithm::Zstd // Default

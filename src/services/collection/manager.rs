@@ -502,13 +502,13 @@ impl CollectionService {
             .config
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
-        let indexing_algorithm = match config.primary_index.as_ref().map(|s| s.as_str()) {
-            Some("hnsw") => crate::core::IndexingAlgorithm::Hnsw,
-            Some("ivf") => crate::core::IndexingAlgorithm::Ivf,
-            Some("pq") => crate::core::IndexingAlgorithm::Pq,
-            Some("flat") => crate::core::IndexingAlgorithm::Flat,
-            Some("annoy") => crate::core::IndexingAlgorithm::Annoy,
-            Some("lsh") => crate::core::IndexingAlgorithm::Lsh,
+        let indexing_algorithm: crate::core::IndexingAlgorithm = match config.primary_index.as_str() {
+            "hnsw" => crate::core::IndexingAlgorithm::Hnsw,
+            "ivf" => crate::core::IndexingAlgorithm::Ivf,
+            "pq" => crate::core::IndexingAlgorithm::Pq,
+            "flat" => crate::core::IndexingAlgorithm::Flat,
+            "annoy" => crate::core::IndexingAlgorithm::Annoy,
+            "lsh" => crate::core::IndexingAlgorithm::Lsh,
             _ => crate::core::IndexingAlgorithm::Hnsw,
         };
 

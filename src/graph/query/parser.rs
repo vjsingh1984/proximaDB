@@ -52,7 +52,7 @@ impl QueryParser {
     pub fn parse(&self, input: &str) -> QueryResult<CompiledPattern> {
         match parse_query(input) {
             Ok((_, compiled_pattern)) => Ok(compiled_pattern),
-            Err(e) => Err(ProximaDBError::invalid_argument(&format!(
+            Err(e) => Err(ProximaDBError::InvalidInput(format!(
                 "Failed to parse query: {}",
                 e
             ))),
@@ -75,12 +75,13 @@ fn identifier(input: &str) -> IResult<&str, String> {
 
 // Helper to parse string literals (e.g., "value" or 'value')
 fn string_literal(input: &str) -> IResult<&str, String> {
-    alt((
-        delimited(char('"'), take_while1(|c| c != '"'), char('"')),
-        delimited(char('\''), take_while1(|c| c != '\''), char('\'')),
-    ))
-    .map(|s| s.to_string())
-    .parse(input)
+    map(
+        alt((
+            delimited(char::<&str, nom::error::Error<_>>('"'), take_while1(|c| c != '"'), char('"')),
+            delimited(char::<&str, nom::error::Error<_>>('\''), take_while1(|c| c != '\''), char('\'')),
+        )),
+        |s| s.to_string(),
+    )(input)
 }
 
 // Helper to parse integer literals
@@ -120,16 +121,17 @@ fn property_assignment(input: &str) -> IResult<&str, (String, PropertyConstraint
 
 // Helper to parse property map (e.g., {key: value, key2: value2})
 fn property_map(input: &str) -> IResult<&str, HashMap<String, PropertyConstraint>> {
-    delimited(
-        char('{'),
-        separated_list0(
-            delimited(multispace0, char(','), multispace0),
-            property_assignment,
+    map(
+        delimited(
+            char('{'),
+            separated_list0(
+                delimited(multispace0, char(','), multispace0),
+                property_assignment,
+            ),
+            char('}'),
         ),
-        char('}'),
-    )
-    .map(|assignments| assignments.into_iter().collect())
-    .parse(input)
+        |assignments| assignments.into_iter().collect(),
+    )(input)
 }
 
 // Parse a node pattern (e.g., (n:Label {prop: "val"}))

@@ -214,17 +214,12 @@ impl TypedMetadata {
 /// Convert from protobuf MetadataItem
 impl From<&crate::proto::proximadb_v1::MetadataItem> for MetadataValue {
     fn from(item: &crate::proto::proximadb_v1::MetadataItem) -> Self {
-        use crate::proto::proximadb_v1::sql_value::Value;
+        use crate::proto::proximadb_v1::metadata_item::Value;
 
         match &item.value {
             Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
             Some(Value::NumberValue(n)) => MetadataValue::Number(*n),
             Some(Value::BoolValue(b)) => MetadataValue::Bool(*b),
-            Some(Value::Int64Value(i)) => MetadataValue::Number(*i as f64),
-            Some(Value::BytesValue(_)) => MetadataValue::String(Arc::from("[binary]")),
-            Some(Value::NullValue(_)) => MetadataValue::Null,
-            Some(Value::ArrayValue(_)) => MetadataValue::String(Arc::from("[array]")),
-            Some(Value::ObjectValue(_)) => MetadataValue::String(Arc::from("[object]")),
             None => MetadataValue::Null,
         }
     }
@@ -257,7 +252,7 @@ impl From<&MetadataValue> for crate::proto::proximadb_v1::SqlValue {
             MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
             MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
             MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
-            MetadataValue::Null => Some(Value::NullValue(0)), // prost_types::NullValue as i32
+            MetadataValue::Null => Some(Value::NullValue(prost_types::NullValue::default().into())),
         };
 
         crate::proto::proximadb_v1::SqlValue {

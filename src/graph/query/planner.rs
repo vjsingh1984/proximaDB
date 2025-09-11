@@ -91,7 +91,7 @@ pub struct OptimizationFlags {
 }
 
 /// Graph statistics for cost estimation
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GraphStatistics {
     /// Total number of nodes
     pub node_count: u64,

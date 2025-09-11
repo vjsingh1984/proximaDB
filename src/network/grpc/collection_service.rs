@@ -43,7 +43,7 @@ impl CollectionService for CollectionServiceImpl {
                 auto_index_selection: false,
                 storage_config: None,
                 embedding_models: vec![],
-                owner: String::new(),
+                owner: Some(String::new()),
                 description: cfg.description.clone(),
                 tags: cfg.tags.clone(),
             }),

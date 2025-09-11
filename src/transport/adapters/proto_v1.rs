@@ -70,18 +70,7 @@ pub fn native_records_to_v1(
         let metadata: HashMap<String, proximadb_v1::SqlValue> = if include_metadata {
             let mut m = HashMap::with_capacity(r.metadata.len());
             for (k, v) in r.metadata.iter() {
-                let sql = match v {
-                    MetadataValue::String(s) => proximadb_v1::SqlValue {
-                        value: Some(proximadb_v1::sql_value::Value::StringValue(s.to_string())),
-                    },
-                    MetadataValue::Number(n) => proximadb_v1::SqlValue {
-                        value: Some(proximadb_v1::sql_value::Value::NumberValue(*n)),
-                    },
-                    MetadataValue::Bool(b) => proximadb_v1::SqlValue {
-                        value: Some(proximadb_v1::sql_value::Value::BoolValue(*b)),
-                    },
-                    MetadataValue::Null => proximadb_v1::SqlValue { value: None },
-                };
+                let sql = v.clone(); // v is already a SqlValue
                 m.insert(k.clone(), sql);
             }
             m

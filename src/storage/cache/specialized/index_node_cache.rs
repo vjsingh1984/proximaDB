@@ -22,6 +22,7 @@ impl CacheValue for IndexNode {
 }
 
 /// Specialized cache for index structures with hot path optimization
+#[derive(Debug)]
 pub struct IndexNodeCache {
     base: BaseCacheImpl<String, IndexNode>,
 }

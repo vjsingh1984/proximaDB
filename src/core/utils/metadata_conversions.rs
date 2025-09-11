@@ -48,8 +48,8 @@ use std::collections::HashMap;
 pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, JsonValue> {
     let mut map = HashMap::with_capacity(metadata.len());
 
-    for (key, value) in metadata {
-        if let Some(ref value) = value {
+    for item in metadata {
+        if let Some(ref value) = item.value {
             let json_value = match value {
                 metadata_item::Value::StringValue(s) => JsonValue::String(s.clone()),
                 metadata_item::Value::NumberValue(n) => JsonValue::Number(
@@ -59,7 +59,7 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, Json
                 // Note: Arrays and objects are serialized as JSON strings for now
                 // since the proto doesn't have native array/object types yet
             };
-            map.insert(key.clone(), json_value);
+            map.insert(item.key.clone(), json_value);
         }
     }
 
@@ -186,7 +186,7 @@ pub fn merge_metadata(base: &[MetadataItem], updates: &[MetadataItem]) -> Vec<Me
 pub fn filter_metadata(metadata: &[MetadataItem], allowed_keys: &[&str]) -> Vec<MetadataItem> {
     metadata
         .iter()
-        .filter(|(key, value)| allowed_keys.contains(&key.as_str()))
+        .filter(|item| allowed_keys.contains(&item.key.as_str()))
         .cloned()
         .collect()
 }
@@ -206,12 +206,12 @@ pub fn validate_metadata_types(
     metadata: &[MetadataItem],
     schema: &HashMap<String, MetadataValueType>,
 ) -> Result<()> {
-    for (key, value) in metadata {
-        if let Some(expected_type) = schema.get(&key) {
-            if !matches_type(&value, expected_type) {
+    for item in metadata {
+        if let Some(expected_type) = schema.get(&item.key) {
+            if !matches_type(&item.value, expected_type) {
                 return Err(anyhow!(
                     "Type mismatch for field '{}': expected {:?}",
-                    key,
+                    item.key,
                     expected_type
                 ));
             }

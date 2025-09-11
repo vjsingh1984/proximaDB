@@ -177,6 +177,10 @@ impl BackgroundFlushContext {
         };
 
         let storage_assignment = StorageAssignment {
+            primary_path: self.base_location.clone(),
+            backup_paths: vec![],
+            engine: 0, // Default engine
+            engine_config: std::collections::HashMap::new(),
             base_location: self.base_location.clone(),
             assigned_at: chrono::Utc::now().timestamp_millis(),
         };

@@ -889,14 +889,14 @@ impl IndexConfig {
         }
 
         // Apply general overrides
-        if let Some(concurrency) = proto.build_concurrency {
-            config.build_concurrency = Some(concurrency as usize);
+        if proto.build_concurrency > 0 {
+            config.build_concurrency = Some(proto.build_concurrency as usize);
         }
-        if let Some(memory_limit) = proto.memory_limit_mb {
-            config.memory_limit_mb = Some(memory_limit as u64);
+        if proto.memory_limit_mb > 0 {
+            config.memory_limit_mb = Some(proto.memory_limit_mb as u64);
         }
-        if let Some(checkpoint) = proto.checkpoint_interval_ms {
-            config.checkpoint_interval_ms = Some(checkpoint as u64);
+        if proto.checkpoint_interval_ms > 0 {
+            config.checkpoint_interval_ms = Some(proto.checkpoint_interval_ms as u64);
         }
 
         // Validate the final configuration

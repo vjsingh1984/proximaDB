@@ -26,6 +26,17 @@ pub struct AccessPatternMetricsCollector {
     pattern_engine: Arc<PatternRecognitionEngine>,
 }
 
+impl std::fmt::Debug for AccessPatternMetricsCollector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessPatternMetricsCollector")
+            .field("metrics", &"AccessPatternMetrics{...}")
+            .field("historical_data", &"HistoricalAccessData{...}")
+            .field("correlation_tracker", &"CorrelationTracker{...}")
+            .field("pattern_engine", &"PatternRecognitionEngine{...}")
+            .finish()
+    }
+}
+
 /// Core access pattern metrics using atomic counters
 pub struct AccessPatternMetrics {
     // File access metrics

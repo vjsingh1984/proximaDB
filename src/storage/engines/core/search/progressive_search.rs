@@ -187,9 +187,9 @@ impl ProgressiveSearchExecutor {
         let mut candidates = Vec::with_capacity(records.len());
 
         for record in records {
-            let quantized_vectors = if let Some(quant_data) = &record.quantized_vector {
+            let quantized_vectors = if !record.quantized_vector.is_empty() {
                 // FAST PATH: Use pre-stored quantized vectors (write-time quantization)
-                self.parse_quantized_data(quant_data, levels)?
+                self.parse_quantized_data(&record.quantized_vector, levels)?
             } else {
                 // Check if runtime quantization should be allowed based on:
                 // 1. Collection configuration

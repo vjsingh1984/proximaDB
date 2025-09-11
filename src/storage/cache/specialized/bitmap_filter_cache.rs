@@ -139,6 +139,7 @@ impl IncrementalUpdater {
 }
 
 /// Cache for filter bitmap results with advanced features
+#[derive(Debug)]
 pub struct BitmapFilterCache {
     base: BaseCacheImpl<String, CachedFilterResult>,
     optimizer: Arc<FilterOptimizer>,

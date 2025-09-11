@@ -71,6 +71,7 @@ pub struct CacheAccessEvent {
 /// - History limited to `max_history` entries (default: 10,000)
 /// - Correlation matrix pruned when > 100,000 entries
 /// - Background processing prevents memory bloat
+#[derive(Debug)]
 pub struct AccessPatternTracker {
     /// Access history for pattern detection (processed async)
     /// VecDeque provides O(1) push/pop for sliding window
@@ -386,8 +387,8 @@ impl AccessPatternTracker {
                 .value()
                 .iter()
                 .take(limit)
-                .filter(|(key, value)| value.correlation_score > 0.3)
-                .map(|(key, value)| (key.clone(), value.cache_type.clone()))
+                .filter(|correlation| correlation.correlation_score > 0.3)
+                .map(|correlation| (correlation.key.clone(), correlation.cache_type.clone()))
                 .collect()
         } else {
             Vec::new()
@@ -407,6 +408,7 @@ impl AccessPatternTracker {
 }
 
 /// Dynamic memory allocator for cache tier resizing
+#[derive(Debug)]
 pub struct DynamicMemoryAllocator {
     /// Total memory budget in bytes
     total_budget: usize,
@@ -510,6 +512,7 @@ impl DynamicMemoryAllocator {
 }
 
 /// Predictive prefetch engine for proactive data loading
+#[derive(Debug)]
 pub struct PredictivePrefetchEngine {
     pattern_tracker: Arc<AccessPatternTracker>,
     prefetch_queue: Arc<Mutex<VecDeque<PrefetchRequest>>>,
@@ -589,6 +592,7 @@ impl PredictivePrefetchEngine {
 }
 
 /// Cascade invalidator for propagating cache updates
+#[derive(Debug)]
 pub struct CascadeInvalidator {
     /// Dependency graph for cache entries (using DashMap for concurrent access)
     dependency_graph: Arc<DashMap<String, Vec<String>>>,
@@ -683,6 +687,7 @@ impl CascadeInvalidator {
 }
 
 /// Orchestrates multiple specialized caches for cross-cache operations
+#[derive(Debug)]
 pub struct CrossCacheOrchestrator {
     /// Query result cache
     query_cache: Option<Arc<QueryCache>>,

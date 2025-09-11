@@ -220,7 +220,7 @@ pub mod utils {
         serde_json::json!({
             "id": record.id,
             "vector": record.vector,
-            "metadata": metadata_to_json(&record.metadata),
+            "metadata": crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata),
             "timestamp": record.timestamp,
             "version": record.version,
         })

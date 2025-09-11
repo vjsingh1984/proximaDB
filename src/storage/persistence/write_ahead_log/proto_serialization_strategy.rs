@@ -363,11 +363,11 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
             // Attempt to delete PB file (proto path); other formats not used here
             let path = self
                 .disk_manager
-                .get_batch_file_path(collection_id, bid, SerializationFormat::ProtocolBuffers);
+                .batch_url(collection_id, bid, SerializationFormat::ProtocolBuffers);
             let file_info = WriteBufferFileInfo {
                 collection_id: collection_id.to_string(),
                 batch_id: bid.clone(),
-                file_path: path,
+                file_url: path,
                 size_bytes: 0,
                 format: SerializationFormat::ProtocolBuffers,
             };

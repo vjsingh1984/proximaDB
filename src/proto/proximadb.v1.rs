@@ -9,6 +9,7 @@ pub struct Entity {
     #[prost(message, repeated, tag = "2")]
     pub embeddings: ::prost::alloc::vec::Vec<EmbeddingVersion>,
     #[prost(message, optional, tag = "3")]
+    #[serde(skip)]
     pub typed_metadata: ::core::option::Option<TypedMetadata>,
     #[prost(message, optional, tag = "4")]
     #[serde(skip)]
@@ -45,16 +46,14 @@ pub struct EmbeddingVersion {
     #[prost(enumeration = "Modality", tag = "7")]
     pub modality: i32,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct TypedMetadata {
     #[prost(map = "string, message", tag = "1")]
     pub fields: ::std::collections::HashMap<::prost::alloc::string::String, TypedField>,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct TypedField {
     #[prost(bool, tag = "7")]
     pub indexed: bool,
@@ -226,7 +225,6 @@ pub struct DeleteEntityResponse {
     #[prost(string, tag = "2")]
     pub message: ::prost::alloc::string::String,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchEntitiesRequest {
@@ -338,7 +336,6 @@ pub mod filter_clause {
         BoolValue(bool),
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TemporalClause {

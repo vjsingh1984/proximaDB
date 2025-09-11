@@ -64,7 +64,7 @@ impl ParquetConfigBuilder {
                     // Product Quantization specific settings
                     pq_segments: 8,
                     pq_bits: 8,
-                    pq_codebooks: vec![],
+                    pq_codebooks: 256, // Default codebook size
                     // Thresholds for progressive search
                     binary_threshold: 100.0,
                     int8_threshold: 50.0,

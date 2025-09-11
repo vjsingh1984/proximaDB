@@ -2511,7 +2511,19 @@ impl UnifiedStorageEngine for SstStorage {
                 collection_id,
                 params.collection_config.as_ref(),
                 params.force,
-                compression_config.cloned(),
+                compression_config.as_ref().map(|storage_config| {
+                    crate::proto::proximadb_v1::CompressionConfig {
+                        algorithm: storage_config.compression,
+                        level: None, // StorageConfig doesn't have level, use default
+                        adaptive: false, // Default value
+                        min_ratio: None,
+                        enable_quantization: false,
+                        quantization_type: None, // Default quantization type  
+                        normalization_method: None, // Default normalization
+                        block_size_kb: 64, // Default block size
+                        dynamic_block_sizing: false, // Default static sizing
+                    }
+                }),
             )
             .await
             .context("Failed to flush records to SSTable with row-by-row storage")?;
@@ -2788,7 +2800,7 @@ impl UnifiedStorageEngine for SstStorage {
                     "🔍 SST DO_COMPACT: Passing compression to perform_compaction_enhanced: {:?}",
                     compression_config
                         .as_ref()
-                        .map(|c| format!("algorithm={}, level={:?}", c.algorithm, c.level))
+                        .map(|c| format!("compression={}, max_file_size_mb={}", c.compression, c.max_file_size_mb))
                 );
 
                 let enhanced_stats = compaction_manager
@@ -2796,7 +2808,19 @@ impl UnifiedStorageEngine for SstStorage {
                         &task,
                         &self.config,
                         Some(self.atomic_coordinator.clone()),
-                        compression_config.cloned(),
+                        compression_config.as_ref().map(|storage_config| {
+                            crate::proto::proximadb_v1::CompressionConfig {
+                                algorithm: storage_config.compression,
+                                level: None, // StorageConfig doesn't have level, use default
+                                adaptive: false, // Default value
+                                min_ratio: None,
+                                enable_quantization: false,
+                                quantization_type: None, // Default quantization type
+                                normalization_method: None, // Default normalization
+                                block_size_kb: 64, // Default block size
+                                dynamic_block_sizing: false, // Default static sizing
+                            }
+                        }),
                     )
                     .await?;
 
@@ -3308,7 +3332,7 @@ impl UnifiedStorageEngine for SstStorage {
         }
         if !include_metadata {
             for result in &mut optimized_results {
-                result.metadata = crate::core::metadata_types::TypedMetadata::new();
+                result.metadata = HashMap::new();
             }
         }
 
@@ -3359,7 +3383,7 @@ impl UnifiedStorageEngine for SstStorage {
 
                 // Log metadata details for first result
                 if i == 0 && result.metadata.len() > 0 {
-                    let metadata_map = result.metadata.to_json_map();
+                    let metadata_map = crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&result.metadata);
                     debug!(
                         "    📋 Metadata sample: {:?}",
                         metadata_map

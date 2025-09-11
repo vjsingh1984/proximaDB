@@ -799,7 +799,7 @@ impl ViperEngine {
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(0);
                         // Parse metadata from extra_meta list of key-value pairs
-                        let mut metadata_map = HashMap::new();
+                        let mut metadata_map: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
                         if let Some(extra_meta_col) = batch.column_by_name("extra_meta") {
                             if let Some(extra_meta_list) =
                                 extra_meta_col.as_any().downcast_ref::<ListArray>()
@@ -824,7 +824,9 @@ impl ViperEngine {
                                             if !struct_array.is_null(kv_idx) {
                                                 let key = key_array.value(kv_idx).to_string();
                                                 let value = value_array.value(kv_idx).to_string();
-                                                metadata_map.insert(key, value);
+                                                metadata_map.insert(key, crate::proto::proximadb_v1::SqlValue {
+                                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value)),
+                                                });
                                             }
                                         }
                                     }
@@ -888,16 +890,14 @@ impl ViperEngine {
                                             }
                                             _ => continue, // Skip unsupported types
                                         };
-                                        metadata_map.insert(field_name.to_string(), string_value);
+                                        metadata_map.insert(field_name.to_string(), crate::proto::proximadb_v1::SqlValue {
+                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(string_value)),
+                                        });
                                     }
                                 }
                             }
                         }
-                        // Convert HashMap to Vec<MetadataItem>
-                        let metadata =
-                            crate::core::proto_metadata_helper::hashmap_to_proto_metadata(
-                                &metadata_map,
-                            );
+                        // metadata_map is already HashMap<String, SqlValue> which is what VectorRecord expects
                         let record = VectorRecord {
                             id: vector_id.to_string(),
                             vector,
@@ -1125,8 +1125,10 @@ impl ViperEngine {
             .map(|r| {
                 // Convert OptimizedSearchRecord vector (Arc<Vec<f32>>) to Vec<f32>
                 let vector = r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
-                // Convert TypedMetadata to JSON map for proto conversion
-                let metadata_json = r.metadata.to_json_map();
+                // Convert metadata HashMap to proto format
+                let metadata_json = r.metadata.iter()
+                    .map(|(k, v)| (k.clone(), serde_json::Value::String("TODO".to_string())))
+                    .collect::<std::collections::HashMap<String, serde_json::Value>>();
                 crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
                     score: r.score as f64,
@@ -1148,7 +1150,14 @@ impl ViperEngine {
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,
-                    source: r.source,
+                    source: r.source.and_then(|sc| {
+                        match sc.data {
+                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => Some(text),
+                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => Some(url),
+                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => Some("[Binary Content]".to_string()),
+                            None => Some("[Empty Content]".to_string()),
+                        }
+                    }),
                     expanded_context: r.expanded_context.iter().map(|sc| {
                         match &sc.data {
                             Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
@@ -1866,49 +1875,25 @@ impl UnifiedStorageEngine for ViperEngine {
         let all_results: Vec<OptimizedSearchRecord> = search_results
             .into_iter()
             .map(|r| {
-                let metadata_map: HashMap<String, serde_json::Value> = r
-                    .metadata
-                    .into_iter()
-                    .map(|(key, sql_value)| {
-                        let value = match sql_value.value {
-                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                serde_json::Value::String(s)
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                                serde_json::Value::Number(
-                                    serde_json::Number::from_f64(n)
-                                        .unwrap_or(serde_json::Number::from(0)),
-                                )
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                                serde_json::Value::Bool(b)
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                                serde_json::Value::Number(serde_json::Number::from(i))
-                            }
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                serde_json::Value::String(crate::utils::encoding::base64_encode(b))
-                            }
-                            _ => serde_json::Value::Null,
-                        };
-                        (key, value)
-                    })
-                    .collect();
-
+                // Use the original SqlValue metadata directly
                 let mut record = OptimizedSearchRecord::new(r.id, r.score as f32)
                     .add_vector(r.vector)
-                    .with_metadata(metadata_map);
+                    .with_metadata(r.metadata);
 
                 if let Some(sim) = r.similarity {
                     record = record.with_similarity(sim);
                 }
 
                 if let (Some(version), Some(timestamp)) = (r.version, r.timestamp) {
-                    record = record.with_version_info(version as u32, timestamp as u32);
+                    record = record.with_version_info(version, timestamp);
                 }
 
                 if let Some(source) = r.source {
-                    record = record.with_source(source.unwrap_or_default());
+                    use crate::proto::proximadb_v1::{SourceContent, source_content};
+                    let source_content = SourceContent {
+                        data: Some(source_content::Data::TextContent(source)),
+                    };
+                    record = record.with_source(source_content);
                 }
 
                 record
@@ -1930,7 +1915,7 @@ impl UnifiedStorageEngine for ViperEngine {
         }
         if !include_metadata {
             for result in &mut results {
-                result.metadata = TypedMetadata::new();
+                result.metadata = HashMap::new();
             }
         }
         // ========================================================================

@@ -1484,9 +1484,9 @@ impl UnifiedSstableReader {
 
         // Linear search is often faster than HashMap lookup for small metadata sets (< 16 items)
         // which is typical for vector metadata
-        for (key, value) in metadata.iter() {
-            if key == filter_key {
-                return self.fast_value_comparison(&value, filter_value);
+        for item in metadata.iter() {
+            if &item.key == filter_key {
+                return self.fast_value_comparison(&item.value, filter_value);
             }
         }
         false
@@ -2330,7 +2330,23 @@ impl UnifiedSstableReader {
 
                 // Ultra-fast metadata filtering (hot path optimization)
                 if let Some((filter_key, filter_value)) = filter_info {
-                    if !self.fast_metadata_match(&record.metadata, filter_key, filter_value) {
+                    // Convert HashMap to Vec<MetadataItem> for fast_metadata_match
+                    let metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = record.metadata
+                        .iter()
+                        .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
+                            key: k.clone(),
+                            value: match &v.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => 
+                                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone())),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => 
+                                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(*n)),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => 
+                                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b)),
+                                _ => None,
+                            },
+                        })
+                        .collect();
+                    if !self.fast_metadata_match(&metadata_items, filter_key, filter_value) {
                         filtered_out += 1;
                         continue; // Skip to next record immediately
                     }
@@ -2377,7 +2393,7 @@ impl UnifiedSstableReader {
                     OptimizedSearchRecord::new(record.id.clone(), similarity.rank_value)
                         .with_similarity(similarity.normalized_score)
                         .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::from_map(metadata_map))
+                        .with_metadata(record.metadata.clone())
                         .with_version_info(record.version.unwrap_or(0), record.timestamp),
                 );
             }
@@ -2877,7 +2893,7 @@ impl UnifiedSstableReader {
                     updated_at: r.updated_at,
                     expires_at: r.expires_at,
                     version: r.version,
-                    quantized_vector: None,
+                    quantized_vector: vec![],
                     source: None,
                 })
                 .collect();
@@ -3248,7 +3264,7 @@ impl UnifiedSstableReader {
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
                         version: record.version.map(|v| v as i64),
-                        quantized_vector: None,
+                        quantized_vector: vec![],
                         source: None,
                     }));
                 }
@@ -4000,7 +4016,7 @@ impl UnifiedSstableReader {
                             record
                                 .metadata
                                 .iter()
-                                .map(|(key, value)| &key)
+                                .map(|(key, _value)| key.clone())
                                 .collect::<Vec<_>>()
                         );
                     }

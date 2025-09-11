@@ -247,7 +247,7 @@ impl GraphMemoryPool {
                 let map_lock = self
                     .node_property_str_ordered
                     .entry(key.clone())
-                    .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+                    .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(property_value_to_string(value))
                     .or_insert_with(Vec::new)
@@ -300,7 +300,7 @@ impl GraphMemoryPool {
                 let map_lock = self
                     .edge_property_str_ordered
                     .entry(key.clone())
-                    .or_insert_with(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+                    .or_insert_with(|| std::sync::RwLock::new(std::collections::BTreeMap::new()));
                 let mut map = map_lock.write().unwrap();
                 map.entry(property_value_to_string(value))
                     .or_insert_with(Vec::new)

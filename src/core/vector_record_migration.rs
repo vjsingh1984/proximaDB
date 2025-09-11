@@ -20,6 +20,7 @@
 //! It serves as a compatibility layer during the transition period.
 
 use crate::proto::proximadb_v1::VectorRecord;
+use std::collections::HashMap;
 
 /// Avro VectorRecord type alias for compatibility
 pub type ServiceVectorRecord = crate::core::service_types::VectorRecord;
@@ -32,39 +33,34 @@ pub fn service_to_proto(
     service_record: &ServiceVectorRecord,
     _collection_id: &str,
 ) -> ProtoVectorRecord {
-    // Convert metadata from HashMap<String, serde_json::Value> to Vec<MetadataItem>
-    let metadata: Vec<crate::proto::proximadb_v1::MetadataItem> = service_record
+    // Convert metadata from HashMap<String, serde_json::Value> to HashMap<String, SqlValue>
+    let metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = service_record
         .metadata
         .iter()
         .map(|(key, value)| {
-            let metadata_value = match value {
-                serde_json::Value::String(s) => {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()))
-                }
+            let sql_value = match value {
+                serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                },
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f))
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                        }
                     } else {
-                        Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                n.to_string(),
-                            ),
-                        )
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(n.to_string())),
+                        }
                     }
                 }
-                serde_json::Value::Bool(b) => Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b),
-                ),
-                _ => Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        value.to_string(),
-                    ),
-                ),
+                serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
+                },
+                _ => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
+                },
             };
-            crate::proto::proximadb_v1::MetadataItem {
-                key: key.clone(),
-                value: metadata_value,
-            }
+            (key.clone(), sql_value)
         })
         .collect();
 
@@ -72,10 +68,10 @@ pub fn service_to_proto(
         id: service_record.id.clone(),
         vector: service_record.vector.clone(),
         metadata,
-        timestamp: (service_record.timestamp / 1_000_000) as u32, // Convert microseconds to seconds
-        updated_at: service_record.updated_at.map(|v| (v / 1_000_000) as u32),
-        expires_at: service_record.expires_at.map(|v| (v / 1_000_000) as u32),
-        version: service_record.version.map(|v| v as u32),
+        timestamp: (service_record.timestamp / 1_000_000) as i64, // Convert microseconds to seconds
+        updated_at: service_record.updated_at.map(|v| (v / 1_000_000) as i64),
+        expires_at: service_record.expires_at.map(|v| (v / 1_000_000) as i64),
+        version: service_record.version.map(|v| v as i64),
         quantized_vector: Vec::new(),
         source: None,
     }
@@ -88,7 +84,7 @@ pub fn proto_to_service(
 ) -> ServiceVectorRecord {
     // Convert metadata from Vec<MetadataItem> to HashMap<String, serde_json::Value>
     let metadata =
-        crate::core::proto_metadata_helper::proto_metadata_to_json(&proto_record.metadata);
+        crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&proto_record.metadata);
 
     ServiceVectorRecord {
         id: proto_record.id.clone(),

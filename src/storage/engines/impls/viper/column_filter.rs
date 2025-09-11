@@ -307,7 +307,7 @@ impl VIPERColumnFilterEvaluator {
             let mut column_values = Vec::new();
             for record in &all_records {
                 let metadata_map =
-                    crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
+                    crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
                 if let Some(value) = metadata_map.get(name).cloned() {
                     column_values.push(value);
                 } else {

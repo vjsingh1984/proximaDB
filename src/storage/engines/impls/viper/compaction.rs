@@ -861,7 +861,7 @@ impl Compaction {
                             // Create temporary VectorRecord instances for comparison
                             let existing_vector_record = VectorRecord {
                                 id: id_str.clone(),
-                                version: existing_record.version,
+                                version: Some(existing_record.version),
                                 timestamp: existing_record.timestamp.unwrap_or(0),
                                 vector: vec![],
                                 metadata: std::collections::HashMap::new(),
@@ -873,7 +873,7 @@ impl Compaction {
 
                             let current_vector_record = VectorRecord {
                                 id: id_str.clone(),
-                                version: record_version.unwrap_or(0),
+                                version: Some(record_version.unwrap_or(0)),
                                 timestamp: record_timestamp.flatten().unwrap_or(0),
                                 vector: vec![],
                                 metadata: std::collections::HashMap::new(),
@@ -1263,7 +1263,7 @@ impl Compaction {
                         // Convert metadata to HashMap<String, SqlValue>
                         let metadata: std::collections::HashMap<
                             String,
-                            crate::storage::engines::impls::viper::FilterValue,
+                            crate::proto::proximadb_v1::SqlValue,
                         > = record
                             .row_data
                             .iter()
@@ -1271,9 +1271,9 @@ impl Compaction {
                             .map(|(k, v)| {
                                 (
                                     k.clone(),
-                                    crate::storage::engines::impls::viper::FilterValue::Equals(
-                                        serde_json::Value::String(v.to_string()),
-                                    ),
+                                    crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string())),
+                                    },
                                 )
                             })
                             .collect();
@@ -1282,7 +1282,7 @@ impl Compaction {
                             id: record.id.clone().unwrap_or_default(),
                             vector,
                             metadata,
-                            version: record.version,
+                            version: Some(record.version),
                             updated_at: record.timestamp.map(|t| t as i64),
                             expires_at: None,
                             quantized_vector: vec![],

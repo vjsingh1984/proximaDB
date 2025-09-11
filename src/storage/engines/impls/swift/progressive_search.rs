@@ -417,7 +417,7 @@ async fn phase3_pq_refinement(
 ) -> Result<Vec<Candidate>> {
     // Create distance computation engine for PQ operations
     // Note: Skip PQ distance table computation for now, use direct computation
-    let distance_table: Option<Vec<Vec<f32>>> = if !sst.header.quantization.pq_codebooks.is_empty()
+    let distance_table: Option<Vec<Vec<f32>>> = if sst.header.quantization.pq_codebooks > 0
     {
         // TODO: Implement proper PQ distance table computation
         None
@@ -621,11 +621,8 @@ fn condition_matches_block_stats(
 
 fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool {
     // Convert metadata to HashMap for easier lookup
-    let metadata_map: std::collections::HashMap<String, serde_json::Value> = record
-        .metadata
-        .iter()
-        .map(|(key, value)| (key.clone(), metadata_item_to_json(&value)))
-        .collect();
+    let metadata_map: std::collections::HashMap<String, serde_json::Value> = 
+        crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
 
     for condition in &filter.conditions {
         if !condition_matches_record(condition, &metadata_map) {

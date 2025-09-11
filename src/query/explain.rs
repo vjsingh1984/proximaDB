@@ -248,7 +248,7 @@ impl GraphHints {
                     hints.index_usage.push(GraphIndexUsage {
                         index_name: index_name.clone(),
                         index_type: "label_index".to_string(),
-                        selectivity: step.cost.selectivity_estimate.unwrap_or(1.0),
+                        selectivity: 1.0 / (step.cost.total_cost + 1.0), // estimate from cost
                         used: true,
                         skip_reason: None,
                     });
@@ -273,10 +273,10 @@ impl GraphHints {
         // Add graph statistics if available
         if let Some(stats) = stats {
             hints.graph_stats = Some(GraphPlannerStats {
-                total_nodes: stats.node_count,
-                total_edges: stats.edge_count,
+                total_nodes: stats.node_count as usize,
+                total_edges: stats.edge_count as usize,
                 avg_node_degree: stats.avg_node_degree,
-                label_selectivity: stats.label_selectivity.clone(),
+                label_selectivity: stats.label_selectivity.iter().map(|(k, v)| (k.clone(), *v as usize)).collect(),
                 property_cardinality: HashMap::new(), // TODO: Add property stats
             });
         }

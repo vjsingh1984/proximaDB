@@ -291,7 +291,7 @@ impl StreamingCompactor {
                 // Check for tombstone (expired record)
                 let now = chrono::Utc::now().timestamp() as u32;
                 if let Some(expires_at) = merge_record.record.expires_at {
-                    if expires_at <= now {
+                    if expires_at <= now as i64 {
                         deleted_vector_ids.push(current_id.clone());
                         records_deduped += 1;
 

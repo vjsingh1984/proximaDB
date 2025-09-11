@@ -18,6 +18,7 @@ impl CacheValue for Value {
 }
 
 /// Metadata cache using the base cache infrastructure
+#[derive(Debug)]
 pub struct MetadataStore {
     base: BaseCacheImpl<String, Value>,
 }

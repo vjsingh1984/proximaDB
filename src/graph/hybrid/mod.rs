@@ -276,7 +276,7 @@ pub struct HybridQueryResult {
 }
 
 /// Individual node result from hybrid query
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct HybridNodeResult {
     /// The node itself
     pub node: Node,
@@ -293,7 +293,7 @@ pub struct HybridNodeResult {
 }
 
 /// Step in a path
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PathStep {
     /// Node at this step
     pub node: Node,
@@ -1388,11 +1388,13 @@ impl HybridQueryEngine {
             // In a production system, this would preserve type information
             let value_str = match value {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => s.clone(),
-                Some(crate::proto::proximadb_v1::metadata_item::Value::IntValue(i)) => {
-                    i.to_string()
-                }
-                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f)) => {
-                    f.to_string()
+                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                    // Convert double to int-like display if it's a whole number
+                    if n.fract() == 0.0 {
+                        format!("{:.0}", n)
+                    } else {
+                        n.to_string()
+                    }
                 }
                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                     b.to_string()
@@ -1449,8 +1451,8 @@ impl HybridQueryEngine {
                 Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
                     b.to_string()
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
-                    // Skip vector values in metadata conversion
+                Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(_)) => {
+                    // Skip binary data in metadata conversion
                     continue;
                 }
                 None => "null".to_string(),
@@ -1660,7 +1662,7 @@ impl HybridQueryEngine {
         end_node_id: &NodeId,
         parent: &HashMap<NodeId, (NodeId, EdgeId)>,
     ) -> QueryResult<Vec<PathStep>> {
-        let mut path = Vec::new();
+        let mut path: Vec<PathStep> = Vec::new();
         let mut current_id = end_node_id.clone();
 
         // Build path backwards

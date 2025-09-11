@@ -514,10 +514,10 @@ fn parse_sp_algorithm(
 ) -> Option<crate::proto::proximadb_v1::ShortestPathAlgorithm> {
     match s.unwrap_or("DIJKSTRA").to_ascii_uppercase().as_str() {
         "ASTAR" => {
-            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmAstar)
+            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar)
         }
         "DIJKSTRA" => {
-            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmDijkstra)
+            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra)
         }
         _ => None,
     }

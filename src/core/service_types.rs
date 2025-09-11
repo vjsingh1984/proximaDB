@@ -274,33 +274,45 @@ impl VectorRecord {
 
     /// Convert to search result (zero-copy field mapping)
     pub fn to_search_result(&self, similarity: f32) -> OptimizedSearchRecord {
-        // Convert metadata to TypedMetadata
+        // Convert metadata to SqlValue HashMap
         let mut metadata_map = std::collections::HashMap::new();
         for (key, value) in &self.metadata {
-            let typed_value = match value {
+            let sql_value = match value {
                 serde_json::Value::String(s) => {
-                    MetadataValue::String(std::sync::Arc::from(s.as_str()))
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                    }
                 }
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
-                        MetadataValue::Number(f)
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                        }
                     } else {
-                        MetadataValue::Null
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
+                        }
                     }
                 }
-                serde_json::Value::Bool(b) => MetadataValue::Bool(*b),
-                _ => MetadataValue::Null,
+                serde_json::Value::Bool(b) => {
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
+                    }
+                }
+                _ => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
+                },
             };
-            metadata_map.insert(key.clone(), typed_value);
+            metadata_map.insert(key.clone(), sql_value);
         }
 
         OptimizedSearchRecord::new(self.id.clone(), similarity)
             .with_similarity(similarity)
             .add_vector(self.vector.clone())
-            .with_metadata(TypedMetadata::from_map(metadata_map))
+            .with_metadata(metadata_map)
             .with_version_info(
-                self.version.map(|v| v as u32).unwrap_or(0),
-                self.timestamp as u32,
+                self.version.map(|v| v as i64).unwrap_or(0),
+                self.timestamp as i64,
             )
     }
 

@@ -1982,29 +1982,10 @@ impl VectorOperationsService {
         include_vector: bool,
         include_source: bool,
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
-        use crate::proto::proximadb_v1::{MetadataItem, SearchVectorRecord};
+        use crate::proto::proximadb_v1::{SearchVectorRecord, SqlValue};
 
-        // Convert TypedMetadata to proto MetadataItems
-        let metadata_items: Vec<MetadataItem> = result
-            .metadata
-            .iter()
-            .map(|(key, value)| {
-                use crate::core::metadata_types::MetadataValue;
-                use crate::proto::proximadb_v1::sql_value::Value;
-
-                let proto_value = match value {
-                    MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
-                    MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
-                    MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
-                    MetadataValue::Null => None,
-                };
-
-                MetadataItem {
-                    key: key.clone(),
-                    value: proto_value,
-                }
-            })
-            .collect();
+        // OptimizedSearchRecord already has SqlValue metadata, just clone it
+        let metadata_map = result.metadata.clone();
 
         SearchVectorRecord {
             id: result.id.clone(),
@@ -2017,13 +1998,13 @@ impl VectorOperationsService {
             } else {
                 vec![]
             },
-            metadata: metadata_items,
+            metadata: metadata_map,
             score: result.score as f64,
             similarity: result.similarity,
             version: result.version,
             timestamp: result.timestamp,
             source: if include_source {
-                result.source.clone()
+                result.source.as_ref().map(|s| format!("{:?}", s)) // Convert SourceContent to String
             } else {
                 None
             },
@@ -2062,30 +2043,8 @@ impl VectorOperationsService {
         result: &crate::core::search::results::OptimizedSearchRecord,
         include_vector: bool,
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
-        // Map TypedMetadata to v1 SqlValue map
-        let mut metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-            std::collections::HashMap::new();
-
-        for (key, value) in result.metadata.iter() {
-            use crate::core::metadata_types::MetadataValue;
-            let sql_value = match value {
-                MetadataValue::String(s) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        s.to_string(),
-                    )),
-                },
-                MetadataValue::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                        *n,
-                    )),
-                },
-                MetadataValue::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
-                },
-                MetadataValue::Null => crate::proto::proximadb_v1::SqlValue { value: None },
-            };
-            metadata.insert(key.clone(), sql_value);
-        }
+        // OptimizedSearchRecord already has SqlValue metadata, just clone it
+        let metadata = result.metadata.clone();
 
         crate::proto::proximadb_v1::SearchVectorRecord {
             id: result.id.clone(),

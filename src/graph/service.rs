@@ -729,22 +729,22 @@ impl GraphService {
                             None => true,
                         },
                         Op::GreaterThan => {
-                            cmp_prop_gt(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::GreaterEqual => {
-                            cmp_prop_ge(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::LessThan => {
-                            cmp_prop_lt(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::LessEqual => {
-                            cmp_prop_le(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::StartsWith => {
-                            prop_starts_with(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            prop_starts_with(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::Contains => {
-                            prop_contains(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         _ => false,
                     };
@@ -974,22 +974,22 @@ impl GraphService {
                             None => true,
                         },
                         Op::GreaterThan => {
-                            cmp_prop_gt(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_gt(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::GreaterEqual => {
-                            cmp_prop_ge(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_ge(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::LessThan => {
-                            cmp_prop_lt(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_lt(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::LessEqual => {
-                            cmp_prop_le(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            cmp_prop_le(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::StartsWith => {
-                            prop_starts_with(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            prop_starts_with(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         Op::Contains => {
-                            prop_contains(prop_val_opt.as_ref(), filter.value.as_ref().unwrap())
+                            prop_contains(prop_val_opt, filter.value.as_ref().unwrap())
                         }
                         _ => false,
                     };
@@ -1052,7 +1052,7 @@ impl GraphService {
         }
 
         let stats = crate::proto::proximadb_v1::GraphStats {
-            total_nodes: self.engine.node_count(),
+            total_nodes: self.engine.node_count().unwrap_or(0) as u64,
             total_edges: self.stats_edges.load(std::sync::atomic::Ordering::Relaxed),
             label_stats: vec![], // TODO: Implement detailed label stats
             edge_type_stats: self

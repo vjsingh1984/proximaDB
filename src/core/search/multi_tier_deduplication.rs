@@ -171,7 +171,7 @@ impl MultiTierDeduplicator {
         // If we have a logical metadata query, use that (takes precedence)
         if let Some(ref query) = self.metadata_query {
             let json_metadata =
-                crate::core::proto_metadata_helper::proto_metadata_to_json(&vector_record.metadata);
+                crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&vector_record.metadata);
             match self.query_engine.evaluate(query, &json_metadata) {
                 Ok(result) => {
                     if !result {

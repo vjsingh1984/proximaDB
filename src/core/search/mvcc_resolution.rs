@@ -144,7 +144,7 @@ impl MvccResolver {
     /// Check if a record is expired
     pub fn is_expired(&self, record: &VectorRecord) -> bool {
         if let Some(expires_at) = record.expires_at {
-            expires_at < self.current_timestamp
+            expires_at < self.current_timestamp as i64
         } else {
             false
         }

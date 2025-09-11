@@ -1373,7 +1373,8 @@ impl RaptorEngine {
             let metadata_json = serde_json::to_string(&record.metadata)?;
             metadata_strs.push(Some(metadata_json));
 
-            versions.push(record.version);
+            // Convert Option<i64> to Option<u32> for Arrow UInt32Array compatibility
+            versions.push(record.version.map(|v| v as u32));
             timestamps.push(Some(record.timestamp as i64));
         }
 
@@ -1508,11 +1509,12 @@ impl RaptorEngine {
             serde_json::from_str(metadata_str)?
         };
 
-        // Convert JSON metadata to Vec<MetadataItem> using centralized utility
+        // Convert JSON metadata to HashMap<String, SqlValue> for proto v1 compatibility
         let metadata = if let Some(obj) = metadata_json.as_object() {
-            crate::core::utils::metadata_conversions::json_to_proto_metadata(obj.clone())
+            let metadata_items = crate::core::utils::metadata_conversions::json_to_proto_metadata(obj.clone());
+            crate::core::proto_metadata_helper::proto_metadata_to_sqlvalue_hashmap(&metadata_items)
         } else {
-            Vec::new()
+            HashMap::new()
         };
 
         Ok(VectorRecord {

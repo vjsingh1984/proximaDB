@@ -1589,7 +1589,7 @@ impl StorageQueryContext {
                     quantization_type,
                     bits: level.bits as i32,
                     search_priority: idx as i32, // Use index as priority
-                    num_subvectors: level.num_subvectors.map(|n| n as i32),
+                    num_subvectors: Some(level.num_subvectors as i32),
                     min_recall: 0.9, // Default recall threshold
                 }
             })
@@ -1646,16 +1646,7 @@ impl StorageQueryContext {
                 .unwrap_or_else(|| "./data".to_string()),
             estimated_vector_count: 0,
             estimated_size_bytes: 0,
-            performance_tier: config
-                .and_then(|c| c.storage_config.as_ref())
-                .and_then(|s| s.preset.as_ref())
-                .map(|preset| match preset.as_str() {
-                    "archive" => PerformanceTier::Archive,
-                    "real_time" | "maximum_performance" => PerformanceTier::Hot,
-                    "cloud_optimized" => PerformanceTier::Cold,
-                    _ => PerformanceTier::Warm,
-                })
-                .unwrap_or(PerformanceTier::Warm),
+            performance_tier: PerformanceTier::Warm, // Default since preset field doesn't exist
             compression_enabled: config
                 .and_then(|c| c.storage_config.as_ref())
                 .map(|s| s.compression != 0)  // Assume 0 means no compression

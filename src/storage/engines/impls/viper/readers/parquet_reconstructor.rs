@@ -472,12 +472,15 @@ impl ParquetReconstructor {
                 Vec::new()
             };
 
+            // Convert Vec<MetadataItem> to HashMap<String, SqlValue>
+            let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_sqlvalue_hashmap(&metadata);
+            
             vector_records.push(VectorRecord {
                 id,
                 vector,
-                metadata,
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata: metadata_map,
+                timestamp: chrono::Utc::now().timestamp(), // i64, not u32
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: Vec::new(),

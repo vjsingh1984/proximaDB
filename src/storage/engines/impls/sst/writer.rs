@@ -662,9 +662,17 @@ impl SstableWriter {
                     Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    _ => serde_json::Value::Null,
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                        serde_json::Value::Bool(*b)
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                        serde_json::Value::String("[binary data]".to_string())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        serde_json::Value::Null
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        serde_json::Value::String("[array]".to_string())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        serde_json::Value::String("[object]".to_string())
                     }
                     None => serde_json::Value::Null,
                 };
@@ -768,7 +776,8 @@ impl SstableWriter {
         let mut builder = CompositeBloomFilterBuilder::new(config);
         for record in block_records {
             for (key, sql_value) in &record.metadata {
-                builder.add_metadata_item(key.clone(), sql_value.clone());
+                let metadata_item = crate::core::proto_metadata_helper::sqlvalue_to_metadata_item(key.clone(), sql_value);
+                builder.add_metadata_item(key.clone(), metadata_item);
             }
         }
 
@@ -886,9 +895,17 @@ impl SstableWriter {
                     Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    _ => serde_json::Value::Null,
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                        serde_json::Value::Bool(*b)
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                        serde_json::Value::String("[binary data]".to_string())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        serde_json::Value::Null
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        serde_json::Value::String("[array]".to_string())
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        serde_json::Value::String("[object]".to_string())
                     }
                     None => serde_json::Value::Null,
                 };
@@ -1109,7 +1126,8 @@ impl SstableWriter {
         let mut builder = CompositeBloomFilterBuilder::new(config);
         for record in block_records {
             for (key, sql_value) in &record.metadata {
-                builder.add_metadata_item(key.clone(), sql_value.clone());
+                let metadata_item = crate::core::proto_metadata_helper::sqlvalue_to_metadata_item(key.clone(), sql_value);
+                builder.add_metadata_item(key.clone(), metadata_item);
             }
         }
 

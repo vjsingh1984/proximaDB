@@ -2105,8 +2105,9 @@ impl WriteAheadLogManager {
     ) -> std::collections::HashMap<String, serde_json::Value> {
         metadata
             .iter()
-            .filter_map(|(key, value)| {
-                let value = value.as_ref().and_then(|v| match v {
+            .filter_map(|item| {
+                let key = &item.key;
+                let value = item.value.as_ref().and_then(|v| match v {
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
                         Some(serde_json::Value::String(s.clone()))
                     }

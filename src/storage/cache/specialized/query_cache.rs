@@ -59,6 +59,7 @@ impl CacheValue for CachedQueryResult {
 }
 
 /// Specialized cache for query results with staleness detection
+#[derive(Debug)]
 pub struct QueryCache {
     base: BaseCacheImpl<QueryKey, CachedQueryResult>,
 }

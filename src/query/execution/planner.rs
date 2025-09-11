@@ -327,7 +327,8 @@ impl ExecutionPlanner {
                 .iter()
                 .filter_map(|e| self.expr_to_identifier(e))
                 .collect::<Vec<_>>();
-            let aggs = self.extract_aggregates(&select.projection);
+            let projection_exprs: Vec<_> = select.projection.iter().map(|p| p.expr.clone()).collect();
+            let aggs = self.extract_aggregates(&projection_exprs);
             let having = self.convert_where_to_filter(&select.having)?; // reuse filter converter
             operations.push(ExecutionOperation::Aggregate {
                 group_keys,

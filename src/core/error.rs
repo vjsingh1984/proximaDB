@@ -69,6 +69,9 @@ pub enum StorageError {
     #[error("Resource not found: {0}")]
     NotFound(String),
 
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
+
     #[error("Index error: {0}")]
     IndexError(String),
 
@@ -125,6 +128,9 @@ pub enum QueryError {
 
     #[error("Collection not found: {0}")]
     CollectionNotFound(String),
+
+    #[error("Invalid filter: {0}")]
+    InvalidFilter(String),
 }
 
 #[derive(Error, Debug)]

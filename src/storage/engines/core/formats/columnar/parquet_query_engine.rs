@@ -812,12 +812,12 @@ impl UnifiedParquetReader {
         Ok(Some(VectorRecord {
             id: id.unwrap_or_else(|| format!("row_{}", row_idx)),
             vector,
-            metadata: vec![], // Would extract from metadata columns
-            timestamp: timestamp.unwrap_or(0),
+            metadata: std::collections::HashMap::new(), // Would extract from metadata columns
+            timestamp: timestamp.unwrap_or(0) as i64,
             updated_at: None,
             quantized_vector: Vec::new(),
             expires_at: None,
-            version: version,
+            version: version.map(|v| v as i64),
             source: None,
         }))
     }
@@ -1192,11 +1192,11 @@ impl UnifiedParquetReader {
         Ok(Some(VectorRecord {
             id: id.unwrap_or_else(|| format!("row_{}", row_index)),
             vector: vector.unwrap_or_default(),
-            metadata: vec![],
-            timestamp: timestamp.unwrap_or(0),
+            metadata: std::collections::HashMap::new(),
+            timestamp: timestamp.unwrap_or(0) as i64,
             updated_at: None,
             expires_at: None,
-            version: version.map(|v| v as u32),
+            version: version.map(|v| v as i64),
             quantized_vector: Vec::new(),
             source: None,
         }))

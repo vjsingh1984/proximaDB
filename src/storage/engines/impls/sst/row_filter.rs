@@ -166,13 +166,13 @@ impl SSTRowFilterEvaluator {
     fn get_or_convert_vector_metadata(
         &mut self,
         cache_key: &str,
-        metadata: &[crate::proto::proximadb_v1::MetadataItem],
+        metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
     ) -> Result<HashMap<String, serde_json::Value>> {
         if let Some(cached) = self.metadata_cache.get(cache_key) {
             return Ok(cached.clone());
         }
 
-        let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(metadata);
+        let metadata_map = crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(metadata);
 
         // Cache for stable IDs only
         if !cache_key.starts_with("idx_") && cache_key.len() < 100 {
@@ -225,7 +225,7 @@ impl SSTRowFilterEvaluator {
         for (index, record) in records.iter().enumerate() {
             // Convert metadata without caching for immutable operation
             let metadata_map =
-                crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
+                crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
 
             if crate::storage::engines::core::evaluate_filter(filter_expr, &metadata_map) {
                 qualifying_indices.push(index);
