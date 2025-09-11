@@ -76,7 +76,7 @@ pub fn service_to_proto(
         updated_at: service_record.updated_at.map(|v| (v / 1_000_000) as u32),
         expires_at: service_record.expires_at.map(|v| (v / 1_000_000) as u32),
         version: service_record.version.map(|v| v as u32),
-        quantized_vector: None,
+        quantized_vector: Vec::new(),
         source: None,
     }
 }

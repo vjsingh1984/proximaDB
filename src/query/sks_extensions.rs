@@ -25,6 +25,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+/// Temporary context structure for ASSEMBLE operations
+#[derive(Debug, Clone)]
+struct AssembledContext {
+    metadata: HashMap<String, serde_json::Value>,
+    relevance_score: Option<f64>,
+    graph_distance: Option<u32>,
+    provenance_chain: Vec<String>,
+}
+
 /// SKS-specific SQL operators
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SksOperator {
@@ -209,7 +218,7 @@ impl SksExecutor {
         );
 
         // 1. Gather context from multiple sources
-        let mut assembled_context = Vec::new();
+        let mut assembled_context: Vec<AssembledContext> = Vec::new();
 
         for item_id in context_items {
             // TODO: Retrieve context from entity store, vector collections, graph relationships
@@ -227,7 +236,7 @@ impl SksExecutor {
         // Default: preserve discovery order for now
 
         // 3. Build result rows with provenance
-        let rows = assembled_context
+        let rows: Vec<QueryRow> = assembled_context
             .into_iter()
             .map(|context| QueryRow {
                 fields: context.metadata,
@@ -393,6 +402,7 @@ impl SksFunction {
                     edge_types: vec![edge_type.clone()],
                     max_depth: *max_depth,
                     filters: None, // TODO: Add filter support
+                    vector_target_collection: None,
                 }])
             }
 

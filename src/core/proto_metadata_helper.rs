@@ -13,10 +13,10 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, serd
         .map(|(key, value)| {
             let value = match &value {
                 Some(metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                Some(metadata_item::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                Some(metadata_item::Value::NumberValue(n)) => serde_json::Number::from_f64(n)
                     .map(serde_json::Value::Number)
                     .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(b),
                 None => serde_json::Value::Null,
             };
             (key.clone(), value)

@@ -65,7 +65,6 @@ pub struct TypedField {
 }
 /// Nested message and enum types in `TypedField`.
 pub mod typed_field {
-    #[derive(serde::Serialize, serde::Deserialize)]
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Value {
@@ -348,7 +347,6 @@ pub struct TemporalClause {
 }
 /// Nested message and enum types in `TemporalClause`.
 pub mod temporal_clause {
-    #[derive(serde::Serialize, serde::Deserialize)]
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Clause {
@@ -3704,8 +3702,10 @@ pub struct Node {
     pub embedding: ::core::option::Option<EmbeddingVersion>,
     /// Metadata
     #[prost(message, optional, tag = "5")]
+    #[serde(skip)]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag = "6")]
+    #[serde(skip)]
     pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// Edge represents a directed relationship between two nodes
@@ -3736,8 +3736,10 @@ pub struct Edge {
     pub weight: ::core::option::Option<f64>,
     /// Metadata
     #[prost(message, optional, tag = "7")]
+    #[serde(skip)]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag = "8")]
+    #[serde(skip)]
     pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// PropertyValue supports various data types for flexible schema

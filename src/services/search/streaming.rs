@@ -25,7 +25,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::sql_value;
+use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
 use crate::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
 
@@ -40,6 +40,36 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
         sql_value::Value::NullValue(_) => MetadataValue::Null,
         sql_value::Value::ArrayValue(_) => MetadataValue::String(Arc::from("[array]")),
         sql_value::Value::ObjectValue(_) => MetadataValue::String(Arc::from("[object]")),
+    }
+}
+
+/// Helper function to convert proto metadata Value to SqlValue
+fn convert_proto_value_to_sql(value: sql_value::Value) -> proximadb_v1::SqlValue {
+    match value {
+        sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::StringValue(s)),
+        },
+        sql_value::Value::NumberValue(f) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NumberValue(f)),
+        },
+        sql_value::Value::BoolValue(b) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::BoolValue(b)),
+        },
+        sql_value::Value::Int64Value(i) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::Int64Value(i)),
+        },
+        sql_value::Value::BytesValue(b) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::BytesValue(b)),
+        },
+        sql_value::Value::NullValue(n) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NullValue(n)),
+        },
+        sql_value::Value::ArrayValue(a) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::ArrayValue(a)),
+        },
+        sql_value::Value::ObjectValue(o) => proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::ObjectValue(o)),
+        },
     }
 }
 
@@ -447,7 +477,7 @@ impl StreamingSearchService {
                         let value = &item.value;
                         if let Some(value) = value {
                             metadata_map
-                                .insert(key.clone(), convert_proto_value_to_typed(value.clone()));
+                                .insert(key.clone(), convert_proto_value_to_sql(value.clone()));
                         }
                     }
 
@@ -455,7 +485,7 @@ impl StreamingSearchService {
                         OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
                             .with_similarity(similarity.rank_value)
                             .add_vector(record.vector.clone())
-                            .with_metadata(TypedMetadata::from_map(metadata_map))
+                            .with_metadata(metadata_map)
                             .with_version_info(record.version.unwrap_or(0), record.timestamp);
 
                     results.push(search_result);

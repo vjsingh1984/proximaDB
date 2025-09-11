@@ -30,6 +30,7 @@
 //! engine-specific optimizations → results
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -1569,7 +1570,7 @@ impl VectorOperationsService {
                     version: None,
                     timestamp: None,
                     updated_at: None,
-                    expires_at: scored_result.expires_at.map(|dt| dt.timestamp() as u32),
+                    expires_at: scored_result.expires_at.map(|dt| dt.timestamp()),
                     source: None,
                     expanded_context: Vec::new(),
                     semantic_similarity: None,
@@ -2017,7 +2018,7 @@ impl VectorOperationsService {
                 vec![]
             },
             metadata: metadata_items,
-            score: result.score,
+            score: result.score as f64,
             similarity: result.similarity,
             version: result.version,
             timestamp: result.timestamp,
@@ -2048,6 +2049,10 @@ impl VectorOperationsService {
             } else {
                 vec![]
             },
+            semantic_similarity: result.similarity,
+            quantization_info: None,
+            engine_stats: HashMap::new(),
+            index_path: None,
         }
     }
 
@@ -2094,8 +2099,16 @@ impl VectorOperationsService {
                 vec![]
             },
             metadata,
-            score: result.score,
+            score: result.score as f64,
             version: result.version,
+            similarity: result.similarity,
+            timestamp: result.timestamp.map(|t| t as i64),
+            source: None, // Add if needed
+            expanded_context: vec![], // Add if needed
+            semantic_similarity: result.similarity,
+            quantization_info: None,
+            engine_stats: HashMap::new(),
+            index_path: None,
         }
     }
 
