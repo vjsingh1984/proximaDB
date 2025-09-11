@@ -73,7 +73,7 @@ pub trait EntityStore: Send + Sync {
 }
 
 /// Entity header containing metadata, provenance, and temporal info
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityHeader {
     pub typed_metadata: Option<TypedMetadata>,
     pub flexible_metadata: Option<FlexibleMetadata>,
@@ -312,9 +312,8 @@ impl EntityStore for ProximaEntityStore {
         };
 
         // Serialize header and store (in-memory v1)
-        let header_json = serde_json::to_string(&format!("{:?}", header))
+        let header_bytes = serde_json::to_vec(&header)
             .map_err(|e| anyhow::anyhow!("Failed to serialize header: {}", e))?;
-        let header_bytes = header_json.as_bytes().to_vec();
         // In-memory cache
         self.headers
             .write()
@@ -364,16 +363,12 @@ impl EntityStore for ProximaEntityStore {
             }
         }
         let header: EntityHeader = match opt {
-            Some(bytes) => {
-                // Simple fallback - return empty header for now
-                // TODO: Implement proper proto-based serialization
-                EntityHeader {
-                    typed_metadata: None,
-                    flexible_metadata: None,
-                    provenance: None,
-                    temporal: None,
-                }
-            },
+            Some(bytes) => serde_json::from_slice(&bytes).unwrap_or(EntityHeader {
+                typed_metadata: None,
+                flexible_metadata: None,
+                provenance: None,
+                temporal: None,
+            }),
             None => EntityHeader {
                 typed_metadata: None,
                 flexible_metadata: None,
@@ -444,27 +439,57 @@ impl EntityStore for ProximaEntityStore {
         // temporal_filter: Option<TemporalFilter>, // TODO: Add when proto is available
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>> {
-        // Use existing progressive search infrastructure
-        let mut results = Vec::new();
+        let mut results: Vec<(Entity, f32)> = Vec::new();
 
-        // If we have a query vector, perform similarity search
+        // Convert proto MetadataFilter to internal FilterExpression (best-effort)
+        let core_filter = Self::convert_metadata_filter(&metadata_filter);
+
         if let Some(vector) = query_vector {
-            // Perform vector search using existing infrastructure
-            // let vector_results = self.vector_engine.search(...).await?;
-            // Convert results to entities
+            if let Some(vs) = &self.vector_service {
+                let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
+                    optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+                    progressive_search: true,
+                    include_vectors: false,
+                    include_metadata: true,
+                    scenario: Some("sks_entity_search".to_string()),
+                };
+                let vos_results = vs
+                    .unified_search_v1(
+                        collection_id,
+                        vector,
+                        top_k,
+                        core_filter.clone(),
+                        Some(search_config),
+                    )
+                    .await?;
+
+                for search_set in vos_results {
+                    for record in search_set.results {
+                        let entity_id = record
+                            .metadata
+                            .get("entity_id")
+                            .and_then(|sv| match &sv.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .or_else(|| self.vector_to_entity.read().unwrap().get(&record.id).cloned())
+                            .unwrap_or_default();
+                        if entity_id.is_empty() { continue; }
+                        if let Some(entity) = self
+                            .get_entity(collection_id, &entity_id, false, false)
+                            .await?
+                        {
+                            results.push((entity, record.score as f32));
+                        }
+                    }
+                }
+            }
+        } else if core_filter.is_some() {
+            // TODO: implement pure metadata filter path efficiently; for now, fallback to listing a small window
+            let candidates = self.list_entities(collection_id, 0, top_k).await?;
+            results.extend(candidates.into_iter().map(|e| (e, 0.0)));
         }
 
-        // Apply metadata filters
-        if let Some(filter) = metadata_filter {
-            // Apply metadata filtering
-        }
-
-        // TODO: Apply temporal filters when available
-        // if let Some(temporal) = temporal_filter {
-        //     // Apply temporal filtering
-        // }
-
-        // Return top-k results
         results.truncate(top_k);
         Ok(results)
     }
@@ -499,6 +524,53 @@ impl EntityStore for ProximaEntityStore {
 }
 
 impl ProximaEntityStore {}
+
+impl ProximaEntityStore {
+    /// Compute on-disk path for a header key (helper for tests)
+    pub fn header_fs_path(&self, key: &str) -> String {
+        // Mirror FsKV path strategy
+        let mut p = std::path::PathBuf::from("data/entities");
+        p.push(format!("{}.bin", key.replace('/', "__")));
+        p.to_string_lossy().to_string()
+    }
+
+    fn convert_metadata_filter(
+        filter: &Option<MetadataFilter>,
+    ) -> Option<crate::core::search::FilterExpression> {
+        use crate::core::search::{ComparisonOperator as Op, FilterExpression as FE};
+        use crate::proto::proximadb_v1::{filter_clause, ComparisonOp, LogicalOp};
+        let f = filter.as_ref()?;
+        let mut terms: Vec<FE> = Vec::new();
+        for c in &f.clauses {
+            let val = match &c.value {
+                Some(filter_clause::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                Some(filter_clause::Value::IntValue(i)) => serde_json::json!(*i),
+                Some(filter_clause::Value::DoubleValue(d)) => serde_json::json!(*d),
+                Some(filter_clause::Value::BoolValue(b)) => serde_json::json!(*b),
+                None => serde_json::Value::Null,
+            };
+            let op = match ComparisonOp::from_i32(c.op).unwrap_or(ComparisonOp::Eq) {
+                ComparisonOp::Eq => Op::Equals,
+                ComparisonOp::Ne => Op::NotEquals,
+                ComparisonOp::Gt => Op::GreaterThan,
+                ComparisonOp::Gte => Op::GreaterThanOrEqual,
+                ComparisonOp::Lt => Op::LessThan,
+                ComparisonOp::Lte => Op::LessThanOrEqual,
+                ComparisonOp::In => Op::In,
+                ComparisonOp::NotIn => Op::NotIn,
+                ComparisonOp::Contains => Op::Contains,
+            };
+            terms.push(FE::Comparison { field: c.field.clone(), operator: op, value: val });
+        }
+        match LogicalOp::from_i32(f.op).unwrap_or(LogicalOp::And) {
+            LogicalOp::And => Some(FE::And(terms)),
+            LogicalOp::Or => Some(FE::Or(terms)),
+            LogicalOp::Not => {
+                if let Some(first) = terms.into_iter().next() { Some(FE::Not(Box::new(first))) } else { None }
+            }
+        }
+    }
+}
 
 // Placeholder traits - these will be implemented in separate files
 #[async_trait]

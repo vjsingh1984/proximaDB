@@ -228,6 +228,11 @@ pub struct WALBehaviorWrapper {
 
     /// Flush coordination state
     flush_state: Arc<RwLock<FlushState>>,
+
+    /// Distributed mode: idempotency tokens per collection
+    idempotency_tokens: Arc<RwLock<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
+    /// Distributed mode: per-collection partition sequencers (partition_key -> seq)
+    partition_sequences: Arc<RwLock<std::collections::HashMap<String, std::collections::HashMap<String, u64>>>>,
 }
 
 impl WALBehaviorWrapper {
@@ -241,6 +246,8 @@ impl WALBehaviorWrapper {
             mvcc_versions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             wal_metrics: Arc::new(RwLock::new(WriteBufferMetrics::default())),
             flush_state: Arc::new(RwLock::new(FlushState::default())),
+            idempotency_tokens: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            partition_sequences: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
     }
 
@@ -327,6 +334,17 @@ impl WALBehaviorWrapper {
         collection_id: &str,
         mut batch: WALVectorBatch,
     ) -> Result<Vec<u64>> {
+        // Backpressure: per-collection threshold check
+        let current_usage = {
+            let coord = self.batch_coordinator.read().await;
+            if let Some(col) = coord.batches.get(collection_id) {
+                col.values().filter(|b| !b.is_flushed).map(|b| b.total_size_bytes as u64).sum()
+            } else { 0 }
+        };
+        let threshold = self.config.flush_threshold_bytes as u64;
+        if current_usage >= threshold {
+            anyhow::bail!("BACKPRESSURE: collection {} over memtable threshold; retry later", collection_id);
+        }
         let batch_id = batch.batch_id.to_base62();
         let vector_count = batch.vector_records.len();
 
@@ -694,6 +712,12 @@ impl WALBehaviorWrapper {
         self.wal_metrics.read().await.clone()
     }
 
+    /// List all collections currently tracked in the write buffer (coordinator view)
+    pub async fn list_collections(&self) -> Vec<String> {
+        let guard = self.batch_coordinator.read().await;
+        guard.batches.keys().cloned().collect()
+    }
+
     /// Get latest version of a vector by ID (MODERN - MVCC handled by GlobalPartitionedMemtable)
     pub async fn get_latest_vector(
         &self,
@@ -773,6 +797,43 @@ impl WALBehaviorWrapper {
     pub async fn len(&self) -> usize {
         // Direct access to GlobalPartitionedMemtable
         self.inner.len().await
+    }
+
+    /// Distributed: register idempotency token; returns false if duplicate
+    pub async fn register_idempotency(&self, collection_id: &str, token: &str) -> bool {
+        let mut map = self.idempotency_tokens.write().await;
+        let set = map.entry(collection_id.to_string()).or_insert_with(Default::default);
+        set.insert(token.to_string())
+    }
+
+    /// Distributed: get next partition sequence
+    pub async fn next_partition_sequence(&self, collection_id: &str, partition_key: &str) -> u64 {
+        let mut all = self.partition_sequences.write().await;
+        let per = all.entry(collection_id.to_string()).or_insert_with(Default::default);
+        let seq = per.entry(partition_key.to_string()).or_insert(0);
+        *seq += 1;
+        *seq
+    }
+
+    /// Distributed add: with partition & idempotency token support
+    pub async fn add_vector_batch_distributed(
+        &self,
+        collection_id: &str,
+        partition_key: Option<&str>,
+        idempotency_token: Option<&str>,
+        batch: WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        if let Some(token) = idempotency_token {
+            // If token already exists, ignore batch (idempotent)
+            if !self.register_idempotency(collection_id, token).await {
+                tracing::info!("WAL idempotent: skipping duplicate token {}", token);
+                return Ok(Vec::new());
+            }
+        }
+        if let Some(pk) = partition_key {
+            let _ = self.next_partition_sequence(collection_id, pk).await;
+        }
+        self.add_vector_batch(collection_id, batch).await
     }
 
     /// Get collections that need flushing (global WAL, collection-partitioned)

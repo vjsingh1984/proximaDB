@@ -701,7 +701,7 @@ impl UnifiedProgressiveSearchPipeline {
     fn convert_metadata(&self, record: &VectorRecord) -> HashMap<String, serde_json::Value> {
         let mut map = HashMap::new();
 
-        for entry in &record.metadata {
+        for (key, entry) in &record.metadata {
             if let Some(ref proto_value) = entry.value {
                 use crate::proto::proximadb_v1::metadata_item;
                 use serde_json::Value;
@@ -717,7 +717,7 @@ impl UnifiedProgressiveSearchPipeline {
                     }
                     metadata_item::Value::BoolValue(b) => Value::Bool(*b),
                 };
-                map.insert(entry.key.clone(), json_value);
+                map.insert(key.clone(), json_value);
             }
         }
 

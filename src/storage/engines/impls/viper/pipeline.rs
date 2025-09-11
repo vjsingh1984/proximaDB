@@ -32,9 +32,7 @@ use tracing::{debug, info, warn};
 
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 // Quantization now handled by unified compute module
-use crate::core::proto_metadata_helper;
 use crate::core::{String, VectorRecord};
-use crate::proto::proximadb_v1::sql_value::Value as MetadataValue;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
@@ -790,32 +788,30 @@ impl VectorRecordProcessor {
         for field in fields {
             let a_val = a
                 .metadata
-                .iter()
-                .find(|item| &item.key == field)
-                .map(|item| &item.value);
+                .get(field);
             let b_val = b
                 .metadata
-                .iter()
-                .find(|item| &item.key == field)
-                .map(|item| &item.value);
+                .get(field);
             match (a_val, b_val) {
                 (Some(a_meta), Some(b_meta)) => {
                     // Convert metadata values to JSON for comparison
-                    let a_json = match a_meta {
-                        Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(MetadataValue::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                    let a_json = match &a_meta.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                        Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
-                        None => serde_json::Value::Null,
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        _ => serde_json::Value::Null,
                     };
-                    let b_json = match b_meta {
-                        Some(MetadataValue::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(MetadataValue::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                    let b_json = match &b_meta.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                        Some(MetadataValue::BoolValue(b)) => serde_json::Value::Bool(*b),
-                        None => serde_json::Value::Null,
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        _ => serde_json::Value::Null,
                     };
                     let cmp = self.compare_metadata_values(&a_json, &b_json);
                     if cmp != Ordering::Equal {
@@ -3142,14 +3138,14 @@ impl CompactionEngine {
                 .filter_map(|field| {
                     record
                         .metadata
-                        .iter()
-                        .find(|item| &item.key == field)
-                        .map(|item| {
-                            let value_str = match &item.value {
-                                Some(MetadataValue::StringValue(s)) => s.clone(),
-                                Some(MetadataValue::NumberValue(n)) => n.to_string(),
-                                Some(MetadataValue::BoolValue(b)) => b.to_string(),
-                                None => String::new(),
+                        .get(field)
+                        .map(|sql_value| {
+                            let value_str = match &sql_value.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                                _ => String::new(),
                             };
                             format!("{}:{}", field, value_str)
                         })

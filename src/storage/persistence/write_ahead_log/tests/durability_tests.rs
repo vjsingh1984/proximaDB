@@ -248,3 +248,84 @@ async fn test_batch_sync_coordinator() {
     // Shutdown coordinator
     coordinator.shutdown().await;
 }
+#[tokio::test]
+async fn test_manifest_reader_orders_entries() {
+    use crate::storage::persistence::write_ahead_log::manifest::{WalManifest, WalManifestEntry};
+    let temp_dir = TempDir::new().unwrap();
+    let fs_factory = Arc::new(
+        FilesystemFactory::new(Default::default())
+            .await
+            .expect("fs factory"),
+    );
+    let dm = WriteBufferDiskManager::new(fs_factory.clone(), temp_dir.path());
+    let manifest = WalManifest::new(Arc::new(dm));
+    let cid = "c1";
+    std::fs::create_dir_all(manifest.disk.get_collection_wal_dir(cid)).unwrap();
+
+    let b1 = super::super::BatchId::new();
+    let mut e1 = WalManifestEntry::from_batch(&b1, format!("{}.pbwal", b1.to_base62()), 10, 123);
+    e1.lsn = 1;
+    let b2 = super::super::BatchId::new();
+    let mut e2 = WalManifestEntry::from_batch(&b2, format!("{}.pbwal", b2.to_base62()), 20, 456);
+    e2.lsn = 2;
+    manifest.append_entry(cid, &e2).await.unwrap();
+    manifest.append_entry(cid, &e1).await.unwrap();
+
+    let entries = manifest.read_entries(cid).await.unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries[0].lsn <= entries[1].lsn);
+}
+
+#[tokio::test]
+async fn test_recovery_skips_corrupted_checksum() {
+    use crate::storage::persistence::write_ahead_log::manifest::WalManifest;
+    use crate::storage::persistence::write_ahead_log::serialization::{ProtocolBuffersSerializer, VectorBatchSerializer};
+    use crate::storage::persistence::write_ahead_log::{RecoveryManager, BatchId};
+    use crate::storage::traits::UnifiedStorageEngine;
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+
+    let temp_dir = TempDir::new().unwrap();
+    let fs_factory = Arc::new(
+        FilesystemFactory::new(Default::default())
+            .await
+            .expect("fs factory"),
+    );
+    let dm = Arc::new(WriteBufferDiskManager::new(fs_factory.clone(), temp_dir.path()));
+    let manifest = WalManifest::new(dm.clone());
+    let cid = "rcv1";
+    std::fs::create_dir_all(dm.get_collection_wal_dir(cid)).unwrap();
+
+    // Write a batch to file
+    let serializer = ProtocolBuffersSerializer::new();
+    let rec = crate::core::VectorRecord { id: Some("v1".into()), vector: vec![0.1,0.2], metadata: vec![], timestamp: 0, updated_at: None, expires_at: None, version: Some(1), quantized_vector: vec![], source: None };
+    let data = serializer.serialize_batch(&vec![rec]).unwrap();
+    let bid = BatchId::new();
+    dm.write_batch(cid, &bid, &data, crate::storage::persistence::write_ahead_log::serialization::SerializationFormat::ProtocolBuffers).await.unwrap();
+    // Append corrupted manifest entry (wrong checksum)
+    let mut entry = crate::storage::persistence::write_ahead_log::manifest::WalManifestEntry::from_batch(&bid, format!("{}.pbwal", bid.to_base62()), data.len() as u64, 1);
+    entry.lsn = ((entry.timestamp_ms as u128) << 16) as u64;
+    manifest.append_entry(cid, &entry).await.unwrap();
+
+    // Mock engine
+    struct MockEngine { pub cnt: Arc<tokio::sync::Mutex<u64>> }
+    #[async_trait]
+    impl UnifiedStorageEngine for MockEngine {
+        fn engine_name(&self) -> &'static str { "Mock" }
+        fn engine_version(&self) -> &'static str { "1" }
+        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Lsm }
+        async fn do_flush(&self, p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult, crate::core::StorageError> { let mut g = self.cnt.lock().await; *g += p.vector_records.len() as u64; Ok(Default::default()) }
+        async fn do_compact(&self, _: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult, crate::core::StorageError> { Ok(Default::default()) }
+        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>, crate::core::StorageError> { Ok(HashMap::new()) }
+        async fn vector_by_id(&self, _: &str, _: &str) -> Result<Option<crate::core::VectorRecord>, crate::core::StorageError> { Ok(None) }
+        async fn search_vectors_unified(&self, _: &crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, crate::core::StorageError> { Ok(vec![]) }
+    }
+
+    let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
+    let mut rm = RecoveryManager::new(Default::default(), wal_behavior, fs_factory.clone());
+    let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(MockEngine{ cnt: Arc::new(tokio::sync::Mutex::new(0)) });
+    rm.register_storage_engine(cid, engine.clone()).await.unwrap();
+
+    let recovered = rm.recover_collection(cid, None).await.unwrap();
+    assert_eq!(recovered, 0, "Corrupted checksum should be skipped");
+}

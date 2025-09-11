@@ -208,8 +208,8 @@ impl MultiTierDeduplicator {
                 // Apply each filter
                 let metadata = &vector_record.metadata;
                 for (key, expected_value) in filters {
-                    match metadata.iter().find(|item| &key == key) {
-                        Some(item) => {
+                    match metadata.iter().find(|(k, _)| k == key) {
+                        Some((_, item)) => {
                             // Convert metadata value to JSON for comparison
                             let actual_json = match &item.value {
                                 Some(

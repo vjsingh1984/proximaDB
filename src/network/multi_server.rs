@@ -410,6 +410,8 @@ impl SharedServices {
         metrics_collector: Option<Arc<MetricsCollector>>,
         storage_config: &crate::core::config::StorageConfig,
         orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+        // Optional full runtime config for hybrid/graph overrides
+        opt_config: Option<&crate::core::config::Config>,
     ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
         debug!(
@@ -662,7 +664,7 @@ impl SharedServices {
 
         // Create GraphService for native graph database operations
         debug!("🔧 SharedServices::new - Creating GraphService for graph database operations...");
-        let mut graph_service_inst = crate::graph::GraphService::new();
+        let mut graph_service_inst = if let Some(cfg) = opt_config { crate::graph::GraphService::from_config(cfg) } else { crate::graph::GraphService::new() };
         // Create a simple file-backed metrics updater under data_root/metrics
         let filesystem_factory =
             Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -674,8 +676,10 @@ impl SharedServices {
                 &storage_config.metadata_url.replace("file://", "")
             ),
             flush_interval_seconds: 60,
-            // max_pending_updates: 10000, // Field removed from MetricsConfig
-            // compression_enabled: true, // Field removed from MetricsConfig
+            retention_days: 7,
+            parallel_scan_threshold: 1000,
+            sparsity_threshold: 0.5,
+            quantization_size_threshold: 1024 * 1024, // 1MB
         };
         let metrics_store = Arc::new(
             crate::metrics::store::MetricsPersistenceLayer::new(filesystem_factory, metrics_config)
@@ -690,12 +694,26 @@ impl SharedServices {
         debug!("✅ SharedServices::new - GraphService created successfully");
 
         // Create unified handlers with VectorOperationsService and GraphService
-        let mut unified_handlers_instance = UnifiedHandlers::new(
-            collection_service.clone(),
-            vector_operations_service.clone(),
-        );
+        let mut unified_handlers_instance = if let Some(cfg) = opt_config {
+            UnifiedHandlers::with_config(
+                collection_service.clone(),
+                vector_operations_service.clone(),
+                cfg,
+            )
+        } else {
+            UnifiedHandlers::new(
+                collection_service.clone(),
+                vector_operations_service.clone(),
+            )
+        };
         // Replace the auto-created GraphService with our shared one
         unified_handlers_instance.graph_service = graph_service.clone();
+        // Apply hybrid runtime config if provided
+        if let Some(cfg) = opt_config {
+            if let Some(ref hybrid) = cfg.hybrid {
+                unified_handlers_instance.set_hybrid_runtime(hybrid.clone());
+            }
+        }
         let unified_handlers = Arc::new(unified_handlers_instance);
 
         info!(

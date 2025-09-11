@@ -3460,6 +3460,14 @@ impl UnifiedSstableReader {
                     }
                 };
 
+            // Track bloom filter access via orchestrator (best-effort)
+            if let Some(orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                orch.pattern_tracker().track_access_async(
+                    file_path.to_string(),
+                    crate::storage::cache::orchestrator::CacheType::FilterBitmap,
+                );
+            }
+
             // Cache the bloom filter in central cache
             // We need to store the bloom filter somewhere accessible
             // For now, we'll use a simple in-memory cache (should be improved)
@@ -3492,6 +3500,13 @@ impl UnifiedSstableReader {
         }
 
         debug!("Loaded metadata for SSTable: {}", file_path);
+        // Track metadata header access via orchestrator (best-effort)
+        if let Some(orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            orch.pattern_tracker().track_access_async(
+                file_path.to_string(),
+                crate::storage::cache::orchestrator::CacheType::Metadata,
+            );
+        }
         Ok(())
     }
 

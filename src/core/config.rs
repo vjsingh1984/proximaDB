@@ -19,6 +19,8 @@ pub struct Config {
     pub cache: Option<CacheRuntimeConfig>,
     /// Graph runtime configuration (optional)
     pub graph: Option<GraphRuntimeConfig>,
+    /// Hybrid query runtime configuration (optional)
+    pub hybrid: Option<HybridRuntimeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +206,7 @@ impl Default for Config {
             sks: None, // SKS disabled by default
             cache: None,
             graph: Some(GraphRuntimeConfig::default()),
+            hybrid: Some(HybridRuntimeConfig::default()),
         }
     }
 }
@@ -232,11 +235,32 @@ pub struct GraphRuntimeConfig {
     pub enable_prefetch: bool,
     /// Per-node/iteration adjacency prefetch budget
     pub prefetch_budget: usize,
+    /// Select graph engine ("ORION"|"PULSAR"|"QUASAR")
+    #[serde(default = "default_graph_engine")] 
+    pub engine: String,
 }
 
 impl Default for GraphRuntimeConfig {
     fn default() -> Self {
-        Self { enable_prefetch: true, prefetch_budget: 8 }
+        Self { enable_prefetch: true, prefetch_budget: 8, engine: default_graph_engine() }
+    }
+}
+
+fn default_graph_engine() -> String { "ORION".to_string() }
+
+/// Hybrid query runtime configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HybridRuntimeConfig {
+    /// Default seeding strategy ("AVERAGE"|"PER_SEED"|"NONE")
+    pub seeding_strategy: String,
+    /// Fusion weights for [vector, graph]
+    pub fusion_weights: Option<Vec<f64>>,
+}
+
+impl Default for HybridRuntimeConfig {
+    fn default() -> Self {
+        Self { seeding_strategy: "AVERAGE".to_string(), fusion_weights: Some(vec![0.6, 0.4]) }
     }
 }
 

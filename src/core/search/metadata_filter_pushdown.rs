@@ -358,7 +358,7 @@ impl MetadataFilterPushdown {
     fn extract_metadata(&self, record: &VectorRecord) -> HashMap<String, Value> {
         let mut metadata = HashMap::new();
 
-        for entry in &record.metadata {
+        for (key, entry) in &record.metadata {
             // Convert the protobuf metadata value to serde_json::Value
             if let Some(ref proto_value) = entry.value {
                 use crate::proto::proximadb_v1::metadata_item;
@@ -373,7 +373,7 @@ impl MetadataFilterPushdown {
                     }
                     metadata_item::Value::BoolValue(b) => Value::Bool(*b),
                 };
-                metadata.insert(entry.key.clone(), json_value);
+                metadata.insert(key.clone(), json_value);
             }
         }
 
@@ -583,7 +583,7 @@ impl MetadataBloomBuilder {
     pub fn add_record(&mut self, record: &VectorRecord) {
         use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
 
-        for entry in &record.metadata {
+        for (key, entry) in &record.metadata {
             let config = BloomFilterConfig {
                 strategy: BloomStrategy::BitPacked,
                 bits_per_key: 10,
@@ -594,7 +594,7 @@ impl MetadataBloomBuilder {
             };
             let builder = self
                 .builders
-                .entry(entry.key.clone())
+                .entry(key.clone())
                 .or_insert_with(|| BloomFilterBuilder::new(config));
 
             // Serialize the metadata value for the bloom filter

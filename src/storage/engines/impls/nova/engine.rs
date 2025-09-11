@@ -20,7 +20,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 // Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
@@ -569,7 +568,7 @@ impl UnifiedStorageEngine for NovaEngine {
                     // Product Quantization specific settings
                     pq_segments: 32,
                     pq_bits: 8,
-                    pq_codebooks: vec![],
+                    pq_codebooks: 0,
                     // Thresholds for progressive search
                     binary_threshold: 0.0,
                     int8_threshold: 0.85,
@@ -849,18 +848,21 @@ impl UnifiedStorageEngine for NovaEngine {
                 let metadata_map: HashMap<String, serde_json::Value> = record
                     .metadata
                     .iter()
-                    .map(|(key, value)| {
-                        let value = match &value {
+                    .map(|(key, sql_value)| {
+                        let value = match &sql_value.value {
                             Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                             ) => serde_json::Value::String(s.clone()),
                             Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
                             ) => serde_json::json!(n),
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
+                            Some(
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
+                            ) => serde_json::json!(i),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
                                 b,
                             )) => serde_json::Value::Bool(*b),
-                            None => serde_json::Value::Null,
+                            _ => serde_json::Value::Null,
                         };
                         (key.clone(), value)
                     })
@@ -870,7 +872,7 @@ impl UnifiedStorageEngine for NovaEngine {
                     OptimizedSearchRecord::new(id, similarity_result.normalized_score)
                         .with_similarity(similarity_result.normalized_score)
                         .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                        .with_metadata(record.metadata.clone());
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);
@@ -1110,18 +1112,21 @@ impl NovaEngine {
                 let metadata_map: HashMap<String, serde_json::Value> = record
                     .metadata
                     .iter()
-                    .map(|(key, value)| {
-                        let value = match &value {
+                    .map(|(key, sql_value)| {
+                        let value = match &sql_value.value {
                             Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                             ) => serde_json::Value::String(s.clone()),
                             Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
                             ) => serde_json::json!(n),
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
+                            Some(
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
+                            ) => serde_json::json!(i),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
                                 b,
                             )) => serde_json::Value::Bool(*b),
-                            None => serde_json::Value::Null,
+                            _ => serde_json::Value::Null,
                         };
                         (key.clone(), value)
                     })
@@ -1131,7 +1136,7 @@ impl NovaEngine {
                     OptimizedSearchRecord::new(id, similarity_result.normalized_score)
                         .with_similarity(similarity_result.normalized_score)
                         .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                        .with_metadata(record.metadata.clone());
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);

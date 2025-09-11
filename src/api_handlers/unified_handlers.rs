@@ -78,6 +78,8 @@ pub struct UnifiedHandlers {
     pub graph_service: Arc<crate::graph::GraphService>,
     /// Metrics query service for collection statistics and optimization hints
     pub metrics_query_service: Option<Arc<MetricsQueryService>>,
+    /// Optional hybrid runtime configuration (weights, seeding). Thread-safe.
+    pub hybrid_runtime: std::sync::Arc<std::sync::RwLock<Option<crate::core::config::HybridRuntimeConfig>>>,
 }
 
 impl UnifiedHandlers {
@@ -96,6 +98,7 @@ impl UnifiedHandlers {
             vector_operations_service,
             graph_service: Arc::new(crate::graph::GraphService::new()),
             metrics_query_service: None,
+            hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
@@ -110,7 +113,27 @@ impl UnifiedHandlers {
             vector_operations_service,
             graph_service: Arc::new(crate::graph::GraphService::new()),
             metrics_query_service: Some(metrics_query_service),
+            hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
+    }
+
+    /// Create unified handlers with configuration overrides (graph engine, hybrid runtime)
+    pub fn with_config(
+        collection_service: Arc<CollectionService>,
+        vector_operations_service: Arc<VectorOperationsService>,
+        config: &crate::core::config::Config,
+    ) -> Self {
+        let mut s = Self::new(collection_service, vector_operations_service);
+        s.graph_service = Arc::new(crate::graph::service::GraphService::from_config(config));
+        if let Some(h) = &config.hybrid {
+            s.set_hybrid_runtime(h.clone());
+        }
+        s
+    }
+
+    /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
+    pub fn set_hybrid_runtime(&self, cfg: crate::core::config::HybridRuntimeConfig) {
+        if let Ok(mut guard) = self.hybrid_runtime.write() { *guard = Some(cfg); }
     }
 
     /// Handle any collection operation with unified logic
@@ -1474,12 +1497,16 @@ impl UnifiedHandlers {
 
         // 3. Create unified query engine with vector and graph services
         let graph_service = Arc::new(crate::graph::service::GraphService::new());
-        let seeding = Self::parse_seeding_strategy(&sql);
+        // Resolve runtime hybrid config overrides (seeding + weights)
+        let runtime = self.hybrid_runtime.read().ok().and_then(|g| g.clone());
+        let (seeding, fusion_weights) = Self::resolve_hybrid_static(runtime, &sql);
+
         let query_engine = crate::query::execution::QueryEngine::new_with_options(
             self.vector_operations_service.clone(),
             graph_service,
             params.clone(),
             seeding,
+            fusion_weights,
         );
 
         // 4. Execute query with new engine (uses HashMap metadata optimization)
@@ -1566,6 +1593,55 @@ impl UnifiedHandlers {
             return crate::query::execution::SeedingStrategy::Average;
         }
         crate::query::execution::SeedingStrategy::Average
+    }
+
+    pub(crate) fn resolve_hybrid_static(
+        runtime: Option<crate::core::config::HybridRuntimeConfig>,
+        sql: &str,
+    ) -> (crate::query::execution::SeedingStrategy, Option<Vec<f64>>) {
+        let seeding = if let Some(ref hr) = runtime {
+            match hr.seeding_strategy.to_ascii_uppercase().as_str() {
+                "PER_SEED" => crate::query::execution::SeedingStrategy::PerSeed,
+                "NONE" => crate::query::execution::SeedingStrategy::None,
+                _ => crate::query::execution::SeedingStrategy::Average,
+            }
+        } else {
+            Self::parse_seeding_strategy(sql)
+        };
+        let weights = runtime.and_then(|hr| hr.fusion_weights);
+        (seeding, weights)
+    }
+}
+
+#[cfg(test)]
+mod hybrid_tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_hybrid_prefers_runtime_over_sql_hint() {
+        // Runtime says PER_SEED; SQL hints NONE → runtime should win
+        let runtime = crate::core::config::HybridRuntimeConfig {
+            seeding_strategy: "PER_SEED".to_string(),
+            fusion_weights: Some(vec![0.8, 0.2]),
+        };
+        let sql = "-- SEEDING: NONE\nSELECT * FROM a";
+        let (seeding, weights) = UnifiedHandlers::resolve_hybrid_static(Some(runtime), sql);
+        match seeding {
+            crate::query::execution::SeedingStrategy::PerSeed => {}
+            _ => panic!("Expected PerSeed"),
+        }
+        assert_eq!(weights, Some(vec![0.8, 0.2]));
+    }
+
+    #[test]
+    fn test_resolve_hybrid_uses_sql_when_no_runtime() {
+        let sql = "-- SEEDING: NONE\nSELECT * FROM a";
+        let (seeding, weights) = UnifiedHandlers::resolve_hybrid_static(None, sql);
+        match seeding {
+            crate::query::execution::SeedingStrategy::None => {}
+            _ => panic!("Expected None"),
+        }
+        assert_eq!(weights, None);
     }
 }
 

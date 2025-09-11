@@ -142,6 +142,18 @@ impl GraphService {
         s
     }
 
+    /// Create from global Config with engine selection (currently ORION default)
+    pub fn from_config(cfg: &crate::core::config::Config) -> Self {
+        let engine_name = cfg
+            .graph
+            .as_ref()
+            .map(|g| g.engine.to_ascii_uppercase())
+            .unwrap_or_else(|| "ORION".to_string());
+        // TODO: Wire PULSAR/QUASAR engines when implemented
+        tracing::info!("GraphService engine selection: {}", engine_name);
+        Self::new()
+    }
+
     /// Compute shortest path with algorithm selection and optional k-shortest support.
     pub async fn shortest_path(
         &self,
@@ -707,12 +719,12 @@ impl GraphService {
                 for filter in &query.filters {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
-                    let pass = match filter.operator {
+                    let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
                             Some(v) => v.value == filter.value.as_ref().unwrap().value,
                             None => false,
                         },
-                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => match prop_val_opt {
+                        Op::NotEquals => match prop_val_opt {
                             Some(v) => v.value != filter.value.as_ref().unwrap().value,
                             None => true,
                         },
@@ -731,7 +743,7 @@ impl GraphService {
                         Op::StartsWith => {
                             prop_starts_with(prop_val_opt, &filter.value)
                         }
-                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => {
+                        Op::Contains => {
                             prop_contains(prop_val_opt, &filter.value)
                         }
                         _ => false,
@@ -950,13 +962,14 @@ impl GraphService {
             use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
             results.retain(|edge| {
                 for filter in &query.filters {
+                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                     let prop_val_opt = edge.properties.get(&filter.key);
-                    let pass = match filter.operator {
+                    let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
                             Some(v) => v.value == filter.value.as_ref().unwrap().value,
                             None => false,
                         },
-                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => match prop_val_opt {
+                        Op::NotEquals => match prop_val_opt {
                             Some(v) => v.value != filter.value.as_ref().unwrap().value,
                             None => true,
                         },
@@ -975,7 +988,7 @@ impl GraphService {
                         Op::StartsWith => {
                             prop_starts_with(prop_val_opt, &filter.value)
                         }
-                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => {
+                        Op::Contains => {
                             prop_contains(prop_val_opt, &filter.value)
                         }
                         _ => false,

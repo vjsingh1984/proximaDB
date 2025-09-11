@@ -49,15 +49,14 @@
 //! ```
 
 use super::ast::{
-    CompiledPattern, EdgeDirection, EdgePattern, FoundPath, LogicalOperator, MatchResult,
-    NodePattern, OrderBy, PathElement, PathPattern, PropertyConstraint, PropertyProjection,
+    CompiledPattern, EdgeDirection, EdgePattern, FoundPath, MatchResult,
+    NodePattern, PathElement, PathPattern, PropertyConstraint, PropertyProjection,
     ReturnSpec, VariableBinding, WhereClause,
 };
-use super::{QueryContext, QueryResult, QueryStats};
+use super::{QueryContext, QueryResult};
 use crate::core::error::ProximaDBError;
-use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
+use crate::graph::{Edge, GraphMemoryPool, Node, NodeId};
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
@@ -142,7 +141,7 @@ impl PatternMatcher {
             .iter()
             .min_by_key(|node| self.estimate_node_selectivity(node, memory_pool))
             .ok_or_else(|| {
-                ProximaDBError::InvalidInput("Pattern must contain at least one node")
+                ProximaDBError::InvalidInput("Pattern must contain at least one node".to_string())
             })?;
 
         // Find matching nodes
@@ -169,7 +168,7 @@ impl PatternMatcher {
     fn extend_match(
         &self,
         pattern: &CompiledPattern,
-        mut candidate: MatchResult,
+        candidate: MatchResult,
         memory_pool: &Arc<GraphMemoryPool>,
         _context: &QueryContext,
     ) -> QueryResult<Vec<MatchResult>> {
@@ -614,7 +613,7 @@ impl PatternMatcher {
             PropertyConstraint::Regex(pattern) => {
                 if let serde_json::Value::String(s) = &json_value {
                     let regex = Regex::new(pattern).map_err(|e| {
-                        ProximaDBError::InvalidInput(&format!("Invalid regex: {}", e))
+                        ProximaDBError::InvalidInput(format!("Invalid regex: {}", e))
                     })?;
                     Ok(regex.is_match(s))
                 } else {
@@ -639,7 +638,7 @@ impl PatternMatcher {
             (Value::String(s1), Value::String(s2)) => Ok(s1.cmp(s2) as i32),
             (Value::Bool(b1), Value::Bool(b2)) => Ok(b1.cmp(b2) as i32),
             _ => Err(ProximaDBError::InvalidInput(
-                "Cannot compare values of different types",
+                "Cannot compare values of different types".to_string(),
             )),
         }
     }
@@ -657,7 +656,7 @@ impl PatternMatcher {
                 serde_json::Value::Number(serde_json::Number::from(*i))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or_default())
+                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or(serde_json::Number::from(0)))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(*b)
@@ -763,20 +762,20 @@ impl PatternCompiler {
                 r"\(([a-zA-Z_][a-zA-Z0-9_]*):?([a-zA-Z_][a-zA-Z0-9_]*)?\s*(\{[^}]*\})?\)",
             )
             .map_err(|e| {
-                ProximaDBError::internal(&format!("Failed to compile node regex: {}", e))
+                ProximaDBError::Internal(format!("Failed to compile node regex: {}", e))
             })?,
             edge_pattern_regex: Regex::new(
                 r"-\[([a-zA-Z_][a-zA-Z0-9_]*)?:?([a-zA-Z_][a-zA-Z0-9_]*)?\s*(\{[^}]*\})?\]->?",
             )
             .map_err(|e| {
-                ProximaDBError::internal(&format!("Failed to compile edge regex: {}", e))
+                ProximaDBError::Internal(format!("Failed to compile edge regex: {}", e))
             })?,
             path_pattern_regex: Regex::new(r"-\[\*([0-9]+)\.\.([0-9]+)\]->?").map_err(|e| {
-                ProximaDBError::internal(&format!("Failed to compile path regex: {}", e))
+                ProximaDBError::Internal(format!("Failed to compile path regex: {}", e))
             })?,
             property_pattern_regex: Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^,}]+)")
                 .map_err(|e| {
-                    ProximaDBError::internal(&format!("Failed to compile property regex: {}", e))
+                    ProximaDBError::Internal(format!("Failed to compile property regex: {}", e))
                 })?,
         })
     }
@@ -906,7 +905,7 @@ impl PatternCompiler {
             } else if let Ok(float_val) = prop_value_str.parse::<f64>() {
                 // Float value
                 serde_json::Value::Number(
-                    serde_json::Number::from_f64(float_val).unwrap_or_default(),
+                    serde_json::Number::from_f64(float_val).unwrap_or(serde_json::Number::from(0)),
                 )
             } else if prop_value_str == "true" || prop_value_str == "false" {
                 // Boolean value

@@ -368,6 +368,15 @@ impl UnifiedParquetReader {
 
         Ok(reader)
     }
+
+    /// Create reader with SharedContext (for orchestrator/threading)
+    pub async fn new_with_context(
+        filesystem: Arc<FilesystemFactory>,
+        _ctx: &crate::core::context::SharedContext,
+    ) -> Result<Self> {
+        // For now, context is used implicitly via global orchestrator registration inside new_with_factory
+        Self::new_with_factory(filesystem, None).await
+    }
     /// Create with custom configuration
     pub async fn with_config(
         filesystem: Arc<FilesystemFactory>,
@@ -502,6 +511,11 @@ impl UnifiedParquetReader {
                 let _ = footer_cache.preload_footer(&file_path_owned).await;
             }
         });
+        // Track metadata access with orchestrator (best-effort)
+        if let Some(orch) = CrossCacheOrchestrator::global() {
+            orch.pattern_tracker()
+                .track_access_async(file_path.to_string(), CacheType::Metadata);
+        }
         Ok(metadata)
     }
 

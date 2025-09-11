@@ -86,15 +86,9 @@ impl ProtoSerializationStrategy {
 
         // Create disk manager
         let wal_base_url = &config.multi_disk.data_directories[0];
-        // Extract path from URL - remove "file://" prefix if present
-        let wal_base_dir = if wal_base_url.starts_with("file://") {
-            wal_base_url.strip_prefix("file://").unwrap()
-        } else {
-            wal_base_url
-        };
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
             filesystem_factory.clone(),
-            wal_base_dir,
+            wal_base_url,
         ));
 
         // Create flush coordinator
@@ -362,6 +356,29 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
+        // Delete WAL files for flushed batches and compact manifest
+        let mut to_delete = std::collections::HashSet::new();
+        for bid in &flush_result.flushed_batch_ids {
+            to_delete.insert(bid.to_base62());
+            // Attempt to delete PB file (proto path); other formats not used here
+            let path = self
+                .disk_manager
+                .get_batch_file_path(collection_id, bid, SerializationFormat::ProtocolBuffers);
+            let file_info = WriteBufferFileInfo {
+                collection_id: collection_id.to_string(),
+                batch_id: bid.clone(),
+                file_path: path,
+                size_bytes: 0,
+                format: SerializationFormat::ProtocolBuffers,
+            };
+            let _ = self.disk_manager.delete_file(&file_info).await;
+        }
+        // Remove from manifest
+        let manifest = crate::storage::persistence::write_ahead_log::manifest::WalManifest::new(
+            self.disk_manager.clone(),
+        );
+        let _ = manifest.remove_by_batch_ids(collection_id, &to_delete).await;
+
         Ok(FlushResult {
             success: flush_result.success,
             collections_affected: vec![collection_id.to_string()],
@@ -440,7 +457,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                 let file_info = WriteBufferFileInfo {
                     collection_id: collection_id.to_string(),
                     batch_id: batch.batch_id.clone(),
-                    file_path: self.disk_manager.get_batch_file_path(
+                    file_url: self.disk_manager.batch_url(
                         collection_id,
                         &batch.batch_id,
                         SerializationFormat::ProtocolBuffers,
@@ -450,13 +467,12 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                 };
 
                 // Use filesystem sync_file to ensure durability
-                let file_url = format!("file://{}", file_info.file_path.display());
                 if let Ok(filesystem) = self
                     .disk_manager
                     .filesystem_factory()
-                    .get_filesystem(&file_url)
+                    .get_filesystem(&file_info.file_url)
                 {
-                    let _ = filesystem.sync_file(&file_url).await;
+                    let _ = filesystem.sync_file(&file_info.file_url).await;
                 }
             }
         } else {

@@ -69,7 +69,7 @@ pub fn native_records_to_v1(
         // Map typed metadata to v1 SqlValue map if requested
         let metadata: HashMap<String, proximadb_v1::SqlValue> = if include_metadata {
             let mut m = HashMap::with_capacity(r.metadata.len());
-            for (k, v) in r.metadata.as_map().iter() {
+            for (k, v) in r.metadata.iter() {
                 let sql = match v {
                     MetadataValue::String(s) => proximadb_v1::SqlValue {
                         value: Some(proximadb_v1::sql_value::Value::StringValue(s.to_string())),

@@ -81,6 +81,7 @@ impl QueryEngine {
         graph_service: Arc<GraphService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         seeding_strategy: SeedingStrategy,
+        fusion_weights: Option<Vec<f64>>,
     ) -> Self {
         let mut planner = crate::query::execution::planner::ExecutionPlanner::with_params(
             vector_service.clone(),
@@ -88,6 +89,7 @@ impl QueryEngine {
             params,
         );
         planner.set_seeding_strategy(seeding_strategy.clone());
+        planner.set_fusion_weights(fusion_weights);
         let executor = crate::query::execution::executor::QueryExecutor::new(
             vector_service.clone(),
             graph_service.clone(),
@@ -134,6 +136,8 @@ impl QueryEngine {
         let plan = self.planner.create_plan(&query)?;
 
         let mut hints = plan.performance_hints.clone();
+        // Add hybrid configuration hints
+        hints.push(format!("Seeding: {:?}", plan.seeding_strategy));
         let has_vector = plan
             .operations
             .iter()
@@ -144,6 +148,12 @@ impl QueryEngine {
             .any(|op| matches!(op, ExecutionOperation::GraphTraversal { .. }));
         if has_vector && has_graph {
             hints.push("Hybrid: parallel execution + seed handoff available".to_string());
+        }
+        // Extract fusion weights for explain
+        for op in &plan.operations {
+            if let ExecutionOperation::Fusion { weights, .. } = op {
+                hints.push(format!("Fusion weights: {:?}", weights));
+            }
         }
 
         Ok(ExplainResult {
@@ -178,6 +188,8 @@ pub struct ExecutionPlan {
     pub optimizations: Vec<String>,
     pub performance_hints: Vec<String>,
     pub seeding_strategy: SeedingStrategy,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 /// Individual operation in the execution plan
@@ -219,8 +231,8 @@ pub enum ExecutionOperation {
     /// Join scaffolding (not yet implemented)
     Join {
         kind: JoinKind,
-        left_key: String,
-        right_key: String,
+        left_keys: Vec<String>,
+        right_keys: Vec<String>,
         left_alias: String,
         right_alias: String,
     },
@@ -265,8 +277,8 @@ impl ExecutionOperation {
                     aggs.len()
                 )
             }
-            ExecutionOperation::Join { kind, .. } => {
-                format!("Join ({:?})", kind)
+            ExecutionOperation::Join { kind, left_keys, .. } => {
+                format!("Join ({:?}) keys:{}", kind, left_keys.len())
             }
         }
     }

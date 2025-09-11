@@ -109,6 +109,8 @@ pub mod proto_serialization_strategy; // Clean architecture proto implementation
 pub mod recovery_manager; // New centralized recovery operations
 pub mod recovery_thread_pool; // Thread pool for parallel recovery
 pub mod serialization; // New pure serialization layer
+pub mod manifest; // Per-collection manifest
+pub mod collection_path; // Slug codec for collection paths
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
 pub mod simple_atomic_sync;
@@ -1811,7 +1813,15 @@ impl WriteAheadLogManager {
                             None
                         },
                         if include_metadata {
-                            self.convert_proto_metadata_to_hashmap(&vector_record.metadata)
+                            vector_record.metadata.iter().map(|(k, v)| {
+                                let json_val = match v.value.as_ref() {
+                                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::json!(*n),
+                                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                                    _ => serde_json::Value::Null,
+                                };
+                                (k.clone(), json_val)
+                            }).collect()
                         } else {
                             std::collections::HashMap::new()
                         },
@@ -1820,7 +1830,7 @@ impl WriteAheadLogManager {
                 // Set additional fields that aren't in the standard constructor
                 let mut search_result = search_result;
                 search_result.vector_id = Some(vector_record.id.clone());
-                search_result.timestamp = Some(vector_record.timestamp);
+                search_result.timestamp = Some(vector_record.timestamp as u32);
                 search_result.version = vector_record.version.map(|v| v as u32);
 
                 all_results.push(search_result);

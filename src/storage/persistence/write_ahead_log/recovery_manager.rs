@@ -16,9 +16,10 @@ use tracing::{debug, info, warn};
 
 use crate::storage::persistence::write_ahead_log::{
     WALFlushCoordinator, WriteBufferDiskManager, WriteBufferFileInfo,
-    recovery_thread_pool::get_recovery_thread_pool, serialization::SerializerFactory,
+    recovery_thread_pool::get_recovery_thread_pool, serialization::SerializerFactory, serialization::SerializationFormat,
 };
 use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::BatchId;
 
 /// Recovery destination configuration
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -304,13 +305,8 @@ impl RecoveryManager {
         recovery_mode: RecoveryMode,
         progress_callback: Option<RecoveryProgressCallback>,
     ) -> Result<(u64, u64)> {
-        // Returns (vectors_recovered, files_recovered)
-        info!(
-            "🔄 Recovering collection: {} (mode: {:?})",
-            collection_id, recovery_mode
-        );
+        info!("🔄 Recovering collection: {} (mode: {:?})", collection_id, recovery_mode);
 
-        // Check if we have a storage engine for this collection
         if recovery_mode == RecoveryMode::DirectToStorage {
             let engines = storage_engines.read().await;
             if !engines.contains_key(collection_id) {
@@ -321,98 +317,65 @@ impl RecoveryManager {
             }
         }
 
-        // List all WAL files for the collection
-        let wal_files = disk_manager.list_collection_files(collection_id).await?;
-        if wal_files.is_empty() {
-            debug!("No WAL files found for collection {}", collection_id);
-            return Ok((0, 0));
-        }
-
-        info!(
-            "Found {} WAL files for collection {}",
-            wal_files.len(),
-            collection_id
-        );
-
-        let total_files = wal_files.len();
+        let manifest = crate::storage::persistence::write_ahead_log::manifest::WalManifest::new(disk_manager.clone());
+        let entries = manifest.read_entries(collection_id).await.unwrap_or_default();
         let mut vectors_recovered = 0u64;
-        let mut bytes_processed = 0u64;
         let mut files_recovered = 0u64;
 
-        // Sort files by batch ID to maintain order
-        let mut sorted_files = wal_files;
-        sorted_files.sort_by_key(|f| f.batch_id.clone());
-
-        // Notify flush coordinator about collection recovery (if method exists)
-        // For now, just log that recovery is starting
-        debug!("🔄 Starting recovery for collection {}", collection_id);
-
-        for (idx, file_info) in sorted_files.iter().enumerate() {
-            // Send progress update
-            if let Some(ref callback) = progress_callback {
-                callback(RecoveryProgress {
-                    current_file: idx + 1,
-                    total_files,
-                    current_collection: collection_id.to_string(),
-                    vectors_recovered,
-                    bytes_processed,
-                });
+        for (idx, e) in entries.iter().enumerate() {
+            let coll_url = disk_manager.collection_wal_url(collection_id);
+            let file_url = format!("{}{}", coll_url, e.file_name);
+            let mut file_info = WriteBufferFileInfo {
+                collection_id: collection_id.to_string(),
+                batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
+                file_url: file_url.clone(),
+                size_bytes: e.size_bytes,
+                format: SerializationFormat::ProtocolBuffers,
+            };
+            if let Some(ext) = e.file_name.rsplit('.').next() {
+                file_info.format = match ext { "pbwal" => SerializationFormat::ProtocolBuffers, "bcwal" => SerializationFormat::Bincode, "avwal" => SerializationFormat::Avro, _ => file_info.format };
             }
 
-            match Self::recover_file_internal(
-                file_info,
-                &disk_manager,
-                &storage_engines,
-                recovery_mode,
-            )
-            .await
-            {
-                Ok(count) => {
-                    vectors_recovered += count;
-                    bytes_processed += file_info.size_bytes;
+            if let Ok(data) = disk_manager.read_batch(&file_info).await {
+                let checksum = crate::utils::checksum::Crc32::checksum(&data);
+                if checksum != e.checksum_crc32 { warn!("Checksum mismatch for {}, skipping", file_info.file_url); continue; }
+                let serializer = SerializerFactory::create(file_info.format);
+                let vectors = serializer.deserialize_batch(&data).context("Failed to deserialize WAL data")?;
+                let count = vectors.len() as u64;
+                let result = Self::flush_recovered_vectors(&file_info, vectors, &disk_manager, &storage_engines, recovery_mode).await?;
+                if result.success {
                     files_recovered += 1;
-                    debug!(
-                        "Recovered {} vectors from batch {}",
-                        count,
-                        file_info.batch_id.to_base62()
-                    );
+                    vectors_recovered += count;
+                    let _ = disk_manager.delete_wal_file_url(&file_info.file_url).await;
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to recover batch {} for collection {}: {}",
-                        file_info.batch_id.to_base62(),
-                        collection_id,
-                        e
-                    );
-                    // Continue with next file
-                    continue;
-                }
+                if let Some(cb) = &progress_callback { cb(RecoveryProgress { current_file: idx + 1, total_files: entries.len(), current_collection: collection_id.to_string(), vectors_recovered, bytes_processed: e.size_bytes }); }
             }
         }
 
-        // Clean up WAL files after successful recovery
-        if vectors_recovered > 0 {
-            info!(
-                "🧹 Cleaning up {} WAL files after recovery",
-                sorted_files.len()
-            );
-            for file_info in &sorted_files {
-                if let Err(e) = disk_manager.delete_file(file_info).await {
-                    warn!("Failed to delete WAL file after recovery: {}", e);
-                }
+        // Process non-manifest files as best-effort
+        let listed = disk_manager.list_collection_files(collection_id).await.unwrap_or_default();
+        for fi in listed {
+            if let Some(name) = fi.file_url.split('/').last() {
+                if entries.iter().any(|m| m.file_name == name) { continue; }
             }
+            let count = Self::recover_file_internal(&fi, &disk_manager, &storage_engines, recovery_mode).await?;
+            vectors_recovered += count;
+            files_recovered += 1;
         }
 
-        // Notify flush coordinator about collection recovery completion
-        // Collection recovery complete
+        // Compact manifest to remaining existing files
+        let manifest = crate::storage::persistence::write_ahead_log::manifest::WalManifest::new(disk_manager.clone());
+        let mut remaining = Vec::new();
+        let current_entries = manifest.read_entries(collection_id).await.unwrap_or_default();
+        for e in current_entries {
+            let url = format!("{}{}", disk_manager.collection_wal_url(collection_id), e.file_name);
+            if let Ok(fs) = disk_manager.filesystem_factory().get_filesystem(&url) {
+                if fs.exists(&url).await.unwrap_or(false) { remaining.push(e); }
+            }
+        }
+        let _ = manifest.rewrite_entries(collection_id, &remaining).await;
 
-        // Stats are updated by the caller since this is a static method
-
-        info!(
-            "✅ Recovered {} vectors from {} files for collection {}",
-            vectors_recovered, files_recovered, collection_id
-        );
-
+        info!("✅ Recovered {} vectors from {} files for collection {}", vectors_recovered, files_recovered, collection_id);
         Ok((vectors_recovered, files_recovered))
     }
 
@@ -434,11 +397,7 @@ impl RecoveryManager {
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         recovery_mode: RecoveryMode,
     ) -> Result<u64> {
-        debug!(
-            "Recovering file: {} (format: {:?})",
-            file_info.file_path.display(),
-            file_info.format
-        );
+        debug!("Recovering file: {} (format: {:?})", file_info.file_url, file_info.format);
 
         // Read the file data
         let data = disk_manager
@@ -473,18 +432,18 @@ impl RecoveryManager {
             debug!(
                 "✅ Successfully flushed {} vectors from WAL file {} - marking for deletion_info",
                 flush_result.entries_flushed.unwrap_or(0),
-                file_info.file_path.display()
+                file_info.file_url
             );
 
             // Delete the WAL file since data is now safely in storage engine
-            if let Err(e) = disk_manager.delete_wal_file(&file_info.file_path).await {
+            if let Err(e) = disk_manager.delete_wal_file_url(&file_info.file_url).await {
                 warn!("Failed to delete WAL file after successful recovery: {}", e);
                 // Continue - data is safely recovered even if cleanup fails
             }
         } else {
             warn!(
                 "⚠️ Flush failed for WAL file {} - keeping file for retry",
-                file_info.file_path.display()
+                file_info.file_url
             );
         }
 
@@ -531,17 +490,17 @@ impl RecoveryManager {
         let mut collections = Vec::new();
 
         // Get the base WAL directory from disk_manager
-        let base_wal_dir = self.disk_manager.get_base_wal_dir();
+        let base_wal_url = self.disk_manager.get_base_wal_url();
 
-        // List directories within the base WAL directory
+        // List directories within the base WAL URL
         let entries = self
             .disk_manager
             .filesystem_factory()
-            .get_filesystem(&base_wal_dir.to_string_lossy())
-            .context("Failed to get filesystem for base WAL directory")?
-            .list(&base_wal_dir.to_string_lossy())
+            .get_filesystem(base_wal_url)
+            .context("Failed to get filesystem for base WAL URL")?
+            .list(base_wal_url)
             .await
-            .context("Failed to list base WAL directory")?;
+            .context("Failed to list base WAL URL")?;
 
         for entry in entries {
             if entry.metadata.is_directory {

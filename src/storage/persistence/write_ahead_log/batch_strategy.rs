@@ -309,7 +309,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Check Write Buffer data (unflushed)
             if let Some(wal_record) = wal_behavior.vector_by_id(collection_id, vector_id).await? {
                 // Check if not expired
-                let current_time = chrono::Utc::now().timestamp() as u32;
+                let current_time = chrono::Utc::now().timestamp();
                 let is_expired = wal_record
                     .expires_at
                     .map(|expires| expires < current_time)
@@ -408,10 +408,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
-                        quantized_vector: None,
+                        quantized_vector: Vec::new(),
                         source: None,
                     };
-                    (search_result.id, search_result.score, vector_record)
+                    (search_result.id, search_result.score as f32, vector_record)
                 })
                 .collect();
 
@@ -890,13 +890,13 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         let tombstone = VectorRecord {
             id: vector_id.clone(),
             vector: vec![], // Empty vector for tombstone
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
-            expires_at: Some((chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)) as u32), // 30 days
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
+            expires_at: Some(chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)), // 30 days
             version: None, // None for tombstone
             // rank removed -  None,
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             source: None,
         };
 

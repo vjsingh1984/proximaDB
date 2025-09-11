@@ -565,58 +565,52 @@ pub mod protocol_conversions {
     pub fn from_proto_metadata_filter(
         proto_filter: &crate::proto::proximadb_v1::MetadataFilter,
     ) -> Result<FilterExpression, String> {
-        if proto_filter.conditions.is_empty() {
+        if proto_filter.clauses.is_empty() {
             return Ok(FilterExpression::And(vec![]));
         }
 
         let conditions: Result<Vec<FilterExpression>, String> = proto_filter
-            .conditions
+            .clauses
             .iter()
             .map(|condition| {
-                let field = condition.field_name.clone();
+                let field = condition.field.clone();
                 let value = match &condition.value {
                     Some(v) => serde_json::to_value(v).map_err(|e| e.to_string())?,
                     None => return Err("Missing value in filter condition".to_string()),
                 };
 
-                let operator = match crate::proto::proximadb_v1::FilterOperation::try_from(
-                    condition.operation,
+                let operator = match crate::proto::proximadb_v1::ComparisonOp::try_from(
+                    condition.op,
                 ) {
-                    Ok(crate::proto::proximadb_v1::FilterOperation::Equals) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Eq) => {
                         ComparisonOperator::Equals
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::NotEquals) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Ne) => {
                         ComparisonOperator::NotEquals
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::GreaterThan) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Gt) => {
                         ComparisonOperator::GreaterThan
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::GreaterThanOrEqual) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Gte) => {
                         ComparisonOperator::GreaterThanOrEqual
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::LessThan) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Lt) => {
                         ComparisonOperator::LessThan
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::LessThanOrEqual) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Lte) => {
                         ComparisonOperator::LessThanOrEqual
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::In) => ComparisonOperator::In,
-                    Ok(crate::proto::proximadb_v1::FilterOperation::NotIn) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::In) => ComparisonOperator::In,
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::NotIn) => {
                         ComparisonOperator::NotIn
                     }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::Contains) => {
+                    Ok(crate::proto::proximadb_v1::ComparisonOp::Contains) => {
                         ComparisonOperator::Contains
-                    }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::StartsWith) => {
-                        ComparisonOperator::StartsWith
-                    }
-                    Ok(crate::proto::proximadb_v1::FilterOperation::EndsWith) => {
-                        ComparisonOperator::EndsWith
                     }
                     _ => {
                         return Err(format!(
                             "Unknown proto filter operation: {}",
-                            condition.operation
+                            condition.op
                         ));
                     }
                 };
@@ -858,6 +852,21 @@ pub mod protocol_conversions {
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        serde_json::json!(*i)
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(bytes)) => {
+                        serde_json::Value::String(format!("BYTES({} bytes)", bytes.len()))
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        serde_json::Value::Null
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        serde_json::Value::Array(vec![])  // Simplified for now
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        serde_json::Value::Object(serde_json::Map::new())  // Simplified for now
+                    }
                     None => serde_json::Value::Null,
                 };
 
@@ -889,23 +898,20 @@ pub mod protocol_conversions {
             .clauses
             .iter()
             .map(|clause| {
-                let value = match clause {
-                    crate::proto::proximadb_v1::FilterClause {
-                        string_value: Some(s),
-                        ..
-                    } => serde_json::Value::String(s.clone()),
-                    crate::proto::proximadb_v1::FilterClause {
-                        int_value: Some(i), ..
-                    } => serde_json::json!(i),
-                    crate::proto::proximadb_v1::FilterClause {
-                        double_value: Some(d),
-                        ..
-                    } => serde_json::json!(d),
-                    crate::proto::proximadb_v1::FilterClause {
-                        bool_value: Some(b),
-                        ..
-                    } => serde_json::Value::Bool(*b),
-                    _ => serde_json::Value::Null,
+                let value = match &clause.value {
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
+                        serde_json::Value::String(s.clone())
+                    }
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => {
+                        serde_json::json!(*i)
+                    }
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(d)) => {
+                        serde_json::json!(*d)
+                    }
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    None => serde_json::Value::Null,
                 };
 
                 let operator = match crate::proto::proximadb_v1::ComparisonOp::try_from(clause.op) {

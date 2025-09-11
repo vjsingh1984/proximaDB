@@ -17,6 +17,8 @@ use std::time::Instant;
 use std::sync::Mutex;
 #[cfg(test)]
 static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
+#[cfg(test)]
+static TEST_SIMILAR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
 
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
@@ -150,13 +152,13 @@ impl QueryExecutor {
                         self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
                     }
                 }
-                ExecutionOperation::Join { kind, left_key, right_key, left_alias: _, right_alias: _ } => {
+                ExecutionOperation::Join { kind, left_keys, right_keys, left_alias: _, right_alias: _ } => {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
                     let right = buffers.pop().unwrap();
                     let left = buffers.pop().unwrap();
-                    let joined = self.join_rows(&left, &right, &left_key, &right_key, kind)?;
+                    let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
                 _ => {
@@ -170,11 +172,13 @@ impl QueryExecutor {
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
         // Resolve final rows: prefer the last buffer if present
-        let final_rows = if let Some(last) = buffers.pop() {
+        let mut final_rows = if let Some(last) = buffers.pop() {
             last
         } else {
             all_rows
         };
+        // Apply pagination (offset then limit)
+        Self::apply_limit_offset(&mut final_rows, plan.offset, plan.limit);
         let total_found = final_rows.len();
 
         Ok(QueryResult {
@@ -236,13 +240,13 @@ impl QueryExecutor {
                         self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
                     }
                 }
-                ExecutionOperation::Join { kind, left_key, right_key, left_alias: _, right_alias: _ } => {
+                ExecutionOperation::Join { kind, left_keys, right_keys, left_alias: _, right_alias: _ } => {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
                     let right = buffers.pop().unwrap();
                     let left = buffers.pop().unwrap();
-                    let joined = self.join_rows(&left, &right, &left_key, &right_key, kind)?;
+                    let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
                 _ => {
@@ -255,11 +259,12 @@ impl QueryExecutor {
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let final_rows = if let Some(last) = buffers.pop() {
+        let mut final_rows = if let Some(last) = buffers.pop() {
             last
         } else {
             all_rows
         };
+        Self::apply_limit_offset(&mut final_rows, plan.offset, plan.limit);
         let total_found = final_rows.len();
 
         Ok(QueryResult {
@@ -281,7 +286,7 @@ impl QueryExecutor {
         let mut vector_ops: Vec<ExecutionOperation> = Vec::new();
         let mut graph_ops: Vec<ExecutionOperation> = Vec::new();
         let mut fusion_strategy: Option<(crate::query::execution::FusionStrategy, Vec<f64>)> = None;
-        let mut join_request: Option<(crate::query::execution::JoinKind, String, String)> = None;
+        let mut join_request: Option<(crate::query::execution::JoinKind, Vec<String>, Vec<String>)> = None;
         for op in &plan.operations {
             match op {
                 ExecutionOperation::VectorSearch { .. } => vector_ops.push(op.clone()),
@@ -289,8 +294,8 @@ impl QueryExecutor {
                 ExecutionOperation::Fusion { strategy, weights } => {
                     fusion_strategy = Some((strategy.clone(), weights.clone()))
                 }
-                ExecutionOperation::Join { kind, left_key, right_key, left_alias: _, right_alias: _ } => {
-                    join_request = Some((kind.clone(), left_key.clone(), right_key.clone()));
+                ExecutionOperation::Join { kind, left_keys, right_keys, left_alias: _, right_alias: _ } => {
+                    join_request = Some((kind.clone(), left_keys.clone(), right_keys.clone()));
                 }
                 _ => {}
             }
@@ -472,31 +477,24 @@ impl QueryExecutor {
         }
 
         // Join or fuse
-        let fused_results = if let Some((kind, left_key, right_key)) = join_request {
-            let has_left = vector_results
-                .iter()
-                .any(|r| r.fields.contains_key(&left_key));
-            let has_right = graph_results
-                .iter()
-                .any(|r| r.fields.contains_key(&right_key));
-            let id_like = left_key.ends_with(".id")
-                || left_key == "id"
-                || right_key.ends_with(".id")
-                || right_key == "id";
-            if has_left && has_right && id_like {
-                self.join_rows(
-                    &vector_results,
-                    &graph_results,
-                    &left_key,
-                    &right_key,
-                    &kind,
-                )?
-            } else if let Some((strategy, weights)) = &fusion_strategy {
-                self.apply_fusion_algorithm(&vector_results, &graph_results, strategy, weights)?
+        let fused_results = if let Some((kind, left_keys, right_keys)) = join_request {
+            let joined = self.join_rows(
+                &vector_results,
+                &graph_results,
+                &left_keys,
+                &right_keys,
+                &kind,
+            )?;
+            if joined.is_empty() {
+                if let Some((strategy, weights)) = &fusion_strategy {
+                    self.apply_fusion_algorithm(&vector_results, &graph_results, strategy, weights)?
+                } else {
+                    let mut combined = vector_results;
+                    combined.extend(graph_results);
+                    combined
+                }
             } else {
-                let mut combined = vector_results;
-                combined.extend(graph_results);
-                combined
+                joined
             }
         } else if let Some((strategy, weights)) = fusion_strategy {
             self.apply_fusion_algorithm(&vector_results, &graph_results, &strategy, &weights)?
@@ -507,6 +505,8 @@ impl QueryExecutor {
         };
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
+        let mut fused_results = fused_results;
+        Self::apply_limit_offset(&mut fused_results, plan.offset, plan.limit);
         let total_found = fused_results.len();
         let mut result = QueryResult {
             rows: fused_results,
@@ -611,44 +611,98 @@ impl QueryExecutor {
         &self,
         left: &Vec<QueryRow>,
         right: &Vec<QueryRow>,
-        left_key: &str,
-        right_key: &str,
-        _kind: &crate::query::execution::JoinKind,
+        left_keys: &Vec<String>,
+        right_keys: &Vec<String>,
+        kind: &crate::query::execution::JoinKind,
     ) -> Result<Vec<QueryRow>> {
         use std::collections::HashMap;
         let mut index: HashMap<String, Vec<&QueryRow>> = HashMap::new();
+        let rk_norms: Vec<String> = right_keys
+            .iter()
+            .map(|k| Self::normalize_field_name(k).to_string())
+            .collect();
         for r in right {
-            if let Some(v) = r.fields.get(right_key) {
-                let key = v.to_string();
-                index.entry(key).or_default().push(r);
-            }
+            let key = Self::composite_key(&r.fields, right_keys, &rk_norms);
+            index.entry(key).or_default().push(r);
         }
         let mut out = Vec::new();
+        let lk_norms: Vec<String> = left_keys
+            .iter()
+            .map(|k| Self::normalize_field_name(k).to_string())
+            .collect();
         for l in left {
-            if let Some(vl) = l.fields.get(left_key) {
-                let lk = vl.to_string();
-                if let Some(matches) = index.get(&lk) {
-                    for r in matches {
-                        let mut fields = l.fields.clone();
-                        for (k, v) in &r.fields {
-                            let key = if fields.contains_key(k) {
-                                format!("r_{}", k)
-                            } else {
-                                k.clone()
-                            };
-                            fields.insert(key, v.clone());
-                        }
-                        out.push(QueryRow {
-                            fields,
-                            similarity_score: l.similarity_score.or(r.similarity_score),
-                            graph_distance: l.graph_distance.or(r.graph_distance),
-                            provenance: None,
-                        });
+            let lk = Self::composite_key(&l.fields, left_keys, &lk_norms);
+            if let Some(matches) = index.get(&lk) {
+                for r in matches {
+                    let mut fields = l.fields.clone();
+                    for (k, v) in &r.fields {
+                        let key = if fields.contains_key(k) {
+                            format!("r_{}", k)
+                        } else {
+                            k.clone()
+                        };
+                        fields.insert(key, v.clone());
                     }
+                    out.push(QueryRow {
+                        fields,
+                        similarity_score: l.similarity_score.or(r.similarity_score),
+                        graph_distance: l.graph_distance.or(r.graph_distance),
+                        provenance: None,
+                    });
                 }
+            } else if matches!(kind, crate::query::execution::JoinKind::Left) {
+                out.push(l.clone());
             }
         }
         Ok(out)
+    }
+
+    fn normalize_field_name(key: &str) -> &str {
+        match key.rsplit_once('.') {
+            Some((_, suffix)) => suffix,
+            None => key,
+        }
+    }
+
+    fn get_field_value(
+        fields: &std::collections::HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<String> {
+        fields.get(key).and_then(|v| match v {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            other => Some(other.to_string()),
+        })
+    }
+
+    fn composite_key(
+        fields: &std::collections::HashMap<String, serde_json::Value>,
+        keys: &Vec<String>,
+        norms: &Vec<String>,
+    ) -> String {
+        let mut parts: Vec<String> = Vec::with_capacity(keys.len());
+        for (i, k) in keys.iter().enumerate() {
+            let nv = Self::get_field_value(fields, k)
+                .or_else(|| Self::get_field_value(fields, &norms[i]));
+            parts.push(nv.unwrap_or_default());
+        }
+        parts.join("\u{1F}")
+    }
+
+    fn apply_limit_offset(rows: &mut Vec<QueryRow>, offset: Option<usize>, limit: Option<usize>) {
+        let off = offset.unwrap_or(0);
+        if off > 0 && off < rows.len() {
+            rows.drain(0..off);
+        } else if off >= rows.len() {
+            rows.clear();
+            return;
+        }
+        if let Some(lim) = limit {
+            if rows.len() > lim {
+                rows.truncate(lim);
+            }
+        }
     }
 
     fn parse_join_on(on: &str) -> Option<(String, String)> {
@@ -1054,6 +1108,115 @@ mod executor_tests {
     use crate::query::execution::{ExecutionPlan, ExecutionStrategy};
     use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
 
+    #[test]
+    fn test_apply_limit_offset_slices_rows() {
+        let mut rows: Vec<QueryRow> = (0..10)
+            .map(|i| {
+                let mut f = std::collections::HashMap::new();
+                f.insert("id".to_string(), serde_json::Value::String(format!("{}", i)));
+                QueryRow { fields: f, similarity_score: None, graph_distance: None, provenance: None }
+            })
+            .collect();
+
+        // offset 2, limit 3 => rows [2,3,4]
+        super::QueryExecutor::apply_limit_offset(&mut rows, Some(2), Some(3));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].fields.get("id").and_then(|v| v.as_str()), Some("2"));
+        assert_eq!(rows[2].fields.get("id").and_then(|v| v.as_str()), Some("4"));
+
+        // offset beyond length => empty
+        let mut rows2 = rows.clone();
+        super::QueryExecutor::apply_limit_offset(&mut rows2, Some(100), Some(1));
+        assert_eq!(rows2.len(), 0);
+    }
+
+    #[test]
+    fn test_join_rows_with_qualified_keys() {
+        let exec = QueryExecutor::new_for_tests(Arc::new(GraphService::new()));
+
+        // left: a.id
+        let mut lfields = std::collections::HashMap::new();
+        lfields.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
+        lfields.insert("name".to_string(), serde_json::Value::String("Alice".to_string()));
+        let left = vec![QueryRow { fields: lfields, similarity_score: None, graph_distance: None, provenance: None }];
+
+        // right: b.entity_id
+        let mut rfields = std::collections::HashMap::new();
+        rfields.insert("entity_id".to_string(), serde_json::Value::String("x1".to_string()));
+        rfields.insert("score".to_string(), serde_json::json!(0.9));
+        let right = vec![QueryRow { fields: rfields, similarity_score: None, graph_distance: None, provenance: None }];
+
+        let joined = exec
+            .join_rows(
+                &left,
+                &right,
+                &vec!["a.id".to_string()],
+                &vec!["b.entity_id".to_string()],
+                &crate::query::execution::JoinKind::Inner,
+            )
+            .expect("join should succeed");
+
+        assert_eq!(joined.len(), 1);
+        let row = &joined[0];
+        // Should contain both id and entity_id (entity_id may be prefixed if collision; id should exist)
+        assert_eq!(row.fields.get("id").and_then(|v| v.as_str()), Some("x1"));
+        // right fields merged
+        let has_entity_id = row
+            .fields
+            .get("entity_id")
+            .or_else(|| row.fields.get("r_entity_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s == "x1")
+            .unwrap_or(false);
+        assert!(has_entity_id, "joined row should include right entity_id field");
+    }
+
+    #[test]
+    fn test_join_rows_composite_keys_and_left_join() {
+        let exec = QueryExecutor::new_for_tests(Arc::new(GraphService::new()));
+        // left rows: (id, type)
+        let mut l1 = std::collections::HashMap::new();
+        l1.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
+        l1.insert("type".to_string(), serde_json::Value::String("A".to_string()));
+        let mut l2 = std::collections::HashMap::new();
+        l2.insert("id".to_string(), serde_json::Value::String("x2".to_string()));
+        l2.insert("type".to_string(), serde_json::Value::String("B".to_string()));
+        let left = vec![
+            QueryRow { fields: l1, similarity_score: None, graph_distance: None, provenance: None },
+            QueryRow { fields: l2, similarity_score: None, graph_distance: None, provenance: None },
+        ];
+
+        // right rows: (entity_id, type)
+        let mut r1 = std::collections::HashMap::new();
+        r1.insert("entity_id".to_string(), serde_json::Value::String("x1".to_string()));
+        r1.insert("type".to_string(), serde_json::Value::String("A".to_string()));
+        let right = vec![QueryRow { fields: r1, similarity_score: None, graph_distance: None, provenance: None }];
+
+        // Inner join on composite keys
+        let inner = exec
+            .join_rows(
+                &left,
+                &right,
+                &vec!["a.id".to_string(), "a.type".to_string()],
+                &vec!["b.entity_id".to_string(), "b.type".to_string()],
+                &crate::query::execution::JoinKind::Inner,
+            )
+            .expect("composite join should succeed");
+        assert_eq!(inner.len(), 1);
+
+        // Left join should keep unmatched second row
+        let left_join = exec
+            .join_rows(
+                &left,
+                &right,
+                &vec!["a.id".to_string(), "a.type".to_string()],
+                &vec!["b.entity_id".to_string(), "b.type".to_string()],
+                &crate::query::execution::JoinKind::Left,
+            )
+            .expect("left join should succeed");
+        assert_eq!(left_join.len(), 2);
+    }
+
     #[tokio::test]
     async fn test_vector_execution_with_hashmap_filtering() {
         let executor = create_test_executor();
@@ -1076,6 +1239,8 @@ mod executor_tests {
             optimizations: vec!["HashMap metadata filtering".to_string()],
             performance_hints: vec![],
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            limit: None,
+            offset: None,
         };
 
         let result = executor.execute_vector_plan(plan).await.unwrap();
@@ -1121,6 +1286,8 @@ mod executor_tests {
             optimizations: vec!["RRF fusion algorithm".to_string()],
             performance_hints: vec![],
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            limit: None,
+            offset: None,
         };
 
         let result = executor.execute_hybrid_plan(plan).await.unwrap();
@@ -1162,6 +1329,8 @@ mod executor_tests {
             optimizations: vec!["HashMap filtering".to_string()],
             performance_hints: vec![],
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            limit: None,
+            offset: None,
         };
 
         let start = std::time::Instant::now();
@@ -1287,6 +1456,8 @@ mod executor_tests {
             optimizations: vec![],
             performance_hints: vec![],
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            limit: None,
+            offset: None,
         };
 
         let executor = QueryExecutor::new_for_tests(graph_service);

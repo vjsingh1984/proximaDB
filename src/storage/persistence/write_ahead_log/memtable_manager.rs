@@ -26,6 +26,7 @@ pub struct MemtableStats {
     pub total_batches_added: u64,
     pub total_collections: usize,
     pub memory_usage_bytes: u64,
+    pub per_collection_bytes: std::collections::HashMap<String, u64>,
 }
 
 impl MemtableManager {
@@ -67,11 +68,12 @@ impl MemtableManager {
             stats.total_vectors_added += vector_count;
             stats.total_batches_added += 1;
             stats.memory_usage_bytes += batch_size_bytes;
-            // Update collection count if this is a new collection
-            // For now, we'll just set it to 1 as a simple fix
-            if stats.total_collections == 0 {
-                stats.total_collections = 1;
-            }
+            let e = stats
+                .per_collection_bytes
+                .entry(collection_id.to_string())
+                .or_insert(0);
+            *e += batch_size_bytes;
+            stats.total_collections = stats.per_collection_bytes.len();
         }
 
         debug!(
@@ -154,16 +156,12 @@ impl MemtableManager {
 
     /// Get memory usage for a collection
     pub async fn get_collection_memory_usage(&self, collection_id: &str) -> Result<u64> {
-        // Get unflushed batches and calculate their total size
-        let batches = self
-            .wal_behavior
-            .get_unflushed_batches(collection_id)
-            .await?;
-        let total_size: u64 = batches
-            .iter()
-            .map(|batch| batch.total_size_bytes as u64)
-            .sum();
-        Ok(total_size)
+        // Prefer cached stats, fall back to sum
+        let stats = self.stats.read().await;
+        if let Some(b) = stats.per_collection_bytes.get(collection_id) { return Ok(*b); }
+        drop(stats);
+        let batches = self.wal_behavior.get_unflushed_batches(collection_id).await?;
+        Ok(batches.iter().map(|b| b.total_size_bytes as u64).sum())
     }
 
     /// Check if collection should be flushed based on memory usage
@@ -178,10 +176,7 @@ impl MemtableManager {
 
     /// Get all collections in the memtable
     pub async fn get_all_collections(&self) -> Result<Vec<String>> {
-        // Get all vectors and extract unique collection IDs
-        // This is inefficient but works for now
-        // TODO: Add proper collection tracking in GlobalPartitionedMemtable
-        Ok(Vec::new()) // Return empty for now to avoid errors
+        Ok(self.wal_behavior.list_collections().await)
     }
 
     /// Get statistics

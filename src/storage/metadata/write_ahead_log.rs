@@ -496,12 +496,12 @@ impl MetadataWriteAheadLog {
             let delete_record = crate::proto::proximadb_v1::VectorRecord {
                 id: vector_id,
                 vector: vec![0.0], // Vector content irrelevant for delete
-                metadata: Vec::new(),
-                timestamp: current_time_secs,
-                updated_at: Some(current_time_secs),
-                expires_at: Some(current_time_secs.saturating_sub(1)), // Mark as expired (logical delete)
+                metadata: HashMap::new(),
+                timestamp: current_time_secs as i64,
+                updated_at: Some(current_time_secs as i64),
+                expires_at: Some((current_time_secs.saturating_sub(1)) as i64), // Mark as expired (logical delete)
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: Vec::new(),
                 source: None,
             };
 
@@ -623,12 +623,12 @@ impl MetadataWriteAheadLog {
         Ok(crate::proto::proximadb_v1::VectorRecord {
             id: format!("metadata_{}", metadata.id),
             vector,
-            metadata: vec![],
-            timestamp: timestamp_secs,
-            updated_at: Some(timestamp_secs),
+            metadata: HashMap::new(),
+            timestamp: timestamp_secs as i64,
+            updated_at: Some(timestamp_secs as i64),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             source: None,
         })
     }

@@ -11,13 +11,15 @@ use tracing::{debug, info, warn};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
+use crate::storage::persistence::write_ahead_log::collection_path::slug_for;
+use crate::utils::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
 pub struct WriteBufferDiskManager {
     /// Filesystem factory for creating filesystem instances
     filesystem_factory: Arc<FilesystemFactory>,
-    /// Base directory for WriteBuffer files
-    wal_base_dir: PathBuf,
+    /// Base URL for WriteBuffer files (e.g., file:///path, s3://bucket/prefix)
+    wal_base_url: String,
     /// Statistics
     stats: Arc<tokio::sync::RwLock<DiskStats>>,
 }
@@ -38,24 +40,50 @@ pub struct DiskStats {
 pub struct WriteBufferFileInfo {
     pub collection_id: String,
     pub batch_id: BatchId,
-    pub file_path: PathBuf,
+    /// Full URL to the WAL file (scheme-preserving)
+    pub file_url: String,
     pub size_bytes: u64,
     pub format: SerializationFormat,
 }
 
 impl WriteBufferDiskManager {
     /// Create a new disk manager
-    pub fn new(filesystem_factory: Arc<FilesystemFactory>, wal_base_dir: impl AsRef<Path>) -> Self {
-        info!(
-            "🎯 Creating WriteBufferDiskManager with base dir: {:?}",
-            wal_base_dir.as_ref()
-        );
+    pub fn new(
+        filesystem_factory: Arc<FilesystemFactory>,
+        wal_base_url: impl AsRef<str>,
+    ) -> Self {
+        let wal_base_url = wal_base_url.as_ref().to_string();
+        info!("🎯 Creating WriteBufferDiskManager with base URL: {}", wal_base_url);
 
         Self {
             filesystem_factory,
-            wal_base_dir: wal_base_dir.as_ref().to_path_buf(),
+            wal_base_url,
             stats: Arc::new(tokio::sync::RwLock::new(DiskStats::default())),
         }
+    }
+
+    /// Helper: join URL segments preserving scheme and avoiding duplicate slashes
+    fn join_url(base: &str, segments: &[&str], trailing_slash: bool) -> String {
+        // Remove trailing slash from base (but preserve scheme authority like file:///)
+        let mut url = if base == "file://" {
+            // extremely unlikely, but keep as-is
+            base.to_string()
+        } else {
+            // For file:// URIs, usually base already has file:///path or file://./path
+            base.trim_end_matches('/')
+                .to_string()
+        };
+
+        for seg in segments {
+            if !seg.is_empty() {
+                url.push('/');
+                url.push_str(seg.trim_matches('/'));
+            }
+        }
+        if trailing_slash {
+            url.push('/');
+        }
+        url
     }
 
     /// Get the filesystem factory
@@ -63,9 +91,38 @@ impl WriteBufferDiskManager {
         &self.filesystem_factory
     }
 
-    /// Get the base WAL directory
-    pub fn get_base_wal_dir(&self) -> &PathBuf {
-        &self.wal_base_dir
+    /// Get the base WAL URL
+    pub fn get_base_wal_url(&self) -> &str {
+        &self.wal_base_url
+    }
+
+    /// Build the WAL URL for a collection (slugged): {base}/{slug}/wal/
+    pub fn collection_wal_url(&self, collection_id: &str) -> String {
+        let slug = slug_for(collection_id);
+        Self::join_url(&self.wal_base_url, &[&slug, "wal"], true)
+    }
+
+    /// Build WAL batch URL: .../{slug}/wal/<batch_id>.<ext>
+    pub fn batch_url(
+        &self,
+        collection_id: &str,
+        batch_id: &BatchId,
+        format: SerializationFormat,
+    ) -> String {
+        let slug = slug_for(collection_id);
+        let ext = match format {
+            SerializationFormat::ProtocolBuffers => "pbwal",
+            SerializationFormat::Bincode => "bcwal",
+            SerializationFormat::Avro => "avwal",
+        };
+        let fname = format!("{}.{}", batch_id.to_base62(), ext);
+        Self::join_url(&self.wal_base_url, &[&slug, "wal", &fname], false)
+    }
+
+    /// Build manifest URL: .../{slug}/wal/manifest.log
+    pub fn manifest_url(&self, collection_id: &str) -> String {
+        let slug = slug_for(collection_id);
+        Self::join_url(&self.wal_base_url, &[&slug, "wal", "manifest.log"], false)
     }
 
     /// Write a serialized batch to disk
@@ -89,8 +146,7 @@ impl WriteBufferDiskManager {
         format: SerializationFormat,
         sync_to_disk: bool,
     ) -> Result<WriteBufferFileInfo> {
-        let file_path = self.get_batch_file_path(collection_id, batch_id, format);
-        let file_url = format!("file://{}", file_path.display());
+        let file_url = self.batch_url(collection_id, batch_id, format);
 
         debug!(
             "📝 Writing WriteBuffer batch {} for collection {} to {} ({} bytes)",
@@ -100,25 +156,23 @@ impl WriteBufferDiskManager {
             data.len()
         );
 
-        // Directory should already exist from collection creation
-        // If it doesn't exist, it's an error condition
-        let dir_path = file_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
-        let dir_url = format!("file://{}/", dir_path.display());
+        // Ensure directory exists (create if missing). This improves robustness
+        // in serverless/cloud cold starts where collection directories may not
+        // be pre-created by control-plane paths.
+        let dir_url = self.collection_wal_url(collection_id);
         let filesystem = self.filesystem_factory.get_filesystem(&dir_url)?;
 
-        if !filesystem.exists(&dir_url).await? {
-            return Err(anyhow::anyhow!(
-                "WriteBuffer directory does not exist for collection {}. Was the collection created properly?",
-                collection_id
-            ));
-        }
+        // Always attempt directory creation for uniform semantics (no-op on object stores)
+        let _ = filesystem.create_dir_all(&dir_url).await;
 
-        // Write data
+        // Write data atomically; for object stores this will write to a temp and
+        // then rename to the final path.
         let filesystem = self.filesystem_factory.get_filesystem(&file_url)?;
+        let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
+            ::create_metadata_strategy(&*filesystem, None)?;
+        let file_options = strategy.create_file_options(&*filesystem, &file_url)?;
         filesystem
-            .write(&file_url, data, None)
+            .write(&file_url, data, Some(file_options))
             .await
             .context("Failed to write WriteBuffer batch to disk")?;
 
@@ -131,6 +185,36 @@ impl WriteBufferDiskManager {
             debug!("✅ WriteBuffer batch synced to disk for durability");
         }
 
+        // Append manifest entry with checksum (atomic rewrite of manifest.log)
+        let checksum = Crc32::checksum(data);
+        // Extract filename from URL for manifest entry
+        let file_name = file_url
+            .split('/')
+            .last()
+            .unwrap_or("")
+            .to_string();
+        let entry = crate::storage::persistence::write_ahead_log::manifest::WalManifestEntry::from_batch(
+            batch_id,
+            file_name,
+            data.len() as u64,
+            checksum,
+        );
+        let manifest_url = self.manifest_url(collection_id);
+        let mfs = self.filesystem_factory.get_filesystem(&manifest_url)?;
+        let mut manifest_content = if mfs.exists(&manifest_url).await? {
+            mfs.read(&manifest_url).await?
+        } else {
+            Vec::new()
+        };
+        let mut line = serde_json::to_vec(&entry)?;
+        line.push(b'\n');
+        manifest_content.extend_from_slice(&line);
+        let mstrategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
+            ::create_metadata_strategy(&*mfs, None)?;
+        let mopts = mstrategy.create_file_options(&*mfs, &manifest_url)?;
+        mfs.write(&manifest_url, &manifest_content, Some(mopts)).await?;
+        let _ = mfs.sync_file(&manifest_url).await;
+
         // Update stats
         {
             let mut stats = self.stats.write().await;
@@ -141,7 +225,7 @@ impl WriteBufferDiskManager {
         let file_info = WriteBufferFileInfo {
             collection_id: collection_id.to_string(),
             batch_id: batch_id.clone(),
-            file_path,
+            file_url: file_url.clone(),
             size_bytes: data.len() as u64,
             format,
         };
@@ -152,7 +236,7 @@ impl WriteBufferDiskManager {
 
     /// Read a serialized batch from disk
     pub async fn read_batch(&self, file_info: &WriteBufferFileInfo) -> Result<Vec<u8>> {
-        let file_url = format!("file://{}", file_info.file_path.display());
+        let file_url = file_info.file_url.clone();
 
         debug!(
             "📖 Reading WAL batch {} for collection {} from {}",
@@ -183,8 +267,7 @@ impl WriteBufferDiskManager {
         &self,
         collection_id: &str,
     ) -> Result<Vec<WriteBufferFileInfo>> {
-        let write_buffer_dir = self.wal_base_dir.join(collection_id).join("write_buffer");
-        let dir_url = format!("file://{}/", write_buffer_dir.display());
+        let dir_url = self.collection_wal_url(collection_id);
 
         debug!(
             "📂 Listing WriteBuffer files for collection {} in {}",
@@ -215,17 +298,30 @@ impl WriteBufferDiskManager {
             }
         }
 
-        debug!(
-            "Found {} WAL files for collection {}",
-            wal_files.len(),
-            collection_id
-        );
+        // Backward-compat: if none found, fall back to legacy write_buffer path
+        if wal_files.is_empty() {
+            // Backward-compat path: {base}/{collection_id}/write_buffer/
+            let legacy_url = Self::join_url(&self.wal_base_url, &[collection_id, "write_buffer"], true);
+            if filesystem.exists(&legacy_url).await.unwrap_or(false) {
+                if let Ok(legacy_fs) = self.filesystem_factory.get_filesystem(&legacy_url) {
+                    if let Ok(entries) = legacy_fs.list(&legacy_url).await {
+                        for entry in entries {
+                            if let Some(file_info) = self.parse_wal_filename(&entry.url, collection_id) {
+                                wal_files.push(file_info);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!("Found {} WAL files for collection {}", wal_files.len(), collection_id);
         Ok(wal_files)
     }
 
     /// Delete a WAL file
     pub async fn delete_file(&self, file_info: &WriteBufferFileInfo) -> Result<()> {
-        let file_url = format!("file://{}", file_info.file_path.display());
+        let file_url = file_info.file_url.clone();
 
         debug!(
             "🗑️ Deleting WAL file {} for collection {}",
@@ -244,10 +340,8 @@ impl WriteBufferDiskManager {
     }
 
     /// Delete a WAL file by path (used by recovery manager)
-    pub async fn delete_wal_file(&self, file_path: &Path) -> Result<()> {
-        let file_url = format!("file://{}", file_path.display());
-
-        debug!("🗑️ Deleting WAL file at path: {}", file_path.display());
+    pub async fn delete_wal_file_url(&self, file_url: &str) -> Result<()> {
+        debug!("🗑️ Deleting WAL file at URL: {}", file_url);
 
         let filesystem = self.filesystem_factory.get_filesystem(&file_url)?;
         filesystem
@@ -266,14 +360,13 @@ impl WriteBufferDiskManager {
 
         for file_info in files {
             if let Err(e) = self.delete_file(&file_info).await {
-                warn!("Failed to delete WAL file {:?}: {}", file_info.file_path, e);
+                warn!("Failed to delete WAL file {}: {}", file_info.file_url, e);
                 continue;
             }
         }
 
-        // Try to remove the WriteBuffer directory
-        let write_buffer_dir = self.wal_base_dir.join(collection_id).join("write_buffer");
-        let dir_url = format!("file://{}/", write_buffer_dir.display());
+        // Try to remove the collection WAL directory
+        let dir_url = self.collection_wal_url(collection_id);
         let filesystem = self.filesystem_factory.get_filesystem(&dir_url)?;
 
         if let Err(e) = filesystem.delete(&dir_url).await {
@@ -293,35 +386,12 @@ impl WriteBufferDiskManager {
     }
 
     /// Get the file path for a batch
-    pub fn get_batch_file_path(
-        &self,
-        collection_id: &str,
-        batch_id: &BatchId,
-        format: SerializationFormat,
-    ) -> PathBuf {
-        let extension = match format {
-            SerializationFormat::ProtocolBuffers => "pbwal",
-            SerializationFormat::Bincode => "bcwal",
-            SerializationFormat::Avro => "avwal",
-        };
-
-        self.wal_base_dir
-            .join(collection_id)
-            .join("write_buffer")
-            .join(format!("{}.{}", batch_id.to_base62(), extension))
-    }
+    // get_batch_file_path removed in favor of URL builders
 
     /// Parse a WAL filename to extract metadata
     fn parse_wal_filename(&self, path: &str, collection_id: &str) -> Option<WriteBufferFileInfo> {
-        // Strip file:// prefix if present
-        let clean_path = if path.starts_with("file://") {
-            path.strip_prefix("file://").unwrap_or(path)
-        } else {
-            path
-        };
-
-        let path_buf = PathBuf::from(clean_path);
-        let file_name = path_buf.file_name()?.to_str()?;
+        // Use last path segment as filename regardless of scheme
+        let file_name = path.split('/').last()?;
 
         // Expected format: <batch_id>.<format>
         let parts: Vec<&str> = file_name.split('.').collect();
@@ -350,7 +420,7 @@ impl WriteBufferDiskManager {
         Some(WriteBufferFileInfo {
             collection_id: collection_id.to_string(),
             batch_id,
-            file_path: path_buf,
+            file_url: path.to_string(),
             size_bytes: 0, // Will be filled by caller if needed
             format,
         })

@@ -20,6 +20,7 @@ pub struct ExecutionPlanner {
     cost_model: CostModel,
     params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>, // for decoding $1 vectors when not substituted
     seeding_strategy: crate::query::execution::SeedingStrategy,
+    fusion_weights: Option<Vec<f64>>,
 }
 
 impl ExecutionPlanner {
@@ -34,6 +35,7 @@ impl ExecutionPlanner {
             cost_model: CostModel::new(),
             params: None,
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            fusion_weights: None,
         }
     }
 
@@ -49,6 +51,10 @@ impl ExecutionPlanner {
 
     pub fn set_seeding_strategy(&mut self, strategy: crate::query::execution::SeedingStrategy) {
         self.seeding_strategy = strategy;
+    }
+
+    pub fn set_fusion_weights(&mut self, weights: Option<Vec<f64>>) {
+        self.fusion_weights = weights;
     }
 
     /// Generate optimized execution plan from internal AST
@@ -109,16 +115,20 @@ impl ExecutionPlanner {
                     crate::query::ast::JoinKind::Inner => crate::query::execution::JoinKind::Inner,
                     crate::query::ast::JoinKind::Left => crate::query::execution::JoinKind::Left,
                 };
-                let (lk, rk) = if let Some(on) = &j.on {
-                    self.extract_join_keys(on).unwrap_or(("".into(), "".into()))
+                let (lks, rks) = if let Some(on) = &j.on {
+                    let pairs = Self::extract_join_key_pairs_static(on);
+                    if pairs.is_empty() { (vec!["".into()], vec!["".into()]) } else {
+                        let (ls, rs): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+                        (ls, rs)
+                    }
                 } else {
-                    ("".into(), "".into())
+                    (vec!["".into()], vec!["".into()])
                 };
                 let right_alias = j.right.alias.clone().unwrap_or_else(|| "r".to_string());
                 operations.push(ExecutionOperation::Join {
                     kind,
-                    left_key: lk,
-                    right_key: rk,
+                    left_keys: lks,
+                    right_keys: rks,
                     left_alias: left_alias.clone(),
                     right_alias,
                 });
@@ -132,6 +142,8 @@ impl ExecutionPlanner {
             optimizations,
             performance_hints,
             seeding_strategy: self.seeding_strategy.clone(),
+            limit: select.limit.map(|v| v as usize),
+            offset: select.offset.map(|v| v as usize),
         })
     }
 
@@ -296,7 +308,7 @@ impl ExecutionPlanner {
                 }
                 operations.push(ExecutionOperation::Fusion {
                     strategy: FusionStrategy::ReciprocalRankFusion { k: 60.0 },
-                    weights: vec![0.6, 0.4], // Vector, Graph weights
+                    weights: self.fusion_weights.clone().unwrap_or_else(|| vec![0.6, 0.4]),
                 });
             }
 
@@ -558,18 +570,46 @@ impl ExecutionPlanner {
         }
     }
 
-    fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> {
+    fn extract_join_keys(&self, expr: &Expr) -> Option<(String, String)> { Self::extract_join_keys_static(expr) }
+
+    pub(crate) fn extract_join_keys_static(expr: &Expr) -> Option<(String, String)> {
+        // Support simple equality join: a.id = b.entity_id
         if let Expr::Binary { left, op, right } = expr {
             if matches!(op, BinaryOp::Eq) {
-                if let (Some(l), Some(r)) = (
-                    self.expr_to_identifier(left),
-                    self.expr_to_identifier(right),
-                ) {
-                    return Some((l, r));
-                }
+                let left_key = match &**left {
+                    Expr::Identifier(s) => s.clone(),
+                    _ => return None,
+                };
+                let right_key = match &**right {
+                    Expr::Identifier(s) => s.clone(),
+                    _ => return None,
+                };
+                return Some((left_key, right_key));
             }
         }
         None
+    }
+
+    pub(crate) fn extract_join_key_pairs_static(expr: &Expr) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        match expr {
+            Expr::Binary { left, op, right } => {
+                match op {
+                    BinaryOp::Eq => {
+                        if let (Some(l), Some(r)) = (Self::extract_join_keys_static(expr).map(|p| p.0), Self::extract_join_keys_static(expr).map(|p| p.1)) {
+                            out.push((l, r));
+                        }
+                    }
+                    BinaryOp::And => {
+                        out.extend(Self::extract_join_key_pairs_static(left));
+                        out.extend(Self::extract_join_key_pairs_static(right));
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        out
     }
 
     fn extract_aggregates(
@@ -1005,4 +1045,70 @@ mod planner_tests {
         // TODO: Create with mock services
         unimplemented!("Create test planner")
     }
+
+    #[test]
+    fn test_extract_join_keys_static_simple() {
+        let on = Expr::Binary {
+            left: Box::new(Expr::Identifier("a.id".to_string())),
+            op: BinaryOp::Eq,
+            right: Box::new(Expr::Identifier("b.entity_id".to_string())),
+        };
+        let (l, r) = ExecutionPlanner::extract_join_keys_static(&on).expect("keys");
+        assert_eq!(l, "a.id");
+        assert_eq!(r, "b.entity_id");
+    }
+
+    #[test]
+    fn test_extract_join_key_pairs_static_and_chain() {
+        let on = Expr::Binary {
+            left: Box::new(Expr::Binary {
+                left: Box::new(Expr::Identifier("a.id".to_string())),
+                op: BinaryOp::Eq,
+                right: Box::new(Expr::Identifier("b.entity_id".to_string())),
+            }),
+            op: BinaryOp::And,
+            right: Box::new(Expr::Binary {
+                left: Box::new(Expr::Identifier("a.type".to_string())),
+                op: BinaryOp::Eq,
+                right: Box::new(Expr::Identifier("b.type".to_string())),
+            }),
+        };
+        let pairs = ExecutionPlanner::extract_join_key_pairs_static(&on);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0], ("a.id".to_string(), "b.entity_id".to_string()));
+        assert_eq!(pairs[1], ("a.type".to_string(), "b.type".to_string()));
+    }
+
+    #[test]
+    fn test_extract_join_key_pairs_with_parens_and_reversed_order() {
+        // ( (b.id = a.id) AND (b.kind = a.kind) )
+        let on = Expr::Binary {
+            left: Box::new(Expr::Binary {
+                left: Box::new(Expr::Binary {
+                    left: Box::new(Expr::Identifier("b.id".to_string())),
+                    op: BinaryOp::Eq,
+                    right: Box::new(Expr::Identifier("a.id".to_string())),
+                }),
+                op: BinaryOp::And,
+                right: Box::new(Expr::Binary {
+                    left: Box::new(Expr::Identifier("b.kind".to_string())),
+                    op: BinaryOp::Eq,
+                    right: Box::new(Expr::Identifier("a.kind".to_string())),
+                }),
+            }),
+            op: BinaryOp::And, // trailing AND with a tautology to ensure traversal robustness
+            right: Box::new(Expr::Binary {
+                left: Box::new(Expr::Identifier("1".to_string())),
+                op: BinaryOp::Eq,
+                right: Box::new(Expr::Identifier("1".to_string())),
+            }),
+        };
+        let pairs = ExecutionPlanner::extract_join_key_pairs_static(&on);
+        // Should still extract the two equality pairs
+        assert!(pairs.iter().any(|(l, r)| l == "b.id" && r == "a.id"));
+        assert!(pairs.iter().any(|(l, r)| l == "b.kind" && r == "a.kind"));
+    }
+
+    // NOTE: Full SQL-lowered JOIN tests require JOIN lowering support.
+    // This suite validates composite ON parsing semantics equivalent to SQL-lowered AST.
 }

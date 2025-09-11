@@ -81,15 +81,9 @@ impl AvroSerializationStrategy {
 
         // Create disk manager
         let wal_base_url = &config.multi_disk.data_directories[0];
-        // Extract path from URL - remove "file://" prefix if present
-        let wal_base_dir = if wal_base_url.starts_with("file://") {
-            wal_base_url.strip_prefix("file://").unwrap()
-        } else {
-            wal_base_url
-        };
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
             filesystem_factory.clone(),
-            wal_base_dir,
+            wal_base_url,
         ));
 
         // Create flush coordinator
@@ -464,23 +458,20 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                 let file_info = WriteBufferFileInfo {
                     collection_id: collection_id.to_string(),
                     batch_id: batch.batch_id.clone(),
-                    file_path: self.disk_manager.get_batch_file_path(
-                        collection_id,
-                        &batch.batch_id,
-                        SerializationFormat::Avro,
-                    ),
+                    file_url: self
+                        .disk_manager
+                        .batch_url(collection_id, &batch.batch_id, SerializationFormat::Avro),
                     size_bytes: 0,
                     format: SerializationFormat::Avro,
                 };
 
                 // Use filesystem sync_file to ensure durability
-                let file_url = format!("file://{}", file_info.file_path.display());
                 if let Ok(filesystem) = self
                     .disk_manager
                     .filesystem_factory()
-                    .get_filesystem(&file_url)
+                    .get_filesystem(&file_info.file_url)
                 {
-                    let _ = filesystem.sync_file(&file_url).await;
+                    let _ = filesystem.sync_file(&file_info.file_url).await;
                 }
             }
         } else {

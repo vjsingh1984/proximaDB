@@ -91,7 +91,7 @@ pub struct HybridConfig {
 }
 
 /// Strategy for fusing vector and graph results
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum FusionStrategy {
     /// Vector results filtered by graph constraints
     VectorFirst,

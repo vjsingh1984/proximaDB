@@ -178,6 +178,7 @@ impl ProximaDB {
             Some(metrics_collector.clone()),
             &config.storage,
             Some(orchestrator.clone()),
+            Some(&config),
         )
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");

@@ -13,17 +13,17 @@ toc::[]
 [source,mermaid]
 ----
 graph TD
-    subgraph API Layer
+    subgraph "API Layer"
         A[MultiServer] --> B(REST API)
         A --> C(gRPC API)
     end
 
-    subgraph Service Layer
+    subgraph "Service Layer"
         D[SharedServices] --> E(CollectionService)
         D --> F(VectorOperationsService)
     end
 
-    subgraph Storage Layer
+    subgraph "Storage Layer"
         G[StorageEngine] --> H(Write-Ahead Log)
         G --> I(Memtable)
         G --> J(SSTables/Parquet Files)
@@ -143,12 +143,12 @@ sequenceDiagram
 [source,mermaid]
 ----
 graph TD
-    subgraph Write Path
+    subgraph "Write Path"
         A[Client Write] --> B(Write-Ahead Log)
         B --> C(Memtable)
     end
 
-    subgraph Read Path
+    subgraph "Read Path"
         D[Client Read] --> C
         C --> E{Search Memtable}
         E -- No Match --> F[Search SSTables (L0)]
@@ -156,7 +156,7 @@ graph TD
         G -- No Match --> H[Search SSTables (Ln)]
     end
 
-    subgraph Background Operations
+    subgraph "Background Operations"
         C -- Flush --> I(SSTable L0)
         I -- Compaction --> J(SSTable L1)
         J -- Compaction --> K(SSTable Ln)

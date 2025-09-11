@@ -104,9 +104,8 @@ impl Default for UnifiedSearchConfig {
         }
     }
 }
-use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryCache, QueryKey};
+use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::impls::sst::SstStorage;
-use std::time::SystemTime;
 
 /// Optional debug/explain hints for vector planning and pruning.
 #[derive(Debug, Clone, Default)]
@@ -211,12 +210,12 @@ impl VectorOperationsService {
             (None, 0)
         };
 
-        if let Some(orch) = &self.orchestrator {
-            orch.track_access_async(collection_id.clone(), crate::storage::cache::orchestrator::CacheType::QueryResult);
+        if let Some(_orch) = &self.orchestrator {
+            // orch.track_access_async method not available - implement as needed
         }
         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
             success: true,
-            operation: crate::proto::proximadb_v1::VectorServiceOperation::Search as i32,
+            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch as i32,
             metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                 total_processed: total_count,
                 successful_count: total_count,
@@ -247,13 +246,14 @@ impl VectorOperationsService {
             .into_iter()
             .map(|v| crate::core::VectorRecord {
                 id: v.id,
-                // collection_id is now part of request context
                 vector: v.vector,
-                metadata: crate::core::conversions::sql_values_to_json_map(v.metadata),
+                metadata: v.metadata,
                 timestamp: v.timestamp,
                 updated_at: v.updated_at,
                 expires_at: v.expires_at,
                 version: v.version,
+                quantized_vector: v.quantized_vector,
+                source: v.source,
             })
             .collect();
 
@@ -287,7 +287,7 @@ impl VectorOperationsService {
 
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::Batch as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
                     metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                         total_processed: vector_ids.len() as i64,
                         successful_count: if success { vector_ids.len() as i64 } else { 0 },
@@ -305,7 +305,7 @@ impl VectorOperationsService {
             }
             Err(e) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: false,
-                operation: crate::proto::proximadb_v1::VectorServiceOperation::Batch as i32,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
                 metrics: None,
                 results: None,
                 vector_ids: vec![],
@@ -342,28 +342,10 @@ impl VectorOperationsService {
                     },
                     score: 1.0,
                     vector: rec.vector,
-                    metadata: {
-                        let mut map = std::collections::HashMap::new();
-                        for (k, v) in rec.metadata {
-                            let sql_value = match v {
-                                serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s))
-                                },
-                                serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)))
-                                },
-                                serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b))
-                                },
-                                _ => crate::proto::proximadb_v1::SqlValue { value: None },
-                            };
-                            map.insert(k, sql_value);
-                        }
-                        map
-                    },
+                    metadata: rec.metadata,
                     version: rec.updated_at.map(|x| x as i64),
                     similarity: None,
-                    timestamp: rec.timestamp.map(|t| t as i64),
+                    timestamp: Some(rec.timestamp),
                     source: None,
                     expanded_context: vec![],
                     semantic_similarity: None,
@@ -373,7 +355,7 @@ impl VectorOperationsService {
                 };
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: true,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::Get as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                     metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                         total_processed: 1,
                         successful_count: 1,
@@ -395,7 +377,7 @@ impl VectorOperationsService {
             }
             Ok(None) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: false,
-                operation: crate::proto::proximadb_v1::VectorServiceOperation::Get as i32,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                 metrics: None,
                 results: None,
                 vector_ids: vec![],
@@ -404,7 +386,7 @@ impl VectorOperationsService {
             }),
             Err(e) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: false,
-                operation: crate::proto::proximadb_v1::VectorServiceOperation::Get as i32,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                 metrics: None,
                 results: None,
                 vector_ids: vec![],
@@ -685,7 +667,7 @@ impl VectorOperationsService {
         // Group into a single DomainSearchResult (consistent with previous behavior)
         let mut hits = Vec::with_capacity(natives.len());
         for rec in natives {
-            let meta_json = rec.metadata.to_json_map();
+            let meta_json = crate::core::conversions::sql_values_to_json_map(rec.metadata);
             hits.push(crate::core::service_types::SearchHit {
                 id: rec.id,
                 score: rec.score as f32,
@@ -2004,7 +1986,6 @@ impl VectorOperationsService {
         // Convert TypedMetadata to proto MetadataItems
         let metadata_items: Vec<MetadataItem> = result
             .metadata
-            .as_map()
             .iter()
             .map(|(key, value)| {
                 use crate::core::metadata_types::MetadataValue;
@@ -2080,7 +2061,7 @@ impl VectorOperationsService {
         let mut metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
             std::collections::HashMap::new();
 
-        for (key, value) in result.metadata.as_map().iter() {
+        for (key, value) in result.metadata.iter() {
             use crate::core::metadata_types::MetadataValue;
             let sql_value = match value {
                 MetadataValue::String(s) => crate::proto::proximadb_v1::SqlValue {

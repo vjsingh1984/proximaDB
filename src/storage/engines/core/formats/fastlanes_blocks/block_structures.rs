@@ -419,10 +419,10 @@ impl FastLanesDataBlock {
 
         // Check for deletes (tombstone records)
         let has_deletes = records.iter().any(|r| {
-            r.metadata.iter().any(|kv| {
-            kv.key == "_deleted" && matches!(
-                kv.value.as_ref(),
-                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "true"
+            r.metadata.iter().any(|(key, sql_value)| {
+            key == "_deleted" && matches!(
+                sql_value.value.as_ref(),
+                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
             )
         })
         });
@@ -745,8 +745,8 @@ impl FastLanesDataBlock {
         // ============ STEP 3: Build sparse metadata columns ============
         let mut metadata_keys = HashSet::new();
         for record in &self.records {
-            for item in &record.metadata {
-                metadata_keys.insert(item.key.clone());
+            for (key, _sql_value) in &record.metadata {
+                metadata_keys.insert(key.clone());
             }
         }
 
@@ -764,23 +764,27 @@ impl FastLanesDataBlock {
             let mut presence_bitmap = vec![0u8; (self.records.len() + 7) / 8];
 
             for (idx, record) in self.records.iter().enumerate() {
-                if let Some(item) = record.metadata.iter().find(|m| m.key == *key) {
+                if let Some(sql_value) = record.metadata.get(key) {
                     // Set bit in presence bitmap
                     presence_bitmap[idx / 8] |= 1 << (idx % 8);
 
                     // Serialize value
-                    if let Some(value) = &item.value {
+                    if let Some(value) = &sql_value.value {
                         // Encode the metadata value based on its type
                         let value_bytes = match value {
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 s.as_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                                 n.to_le_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                i.to_le_bytes().to_vec()
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                 vec![if *b { 1 } else { 0 }]
                             }
+                            _ => vec![], // Handle other variants
                         };
                         sparse_values.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
                         sparse_values.write_all(&value_bytes)?;
@@ -926,10 +930,10 @@ impl FastLanesDataBlock {
                 records.push(VectorRecord {
                     id: format!("record_{}", i), // Will be updated from metadata
                     vector,
-                    metadata: Vec::new(),
+                    metadata: std::collections::HashMap::new(),
                     timestamp: 0,
                     updated_at: None,
-                    quantized_vector: None,
+                    quantized_vector: Vec::new(),
                     expires_at: None,
                     version: None,
                     source: None,

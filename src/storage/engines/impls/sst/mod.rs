@@ -1698,6 +1698,21 @@ impl SstStorage {
                     decompression_cache.clone(),
                 ));
             orch.register_cache_provider(CacheType::VectorData, provider);
+            // Register lightweight providers for FilterBitmap and Metadata
+            struct SstStaticProvider;
+            impl CacheStatsProvider for SstStaticProvider {
+                fn snapshot(&self) -> crate::storage::cache::orchestrator::UsageStats {
+                    crate::storage::cache::orchestrator::UsageStats {
+                        hit_rate: 0.0,
+                        avg_entry_size: 4096,
+                        access_frequency: 0.0,
+                        last_rebalance: std::time::SystemTime::now(),
+                    }
+                }
+            }
+            let provider2: Arc<dyn CacheStatsProvider + Send + Sync> = Arc::new(SstStaticProvider);
+            orch.register_cache_provider(CacheType::FilterBitmap, provider2.clone());
+            orch.register_cache_provider(CacheType::Metadata, provider2);
         }
 
         // Initialize compaction manager (always enabled)

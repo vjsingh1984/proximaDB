@@ -189,7 +189,7 @@ impl SqlExecutor {
                     "metadata_info" => {
                         // Convert TypedMetadata to JSON
                         let mut metadata_map = serde_json::Map::new();
-                        for (k, v) in result.metadata.as_map().iter() {
+                        for (k, v) in result.metadata.iter() {
                             let json_value = match v {
                                 crate::core::metadata_types::MetadataValue::String(s) => {
                                     serde_json::Value::String(s.to_string())
@@ -213,7 +213,7 @@ impl SqlExecutor {
                     }
                     field if field.starts_with("metadata.") => {
                         let key = &field[9..];
-                        if let Some(val) = result.metadata.as_map().get(key) {
+                        if let Some(val) = result.metadata.get(key) {
                             let json_value = match val {
                                 crate::core::metadata_types::MetadataValue::String(s) => {
                                     serde_json::Value::String(s.to_string())

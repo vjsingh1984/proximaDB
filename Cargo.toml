@@ -63,7 +63,7 @@ tonic = { version = "0.10", features = ["gzip"] }
 tonic-build = "0.10"
 tonic-reflection = "0.10"
 prost = "0.12"
-prost-types = "0.12"
+prost-types = { version = "0.12" }
 hyper = "0.14"  # Used internally by axum and tonic
 tower = "0.4"
 tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full"] }

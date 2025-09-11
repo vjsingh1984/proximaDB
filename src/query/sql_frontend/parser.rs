@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use sqlparser::ast::{
-    BinaryOperator, Cte as SqlCte, Expr as SqlExpr, Function, FunctionArg, FunctionArgExpr,
+    BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr,
     Join as SqlJoin, JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr,
     Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator,
     Statement, TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
@@ -72,11 +72,11 @@ impl SqlFrontendParser {
     fn convert_query_no_with(&self, query: &SqlQuery) -> Result<Query> {
         match &*query.body {
             SetExpr::Select(select) => Ok(Query::Select(self.convert_select(select, query)?)),
-            SetExpr::SetOperation { left, op, right } => {
+            SetExpr::SetOperation { left, op, right, set_quantifier } => {
                 let (set_op, all) = match op {
-                    SqlSetOperator::Union { all } => (SetOp::Union, *all),
-                    SqlSetOperator::Intersect { all } => (SetOp::Intersect, *all),
-                    SqlSetOperator::Except { all } => (SetOp::Except, *all),
+                    SqlSetOperator::Union => (SetOp::Union, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
+                    SqlSetOperator::Intersect => (SetOp::Intersect, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
+                    SqlSetOperator::Except => (SetOp::Except, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
                 };
                 let left_q = self.convert_setexpr(left)?;
                 let right_q = self.convert_setexpr(right)?;
@@ -104,14 +104,17 @@ impl SqlFrontendParser {
                         limit: None,
                         offset: None,
                         fetch: None,
+                        locks: vec![],
+                        limit_by: vec![],
+                        for_clause: None,
                     },
                 )?))
             }
-            SetExpr::SetOperation { left, op, right } => {
+            SetExpr::SetOperation { left, op, right, set_quantifier } => {
                 let (set_op, all) = match op {
-                    SqlSetOperator::Union { all } => (SetOp::Union, *all),
-                    SqlSetOperator::Intersect { all } => (SetOp::Intersect, *all),
-                    SqlSetOperator::Except { all } => (SetOp::Except, *all),
+                    SqlSetOperator::Union => (SetOp::Union, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
+                    SqlSetOperator::Intersect => (SetOp::Intersect, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
+                    SqlSetOperator::Except => (SetOp::Except, matches!(set_quantifier, sqlparser::ast::SetQuantifier::All)),
                 };
                 let left_q = self.convert_setexpr(left)?;
                 let right_q = self.convert_setexpr(right)?;
@@ -172,11 +175,13 @@ impl SqlFrontendParser {
         };
 
         // Convert GROUP BY
-        let group_by = select
-            .group_by
-            .iter()
-            .map(|expr| self.convert_expr(expr))
-            .collect::<Result<Vec<_>>>()?;
+        let group_by = match &select.group_by {
+            sqlparser::ast::GroupByExpr::All => vec![],  // Handle GROUP BY ALL (PostgreSQL extension)
+            sqlparser::ast::GroupByExpr::Expressions(exprs) => exprs
+                .iter()
+                .map(|expr| self.convert_expr(expr))
+                .collect::<Result<Vec<_>>>()?,
+        };
 
         // Convert HAVING
         let having = match &select.having {
@@ -203,7 +208,7 @@ impl SqlFrontendParser {
         let offset = query
             .offset
             .as_ref()
-            .and_then(|offset_expr| &offset_expr.value)
+            .map(|offset_expr| &offset_expr.value)
             .and_then(|expr| {
                 if let SqlExpr::Value(Value::Number(n, _)) = expr {
                     n.parse::<u64>().ok()
@@ -244,7 +249,7 @@ impl SqlFrontendParser {
     }
 
     fn convert_table_with_joins(&self, table_with_joins: &TableWithJoins) -> Result<Vec<TableRef>> {
-        let mut tables = vec![self.convert_table_factor(&table_with_joins.relation)?];
+        let tables = vec![self.convert_table_factor(&table_with_joins.relation)?];
 
         // Note: Joins are handled separately in convert_select
         // This just returns the main table references
@@ -549,7 +554,7 @@ impl SqlFrontendParser {
             BinaryOperator::GtEq => Ok(BinaryOp::Ge),
             BinaryOperator::And => Ok(BinaryOp::And),
             BinaryOperator::Or => Ok(BinaryOp::Or),
-            BinaryOperator::Like => Ok(BinaryOp::Like),
+            // BinaryOperator::Like => Ok(BinaryOp::Like), // Removed in newer sqlparser
             BinaryOperator::Plus => Ok(BinaryOp::Add),
             BinaryOperator::Minus => Ok(BinaryOp::Sub),
             BinaryOperator::Multiply => Ok(BinaryOp::Mul),

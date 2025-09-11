@@ -593,8 +593,7 @@ impl ProgressiveSearchExecutor {
 
             // Convert metadata to TypedMetadata
             let mut metadata_map = std::collections::HashMap::new();
-            for item in record.metadata {
-                let key = item.key;
+            for (key, item) in record.metadata {
                 let value = item.value;
                 if let Some(value) = value {
                     use crate::proto::proximadb_v1::metadata_item;
