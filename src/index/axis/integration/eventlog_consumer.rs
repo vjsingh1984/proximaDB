@@ -1231,7 +1231,7 @@ impl AxisEventLogConsumer {
                             vector_record
                                 .quantized_vector
                                 .as_ref()
-                                .map_or(false, |v| !v.is_empty())
+                                .map_or(false, |v: &Vec<u8>| !v.is_empty())
                         }
                         ExtractionMode::Both => {
                             // Extract if we have either type
@@ -1239,7 +1239,7 @@ impl AxisEventLogConsumer {
                                 || vector_record
                                     .quantized_vector
                                     .as_ref()
-                                    .map_or(false, |v| !v.is_empty())
+                                    .map_or(false, |v: &Vec<u8>| !v.is_empty())
                         }
                         ExtractionMode::Auto => {
                             // Auto mode: extract if we have any data
@@ -1247,7 +1247,7 @@ impl AxisEventLogConsumer {
                                 || vector_record
                                     .quantized_vector
                                     .as_ref()
-                                    .map_or(false, |v| !v.is_empty())
+                                    .map_or(false, |v: &Vec<u8>| !v.is_empty())
                         }
                     };
 
@@ -1268,9 +1268,9 @@ impl AxisEventLogConsumer {
                                 extraction_mode,
                                 ExtractionMode::QuantizedOnly | ExtractionMode::Both
                             ) {
-                                vector_record.quantized_vector.clone()
+                                vector_record.quantized_vector.clone().unwrap_or_default()
                             } else {
-                                None
+                                vec![]
                             },
                             source: None,
                         };
