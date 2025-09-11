@@ -1,0 +1,1 @@
+"""ProximaDB Protocol Buffer package"""

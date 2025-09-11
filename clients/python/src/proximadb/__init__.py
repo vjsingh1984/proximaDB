@@ -13,6 +13,7 @@ __author__ = "ProximaDB Contributors"
 
 # Core client and configuration
 from .unified_client import ProximaDBClient
+from .client_v1 import ProximaDBClientV1
 from .config import Protocol
 from .config import (
     ClientConfig,
@@ -196,6 +197,7 @@ except (ImportError, AttributeError):
 __all__ = [
     # Core
     "ProximaDBClient",
+    "ProximaDBClientV1",
     "ClientConfig",
     "LogLevel",
     "ConnectionConfig",
