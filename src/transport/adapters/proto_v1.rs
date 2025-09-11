@@ -100,10 +100,18 @@ pub fn native_records_to_v1(
 
         out.push(proximadb_v1::SearchVectorRecord {
             id: r.id.clone(),
-            score: r.score,
+            score: r.score as f64,
             vector,
             metadata,
             version: r.version.map(|v| v as i64),
+            similarity: Some(r.score),
+            timestamp: r.timestamp,
+            source: None,
+            expanded_context: Vec::new(),
+            quantization_info: None,
+            engine_stats: std::collections::HashMap::new(),
+            index_path: None,
+            semantic_similarity: None,
         });
     }
 
