@@ -167,24 +167,23 @@ impl PostingListStorage {
                     let id = format!("{}:{}", cluster_id, entry.vector_id);
                     // For posting list entries, we store the distance as a simple vector
                     let vector = vec![entry.distance_to_centroid];
-                    let metadata = vec![
-                        crate::proto::proximadb_v1::MetadataItem {
-                            key: "cluster_id".to_string(),
-                            value: Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                    cluster_id.to_string(),
-                                ),
-                            ),
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert(
+                        "cluster_id".to_string(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                cluster_id.to_string(),
+                            )),
                         },
-                        crate::proto::proximadb_v1::MetadataItem {
-                            key: "vector_id".to_string(),
-                            value: Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                    entry.vector_id.clone(),
-                                ),
-                            ),
+                    );
+                    metadata.insert(
+                        "vector_id".to_string(), 
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                entry.vector_id.clone(),
+                            )),
                         },
-                    ];
+                    );
                     records.insert(
                         id.clone(),
                         crate::proto::proximadb_v1::VectorRecord {
@@ -194,11 +193,11 @@ impl PostingListStorage {
                             timestamp: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap()
-                                .as_secs() as u32,
+                                .as_secs() as i64,
                             updated_at: None,
                             expires_at: None,
                             version: None,
-                            quantized_vector: None,
+                            quantized_vector: vec![],
                             source: None,
                         },
                     );

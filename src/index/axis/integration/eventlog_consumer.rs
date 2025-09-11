@@ -1228,26 +1228,17 @@ impl AxisEventLogConsumer {
                         }
                         ExtractionMode::QuantizedOnly => {
                             // Only extract if we have quantized data
-                            vector_record
-                                .quantized_vector
-                                .as_ref()
-                                .map_or(false, |v: &Vec<u8>| !v.is_empty())
+                            !vector_record.quantized_vector.is_empty()
                         }
                         ExtractionMode::Both => {
                             // Extract if we have either type
                             !vector_record.vector.is_empty()
-                                || vector_record
-                                    .quantized_vector
-                                    .as_ref()
-                                    .map_or(false, |v: &Vec<u8>| !v.is_empty())
+                                || !vector_record.quantized_vector.is_empty()
                         }
                         ExtractionMode::Auto => {
                             // Auto mode: extract if we have any data
                             !vector_record.vector.is_empty()
-                                || vector_record
-                                    .quantized_vector
-                                    .as_ref()
-                                    .map_or(false, |v: &Vec<u8>| !v.is_empty())
+                                || !vector_record.quantized_vector.is_empty()
                         }
                     };
 
@@ -1268,7 +1259,7 @@ impl AxisEventLogConsumer {
                                 extraction_mode,
                                 ExtractionMode::QuantizedOnly | ExtractionMode::Both
                             ) {
-                                vector_record.quantized_vector.clone().unwrap_or_default()
+                                vector_record.quantized_vector.clone()
                             } else {
                                 vec![]
                             },

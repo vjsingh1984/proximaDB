@@ -257,7 +257,7 @@ impl From<&MetadataValue> for crate::proto::proximadb_v1::SqlValue {
             MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
             MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
             MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
-            MetadataValue::Null => Some(Value::NullValue(crate::proto::proximadb_v1::NullValue{})),
+            MetadataValue::Null => Some(Value::NullValue(0)), // prost_types::NullValue as i32
         };
 
         crate::proto::proximadb_v1::SqlValue {
