@@ -213,20 +213,35 @@ impl MultiTierDeduplicator {
                             // Convert metadata value to JSON for comparison
                             let actual_json = match &item.value {
                                 Some(
-                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                         s,
                                     ),
                                 ) => serde_json::Value::String(s.clone()),
                                 Some(
-                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                         n,
                                     ),
                                 ) => serde_json::Number::from_f64(*n)
                                     .map(serde_json::Value::Number)
                                     .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
                                 Some(
-                                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b),
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
                                 ) => serde_json::Value::Bool(*b),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
+                                ) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_),
+                                ) => serde_json::Value::String("[binary]".to_string()),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_),
+                                ) => serde_json::Value::Null,
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_),
+                                ) => serde_json::Value::String("[array]".to_string()),
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_),
+                                ) => serde_json::Value::String("[object]".to_string()),
                                 None => serde_json::Value::Null,
                             };
                             // Compare values (strict equality for now)

@@ -220,6 +220,11 @@ impl From<&crate::proto::proximadb_v1::MetadataItem> for MetadataValue {
             Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
             Some(Value::NumberValue(n)) => MetadataValue::Number(*n),
             Some(Value::BoolValue(b)) => MetadataValue::Bool(*b),
+            Some(Value::Int64Value(i)) => MetadataValue::Number(*i as f64),
+            Some(Value::BytesValue(_)) => MetadataValue::String(Arc::from("[binary]")),
+            Some(Value::NullValue(_)) => MetadataValue::Null,
+            Some(Value::ArrayValue(_)) => MetadataValue::String(Arc::from("[array]")),
+            Some(Value::ObjectValue(_)) => MetadataValue::String(Arc::from("[object]")),
             None => MetadataValue::Null,
         }
     }
@@ -233,25 +238,29 @@ impl From<&crate::proto::proximadb_v1::SqlValue> for MetadataValue {
             Some(Value::StringValue(s)) => MetadataValue::String(Arc::from(s.as_str())),
             Some(Value::NumberValue(n)) => MetadataValue::Number(*n),
             Some(Value::BoolValue(b)) => MetadataValue::Bool(*b),
+            Some(Value::Int64Value(i)) => MetadataValue::Number(*i as f64),
+            Some(Value::BytesValue(_)) => MetadataValue::String(Arc::from("[binary]")),
+            Some(Value::NullValue(_)) => MetadataValue::Null,
+            Some(Value::ArrayValue(_)) => MetadataValue::String(Arc::from("[array]")),
+            Some(Value::ObjectValue(_)) => MetadataValue::String(Arc::from("[object]")),
             None => MetadataValue::Null,
         }
     }
 }
 
-/// Convert to protobuf MetadataItem
-impl From<(&String, &MetadataValue)> for crate::proto::proximadb_v1::MetadataItem {
-    fn from((key, value): (&String, &MetadataValue)) -> Self {
+/// Convert to protobuf SqlValue (used in v1 vector types)
+impl From<&MetadataValue> for crate::proto::proximadb_v1::SqlValue {
+    fn from(value: &MetadataValue) -> Self {
         use crate::proto::proximadb_v1::sql_value::Value;
 
         let proto_value = match value {
             MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
             MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
             MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
-            MetadataValue::Null => None,
+            MetadataValue::Null => Some(Value::NullValue(crate::proto::proximadb_v1::NullValue{})),
         };
 
-        crate::proto::proximadb_v1::MetadataItem {
-            key: key.clone(),
+        crate::proto::proximadb_v1::SqlValue {
             value: proto_value,
         }
     }

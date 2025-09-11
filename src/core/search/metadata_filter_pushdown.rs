@@ -361,17 +361,28 @@ impl MetadataFilterPushdown {
         for (key, entry) in &record.metadata {
             // Convert the protobuf metadata value to serde_json::Value
             if let Some(ref proto_value) = entry.value {
-                use crate::proto::proximadb_v1::metadata_item;
+                use crate::proto::proximadb_v1::sql_value;
                 let json_value = match proto_value {
-                    metadata_item::Value::StringValue(s) => Value::String(s.clone()),
-                    metadata_item::Value::NumberValue(n) => {
+                    sql_value::Value::StringValue(s) => Value::String(s.clone()),
+                    sql_value::Value::NumberValue(n) => {
                         if let Some(num) = serde_json::Number::from_f64(*n) {
                             Value::Number(num)
                         } else {
                             continue;
                         }
                     }
-                    metadata_item::Value::BoolValue(b) => Value::Bool(*b),
+                    sql_value::Value::BoolValue(b) => Value::Bool(*b),
+                    sql_value::Value::Int64Value(i) => {
+                        if let Some(num) = serde_json::Number::from_f64(*i as f64) {
+                            Value::Number(num)
+                        } else {
+                            continue;
+                        }
+                    }
+                    sql_value::Value::BytesValue(_) => Value::String("[binary]".to_string()),
+                    sql_value::Value::NullValue(_) => Value::Null,
+                    sql_value::Value::ArrayValue(_) => Value::String("[array]".to_string()),
+                    sql_value::Value::ObjectValue(_) => Value::String("[object]".to_string()),
                 };
                 metadata.insert(key.clone(), json_value);
             }
