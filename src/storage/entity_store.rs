@@ -150,6 +150,16 @@ impl ProximaEntityStore {
         GLOBAL_ENTITY_STORE.get().cloned()
     }
 
+    /// Get vector IDs for an entity (public accessor)
+    pub fn get_entity_vectors(&self, entity_id: &str) -> Option<Vec<String>> {
+        self.entity_to_vectors.read().unwrap().get(entity_id).cloned()
+    }
+
+    /// Get embedding vector for a vector ID (public accessor)
+    pub fn get_embedding(&self, vector_id: &str) -> Option<Vec<f32>> {
+        self.embeddings.read().unwrap().get(vector_id).cloned()
+    }
+
     /// Generate entity storage key
     fn entity_key(collection_id: &str, entity_id: &str) -> String {
         format!("{}/entity/{}", collection_id, entity_id)

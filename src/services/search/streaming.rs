@@ -25,16 +25,21 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::metadata_item;
+use crate::proto::proximadb_v1::sql_value;
 use crate::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
 
 /// Helper function to convert proto metadata Value to TypedMetadata value
-fn convert_proto_value_to_typed(value: metadata_item::Value) -> MetadataValue {
+fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
     match value {
-        metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
-        metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
-        metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
+        sql_value::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+        sql_value::Value::NumberValue(f) => MetadataValue::Number(f),
+        sql_value::Value::BoolValue(b) => MetadataValue::Bool(b),
+        sql_value::Value::Int64Value(i) => MetadataValue::Number(i as f64),
+        sql_value::Value::BytesValue(_) => MetadataValue::String(Arc::from("[binary]")),
+        sql_value::Value::NullValue(_) => MetadataValue::Null,
+        sql_value::Value::ArrayValue(_) => MetadataValue::String(Arc::from("[array]")),
+        sql_value::Value::ObjectValue(_) => MetadataValue::String(Arc::from("[object]")),
     }
 }
 

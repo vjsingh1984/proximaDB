@@ -98,6 +98,10 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
                                 Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
                                 Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => "[binary]".to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => "null".to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => "[array]".to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => "[object]".to_string(),
                                 None => String::new(),
                             };
                             (key.clone(), value_str)
