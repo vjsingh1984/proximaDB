@@ -7,8 +7,8 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::index::axis::eventlog::StorageEngineType;
 use crate::core::VectorRecord;
+use crate::index::axis::eventlog::StorageEngineType;
 use crate::services::events::log::{EventLogService, event_log_service};
 use crate::storage::engines::FlushParameters;
 

@@ -1,14 +1,21 @@
 #[cfg(test)]
 mod tests {
-    use crate::storage::engines::universal::adapter::{AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest, UniversalDistanceAdapter};
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::engines::universal::adapter::{
+        AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
+        UniversalDistanceAdapter,
+    };
     use crate::storage::engines::universal::config::StorageEngineConfig;
     use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
-    use crate::storage::engines::universal::hardware_manager::{HardwareAccelerationManager, OptimizationStrategy};
+    use crate::storage::engines::universal::hardware_manager::{
+        HardwareAccelerationManager, OptimizationStrategy,
+    };
     use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
-    use crate::storage::engines::universal::storage_integration::{EngineType, NOVAAdapter, PRISMAdapter};
-    use crate::compute::distance_computation::DistanceMetric;
-    use std::collections::HashMap;
+    use crate::storage::engines::universal::storage_integration::{
+        EngineType, NOVAAdapter, PRISMAdapter,
+    };
     use crate::utils::uuid::Uuid;
+    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_universal_adapter_creation() {
@@ -237,21 +244,29 @@ mod tests {
 }
 
 // Re-export commonly used types for tests
-pub use crate::storage::engines::universal::adapter::{AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest, UniversalDistanceAdapter};
+pub use crate::storage::engines::universal::adapter::{
+    AdapterError, AdapterResult, CandidateVector, DistanceComputationRequest,
+    UniversalDistanceAdapter,
+};
 pub use crate::storage::engines::universal::config::StorageEngineConfig;
 pub use crate::storage::engines::universal::conversion::{FormatConverter, StorageFormat};
-pub use crate::storage::engines::universal::hardware_manager::{HardwareAccelerationManager, OptimizationStrategy};
+pub use crate::storage::engines::universal::hardware_manager::{
+    HardwareAccelerationManager, OptimizationStrategy,
+};
 pub use crate::storage::engines::universal::quantized_calculator::UniversalQuantizedCalculator;
-pub use crate::storage::engines::universal::storage_integration::{EngineType, NOVAAdapter, PRISMAdapter};
-
+pub use crate::storage::engines::universal::storage_integration::{
+    EngineType, NOVAAdapter, PRISMAdapter,
+};
 
 // Test utilities
 #[cfg(test)]
 pub mod test_utils {
-    use crate::storage::engines::universal::adapter::{CandidateVector, DistanceComputationRequest};
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::engines::universal::adapter::{
+        CandidateVector, DistanceComputationRequest,
+    };
     use crate::storage::engines::universal::conversion::StorageFormat;
     use crate::storage::engines::universal::storage_integration::EngineType;
-    use crate::compute::distance_computation::DistanceMetric;
     use std::collections::HashMap;
 
     pub fn create_test_candidate_vector(id: uuid::Uuid, dimension: usize) -> CandidateVector {
@@ -272,7 +287,9 @@ pub mod test_utils {
     ) -> DistanceComputationRequest {
         let query_vector = (0..query_dimension).map(|i| i as f32 * 0.1).collect();
         let candidates = (0..candidate_count)
-            .map(|_| create_test_candidate_vector(crate::utils::uuid::Uuid::new_v4(), query_dimension))
+            .map(|_| {
+                create_test_candidate_vector(crate::utils::uuid::Uuid::new_v4(), query_dimension)
+            })
             .collect();
 
         DistanceComputationRequest {

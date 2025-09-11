@@ -142,9 +142,32 @@ pub struct VectorOperationsService {
 
     /// Collection service for metadata and configuration
     collection_service: Arc<crate::services::collection::manager::CollectionService>,
+    /// Optional global cache orchestrator for richer cache stats/prefetch
+    orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
 
 impl VectorOperationsService {
+    /// Create service with a shared context for cross-cutting concerns
+    pub fn new_with_context(
+        storage_engine: Arc<SstStorage>,
+        wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
+        axis_index_manager: Arc<crate::index::AxisManager>,
+        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        ctx: &crate::core::context::SharedContext,
+    ) -> Self {
+        let mut svc = Self::new(
+            storage_engine,
+            wal_manager,
+            axis_index_manager,
+            collection_service,
+        );
+        svc.orchestrator = ctx.orchestrator.clone();
+        svc
+    }
+    /// Expose the unified storage engine as a trait object for integration points
+    pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
+        self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageEngine>
+    }
     /// Public v1 boundary: execute vector search and return v1 response
     pub async fn search_v1(
         &self,
@@ -188,6 +211,9 @@ impl VectorOperationsService {
             (None, 0)
         };
 
+        if let Some(orch) = &self.orchestrator {
+            orch.track_access_async(collection_id.clone(), crate::storage::cache::orchestrator::CacheType::QueryResult);
+        }
         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
             success: true,
             operation: crate::proto::proximadb_v1::VectorServiceOperation::Search as i32,
@@ -240,13 +266,23 @@ impl VectorOperationsService {
                 let mut vector_ids: Vec<String> = Vec::new();
                 let mut error_code: Option<String> = None;
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                    success = json.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    success = json
+                        .get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     vector_ids = json
                         .get("vector_ids")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    error_code = json.get("error_code").and_then(|v| v.as_str()).map(String::from);
+                    error_code = json
+                        .get("error_code")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
                 }
 
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
@@ -289,12 +325,21 @@ impl VectorOperationsService {
         let include_metadata = req.include_metadata.unwrap_or(true);
 
         match self
-            .vector(&req.collection_id, &req.vector_id, include_vector, include_metadata)
+            .vector(
+                &req.collection_id,
+                &req.vector_id,
+                include_vector,
+                include_metadata,
+            )
             .await
         {
             Ok(Some(rec)) => {
                 let v1_rec = crate::proto::proximadb_v1::SearchVectorRecord {
-                    id: if rec.id.is_empty() { "unknown".to_string() } else { rec.id },
+                    id: if rec.id.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        rec.id
+                    },
                     score: 1.0,
                     vector: rec.vector,
                     metadata: {
@@ -397,7 +442,17 @@ impl VectorOperationsService {
             query_cache,
             axis_index_manager,
             collection_service,
+            orchestrator: None,
         }
+    }
+
+    /// Attach orchestrator (builder-style)
+    pub fn with_orchestrator(
+        mut self,
+        orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+    ) -> Self {
+        self.orchestrator = orchestrator;
+        self
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.
@@ -523,11 +578,7 @@ impl VectorOperationsService {
             k as u32,
             filter_str.as_deref(),
         );
-        if let Some(cached_v1) = self
-            .query_cache
-            .get_if_fresh_v1(&cache_key, 300)
-            .await
-        {
+        if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
             return Ok(cached_v1);
         }
 
@@ -568,11 +619,8 @@ impl VectorOperationsService {
             .await?;
 
         // Build v1 results from the optimized records
-        let v1_results = vec![self.optimized_results_to_proto_v1(
-            optimized_results,
-            collection_id,
-            true,
-        )];
+        let v1_results =
+            vec![self.optimized_results_to_proto_v1(optimized_results, collection_id, true)];
 
         // Cache v1 (via legacy conversion) for reuse
         self.query_cache
@@ -666,7 +714,10 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
-    ) -> Result<(Vec<crate::proto::proximadb_v1::SearchResult>, SearchPlanHints)> {
+    ) -> Result<(
+        Vec<crate::proto::proximadb_v1::SearchResult>,
+        SearchPlanHints,
+    )> {
         // Reuse the same cache check to determine cache_hit
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
         let cache_key = QueryKey::new(
@@ -817,8 +868,8 @@ impl VectorOperationsService {
             filter_params: None, // No longer using UnifiedMetadataFilter
             optimization_goal,
             available_files: Vec::new(), // Storage engines handle file listing
-            total_vectors: 0, // Storage engines track vector counts
-            total_columns: 0, // Storage engines track column metadata
+            total_vectors: 0,            // Storage engines track vector counts
+            total_columns: 0,            // Storage engines track column metadata
             query_vectors: Some(&query_vectors),
         };
 
@@ -846,7 +897,10 @@ impl VectorOperationsService {
         self.query_cache
             .cache_with_dependencies_v1(cache_key, v1_results.clone(), Vec::new())
             .await;
-        debug!("💾 Cached v1 query results for collection {}", collection_id);
+        debug!(
+            "💾 Cached v1 query results for collection {}",
+            collection_id
+        );
 
         // Return v1 results directly - no conversion needed
         Ok(v1_results)
@@ -860,7 +914,10 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
-    ) -> Result<(Vec<crate::proto::proximadb_v1::SearchResult>, SearchPlanHints)> {
+    ) -> Result<(
+        Vec<crate::proto::proximadb_v1::SearchResult>,
+        SearchPlanHints,
+    )> {
         // Determine cache key and cache_hit similarly
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
         let cache_key = QueryKey::new(
@@ -903,7 +960,9 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
-        let mut intermediate_results: Option<Vec<crate::core::search::results::OptimizedSearchRecord>> = None;
+        let mut intermediate_results: Option<
+            Vec<crate::core::search::results::OptimizedSearchRecord>,
+        > = None;
 
         for step in plan.execution_steps {
             match step {
@@ -1048,16 +1107,17 @@ impl VectorOperationsService {
                     estimated_reduction * 100.0
                 );
                 // Convert FilterCondition to UnifiedMetadataFilter
-                let _unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
-                    conditions: vec![filter],
-                    logic: crate::query::unified_query_optimizer::FilterLogic::And,
-                    optimization_hints:
-                        crate::query::unified_query_optimizer::FilterOptimizationHints {
-                            expected_selectivity: Some(estimated_reduction),
-                            preferred_index: None,
-                            allow_parallel: true,
-                        },
-                };
+                let _unified_filter =
+                    crate::query::unified_query_optimizer::UnifiedMetadataFilter {
+                        conditions: vec![filter],
+                        logic: crate::query::unified_query_optimizer::FilterLogic::And,
+                        optimization_hints:
+                            crate::query::unified_query_optimizer::FilterOptimizationHints {
+                                expected_selectivity: Some(estimated_reduction),
+                                preferred_index: None,
+                                allow_parallel: true,
+                            },
+                    };
                 // Configure storage engine to apply filter during scan
                 // TODO: set_scan_filter is private, need to make it public or use different approach
                 // self.storage_engine
@@ -1067,16 +1127,17 @@ impl VectorOperationsService {
             FilterPushdownOperation::IndexLevel { filter, index_name } => {
                 debug!("⬇️ Pushing filter to index: {:?}", index_name);
                 // Convert FilterCondition to UnifiedMetadataFilter
-                let _unified_filter = crate::query::unified_query_optimizer::UnifiedMetadataFilter {
-                    conditions: vec![filter],
-                    logic: crate::query::unified_query_optimizer::FilterLogic::And,
-                    optimization_hints:
-                        crate::query::unified_query_optimizer::FilterOptimizationHints {
-                            expected_selectivity: None,
-                            preferred_index: index_name.clone(),
-                            allow_parallel: true,
-                        },
-                };
+                let _unified_filter =
+                    crate::query::unified_query_optimizer::UnifiedMetadataFilter {
+                        conditions: vec![filter],
+                        logic: crate::query::unified_query_optimizer::FilterLogic::And,
+                        optimization_hints:
+                            crate::query::unified_query_optimizer::FilterOptimizationHints {
+                                expected_selectivity: None,
+                                preferred_index: index_name.clone(),
+                                allow_parallel: true,
+                            },
+                    };
                 // Configure index to apply filter during lookup
                 if let Some(_index) = index_name {
                     // TODO: set_index_filter is private, need to make it public or use different approach
@@ -1182,7 +1243,7 @@ impl VectorOperationsService {
             .storage_engine
             .search_vectors_unified(&search_context)
             .await?;
-        
+
         // Use OptimizedSearchRecord directly - no conversion needed
         let storage_results = optimized_results;
         info!(
@@ -1191,13 +1252,15 @@ impl VectorOperationsService {
         );
 
         // Convert WAL results to OptimizedSearchRecord and merge with storage results
-        let wal_optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> = wal_results
-            .into_iter()
-            .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
-            .collect();
-        
+        let wal_optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+            wal_results
+                .into_iter()
+                .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
+                .collect();
+
         // Merge and rank results from both stages
-        let mut all_results = Vec::with_capacity(wal_optimized_results.len() + storage_results.len());
+        let mut all_results =
+            Vec::with_capacity(wal_optimized_results.len() + storage_results.len());
         all_results.extend(wal_optimized_results);
         all_results.extend(storage_results);
 
@@ -1227,7 +1290,8 @@ impl VectorOperationsService {
             Ok(cached.clone())
         } else {
             // Load from collection service
-            let collection = self.collection_service
+            let collection = self
+                .collection_service
                 .collection(collection_id)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
@@ -1244,7 +1308,7 @@ impl VectorOperationsService {
     async fn get_available_files(&self, _collection_id: &str) -> Result<Vec<String>> {
         // Get collection config to find storage location
         let collection = self.get_or_load_collection(collection_id).await?;
-        
+
         // Build data path from collection config
         // Format: {base_url}/{collection_id}/data
         if let Some(config) = &collection.config {
@@ -1275,7 +1339,7 @@ impl VectorOperationsService {
     }
 
     async fn get_column_count(&self, _collection_id: &str) -> Result<usize> {
-        // TODO: collection_metadata is private, need alternative approach  
+        // TODO: collection_metadata is private, need alternative approach
         // let meta = self.storage_engine.collection_metadata(collection_id)?;
         // Meta is a serde_json::Value, extract the column count
         // For now, return default value
@@ -1372,7 +1436,10 @@ impl VectorOperationsService {
             .await?;
 
         // Return OptimizedSearchRecord directly - no conversion needed
-        debug!("✅ Metadata filter returned {} results", optimized_results.len());
+        debug!(
+            "✅ Metadata filter returned {} results",
+            optimized_results.len()
+        );
         Ok(optimized_results)
     }
 
@@ -1427,7 +1494,10 @@ impl VectorOperationsService {
             .await?;
 
         // Return OptimizedSearchRecord directly - no conversion needed
-        debug!("✅ Vector search returned {} results", optimized_results.len());
+        debug!(
+            "✅ Vector search returned {} results",
+            optimized_results.len()
+        );
         Ok(optimized_results)
     }
 
@@ -1505,25 +1575,27 @@ impl VectorOperationsService {
         let results: Vec<crate::core::search::results::OptimizedSearchRecord> = query_result
             .results
             .into_iter()
-            .map(|scored_result| crate::core::search::results::OptimizedSearchRecord {
-                id: scored_result.vector_id.clone(),
-                vector_id: Some(scored_result.vector_id),
-                score: scored_result.similarity,
-                similarity: Some(scored_result.similarity),
-                vector: None, // AXIS doesn't return vectors by default
-                metadata: Default::default(),
-                debug_info: None,
-                version: None,
-                timestamp: None,
-                updated_at: None,
-                expires_at: scored_result.expires_at.map(|dt| dt.timestamp() as u32),
-                source: None,
-                expanded_context: Vec::new(),
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
-            })
+            .map(
+                |scored_result| crate::core::search::results::OptimizedSearchRecord {
+                    id: scored_result.vector_id.clone(),
+                    vector_id: Some(scored_result.vector_id),
+                    score: scored_result.similarity,
+                    similarity: Some(scored_result.similarity),
+                    vector: None, // AXIS doesn't return vectors by default
+                    metadata: Default::default(),
+                    debug_info: None,
+                    version: None,
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: scored_result.expires_at.map(|dt| dt.timestamp() as u32),
+                    source: None,
+                    expanded_context: Vec::new(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                },
+            )
             .collect();
 
         debug!("✅ Index lookup returned {} results", results.len());
@@ -1834,8 +1906,11 @@ impl VectorOperationsService {
         collection_id: &str,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         // Get vectors from WAL that haven't been flushed to storage
-        let wal_entries = self.wal_manager.read_entries(collection_id, 0, None).await?;
-        
+        let wal_entries = self
+            .wal_manager
+            .read_entries(collection_id, 0, None)
+            .await?;
+
         // Convert WAL entries to VectorRecord proto format
         let unflushed_vectors = wal_entries
             .into_iter()
@@ -1851,7 +1926,7 @@ impl VectorOperationsService {
                 source: None,
             })
             .collect();
-        
+
         Ok(unflushed_vectors)
     }
 
@@ -1892,7 +1967,6 @@ impl VectorOperationsService {
             .collect())
     }
 
-
     /// v1: Convert InternalSearchResult to proximadb_v1::SearchResult
     fn convert_to_proto_search_result_v1(
         &self,
@@ -1925,33 +1999,39 @@ impl VectorOperationsService {
         include_vector: bool,
         include_source: bool,
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
-        use crate::proto::proximadb_v1::{SearchVectorRecord, MetadataItem};
-        
+        use crate::proto::proximadb_v1::{MetadataItem, SearchVectorRecord};
+
         // Convert TypedMetadata to proto MetadataItems
-        let metadata_items: Vec<MetadataItem> = result.metadata.as_map()
+        let metadata_items: Vec<MetadataItem> = result
+            .metadata
+            .as_map()
             .iter()
             .map(|(key, value)| {
                 use crate::core::metadata_types::MetadataValue;
                 use crate::proto::proximadb_v1::sql_value::Value;
-                
+
                 let proto_value = match value {
                     MetadataValue::String(s) => Some(Value::StringValue(s.to_string())),
                     MetadataValue::Number(n) => Some(Value::NumberValue(*n)),
                     MetadataValue::Bool(b) => Some(Value::BoolValue(*b)),
                     MetadataValue::Null => None,
                 };
-                
+
                 MetadataItem {
                     key: key.clone(),
                     value: proto_value,
                 }
             })
             .collect();
-        
+
         SearchVectorRecord {
             id: result.id.clone(),
             vector: if include_vector {
-                result.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default()
+                result
+                    .vector
+                    .as_ref()
+                    .map(|arc| (**arc).clone())
+                    .unwrap_or_default()
             } else {
                 vec![]
             },
@@ -1966,20 +2046,29 @@ impl VectorOperationsService {
                 None
             },
             expanded_context: if include_source {
-                result.expanded_context.iter().map(|sc| {
-                    match &sc.data {
-                        Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
-                        Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => url.clone(),
-                        Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
+                result
+                    .expanded_context
+                    .iter()
+                    .map(|sc| match &sc.data {
+                        Some(crate::proto::proximadb_v1::source_content::Data::TextContent(
+                            text,
+                        )) => text.clone(),
+                        Some(
+                            crate::proto::proximadb_v1::source_content::Data::ExternalReference(
+                                url,
+                            ),
+                        ) => url.clone(),
+                        Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(
+                            _,
+                        )) => "[Binary Content]".to_string(),
                         None => "[Empty Content]".to_string(),
-                    }
-                }).collect()
+                    })
+                    .collect()
             } else {
                 vec![]
             },
         }
     }
-    
 
     /// Convert OptimizedSearchRecord to v1 proto SearchVectorRecord
     fn optimized_to_proto_v1(
@@ -1988,30 +2077,24 @@ impl VectorOperationsService {
         include_vector: bool,
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         // Map TypedMetadata to v1 SqlValue map
-        let mut metadata: std::collections::HashMap<
-            String,
-            crate::proto::proximadb_v1::SqlValue,
-        > = std::collections::HashMap::new();
+        let mut metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
+            std::collections::HashMap::new();
 
         for (key, value) in result.metadata.as_map().iter() {
             use crate::core::metadata_types::MetadataValue;
             let sql_value = match value {
                 MetadataValue::String(s) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            s.to_string(),
-                        ),
-                    ),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        s.to_string(),
+                    )),
                 },
                 MetadataValue::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(*n),
-                    ),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                        *n,
+                    )),
                 },
                 MetadataValue::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
-                    ),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
                 },
                 MetadataValue::Null => crate::proto::proximadb_v1::SqlValue { value: None },
             };
@@ -2075,7 +2158,7 @@ mod migration_example {
             // NOTE: These are placeholder variables for migration example
             let search_context = "example_context";
             let filter = "example_filter";
-            
+
             let search_strategy = self
                 .search_optimizer
                 .optimize_search(search_context)

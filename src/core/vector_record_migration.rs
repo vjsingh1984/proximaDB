@@ -38,26 +38,28 @@ pub fn service_to_proto(
         .iter()
         .map(|(key, value)| {
             let metadata_value = match value {
-                serde_json::Value::String(s) => Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
-                ),
+                serde_json::Value::String(s) => {
+                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()))
+                }
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                            f,
-                        ))
+                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f))
                     } else {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            n.to_string(),
-                        ))
+                        Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                n.to_string(),
+                            ),
+                        )
                     }
                 }
-                serde_json::Value::Bool(b) => {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b))
-                }
-                _ => Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    value.to_string(),
-                )),
+                serde_json::Value::Bool(b) => Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b),
+                ),
+                _ => Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        value.to_string(),
+                    ),
+                ),
             };
             crate::proto::proximadb_v1::MetadataItem {
                 key: key.clone(),
@@ -184,15 +186,17 @@ mod tests {
         let metadata = vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "test".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "test".to_string(),
+                    ),
+                ),
             },
             MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "42".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("42".to_string()),
+                ),
             },
         ];
 

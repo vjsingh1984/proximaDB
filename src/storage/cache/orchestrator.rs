@@ -28,9 +28,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::metrics::collectors::AccessPatternMetricsCollector;
 use crate::storage::cache::metrics::CacheMetrics;
-use crate::storage::cache::{
-    BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache,
-};
+use crate::storage::cache::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache};
 
 /// Event for async cache access tracking
 ///
@@ -77,20 +75,20 @@ pub struct AccessPatternTracker {
     /// Access history for pattern detection (processed async)
     /// VecDeque provides O(1) push/pop for sliding window
     access_history: Arc<Mutex<VecDeque<AccessRecord>>>,
-    
+
     /// Correlation matrix for related items (using DashMap for lock-free concurrent access)
     /// Key: item ID, Value: list of correlated items with scores
     correlation_matrix: Arc<DashMap<String, Vec<AccessCorrelation>>>,
-    
+
     /// Maximum history size before old entries are evicted
     max_history: usize,
-    
+
     /// Event sender for async processing (bounded channel prevents memory issues)
     event_sender: mpsc::Sender<CacheAccessEvent>,
-    
+
     /// Background processor handle for clean shutdown
     processor_handle: Option<tokio::task::JoinHandle<()>>,
-    
+
     /// Integration with unified metrics framework for monitoring
     metrics_collector: Option<Arc<AccessPatternMetricsCollector>>,
 }
@@ -117,6 +115,33 @@ pub enum CacheType {
     FilterBitmap,
     IndexStructure,
     Metadata,
+    // SKS/Graph extensions
+    /// Entity headers (typed/flexible metadata, provenance, temporal)
+    EntityHeader,
+    /// Embedding catalog mappings and representative vectors
+    EmbeddingCatalog,
+    /// Graph node cache
+    GraphNode,
+    /// Graph edge cache
+    GraphEdge,
+    /// Graph adjacency (CSR blocks)
+    GraphAdjacency,
+    /// Graph property indexes/postings
+    GraphPropertyIndex,
+}
+
+static GLOBAL_ORCHESTRATOR: std::sync::OnceLock<Arc<CrossCacheOrchestrator>> = std::sync::OnceLock::new();
+
+impl CrossCacheOrchestrator {
+    /// Register a global orchestrator reference for cross-cutting cache access tracking
+    pub fn register_global(orchestrator: Arc<CrossCacheOrchestrator>) {
+        let _ = GLOBAL_ORCHESTRATOR.set(orchestrator);
+    }
+
+    /// Get the global orchestrator if registered
+    pub fn global() -> Option<Arc<CrossCacheOrchestrator>> {
+        GLOBAL_ORCHESTRATOR.get().cloned()
+    }
 }
 
 impl AccessPatternTracker {
@@ -399,6 +424,11 @@ pub struct UsageStats {
     pub last_rebalance: SystemTime,
 }
 
+/// Provider trait for engines/services to report usage snapshots
+pub trait CacheStatsProvider {
+    fn snapshot(&self) -> UsageStats;
+}
+
 impl DynamicMemoryAllocator {
     pub fn new(total_budget: usize) -> Self {
         let allocations = Arc::new(DashMap::new());
@@ -654,7 +684,6 @@ impl CascadeInvalidator {
 
 /// Orchestrates multiple specialized caches for cross-cache operations
 pub struct CrossCacheOrchestrator {
-    
     /// Query result cache
     query_cache: Option<Arc<QueryCache>>,
     /// Filter bitmap cache
@@ -675,6 +704,8 @@ pub struct CrossCacheOrchestrator {
 
     /// Metrics
     metrics: Arc<CacheMetrics>,
+    // Optional: cache providers for usage snapshots
+    cache_providers: Arc<DashMap<CacheType, Vec<Arc<dyn CacheStatsProvider + Send + Sync>>>>,
 }
 
 impl CrossCacheOrchestrator {
@@ -696,10 +727,18 @@ impl CrossCacheOrchestrator {
             prefetch_engine,
             cascade_invalidator,
             metrics,
+            cache_providers: Arc::new(DashMap::new()),
         }
     }
 
-    
+    /// Register a provider for periodic usage stats snapshots per cache type
+    pub fn register_cache_provider(
+        &self,
+        cache_type: CacheType,
+        provider: Arc<dyn CacheStatsProvider + Send + Sync>,
+    ) {
+        self.cache_providers.entry(cache_type).or_default().push(provider);
+    }
 
     /// Register query result cache
     pub fn with_query_cache(mut self, cache: Arc<QueryCache>) -> Self {
@@ -777,8 +816,6 @@ impl CrossCacheOrchestrator {
         // Invalidate from all caches that might have this key
         let mut tasks = vec![];
 
-        
-
         if let Some(ref cache) = self.query_cache {
             let cache = cache.clone();
             let key = key.to_string();
@@ -827,8 +864,6 @@ impl CrossCacheOrchestrator {
         // Collect current usage stats
         let stats_updates: Vec<(CacheType, UsageStats)> = Vec::new();
 
-        
-
         // Update stats in memory manager
         for (cache_type, stats) in stats_updates {
             self.memory_allocator.update_stats(cache_type, stats).await;
@@ -840,7 +875,6 @@ impl CrossCacheOrchestrator {
         // Apply new allocations to caches
         for (cache_type, allocation) in new_allocations {
             match cache_type {
-                
                 CacheType::QueryResult => {
                     if let Some(cache) = &self.query_cache {
                         cache.resize(allocation).await?;
@@ -871,7 +905,6 @@ impl CrossCacheOrchestrator {
 
                 if let Some(request) = prefetch_engine.dequeue_fetch_request().await {
                     match request.cache_type {
-                        
                         CacheType::Metadata => {
                             if let Some(_cache) = &metadata_cache {
                                 // Would actually fetch and cache metadata
@@ -888,6 +921,14 @@ impl CrossCacheOrchestrator {
     /// Get pattern tracker for external use
     pub fn pattern_tracker(&self) -> Arc<AccessPatternTracker> {
         self.pattern_tracker.clone()
+    }
+
+    /// Hint the orchestrator to prefetch related items (bounded by internal queue caps)
+    pub async fn request_prefetch(&self, key: &str, cache_type: CacheType) {
+        // Best-effort; internal engine enforces queue size and guardrails
+        self.prefetch_engine
+            .queue_predictive_fetch(key, cache_type)
+            .await;
     }
 
     /// Get memory allocator for external use

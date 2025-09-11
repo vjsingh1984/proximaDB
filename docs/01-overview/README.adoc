@@ -47,6 +47,23 @@ High-level documentation covering ProximaDB's capabilities, architecture, and pe
 * Sub-5ms P99 latency
 * 200-500K vectors/second ingestion
 
+== Visual Overview
+
+[source,mermaid]
+----
+graph LR
+  Client --> REST
+  Client --> gRPC
+  REST --> Handlers
+  gRPC --> Handlers
+  Handlers --> VOS[VectorOps]
+  Handlers --> Graph
+  VOS --> VIPER
+  VOS --> SST
+  VOS --> HELIX
+  Graph --> ORION
+----
+
 == Navigation
 
 * **New Users**: Start with link:introduction.adoc[Introduction]

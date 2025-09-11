@@ -42,6 +42,9 @@ This guide is for developers who want to contribute to ProximaDB or build custom
 
 | link:release-process.adoc[Release Process]
 | Versioning, releases, and deployment
+
+| link:agents-sks-hybrid-guide.adoc[Agent Guide: SKS + Hybrid]
+| Step-by-step tasks for implementing SKS and hybrid orchestration
 |===
 
 == Quick Start for Developers

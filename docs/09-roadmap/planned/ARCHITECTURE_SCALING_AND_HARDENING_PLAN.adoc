@@ -1,0 +1,140 @@
+= Architecture, Scaling & Hardening Plan
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document outlines the plan for evolving ProximaDB from a single-node database to a distributed, scalable, and production-ready system. It addresses the key architectural limitations and feature gaps identified during the comprehensive codebase review.
+
+== Recommendations (Next Steps)
+
+=== Near‑Term (P0/P1)
+
+- Relational substrate maturity: Align planner/executor Join schema; ON handling; pushdown; pagination/streaming.
+- SKS persistence v2: Engine‑backed KV for headers; embedding catalog index (entity↔vector) persisted.
+- Graph traversal: Integrate full BFS/DFS/A* from engines with bounds; add traversal filters; tune memory.
+- Orchestrator: Add [cache] config mapping; expose metrics; prefetch policies for SKS/graph workflows.
+- Security: mTLS for gRPC, JWT/OIDC for REST, route‑level RBAC, audit logging.
+
+=== Mid‑Term (Distributed/HA)
+
+- Sharding & Placement: Consistent hashing by collection/shard; shard services (vector/graph) as first‑class.
+- Replication & HA: Raft/consensus per collection/index; WAL replication; quorum reads/writes; failover.
+- Multi‑Cloud: Pluggable storage backends; neutral path abstraction; S3/GCS/Azure hardened with CI tests.
+- Control Plane: Cluster orchestration (membership, placement, rebalance), operator/CRDs for Kubernetes.
+- Observability: End‑to‑end tracing; cardinality‑aware metrics; SLO dashboards.
+
+=== Long‑Term (Performance & Features)
+
+- Hardware acceleration: GPU offload for distance and SQL/GPU planning; SIMD pipelines; batching pipelines.
+- Learned fusion/weights: Adaptive strategies for hybrid queries based on telemetry.
+- Tiered graph storage: QUASAR as default with ORION hot tier; cold moves driven by access patterns.
+- Data governance: Fine‑grained authZ, PII tagging, encryption at rest, key rotation.
+
+== Deep Dive: Current Challenges → Future Designs (Rationale)
+
+=== 1) Partitioning, Sharding, and Placement
+- Challenge: Single‑process MVP with implicit locality; no explicit shard key or policy.
+- Design: Introduce collection‑scoped sharding with pluggable partitioners (hash/modulo, range, hybrid). Co‑locate vector + graph + SKS shards for the same collection to minimize cross‑shard hops. Keep shard metadata in a consistent store (Raft/etcd).
+- Rationale: Minimizes hybrid fan‑out, enables elastic horizontal scaling; shard locality improves cache hit rates and reduces tail latency.
+
+=== 2) Consistency Model and Writes
+- Challenge: WAL is local; cross‑node consistency undefined. SKS headers use FS KV v1.
+- Design: Per‑collection Raft group for metadata + write routing. WAL replication with quorum acks; background repair for late followers. Promote FS KV → Engine‑backed KV or embedded Rocks/ParityDB for headers with write‑through replication.
+- Rationale: Strong consistency for control paths; tunable for data paths (read‑committed, timeline consistency). Clean replay semantics and faster failover.
+
+=== 3) Hybrid Query in a Cluster
+- Challenge: Orchestrator + hybrid is single‑process; no cross‑shard federation.
+- Design: Coordinator layer that plans per‑shard sub‑queries (VectorSearch/GraphTraversal) with shard‑local fusion; global fusion at coordinator. Seeding strategies operate per‑shard first, then federate seeds (prefer locality, cap fan‑out).
+- Rationale: Preserves latency by reducing cross‑shard traffic; deterministic fusion with bounded resources.
+
+=== 4) Cache Orchestrator (Cluster Evolution)
+- Challenge: Orchestrator is process‑local; correlation learning not shared.
+- Design: Hierarchical orchestrator: per‑node collectors + lightweight control plane topic for exchanging hot keys and budgets. Budgets rebalanced node‑locally; global signals steer prefetch for hot partitions.
+- Rationale: Avoids central bottlenecks; preserves independence with enough global hints for effectiveness.
+
+=== 5) Storage Engine Evolution
+- Challenge: Heterogeneous engine APIs; KV/meta needs standardization for SKS.
+- Design: Define StorageKV trait (put/get/scan, TTL, namespaces) implemented by SST/Helix backends or embedded KV. Standardize meta I/O for headers, small indices, and orchestrator hints. Thread the Cross‑Cache Orchestrator explicitly into engines:
+  - HELIX [DONE]: accepts optional orchestrator.
+  - RAPTOR [DONE]: engine/reader accept orchestrator.
+  - VIPER [PLAN]: add optional orchestrator to engine for Parquet footer + file metadata caching, zone map hints.
+  - SST [PLAN]: route bloom/meta caches through orchestrator for shared budgeting and predictive prefetch.
+- Rationale: Removes ad‑hoc FS KV, simplifies durability story, enables uniform replication.
+
+=== 6) Graph at Scale
+- Challenge: ORION in‑memory is fast but memory‑bound; PULSAR/QUASAR single‑process MVP.
+- Design: PULSAR shards = ORION per‑shard; QUASAR hot tier fronting object storage. Add CSR block compaction, adjacency prefetch, and bounded BFS (frontier caps) with backpressure.
+- Rationale: Preserves ORION speed where it matters; enables cost‑efficient cold storage.
+
+=== 7) Security Hardening
+- Challenge: Mixed maturity in authN/Z, TLS, RBAC.
+- Design: mTLS for gRPC, JWT/OIDC for REST; policy engine (OPA/Rego) integration; field‑level ACLs for SKS; envelope encryption for vectors/headers; KMS integration (AES‑GCM + envelope keys).
+- Rationale: Enterprise‑grade posture without invasive rewrites; aligns with multi‑tenant, multi‑cloud deployments.
+
+=== 8) Observability & Backpressure
+- Challenge: Limited shard‑aware metrics and adaptive throttling.
+- Design: Standardize OpenTelemetry traces across planner/executor/services; shard KPIs (p99 latency, cache hit, queue depth). Add credits/leaky bucket per shard; shed load on overload; propagate backpressure.
+- Rationale: Predictable SLOs, faster incident response, safer autoscaling.
+
+=== 9) HA/DR Playbooks
+- Challenge: No formal playbooks for region/node failure.
+- Design: Document and implement: (a) single node failover (raft), (b) region failover (async replication + DNS/ingress switch), (c) backup/restore (snapshots + WAL). Test via chaos runs.
+- Rationale: Operational readiness for enterprise.
+
+== Optimization Roadmap (Concrete)
+
+- Planner/Executor
+  - Align Join schema; ON parsing (qualified ids), pushdown; selection/projection pruning.
+  - Hybrid: global fusion improvements (rank‑sensitive tie‑breakers), vector/graph budget caps.
+
+- Vector/Search
+  - SIMD path consolidation; batching; GPU offload thresholds from HardwareConfig.
+  - Adaptive ANN params (ef_search/nprobe) from telemetry; cold start heuristics.
+
+- SKS
+  - Engine‑backed KV for headers; persistent embedding catalog; entity/vector dual index.
+  - Background compaction for SKS meta; TTL for ephemeral artifacts.
+
+- Graph
+  - Bounded BFS/DFS with frontier caps; adjacency prefetch; CSR block compression.
+  - QUASAR cold tier promotion/demotion policies backed by orchestrator signals.
+
+- Cache Orchestrator
+  - Expose metrics (per‑type hit rate, bytes, prefetch queue); budget rebalance policies.
+  - Cluster gossip for hot keys (small topic); privacy budget for PII.
+
+== Orchestrator Integration Guidelines (Design Rules)
+
+- Single Orchestrator per Process
+  - Use one Cross‑Cache Orchestrator instance per process, created at server startup and registered globally.
+  - Do not instantiate per‑engine orchestrators; pass the shared instance explicitly to engines/services.
+
+- SharedContext (Future‑Proofing)
+  - Introduce a `SharedContext` (or `ServiceContext`) struct that carries:
+    - `Arc<CrossCacheOrchestrator>` handle
+    - Metrics updater, tracer handle
+    - Optional tenant/namespace
+  - Prefer constructors that accept `SharedContext` over ad‑hoc builder patterns.
+
+- API Consistency
+  - Engines/Services: prefer `new_with_context(context, ...)` across VIPER/SST/HELIX/VectorOps/GraphService.
+  - Deprecate internal/fallback orchestrator creation inside engines; log warning if detected.
+
+- Namespacing & Tenancy
+  - All cache access events should include namespace keys (tenant, collection, engine, subsystem) to enable per‑tenant accounting and smarter rebalancing.
+
+- Multi‑Process & Cluster Future
+  - Keep the handle abstract: later it may proxy to a node‑local orchestrator that exchanges hot keys/budgets with a lightweight control plane.
+  - Avoid hard dependencies on process‑local global; prefer explicit passing via context for testability and multi‑service topologies.
+
+- Security
+  - mTLS everywhere; JWT for REST; RBAC policy engine; audit trails.
+
+== Risk Register (Selected)
+
+- Cross‑shard hybrid fan‑out can explode latency → Mitigate via shard‑local seeding, cap fan‑out, staged fusion.
+- Orchestrator over‑eager prefetch may thrash → Introduce guarded budgets and opt‑out on overload.
+- KV/header durability assumptions → Standardize StorageKV with replication semantics.
+- GPU offload regressions at small batch sizes → Respect HardwareConfig thresholds with adaptive cutoff.

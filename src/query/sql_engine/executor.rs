@@ -183,10 +183,7 @@ impl SqlExecutor {
                                     )
                                 })
                                 .collect();
-                            data.insert(
-                                "vector".to_string(),
-                                serde_json::Value::Array(vec_json),
-                            );
+                            data.insert("vector".to_string(), serde_json::Value::Array(vec_json));
                         }
                     }
                     "metadata_info" => {
@@ -260,18 +257,32 @@ impl SqlExecutor {
 fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
     use crate::proto::proximadb_v1::{self, sql_value::Value as V};
     match v {
-        serde_json::Value::String(s) => proximadb_v1::SqlValue { value: Some(V::StringValue(s.clone())) },
-        serde_json::Value::Number(n) => proximadb_v1::SqlValue { value: Some(V::NumberValue(n.as_f64().unwrap_or(0.0))) },
-        serde_json::Value::Bool(b) => proximadb_v1::SqlValue { value: Some(V::BoolValue(*b)) },
-        serde_json::Value::Null => proximadb_v1::SqlValue { value: Some(V::NullValue(0)) },
+        serde_json::Value::String(s) => proximadb_v1::SqlValue {
+            value: Some(V::StringValue(s.clone())),
+        },
+        serde_json::Value::Number(n) => proximadb_v1::SqlValue {
+            value: Some(V::NumberValue(n.as_f64().unwrap_or(0.0))),
+        },
+        serde_json::Value::Bool(b) => proximadb_v1::SqlValue {
+            value: Some(V::BoolValue(*b)),
+        },
+        serde_json::Value::Null => proximadb_v1::SqlValue {
+            value: Some(V::NullValue(0)),
+        },
         serde_json::Value::Array(arr) => {
             let values = arr.iter().map(json_to_sql_value).collect();
-            proximadb_v1::SqlValue { value: Some(V::ArrayValue(proximadb_v1::SqlArray { values })) }
+            proximadb_v1::SqlValue {
+                value: Some(V::ArrayValue(proximadb_v1::SqlArray { values })),
+            }
         }
         serde_json::Value::Object(map) => {
             let mut fields = std::collections::BTreeMap::new();
-            for (k, sv) in map.iter() { fields.insert(k.clone(), json_to_sql_value(sv)); }
-            proximadb_v1::SqlValue { value: Some(V::ObjectValue(proximadb_v1::SqlObject { fields })) }
+            for (k, sv) in map.iter() {
+                fields.insert(k.clone(), json_to_sql_value(sv));
+            }
+            proximadb_v1::SqlValue {
+                value: Some(V::ObjectValue(proximadb_v1::SqlObject { fields })),
+            }
         }
     }
 }

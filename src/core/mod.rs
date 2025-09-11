@@ -66,6 +66,9 @@ pub mod serialization;
 /// Unified compression module with 13 algorithm support
 pub mod compression;
 
+/// Shared context for dependency injection
+pub mod context;
+
 /// Storage-related core types and traits
 pub mod storage;
 
@@ -194,12 +197,12 @@ impl VectorRecordSerialization for VectorRecord {
         // 2. Serialize remaining fields using fast bincode (faster than protobuf)
         let other_fields = VectorRecordOtherFields {
             id: Some(self.id.clone()),
-            metadata: self.metadata.clone(),
-            timestamp: self.timestamp,
-            updated_at: self.updated_at,
-            expires_at: self.expires_at,
-            version: self.version,
-            quantized_vector: self.quantized_vector.clone(),
+            metadata: crate::core::conversions::sql_values_to_metadata_items(self.metadata.clone()),
+            timestamp: self.timestamp as u32,
+            updated_at: self.updated_at.map(|t| t as u32),
+            expires_at: self.expires_at.map(|t| t as u32),
+            version: self.version.map(|v| v as u32),
+            quantized_vector: Some(self.quantized_vector.clone()),
         };
         let bincode_data = bincode::serialize(&other_fields)?;
 
@@ -267,12 +270,12 @@ impl VectorRecordSerialization for VectorRecord {
         Ok(VectorRecord {
             id: other_fields.id.unwrap_or_default(),
             vector,
-            metadata: other_fields.metadata,
-            timestamp: other_fields.timestamp,
-            updated_at: other_fields.updated_at,
-            expires_at: other_fields.expires_at,
-            version: other_fields.version,
-            quantized_vector: other_fields.quantized_vector,
+            metadata: crate::core::conversions::metadata_items_to_sql_values(other_fields.metadata),
+            timestamp: other_fields.timestamp as i64,
+            updated_at: other_fields.updated_at.map(|t| t as i64),
+            expires_at: other_fields.expires_at.map(|t| t as i64),
+            version: other_fields.version.map(|v| v as i64),
+            quantized_vector: other_fields.quantized_vector.unwrap_or_default(),
             source: None,
         })
     }

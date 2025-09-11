@@ -229,33 +229,39 @@ mod tests {
         // Test metadata operations - create MetadataItem instances for testing
         let electronics_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "electronics".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "electronics".to_string(),
+                ),
+            ),
         };
         let books_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "books".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string()),
+            ),
         };
         let clothing_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "clothing".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "clothing".to_string(),
+                ),
+            ),
         };
         let premium_item = crate::proto::proximadb_v1::MetadataItem {
             key: "type".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "premium".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "premium".to_string(),
+                ),
+            ),
         };
         let basic_item = crate::proto::proximadb_v1::MetadataItem {
             key: "type".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "basic".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("basic".to_string()),
+            ),
         };
 
         filter.insert_metadata("category", &electronics_item);
@@ -282,15 +288,17 @@ mod tests {
         // Create MetadataItems for testing
         let electronics_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "electronics".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "electronics".to_string(),
+                ),
+            ),
         };
         let books_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "books".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string()),
+            ),
         };
 
         builder.add_metadata_item("category".to_string(), electronics_item.clone());

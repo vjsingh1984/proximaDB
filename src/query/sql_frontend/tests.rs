@@ -1,7 +1,7 @@
 //! Tests for SQL frontend parser
 
 use super::parser::SqlFrontendParser;
-use crate::query::ast::{Query, Expr, Literal, BinaryOp};
+use crate::query::ast::{BinaryOp, Expr, Literal, Query};
 
 #[cfg(test)]
 mod tests {
@@ -11,10 +11,14 @@ mod tests {
     fn test_parse_simple_select() {
         let parser = SqlFrontendParser::new();
         let sql = "SELECT * FROM products";
-        
+
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse simple SELECT: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to parse simple SELECT: {:?}",
+            result.err()
+        );
+
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 1);
@@ -28,17 +32,24 @@ mod tests {
     fn test_parse_select_with_where() {
         let parser = SqlFrontendParser::new();
         let sql = "SELECT id, name FROM products WHERE price > 100";
-        
+
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse SELECT with WHERE: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT with WHERE: {:?}",
+            result.err()
+        );
+
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 2);
                 assert!(select.selection.is_some());
-                
+
                 // Check WHERE clause structure
-                if let Some(Expr::Binary { op: BinaryOp::Gt, .. }) = &select.selection {
+                if let Some(Expr::Binary {
+                    op: BinaryOp::Gt, ..
+                }) = &select.selection
+                {
                     // Correct structure
                 } else {
                     panic!("Expected binary expression with > operator");
@@ -51,10 +62,14 @@ mod tests {
     fn test_parse_select_with_limit() {
         let parser = SqlFrontendParser::new();
         let sql = "SELECT * FROM products LIMIT 10";
-        
+
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse SELECT with LIMIT: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT with LIMIT: {:?}",
+            result.err()
+        );
+
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.limit, Some(10));
@@ -66,10 +81,14 @@ mod tests {
     fn test_parse_select_with_order_by() {
         let parser = SqlFrontendParser::new();
         let sql = "SELECT * FROM products ORDER BY price DESC";
-        
+
         let result = parser.parse(sql);
-        assert!(result.is_ok(), "Failed to parse SELECT with ORDER BY: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Failed to parse SELECT with ORDER BY: {:?}",
+            result.err()
+        );
+
         match result.unwrap() {
             Query::Select(select) => {
                 assert_eq!(select.order_by.len(), 1);
@@ -82,7 +101,7 @@ mod tests {
     fn test_parse_vector_function() {
         let parser = SqlFrontendParser::new();
         let sql = "SELECT COSINE_DISTANCE(embedding, [0.1, 0.2]) as score FROM products";
-        
+
         let result = parser.parse(sql);
         // This should parse successfully, even if vector literals aren't fully implemented
         match result {
@@ -108,7 +127,7 @@ mod tests {
     fn test_invalid_sql() {
         let parser = SqlFrontendParser::new();
         let sql = "INVALID SQL STATEMENT";
-        
+
         let result = parser.parse(sql);
         assert!(result.is_err(), "Should fail to parse invalid SQL");
     }
@@ -117,7 +136,7 @@ mod tests {
     fn test_empty_sql() {
         let parser = SqlFrontendParser::new();
         let sql = "";
-        
+
         let result = parser.parse(sql);
         assert!(result.is_err(), "Should fail to parse empty SQL");
     }

@@ -29,6 +29,21 @@ This guide provides comprehensive documentation for ProximaDB users, covering ev
 | End-to-end examples and sample apps
 |===
 
+== Examples
+
+- Python
+  - link:examples/python/hybrid_seeding_rest.py[Hybrid seeding over REST]
+  - link:examples/python/grpc_execute_sql.py[gRPC ExecuteSql]
+- Rust
+  - link:examples/rust/hybrid_seeding_rest.rs[Hybrid seeding over REST]
+  - link:examples/rust/grpc_execute_sql.rs[gRPC ExecuteSql]
+- JavaScript
+  - link:examples/javascript/hybridSeedingRest.js[Hybrid seeding over REST]
+
+== Engine Selection
+
+- link:graph-engine-selection.adoc[Graph Engine Selection]
+
 == Quick Navigation
 
 === For New Users

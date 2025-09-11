@@ -15,6 +15,10 @@ pub struct Config {
     pub tls: Option<TlsConfig>,
     pub hardware: Option<HardwareConfig>,
     pub sks: Option<SksConfig>,
+    /// Global cache runtime configuration (optional)
+    pub cache: Option<CacheRuntimeConfig>,
+    /// Graph runtime configuration (optional)
+    pub graph: Option<GraphRuntimeConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,8 +201,42 @@ impl Default for Config {
             network: None,
             tls: None,
             hardware: Some(HardwareConfig::default()),
-            sks: None,  // SKS disabled by default
+            sks: None, // SKS disabled by default
+            cache: None,
+            graph: Some(GraphRuntimeConfig::default()),
         }
+    }
+}
+
+/// Runtime cache configuration for the unified Cross-Cache Orchestrator
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheRuntimeConfig {
+    /// Total memory budget for orchestrator-managed caches (in MB)
+    #[serde(default = "default_orchestrator_budget_mb")]
+    pub total_memory_mb: u64,
+}
+
+fn default_orchestrator_budget_mb() -> u64 { 512 }
+
+impl Default for CacheRuntimeConfig {
+    fn default() -> Self {
+        Self { total_memory_mb: default_orchestrator_budget_mb() }
+    }
+}
+
+/// Graph runtime configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphRuntimeConfig {
+    /// Enable bounded prefetch hints during traversals
+    pub enable_prefetch: bool,
+    /// Per-node/iteration adjacency prefetch budget
+    pub prefetch_budget: usize,
+}
+
+impl Default for GraphRuntimeConfig {
+    fn default() -> Self {
+        Self { enable_prefetch: true, prefetch_budget: 8 }
     }
 }
 
@@ -931,7 +969,9 @@ impl Default for ApiConfig {
     }
 }
 
-fn default_ttl_sweep_interval() -> u64 { 900 }
+fn default_ttl_sweep_interval() -> u64 {
+    900
+}
 
 /// WAL storage configuration supporting multiple directories and cloud storage
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -13,8 +13,8 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::VectorRecord;
-use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 
 /// Configuration for the universal search pipeline
 #[derive(Debug, Clone)]
@@ -254,11 +254,10 @@ impl UniversalSearchPipeline {
         });
 
         // Execute with controlled parallelism
-        let results: Vec<Result<Vec<OptimizedSearchRecord>>> =
-            stream::iter(search_futures)
-                .buffer_unordered(max_parallel)
-                .collect()
-                .await;
+        let results: Vec<Result<Vec<OptimizedSearchRecord>>> = stream::iter(search_futures)
+            .buffer_unordered(max_parallel)
+            .collect()
+            .await;
 
         // Collect successful results
         results.into_iter().collect()
@@ -451,29 +450,28 @@ impl UniversalSearchPipeline {
             let mut typed_metadata_map = std::collections::HashMap::new();
             for (key, value) in metadata_map {
                 let typed_value = match value {
-                    serde_json::Value::String(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                    serde_json::Value::String(s) => {
+                        MetadataValue::String(std::sync::Arc::from(s.as_str()))
+                    }
                     serde_json::Value::Number(n) => {
                         if let Some(f) = n.as_f64() {
                             MetadataValue::Number(f)
                         } else {
                             MetadataValue::Null
                         }
-                    },
+                    }
                     serde_json::Value::Bool(b) => MetadataValue::Bool(b),
                     _ => MetadataValue::Null,
                 };
                 typed_metadata_map.insert(key, typed_value);
             }
-            
+
             results.push(
-                OptimizedSearchRecord::new(
-                    record.id.clone(),
-                    similarity_result.normalized_score
-                )
-                .with_similarity(similarity_result.normalized_score)
-                .add_vector(record.vector)
-                .with_metadata(TypedMetadata::from_map(typed_metadata_map))
-                .with_version_info(record.updated_at.unwrap_or(0), record.timestamp as u32)
+                OptimizedSearchRecord::new(record.id.clone(), similarity_result.normalized_score)
+                    .with_similarity(similarity_result.normalized_score)
+                    .add_vector(record.vector)
+                    .with_metadata(TypedMetadata::from_map(typed_metadata_map))
+                    .with_version_info(record.updated_at.unwrap_or(0), record.timestamp as u32),
             );
         }
 

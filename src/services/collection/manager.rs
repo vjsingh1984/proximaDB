@@ -109,7 +109,7 @@ impl CollectionService {
             performance_config: Default::default(),
             scheme_mapping: Default::default(),
         };
-        
+
         let filesystem_factory = Arc::new(
             FilesystemFactory::new(fs_config)
                 .await
@@ -343,7 +343,7 @@ impl CollectionService {
             updated_at: now,
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 primary_path: base_location.clone(),
-                backup_paths: vec![], 
+                backup_paths: vec![],
                 engine: config.storage_engine,
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_location.clone(),
@@ -1386,7 +1386,7 @@ impl CollectionServiceBuilder {
         self.metadata_backend = Some(backend);
         self
     }
-    
+
     pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
         self.storage_config = Some(config);
         self
@@ -1396,7 +1396,7 @@ impl CollectionServiceBuilder {
         let metadata_backend = self
             .metadata_backend
             .ok_or_else(|| anyhow::anyhow!("Metadata backend is required"))?;
-        
+
         let storage_config = self.storage_config.unwrap_or_default();
 
         CollectionService::new(metadata_backend, storage_config).await

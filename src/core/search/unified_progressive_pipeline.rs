@@ -12,10 +12,10 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
+use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::metadata_types::TypedMetadata;
 use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::proto::proximadb_v1::VectorRecord;
 
@@ -99,14 +99,14 @@ struct PerformanceRecord {
 }
 
 /// Progressive search stage
-/// 
+///
 /// Each stage represents a different quantization level used during
 /// progressive search. Stages are ordered from lowest to highest precision,
 /// allowing the search to quickly filter candidates at low precision
 /// before refining with higher precision stages.
-/// 
+///
 /// # Stage Ordering
-/// 
+///
 /// 1. `Binary` - 1 bit per dimension, fastest but least accurate
 /// 2. `Pq4` - 4-bit product quantization, very fast with reasonable accuracy
 /// 3. `Int8` - 8-bit integer quantization, good balance of speed and accuracy
@@ -749,25 +749,26 @@ impl UnifiedProgressiveSearchPipeline {
             .into_iter()
             .take(top_k)
             .enumerate()
-            .map(
-                |(rank, candidate)| {
-                    let json_metadata = self.convert_metadata(&candidate.record);
-                    let typed_metadata: std::collections::HashMap<String, crate::core::metadata_types::MetadataValue> = 
-                        json_metadata.into_iter()
-                            .map(|(k, v)| (k, crate::core::metadata_types::MetadataValue::from_json(v)))
-                            .collect();
-                    let metadata = TypedMetadata::from_map(typed_metadata);
-                    
-                    OptimizedSearchRecord::new(
-                        candidate.record.id.clone(),
-                        candidate.score,
-                    )
+            .map(|(rank, candidate)| {
+                let json_metadata = self.convert_metadata(&candidate.record);
+                let typed_metadata: std::collections::HashMap<
+                    String,
+                    crate::core::metadata_types::MetadataValue,
+                > = json_metadata
+                    .into_iter()
+                    .map(|(k, v)| (k, crate::core::metadata_types::MetadataValue::from_json(v)))
+                    .collect();
+                let metadata = TypedMetadata::from_map(typed_metadata);
+
+                OptimizedSearchRecord::new(candidate.record.id.clone(), candidate.score)
                     .with_similarity(candidate.score)
                     .add_vector(candidate.record.vector.clone())
                     .with_metadata(metadata)
-                    .with_version_info(candidate.record.version.unwrap_or(0), candidate.record.timestamp)
-                }
-            )
+                    .with_version_info(
+                        candidate.record.version.unwrap_or(0),
+                        candidate.record.timestamp,
+                    )
+            })
             .collect()
     }
 
@@ -841,11 +842,7 @@ impl ThresholdAdjuster {
         }
     }
 
-    fn adjust_thresholds(
-        &self,
-        stages: &[SearchStage],
-        results: &[OptimizedSearchRecord],
-    ) {
+    fn adjust_thresholds(&self, stages: &[SearchStage], results: &[OptimizedSearchRecord]) {
         // Simple adjustment logic - can be made more sophisticated
         let mut thresholds = self.current_thresholds.write();
 

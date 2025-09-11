@@ -42,13 +42,13 @@
 // TODO: Implement complete flow in flush_row_page_columnar()
 // ============================================================================
 
+use crate::utils::hash::FastHash;
 use anyhow::Result;
 use arrow_array::RecordBatch;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use crate::utils::hash::FastHash;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -2626,9 +2626,7 @@ impl RaptorWriter {
         self.bloom_builder.add_id(id.clone());
         self.id_column_builder.ids.push(id.clone());
         let id_hash = crate::utils::hash::XxHasher::hash_bytes(id.as_bytes());
-        self.id_column_builder
-            .id_hashes
-            .push(id_hash);
+        self.id_column_builder.id_hashes.push(id_hash);
         self.id_column_builder
             .row_offsets
             .push(offset_in_page as u32);
@@ -4930,7 +4928,8 @@ impl RaptorWriter {
             }
 
             for i in 0..num_hashes {
-                let hash_u64 = crate::utils::hash::XxHasher::hash_bytes(format!("{}{}", id, i).as_bytes());
+                let hash_u64 =
+                    crate::utils::hash::XxHasher::hash_bytes(format!("{}{}", id, i).as_bytes());
                 let bit_index = (hash_u64 as usize) % num_bits;
 
                 let byte_index = bit_index / 8;

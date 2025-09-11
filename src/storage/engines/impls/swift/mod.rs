@@ -338,16 +338,12 @@ impl SwiftFile {
                                     primary.data.iter().map(|&b| b as i8).collect();
                                 fastlanes_encoder.encode_int8(&int8_data)?
                             }
-                            Some(QuantizationLevel::Pq(config))
-                                if config.bits_per_code == 4 =>
-                            {
+                            Some(QuantizationLevel::Pq(config)) if config.bits_per_code == 4 => {
                                 // PQ4 quantization - use FastLanes PQ4 encoding
                                 fastlanes_encoder
                                     .encode_pq4(&primary.data, config.num_subvectors as usize)?
                             }
-                            Some(QuantizationLevel::Pq(config))
-                                if config.bits_per_code == 8 =>
-                            {
+                            Some(QuantizationLevel::Pq(config)) if config.bits_per_code == 8 => {
                                 // PQ8 quantization - use FastLanes PQ8 encoding
                                 fastlanes_encoder
                                     .encode_pq8(&primary.data, config.num_subvectors as usize)?

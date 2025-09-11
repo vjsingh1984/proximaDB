@@ -1,0 +1,37 @@
+ = Graph Engine Cache Evaluation — ORION, PULSAR, QUASAR
+ :toc:
+ :status: in-progress
+
+== Goal
+Assess current reader/index paths and identify where to integrate the Cross‑Cache Orchestrator (GraphNode, GraphEdge, GraphAdjacency) with safe prefetch and provider stats.
+
+== TL;DR
+- Indexes accelerate lookups (label/property/adjacency) but are not caches; they are persistent structures. Engines also maintain in‑memory caches (plan cache, node/edge/adjacency LRU) that should expose usage to the orchestrator.
+
+== ORION (In‑Memory CSR)
+- Current: CSR adjacency in RAM; label/property indexes in `orion/index.rs`; traversal in `orion/traversal.rs`. Plan cache exists at planner layer.
+- Opportunities:
+  - Track accesses: `GraphAdjacency` when expanding frontiers; `GraphNode` on node materialization; `GraphEdge` on edge fetch.
+  - Providers: expose plan cache hit/miss, node/edge LRU stats via `register_cache_provider`.
+  - Prefetch: bounded next‑frontier adjacency blocks (guard by max_frontier).
+
+== PULSAR (Distributed)
+- Current: Sharding/replication modules; likely remote adjacency/page fetches with local memoization.
+- Opportunities:
+  - Track remote adjacency metadata as `GraphAdjacency`; cache providers for shard routing tables and local adjacency memo caches.
+  - Prefetch: next‑hop adjacency for high‑degree nodes with queue caps.
+
+== QUASAR (Tiered)
+- Current: AccessPatternCache (LRU + frequency) in `quasar/cache.rs`; storage tiering in `quasar/tiering.rs` with node/edge indexes.
+- Opportunities:
+  - Track `GraphNode`/`GraphEdge` touches via orchestrator; register AccessPatternCache as provider (hit_rate, evictions, hot/cold counts).
+  - Prefetch: promote adjacent nodes/edges to hot tier using orchestrator signals (bounded promotions).
+
+== Next Steps (P0)
+- Thread `SharedContext` → GraphService → engines; emit `track_access_async` at adjacency/index touchpoints.
+- Add providers for plan cache, node/edge/adjacency caches; map to CacheType::{GraphNode, GraphEdge, GraphAdjacency}.
+- Add bounded prefetch hooks (next frontier, hot neighbors) guarded by queue/size caps.
+
+== Acceptance
+- Orchestrator observes graph cache usage and rebalances budgets; graph traversals emit access patterns; no overload from prefetch.
+

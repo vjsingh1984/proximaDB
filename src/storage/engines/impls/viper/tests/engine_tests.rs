@@ -100,15 +100,20 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    format!("cat_{}", (value * 10.0) as i32 % 5),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                        "cat_{}",
+                        (value * 10.0) as i32 % 5
+                    )),
+                ),
             },
             MetadataItem {
                 key: "timestamp".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    chrono::Utc::now().timestamp().to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        chrono::Utc::now().timestamp().to_string(),
+                    ),
+                ),
             },
         ],
         timestamp: chrono::Utc::now().timestamp() as u32,
@@ -690,9 +695,9 @@ async fn test_search_vectors_unified() {
         vector.vector = vector_data;
         vector.metadata = vec![MetadataItem {
             key: key.to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                value.to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(value.to_string()),
+            ),
         }];
         vectors_to_flush.push(vector);
     }

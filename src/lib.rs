@@ -164,9 +164,20 @@ impl ProximaDB {
         tracing::info!(
             "🔧 ProximaDB::new - Creating SharedServices FIRST to avoid circular dependency"
         );
+        // Build global Cross-Cache Orchestrator from [cache] or fallback to storage.cache_size_mb
+        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+        let cache_budget_mb = config
+            .cache
+            .as_ref()
+            .map(|c| c.total_memory_mb)
+            .unwrap_or(config.storage.cache_size_mb);
+        let orchestrator = Arc::new(CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize));
+        CrossCacheOrchestrator::register_global(orchestrator.clone());
+
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),
             &config.storage,
+            Some(orchestrator.clone()),
         )
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
@@ -204,14 +215,12 @@ impl ProximaDB {
         let rest_port = config.api.rest_port;
         let grpc_port = config.api.grpc_port;
 
-        let rest_addr: SocketAddr =
-            format!("{}:{}", config.server.bind_address, rest_port)
-                .parse()
-                .map_err(|e| format!("Invalid REST address: {}", e))?;
-        let grpc_addr: SocketAddr =
-            format!("{}:{}", config.server.bind_address, grpc_port)
-                .parse()
-                .map_err(|e| format!("Invalid gRPC address: {}", e))?;
+        let rest_addr: SocketAddr = format!("{}:{}", config.server.bind_address, rest_port)
+            .parse()
+            .map_err(|e| format!("Invalid REST address: {}", e))?;
+        let grpc_addr: SocketAddr = format!("{}:{}", config.server.bind_address, grpc_port)
+            .parse()
+            .map_err(|e| format!("Invalid gRPC address: {}", e))?;
         tracing::debug!(
             "🔧 ProximaDB::new - REST address: {}, gRPC address: {}",
             rest_addr,

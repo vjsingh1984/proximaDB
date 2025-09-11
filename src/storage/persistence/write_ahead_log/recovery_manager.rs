@@ -587,14 +587,20 @@ impl ParallelRecoveryManager {
     ) -> Self {
         // Create a default WAL config for recovery
         let config = crate::storage::persistence::write_ahead_log::config::WALConfig::default();
-        
+
         // Create WAL behavior wrapper using MemtableConfig
         let memtable_config = crate::storage::memtable::MemtableConfig::default();
-        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(
-            memtable_config,
+        let wal_behavior = Arc::new(
+            crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(
+                memtable_config,
+            ),
+        );
+
+        let recovery_manager = Arc::new(RecoveryManager::new(
+            config,
+            wal_behavior,
+            filesystem_factory,
         ));
-        
-        let recovery_manager = Arc::new(RecoveryManager::new(config, wal_behavior, filesystem_factory));
         let num_workers = num_workers.unwrap_or_else(|| num_cpus::get().min(8));
 
         info!(
@@ -974,7 +980,6 @@ mod tests {
             fn get_filesystem_factory(&self) -> &FilesystemFactory {
                 &self.filesystem_factory
             }
-
         }
 
         // Create a filesystem factory for the mock

@@ -144,7 +144,6 @@ mod tests {
         ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
             unimplemented!("Mock filesystem factory not needed for tests")
         }
-
     }
 
     fn create_test_context(

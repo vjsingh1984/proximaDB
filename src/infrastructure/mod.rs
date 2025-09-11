@@ -224,7 +224,7 @@ pub use concurrent_structures::{
 };
 
 pub use tier_policy_engine::{
-    GlobalTier, RuleBasedTierPolicy, ServerTierConfig, SmartTierPolicy, InfrastructureTier,
+    GlobalTier, InfrastructureTier, RuleBasedTierPolicy, ServerTierConfig, SmartTierPolicy,
     WorkloadMetrics, WorkloadPattern,
 };
 

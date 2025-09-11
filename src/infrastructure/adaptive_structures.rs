@@ -58,8 +58,8 @@ use tracing::{debug, info};
 
 use crate::infrastructure::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
 use crate::infrastructure::tier_policy_engine::{
-    CollectionStorageConfig, CollectionStorageLimits, GlobalTier, SmartTierPolicy, InfrastructureTier,
-    WorkloadMetrics, WorkloadPattern,
+    CollectionStorageConfig, CollectionStorageLimits, GlobalTier, InfrastructureTier,
+    SmartTierPolicy, WorkloadMetrics, WorkloadPattern,
 };
 
 /// Adaptive storage interface that chooses optimal backend based on workload

@@ -33,6 +33,16 @@ curl -X POST http://localhost:5678/api/v1/graph/shortest_path \
   -d '{"start_node_id":"n1","target_node_id":"n8","algorithm":"DIJKSTRA"}'
 ----
 
+==== Prefetch Controls
+
+- Global defaults (TOML `[graph]`):
+  - `enable_prefetch = true`
+  - `prefetch_budget = 8`
+- REST per-call (Shortest Path): add to JSON `enable_prefetch`, `prefetch_budget`; or headers:
+  - `x-graph-prefetch-enabled: true|false|1|0`
+  - `x-graph-prefetch-budget: <int>`
+- gRPC per-call: metadata headers with the same names as above.
+
 === Indexes, Constraints, and Stats
 
 - Property and label indexes are used internally for filters.

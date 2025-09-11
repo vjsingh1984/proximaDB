@@ -78,7 +78,10 @@ pub async fn viper_optimization_example() -> Result<()> {
             let vector: Vec<f32> = (0..768).map(|j| ((i + j) as f32) * 0.001).collect();
 
             let mut metadata = HashMap::new();
-            metadata.insert("category".to_string(), serde_json::json!(format!("cat_{}", i % 10)));
+            metadata.insert(
+                "category".to_string(),
+                serde_json::json!(format!("cat_{}", i % 10)),
+            );
             metadata.insert("batch_id".to_string(), serde_json::json!(i / 1000));
 
             let record = VectorRecord {
@@ -250,10 +253,19 @@ pub async fn nova_optimization_example() -> Result<()> {
                 .collect();
 
             let mut metadata = HashMap::new();
-            metadata.insert("department".to_string(), serde_json::json!(format!("dept_{}", i % 50)));
+            metadata.insert(
+                "department".to_string(),
+                serde_json::json!(format!("dept_{}", i % 50)),
+            );
             metadata.insert("project_id".to_string(), serde_json::json!(i / 5000));
-            metadata.insert("data_source".to_string(), serde_json::json!("analytics_pipeline"));
-            metadata.insert("embedding_model".to_string(), serde_json::json!("text-embedding-ada-002"));
+            metadata.insert(
+                "data_source".to_string(),
+                serde_json::json!("analytics_pipeline"),
+            );
+            metadata.insert(
+                "embedding_model".to_string(),
+                serde_json::json!("text-embedding-ada-002"),
+            );
 
             let record = VectorRecord {
                 id: if !recommendations.use_id_less_storage {

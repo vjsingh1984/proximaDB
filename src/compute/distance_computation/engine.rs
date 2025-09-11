@@ -47,9 +47,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
 use std::cmp::Ordering;
 use std::sync::{Arc, OnceLock};
+use tracing::{debug, info};
 
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb_v1::DistanceMetric;
@@ -162,27 +162,27 @@ pub fn initialize_hardware_backend_cache() {
 enum PlatformCapability {
     /// Scalar fallback - works everywhere but slowest
     Scalar,
-    
+
     #[cfg(target_arch = "x86_64")]
     /// SSE2 - 128-bit SIMD (Pentium 4, 2001+)
     X86Sse2,
-    
+
     #[cfg(target_arch = "x86_64")]
     /// AVX - 256-bit SIMD (Sandy Bridge, 2011+)
     X86Avx,
-    
+
     #[cfg(target_arch = "x86_64")]
     /// AVX2 - 256-bit with FMA (Haswell, 2013+)
     X86Avx2,
-    
+
     #[cfg(target_arch = "x86_64")]
     /// AVX512 - 512-bit SIMD (Skylake-X, 2017+)
     X86Avx512,
-    
+
     #[cfg(target_arch = "aarch64")]
     /// ARM NEON - 128-bit SIMD (Cortex-A8+)
     ArmNeon,
-    
+
     #[cfg(target_arch = "aarch64")]
     /// ARM SVE - Scalable vectors (ARMv8.2+)
     ArmSve,
@@ -210,7 +210,7 @@ fn get_platform_capability() -> PlatformCapability {
         // Use the already-initialized global hardware capabilities
         let caps = get_hardware_capabilities();
         let backend = caps.preferred_backend();
-        
+
         // Map HardwareBackend to PlatformCapability
         match backend {
             #[cfg(target_arch = "x86_64")]
@@ -250,10 +250,10 @@ fn get_platform_capability() -> PlatformCapability {
 pub trait GpuAccelerator: Send + Sync {
     /// Check if GPU is available
     fn is_available(&self) -> bool;
-    
+
     /// Get the hardware backend type
     fn backend(&self) -> HardwareBackend;
-    
+
     /// Calculate distance using GPU
     async fn calculate_distance_gpu(
         &self,
@@ -261,7 +261,7 @@ pub trait GpuAccelerator: Send + Sync {
         vec_b: &[f32],
         metric: DistanceMetric,
     ) -> Result<f32>;
-    
+
     /// Calculate batch distances using GPU
     async fn calculate_batch_gpu(
         &self,
@@ -368,7 +368,7 @@ impl SimilarityResult {
         // Use total_cmp for proper NaN handling
         self.distance.total_cmp(&other.distance)
     }
-    
+
     /// Partial comparison for sorting (compatibility)
     pub fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.rank_value.partial_cmp(&other.rank_value)
@@ -393,12 +393,12 @@ impl Default for SimilarityResult {
 pub trait DistanceComputeProvider: Send + Sync {
     /// Get the unified distance compute manager (required for compatibility)
     fn distance_compute(&self) -> &UnifiedDistanceCompute;
-    
+
     /// Get the default distance metric for this provider
     fn default_metric(&self) -> DistanceMetric {
         self.distance_compute().system_default
     }
-    
+
     /// Compute distance between two vectors
     fn compute_distance(
         &self,
@@ -407,9 +407,10 @@ pub trait DistanceComputeProvider: Send + Sync {
         metric: Option<DistanceMetric>,
     ) -> f32 {
         let metric = metric.unwrap_or_else(|| self.default_metric());
-        self.distance_compute().distance_with_metric(vec_a, vec_b, &metric)
+        self.distance_compute()
+            .distance_with_metric(vec_a, vec_b, &metric)
     }
-    
+
     /// Compute distances for a batch of vectors
     fn compute_batch_distances(
         &self,
@@ -417,14 +418,15 @@ pub trait DistanceComputeProvider: Send + Sync {
         vectors: &[&[f32]],
         metric: Option<DistanceMetric>,
     ) -> Vec<f32> {
-        self.distance_compute().distance_batch(query, vectors, metric)
+        self.distance_compute()
+            .distance_batch(query, vectors, metric)
     }
-    
+
     /// Get properties of a metric
     fn metric_properties(&self, metric: DistanceMetric) -> MetricProperties {
         self.distance_compute().get_metric_properties(metric)
     }
-    
+
     /// Check if GPU acceleration is available
     fn is_gpu_available(&self) -> bool {
         self.distance_compute().get_gpu_accelerator().is_some()
@@ -476,17 +478,17 @@ impl UnifiedDistanceCompute {
         // Use cached hardware detection for efficiency
         let preferred_backend = get_cached_preferred_backend();
         let gpu_enabled = is_gpu_enabled_cached();
-        let platform_capability = get_platform_capability();  // Uses global cached detection
-        
+        let platform_capability = get_platform_capability(); // Uses global cached detection
+
         // Get actual hardware backend from centralized capabilities
         let caps = get_hardware_capabilities();
         let hardware_backend = caps.preferred_backend();
-        
+
         debug!(
             "Creating UnifiedDistanceCompute with metric: {:?}, backend: {:?}, platform: {:?}",
             metric, hardware_backend, platform_capability
         );
-        
+
         Self {
             system_default: metric,
             hardware_backend,
@@ -499,12 +501,12 @@ impl UnifiedDistanceCompute {
 
     /// Create with explicit backend selection (for testing)
     pub fn with_backend(metric: DistanceMetric, backend: HardwareBackend) -> Self {
-        let platform_capability = get_platform_capability();  // Uses global cached detection
+        let platform_capability = get_platform_capability(); // Uses global cached detection
         debug!(
             "Creating UnifiedDistanceCompute with explicit backend: {:?}, platform: {:?}",
             backend, platform_capability
         );
-        
+
         Self {
             system_default: metric,
             hardware_backend: backend,
@@ -522,7 +524,7 @@ impl UnifiedDistanceCompute {
                 if !self.gpu_enabled {
                     return None;
                 }
-                
+
                 // Try to create GPU accelerator based on detected hardware
                 match self.preferred_backend {
                     HardwareBackend::CUDA => {
@@ -568,7 +570,7 @@ impl UnifiedDistanceCompute {
     #[inline(always)]
     fn compute_distance_simd(&self, vec_a: &[f32], vec_b: &[f32], metric: &DistanceMetric) -> f32 {
         debug_assert_eq!(vec_a.len(), vec_b.len(), "Vectors must have same dimension");
-        
+
         match metric {
             DistanceMetric::Cosine => self.compute_cosine_simd(vec_a, vec_b),
             DistanceMetric::Euclidean => self.compute_euclidean_simd(vec_a, vec_b),
@@ -589,69 +591,69 @@ impl UnifiedDistanceCompute {
     // ------------------------------------------------------------------------
     // Cosine Distance Implementation
     // ------------------------------------------------------------------------
-    
+
     #[inline(always)]
     fn compute_cosine_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.platform_capability {
             #[cfg(target_arch = "x86_64")]
-            PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => {
-                unsafe { self.cosine_distance_avx2(a, b) }
-            }
+            PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => unsafe {
+                self.cosine_distance_avx2(a, b)
+            },
             #[cfg(target_arch = "x86_64")]
-            PlatformCapability::X86Sse2 | PlatformCapability::X86Avx => {
-                unsafe { self.cosine_distance_sse2(a, b) }
-            }
+            PlatformCapability::X86Sse2 | PlatformCapability::X86Avx => unsafe {
+                self.cosine_distance_sse2(a, b)
+            },
             #[cfg(target_arch = "aarch64")]
-            PlatformCapability::ArmNeon => {
-                unsafe { self.cosine_distance_neon(a, b) }
-            }
+            PlatformCapability::ArmNeon => unsafe { self.cosine_distance_neon(a, b) },
             _ => self.cosine_distance_scalar(a, b),
         }
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn cosine_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
-        let chunks = a.len() / 8;
-        
-        let mut dot = _mm256_setzero_ps();
-        let mut norm_a = _mm256_setzero_ps();
-        let mut norm_b = _mm256_setzero_ps();
+    unsafe fn cosine_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            let chunks = a.len() / 8;
 
-        for i in 0..chunks {
-            let offset = i * 8;
-            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
-            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+            let mut dot = _mm256_setzero_ps();
+            let mut norm_a = _mm256_setzero_ps();
+            let mut norm_b = _mm256_setzero_ps();
 
-            dot = _mm256_fmadd_ps(va, vb, dot);
-            norm_a = _mm256_fmadd_ps(va, va, norm_a);
-            norm_b = _mm256_fmadd_ps(vb, vb, norm_b);
+            for i in 0..chunks {
+                let offset = i * 8;
+                let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+                let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+
+                dot = _mm256_fmadd_ps(va, vb, dot);
+                norm_a = _mm256_fmadd_ps(va, va, norm_a);
+                norm_b = _mm256_fmadd_ps(vb, vb, norm_b);
+            }
+
+            // Horizontal sum using AVX2
+            let dot_sum = self.hsum_ps_avx2(dot);
+            let norm_a_sum = self.hsum_ps_avx2(norm_a);
+            let norm_b_sum = self.hsum_ps_avx2(norm_b);
+
+            // Handle remainder with scalar
+            let mut dot_final = dot_sum;
+            let mut norm_a_final = norm_a_sum;
+            let mut norm_b_final = norm_b_sum;
+
+            let start = chunks * 8;
+            for i in start..a.len() {
+                dot_final += a[i] * b[i];
+                norm_a_final += a[i] * a[i];
+                norm_b_final += b[i] * b[i];
+            }
+
+            // Handle zero vectors
+            if norm_a_final == 0.0 || norm_b_final == 0.0 {
+                return f32::INFINITY;
+            }
+
+            1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
         }
-
-        // Horizontal sum using AVX2
-        let dot_sum = self.hsum_ps_avx2(dot);
-        let norm_a_sum = self.hsum_ps_avx2(norm_a);
-        let norm_b_sum = self.hsum_ps_avx2(norm_b);
-
-        // Handle remainder with scalar
-        let mut dot_final = dot_sum;
-        let mut norm_a_final = norm_a_sum;
-        let mut norm_b_final = norm_b_sum;
-
-        let start = chunks * 8;
-        for i in start..a.len() {
-            dot_final += a[i] * b[i];
-            norm_a_final += a[i] * a[i];
-            norm_b_final += b[i] * b[i];
-        }
-
-        // Handle zero vectors
-        if norm_a_final == 0.0 || norm_b_final == 0.0 {
-            return f32::INFINITY;
-        }
-
-        1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
-    }}
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -673,7 +675,7 @@ impl UnifiedDistanceCompute {
     #[cfg(target_arch = "aarch64")]
     unsafe fn cosine_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::aarch64::*;
-        
+
         let chunks = a.len() / 4;
         let mut dot = vdupq_n_f32(0.0);
         let mut norm_a = vdupq_n_f32(0.0);
@@ -734,52 +736,52 @@ impl UnifiedDistanceCompute {
     // ------------------------------------------------------------------------
     // Euclidean Distance Implementation
     // ------------------------------------------------------------------------
-    
+
     #[inline(always)]
     fn compute_euclidean_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.platform_capability {
             #[cfg(target_arch = "x86_64")]
-            PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => {
-                unsafe { self.euclidean_distance_avx2(a, b) }
-            }
+            PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => unsafe {
+                self.euclidean_distance_avx2(a, b)
+            },
             #[cfg(target_arch = "aarch64")]
-            PlatformCapability::ArmNeon => {
-                unsafe { self.euclidean_distance_neon(a, b) }
-            }
+            PlatformCapability::ArmNeon => unsafe { self.euclidean_distance_neon(a, b) },
             _ => self.euclidean_distance_scalar(a, b),
         }
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn euclidean_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
-        let chunks = a.len() / 8;
-        let mut sum = _mm256_setzero_ps();
+    unsafe fn euclidean_distance_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            let chunks = a.len() / 8;
+            let mut sum = _mm256_setzero_ps();
 
-        for i in 0..chunks {
-            let offset = i * 8;
-            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
-            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
-            let diff = _mm256_sub_ps(va, vb);
-            sum = _mm256_fmadd_ps(diff, diff, sum);
+            for i in 0..chunks {
+                let offset = i * 8;
+                let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+                let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+                let diff = _mm256_sub_ps(va, vb);
+                sum = _mm256_fmadd_ps(diff, diff, sum);
+            }
+
+            let mut result = self.hsum_ps_avx2(sum);
+
+            // Handle remainder
+            let start = chunks * 8;
+            for i in start..a.len() {
+                let diff = a[i] - b[i];
+                result += diff * diff;
+            }
+
+            result.sqrt()
         }
-
-        let mut result = self.hsum_ps_avx2(sum);
-
-        // Handle remainder
-        let start = chunks * 8;
-        for i in start..a.len() {
-            let diff = a[i] - b[i];
-            result += diff * diff;
-        }
-
-        result.sqrt()
-    }}
+    }
 
     #[cfg(target_arch = "aarch64")]
     unsafe fn euclidean_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::aarch64::*;
-        
+
         let chunks = a.len() / 4;
         let mut sum = vdupq_n_f32(0.0);
 
@@ -815,50 +817,50 @@ impl UnifiedDistanceCompute {
     // ------------------------------------------------------------------------
     // Dot Product Implementation
     // ------------------------------------------------------------------------
-    
+
     #[inline(always)]
     fn compute_dot_product_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         match self.platform_capability {
             #[cfg(target_arch = "x86_64")]
-            PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => {
-                unsafe { self.dot_product_avx2(a, b) }
-            }
+            PlatformCapability::X86Avx2 | PlatformCapability::X86Avx512 => unsafe {
+                self.dot_product_avx2(a, b)
+            },
             #[cfg(target_arch = "aarch64")]
-            PlatformCapability::ArmNeon => {
-                unsafe { self.dot_product_neon(a, b) }
-            }
+            PlatformCapability::ArmNeon => unsafe { self.dot_product_neon(a, b) },
             _ => self.dot_product_scalar(a, b),
         }
     }
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2,fma")]
-    unsafe fn dot_product_avx2(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
-        let chunks = a.len() / 8;
-        let mut sum = _mm256_setzero_ps();
+    unsafe fn dot_product_avx2(&self, a: &[f32], b: &[f32]) -> f32 {
+        unsafe {
+            let chunks = a.len() / 8;
+            let mut sum = _mm256_setzero_ps();
 
-        for i in 0..chunks {
-            let offset = i * 8;
-            let va = _mm256_loadu_ps(a.as_ptr().add(offset));
-            let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
-            sum = _mm256_fmadd_ps(va, vb, sum);
+            for i in 0..chunks {
+                let offset = i * 8;
+                let va = _mm256_loadu_ps(a.as_ptr().add(offset));
+                let vb = _mm256_loadu_ps(b.as_ptr().add(offset));
+                sum = _mm256_fmadd_ps(va, vb, sum);
+            }
+
+            let mut result = self.hsum_ps_avx2(sum);
+
+            // Handle remainder
+            let start = chunks * 8;
+            for i in start..a.len() {
+                result += a[i] * b[i];
+            }
+
+            result
         }
-
-        let mut result = self.hsum_ps_avx2(sum);
-
-        // Handle remainder
-        let start = chunks * 8;
-        for i in start..a.len() {
-            result += a[i] * b[i];
-        }
-
-        result
-    }}
+    }
 
     #[cfg(target_arch = "aarch64")]
     unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 {
         use std::arch::aarch64::*;
-        
+
         let chunks = a.len() / 4;
         let mut sum = vdupq_n_f32(0.0);
 
@@ -891,7 +893,7 @@ impl UnifiedDistanceCompute {
     // ------------------------------------------------------------------------
     // Jaccard Distance Implementation
     // ------------------------------------------------------------------------
-    
+
     #[inline(always)]
     fn compute_jaccard_simd(&self, a: &[f32], b: &[f32]) -> f32 {
         // Jaccard doesn't have efficient SIMD implementation, use scalar
@@ -901,14 +903,14 @@ impl UnifiedDistanceCompute {
     fn compute_jaccard_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut intersection = 0.0;
         let mut union = 0.0;
-        
+
         for i in 0..a.len() {
             let min_val = a[i].min(b[i]);
             let max_val = a[i].max(b[i]);
             intersection += min_val;
             union += max_val;
         }
-        
+
         if union == 0.0 {
             0.0
         } else {
@@ -1008,7 +1010,7 @@ impl UnifiedDistanceCompute {
         let raw_value = self.compute_distance_simd(vec_a, vec_b, metric);
         SimilarityResult::new(raw_value, *metric)
     }
-    
+
     /// Main entry point: compute distance with proper metric resolution
     pub fn distance(&self, vec_a: &[f32], vec_b: &[f32]) -> f32 {
         self.distance_with_metric(vec_a, vec_b, &self.system_default)
@@ -1037,7 +1039,7 @@ impl UnifiedDistanceCompute {
             .map(|v| self.calculate_distance(query, v, metric))
             .collect()
     }
-    
+
     /// Batch distance computation for optimal performance
     pub fn distance_batch(
         &self,
@@ -1046,7 +1048,7 @@ impl UnifiedDistanceCompute {
         metric: Option<DistanceMetric>,
     ) -> Vec<f32> {
         let metric = metric.unwrap_or(self.system_default);
-        
+
         vectors
             .iter()
             .map(|v| self.compute_distance_simd(query, v, &metric))
@@ -1073,7 +1075,7 @@ impl UnifiedDistanceCompute {
         metric: Option<DistanceMetric>,
     ) -> Vec<SimilarityResult> {
         let metric = metric.unwrap_or(self.system_default);
-        
+
         vectors
             .iter()
             .map(|v| {
@@ -1098,79 +1100,76 @@ impl UnifiedDistanceCompute {
         // For now, return a default result
         SimilarityResult::new(0.0, *metric)
     }
-    
+
     /// Calculate PQ distance with 2D codebook structure using asymmetric distance computation (ADC)
     pub fn calculate_pq_distance(
         &self,
         query: &[f32],
         codes: &[u8],
-        codebook: &[Vec<f32>],  // 2D structure: [num_subvectors][centroids_per_subvector * dim]
+        codebook: &[Vec<f32>], // 2D structure: [num_subvectors][centroids_per_subvector * dim]
         metric: &DistanceMetric,
     ) -> SimilarityResult {
         if codebook.is_empty() || codes.is_empty() || query.is_empty() {
             return SimilarityResult::new(0.0, *metric);
         }
-        
+
         let num_subvectors = codebook.len();
         let subvector_dim = query.len() / num_subvectors;
-        
+
         // Each codebook[i] contains all centroids for subvector i
         // Assuming 256 centroids per subvector (8-bit codes)
         let _centroids_per_subvector = 256;
-        
+
         let mut total_distance = 0.0;
-        
+
         // Compute asymmetric distance: query vs quantized vector
         for subvector_idx in 0..num_subvectors.min(codes.len()) {
             let code = codes[subvector_idx] as usize;
-            
+
             // Get the query subvector
             let query_start = subvector_idx * subvector_dim;
             let query_end = query_start + subvector_dim;
             let query_subvector = &query[query_start..query_end.min(query.len())];
-            
+
             // Get the corresponding centroid from the codebook
             let centroid_start = code * subvector_dim;
             let centroid_end = centroid_start + subvector_dim;
-            
+
             if centroid_end <= codebook[subvector_idx].len() {
                 let centroid = &codebook[subvector_idx][centroid_start..centroid_end];
-                
+
                 // Compute distance between query subvector and centroid
                 let subvector_distance = match metric {
                     DistanceMetric::Euclidean => {
                         self.compute_euclidean_simd(query_subvector, centroid)
                     }
-                    DistanceMetric::Cosine => {
-                        self.compute_cosine_simd(query_subvector, centroid)
-                    }
+                    DistanceMetric::Cosine => self.compute_cosine_simd(query_subvector, centroid),
                     DistanceMetric::DotProduct => {
                         -self.compute_dot_product_simd(query_subvector, centroid)
                     }
-                    DistanceMetric::Manhattan => {
-                        query_subvector.iter()
-                            .zip(centroid.iter())
-                            .map(|(a, b)| (a - b).abs())
-                            .sum()
-                    }
+                    DistanceMetric::Manhattan => query_subvector
+                        .iter()
+                        .zip(centroid.iter())
+                        .map(|(a, b)| (a - b).abs())
+                        .sum(),
                     _ => {
                         // Fallback to euclidean for unsupported metrics
                         self.compute_euclidean_simd(query_subvector, centroid)
                     }
                 };
-                
+
                 total_distance += subvector_distance;
             }
         }
-        
+
         SimilarityResult::new(total_distance, *metric)
     }
-    
+
     /// Get the system default metric
     pub fn system_default(&self) -> DistanceMetric {
         self.system_default
     }
-    
+
     /// Check if a metric is similarity-based (higher = better)
     pub fn is_similarity_metric(&self, metric: &DistanceMetric) -> bool {
         match metric {
@@ -1178,7 +1177,7 @@ impl UnifiedDistanceCompute {
             _ => false,
         }
     }
-    
+
     /// Get metric properties
     pub fn get_metric_properties(&self, metric: DistanceMetric) -> MetricProperties {
         match metric {
@@ -1239,7 +1238,7 @@ pub fn prewarm_calculator_cache() {
         DistanceMetric::DotProduct,
         DistanceMetric::Manhattan,
     ];
-    
+
     for metric in common_metrics {
         let test_vec_a = vec![1.0f32, 0.0f32];
         let test_vec_b = vec![0.0f32, 1.0f32];
@@ -1252,27 +1251,33 @@ pub fn prewarm_calculator_cache() {
 /// Initialize all UnifiedDistanceCompute optimizations
 pub fn initialize_distance_compute_optimizations() {
     info!("🚀 Initializing UnifiedDistanceCompute optimizations...");
-    
+
     // Initialize hardware backend caching
     initialize_hardware_backend_cache();
     info!("✅ Hardware backend caching initialized");
-    
+
     // Initialize platform capability mapping from global hardware detection
     let platform = get_platform_capability();
-    info!("✅ Platform capability mapped from global detection: {:?}", platform);
-    
+    info!(
+        "✅ Platform capability mapped from global detection: {:?}",
+        platform
+    );
+
     // Pre-warm calculator cache
     prewarm_calculator_cache();
     info!("✅ Distance calculator cache pre-warmed");
-    
+
     // Log optimization summary
     let preferred_backend = get_cached_preferred_backend();
     let gpu_enabled = is_gpu_enabled_cached();
-    
+
     info!("🎯 Distance computation optimizations active:");
     info!("   • Hardware Backend: {:?} (cached)", preferred_backend);
     info!("   • Platform SIMD: {:?}", platform);
-    info!("   • GPU Acceleration: {} (lazy-loaded)", if gpu_enabled { "enabled" } else { "disabled" });
+    info!(
+        "   • GPU Acceleration: {} (lazy-loaded)",
+        if gpu_enabled { "enabled" } else { "disabled" }
+    );
     info!("   • All SIMD implementations integrated directly");
     info!("   • Zero adapter overhead - direct inline calls");
 }
@@ -1312,11 +1317,7 @@ mod tests {
     fn test_batch_computation() {
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         let query = vec![0.0, 0.0];
-        let vectors: Vec<&[f32]> = vec![
-            &[1.0, 0.0],
-            &[0.0, 1.0],
-            &[1.0, 1.0],
-        ];
+        let vectors: Vec<&[f32]> = vec![&[1.0, 0.0], &[0.0, 1.0], &[1.0, 1.0]];
         let distances = compute.distance_batch(&query, &vectors, None);
         assert_eq!(distances.len(), 3);
         assert!((distances[0] - 1.0).abs() < 1e-6);

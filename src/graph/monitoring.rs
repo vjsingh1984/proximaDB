@@ -53,12 +53,12 @@
 //! ```
 
 use crate::core::error::ProximaDBError;
+use crate::graph::{EdgeId, GraphMemoryPool, NodeId};
 use crate::utils::Uuid;
-use crate::graph::{NodeId, EdgeId, GraphMemoryPool};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
 use tokio::sync::mpsc;
 
 /// Main monitoring system for graph operations
@@ -299,10 +299,7 @@ pub enum MetricEvent {
     /// Resource usage update
     ResourceUpdate(ResourceMetrics),
     /// Cache event
-    CacheEvent {
-        cache_type: String,
-        hit: bool,
-    },
+    CacheEvent { cache_type: String, hit: bool },
     /// Business metric update
     BusinessUpdate(BusinessMetrics),
 }
@@ -365,7 +362,7 @@ impl GraphMonitor {
         let metrics_collector = Arc::new(GraphMetricsCollector::new());
         let slow_query_logger = Arc::new(SlowQueryLogger::new(Arc::new(config.clone())));
         let profiler = Arc::new(GraphProfiler::new(Arc::new(config.clone())));
-        
+
         Self {
             metrics_collector,
             slow_query_logger,
@@ -374,17 +371,17 @@ impl GraphMonitor {
             metrics_sender: None,
         }
     }
-    
+
     /// Start monitoring with background tasks
     pub async fn start(&mut self) -> Result<(), ProximaDBError> {
         if !self.config.enabled {
             return Ok(());
         }
-        
+
         // Create metrics processing channel
         let (sender, mut receiver) = mpsc::unbounded_channel();
         self.metrics_sender = Some(sender);
-        
+
         // Start metrics processing task
         let metrics_collector = Arc::clone(&self.metrics_collector);
         tokio::spawn(async move {
@@ -394,12 +391,12 @@ impl GraphMonitor {
                 }
             }
         });
-        
+
         // Start periodic metrics collection
         if self.config.metrics_interval_sec > 0 {
             let collector = Arc::clone(&self.metrics_collector);
             let interval = Duration::from_secs(self.config.metrics_interval_sec);
-            
+
             tokio::spawn(async move {
                 let mut interval_timer = tokio::time::interval(interval);
                 loop {
@@ -410,15 +407,15 @@ impl GraphMonitor {
                 }
             });
         }
-        
+
         // Start Prometheus metrics server if enabled
         if self.config.prometheus_enabled {
             self.start_prometheus_server().await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Record an operation completion
     pub fn record_operation(
         &self,
@@ -430,7 +427,7 @@ impl GraphMonitor {
         if !self.config.enabled {
             return;
         }
-        
+
         if let Some(ref sender) = self.metrics_sender {
             let event = MetricEvent::OperationCompleted {
                 operation: operation.to_string(),
@@ -438,12 +435,12 @@ impl GraphMonitor {
                 success,
                 metadata: metadata.clone(),
             };
-            
+
             if let Err(_) = sender.send(event) {
                 eprintln!("Failed to send operation metric event");
             }
         }
-        
+
         // Check for slow query
         let duration_ms = duration.as_millis() as u64;
         if duration_ms >= self.config.slow_query_threshold_ms {
@@ -456,61 +453,81 @@ impl GraphMonitor {
                 memory_used_mb: 0.0, // TODO: Get actual memory usage
                 nodes_visited: 0,    // TODO: Get from metadata
                 edges_traversed: 0,  // TODO: Get from metadata
-                error: if success { None } else { Some("Operation failed".to_string()) },
+                error: if success {
+                    None
+                } else {
+                    Some("Operation failed".to_string())
+                },
                 stack_trace: None,
             });
         }
     }
-    
+
     /// Start a profiling session
     pub fn start_profiling(&self, operation: &str) -> String {
         if !self.config.detailed_profiling {
             return String::new();
         }
-        
+
         self.profiler.start_session(operation)
     }
-    
+
     /// End a profiling session
     pub fn end_profiling(&self, session_id: &str) -> Option<ProfileSummary> {
         if !self.config.detailed_profiling {
             return None;
         }
-        
+
         self.profiler.end_session(session_id)
     }
-    
+
     /// Record a profiling checkpoint
     pub fn record_checkpoint(&self, session_id: &str, checkpoint: &str, duration: Duration) {
         if !self.config.detailed_profiling {
             return;
         }
-        
-        self.profiler.record_timing(session_id, checkpoint, duration);
+
+        self.profiler
+            .record_timing(session_id, checkpoint, duration);
     }
-    
+
     /// Get current metrics snapshot
     pub fn get_metrics_snapshot(&self) -> Result<MetricsSnapshot, ProximaDBError> {
-        let operation_counts = self.metrics_collector.operation_counts.read()
+        let operation_counts = self
+            .metrics_collector
+            .operation_counts
+            .read()
             .map_err(|_| ProximaDBError::Internal("Failed to read operation counts"))?
             .clone();
-        
-        let error_counts = self.metrics_collector.error_counts.read()
+
+        let error_counts = self
+            .metrics_collector
+            .error_counts
+            .read()
             .map_err(|_| ProximaDBError::Internal("Failed to read error counts"))?
             .clone();
-        
-        let resource_metrics = self.metrics_collector.resource_metrics.read()
+
+        let resource_metrics = self
+            .metrics_collector
+            .resource_metrics
+            .read()
             .map_err(|_| ProximaDBError::Internal("Failed to read resource metrics"))?
             .clone();
-        
-        let business_metrics = self.metrics_collector.business_metrics.read()
+
+        let business_metrics = self
+            .metrics_collector
+            .business_metrics
+            .read()
             .map_err(|_| ProximaDBError::Internal("Failed to read business metrics"))?
             .clone();
-        
-        let cache_metrics = self.metrics_collector.cache_metrics.read()
+
+        let cache_metrics = self
+            .metrics_collector
+            .cache_metrics
+            .read()
             .map_err(|_| ProximaDBError::Internal("Failed to read cache metrics"))?
             .clone();
-        
+
         Ok(MetricsSnapshot {
             timestamp: SystemTime::now(),
             operation_counts,
@@ -520,43 +537,49 @@ impl GraphMonitor {
             cache_metrics,
         })
     }
-    
+
     /// Get recent slow queries
     pub fn get_slow_queries(&self, limit: Option<usize>) -> Vec<SlowQueryRecord> {
         self.slow_query_logger.get_recent_slow_queries(limit)
     }
-    
+
     /// Get recent profile summaries
     pub fn get_recent_profiles(&self, limit: Option<usize>) -> Vec<ProfileSummary> {
         self.profiler.get_recent_summaries(limit)
     }
-    
+
     /// Perform health check
     pub async fn health_check(&self, memory_pool: &Arc<GraphMemoryPool>) -> HealthCheck {
         let mut components = HashMap::new();
         let start_time = Instant::now();
-        
+
         // Check graph memory pool
         let graph_health = self.check_graph_health(memory_pool).await;
         components.insert("graph".to_string(), graph_health);
-        
+
         // Check metrics collector
         let metrics_health = self.check_metrics_health().await;
         components.insert("metrics".to_string(), metrics_health);
-        
+
         // Check profiler
         let profiler_health = self.check_profiler_health().await;
         components.insert("profiler".to_string(), profiler_health);
-        
+
         // Determine overall status
-        let overall_status = if components.values().all(|h| matches!(h.status, HealthStatus::Healthy)) {
+        let overall_status = if components
+            .values()
+            .all(|h| matches!(h.status, HealthStatus::Healthy))
+        {
             HealthStatus::Healthy
-        } else if components.values().any(|h| matches!(h.status, HealthStatus::Unhealthy)) {
+        } else if components
+            .values()
+            .any(|h| matches!(h.status, HealthStatus::Unhealthy))
+        {
             HealthStatus::Unhealthy
         } else {
             HealthStatus::Degraded
         };
-        
+
         HealthCheck {
             status: overall_status,
             components,
@@ -564,13 +587,13 @@ impl GraphMonitor {
             timestamp: SystemTime::now(),
         }
     }
-    
+
     /// Update graph statistics for monitoring
     pub fn update_graph_statistics(&self, memory_pool: &Arc<GraphMemoryPool>) {
         if !self.config.enabled {
             return;
         }
-        
+
         let node_count = memory_pool.node_count() as u64;
         let edge_count = memory_pool.edge_count() as u64;
         let avg_node_degree = if node_count > 0 {
@@ -578,18 +601,18 @@ impl GraphMonitor {
         } else {
             0.0
         };
-        
+
         let business_metrics = BusinessMetrics {
             total_nodes: node_count,
             total_edges: edge_count,
             avg_node_degree,
-            connected_components: 1, // Simplified for now
-            graph_diameter: 0,       // Would require computation
-            traversals_per_minute: 0.0,     // Would track over time
+            connected_components: 1,         // Simplified for now
+            graph_diameter: 0,               // Would require computation
+            traversals_per_minute: 0.0,      // Would track over time
             pattern_matches_per_minute: 0.0, // Would track over time
             hybrid_queries_per_minute: 0.0,  // Would track over time
         };
-        
+
         if let Some(ref sender) = self.metrics_sender {
             let event = MetricEvent::BusinessUpdate(business_metrics);
             if let Err(_) = sender.send(event) {
@@ -597,51 +620,64 @@ impl GraphMonitor {
             }
         }
     }
-    
+
     /// Process metric events
     async fn process_metric_event(
         collector: &GraphMetricsCollector,
         event: MetricEvent,
     ) -> Result<(), ProximaDBError> {
         match event {
-            MetricEvent::OperationCompleted { operation, duration, success, metadata: _ } => {
+            MetricEvent::OperationCompleted {
+                operation,
+                duration,
+                success,
+                metadata: _,
+            } => {
                 // Update operation counts
                 {
-                    let mut counts = collector.operation_counts.write()
-                        .map_err(|_| ProximaDBError::Internal("Failed to write operation counts"))?;
+                    let mut counts = collector.operation_counts.write().map_err(|_| {
+                        ProximaDBError::Internal("Failed to write operation counts".to_string())
+                    })?;
                     *counts.entry(operation.clone()).or_insert(0) += 1;
                 }
-                
+
                 // Update error counts if failed
                 if !success {
-                    let mut error_counts = collector.error_counts.write()
-                        .map_err(|_| ProximaDBError::Internal("Failed to write error counts"))?;
+                    let mut error_counts = collector
+                        .error_counts
+                        .write()
+                        .map_err(|_| ProximaDBError::Internal("Failed to write error counts".to_string()))?;
                     *error_counts.entry(operation.clone()).or_insert(0) += 1;
                 }
-                
+
                 // Update latency histogram
                 {
-                    let mut histograms = collector.latency_histograms.write()
-                        .map_err(|_| ProximaDBError::Internal("Failed to write latency histograms"))?;
-                    
-                    let histogram = histograms.entry(operation).or_insert_with(|| {
-                        LatencyHistogram::new()
-                    });
-                    
+                    let mut histograms = collector.latency_histograms.write().map_err(|_| {
+                        ProximaDBError::Internal("Failed to write latency histograms".to_string())
+                    })?;
+
+                    let histogram = histograms
+                        .entry(operation)
+                        .or_insert_with(|| LatencyHistogram::new());
+
                     histogram.record(duration.as_millis() as f64);
                 }
             }
-            
+
             MetricEvent::ResourceUpdate(metrics) => {
-                let mut resource_metrics = collector.resource_metrics.write()
-                    .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics"))?;
+                let mut resource_metrics = collector
+                    .resource_metrics
+                    .write()
+                    .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics".to_string()))?;
                 *resource_metrics = metrics;
             }
-            
+
             MetricEvent::CacheEvent { cache_type, hit } => {
-                let mut cache_metrics = collector.cache_metrics.write()
-                    .map_err(|_| ProximaDBError::Internal("Failed to write cache metrics"))?;
-                
+                let mut cache_metrics = collector
+                    .cache_metrics
+                    .write()
+                    .map_err(|_| ProximaDBError::Internal("Failed to write cache metrics".to_string()))?;
+
                 match cache_type.as_str() {
                     "plan" => {
                         if hit {
@@ -666,43 +702,45 @@ impl GraphMonitor {
                     }
                     _ => {}
                 }
-                
+
                 // Update overall hit ratio
-                let total_hits = cache_metrics.plan_cache_hits + 
-                                cache_metrics.node_cache_hits + 
-                                cache_metrics.edge_cache_hits;
-                let total_requests = total_hits + 
-                                   cache_metrics.plan_cache_misses + 
-                                   cache_metrics.node_cache_misses + 
-                                   cache_metrics.edge_cache_misses;
-                
+                let total_hits = cache_metrics.plan_cache_hits
+                    + cache_metrics.node_cache_hits
+                    + cache_metrics.edge_cache_hits;
+                let total_requests = total_hits
+                    + cache_metrics.plan_cache_misses
+                    + cache_metrics.node_cache_misses
+                    + cache_metrics.edge_cache_misses;
+
                 cache_metrics.overall_hit_ratio = if total_requests > 0 {
                     total_hits as f64 / total_requests as f64
                 } else {
                     0.0
                 };
             }
-            
+
             MetricEvent::BusinessUpdate(metrics) => {
-                let mut business_metrics = collector.business_metrics.write()
-                    .map_err(|_| ProximaDBError::Internal("Failed to write business metrics"))?;
+                let mut business_metrics = collector
+                    .business_metrics
+                    .write()
+                    .map_err(|_| ProximaDBError::Internal("Failed to write business metrics".to_string()))?;
                 *business_metrics = metrics;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Collect system-level metrics
     async fn collect_system_metrics(
         collector: &GraphMetricsCollector,
     ) -> Result<(), ProximaDBError> {
         // This is a simplified implementation
         // In production, you would use proper system monitoring libraries
-        
+
         let metrics = ResourceMetrics {
-            cpu_usage_percent: 0.0,  // Would use sysinfo or similar
-            memory_used_mb: 0.0,     // Would use sysinfo or similar
+            cpu_usage_percent: 0.0, // Would use sysinfo or similar
+            memory_used_mb: 0.0,    // Would use sysinfo or similar
             memory_usage_percent: 0.0,
             heap_size_mb: 0.0,
             thread_count: 0,
@@ -712,32 +750,37 @@ impl GraphMonitor {
             network_in_bytes_per_sec: 0.0,
             network_out_bytes_per_sec: 0.0,
         };
-        
-        let mut resource_metrics = collector.resource_metrics.write()
-            .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics"))?;
+
+        let mut resource_metrics = collector
+            .resource_metrics
+            .write()
+            .map_err(|_| ProximaDBError::Internal("Failed to write resource metrics".to_string()))?;
         *resource_metrics = metrics;
-        
+
         Ok(())
     }
-    
+
     /// Start Prometheus metrics server
     async fn start_prometheus_server(&self) -> Result<(), ProximaDBError> {
         // This is a placeholder for Prometheus integration
         // In production, you would use the prometheus crate and set up HTTP endpoints
-        println!("Prometheus metrics server would start on port {}", self.config.prometheus_port);
+        println!(
+            "Prometheus metrics server would start on port {}",
+            self.config.prometheus_port
+        );
         Ok(())
     }
-    
+
     /// Check graph component health
     async fn check_graph_health(&self, memory_pool: &Arc<GraphMemoryPool>) -> ComponentHealth {
         let start_time = Instant::now();
-        
+
         // Basic health check - ensure we can access the memory pool
         let node_count = memory_pool.node_count();
         let edge_count = memory_pool.edge_count();
-        
+
         let response_time = start_time.elapsed().as_millis() as u64;
-        
+
         if node_count == 0 && edge_count == 0 {
             ComponentHealth {
                 status: HealthStatus::Degraded,
@@ -754,11 +797,11 @@ impl GraphMonitor {
             }
         }
     }
-    
+
     /// Check metrics collector health
     async fn check_metrics_health(&self) -> ComponentHealth {
         let start_time = Instant::now();
-        
+
         // Check if we can access metrics
         match self.metrics_collector.operation_counts.read() {
             Ok(_) => ComponentHealth {
@@ -775,11 +818,11 @@ impl GraphMonitor {
             },
         }
     }
-    
+
     /// Check profiler health
     async fn check_profiler_health(&self) -> ComponentHealth {
         let start_time = Instant::now();
-        
+
         // Check if profiler is accessible
         match self.profiler.active_profiles.read() {
             Ok(_) => ComponentHealth {
@@ -826,28 +869,28 @@ impl LatencyHistogram {
     pub fn new() -> Self {
         Self {
             buckets: vec![
-                (1.0, 0),     // < 1ms
-                (5.0, 0),     // < 5ms
-                (10.0, 0),    // < 10ms
-                (25.0, 0),    // < 25ms
-                (50.0, 0),    // < 50ms
-                (100.0, 0),   // < 100ms
-                (250.0, 0),   // < 250ms
-                (500.0, 0),   // < 500ms
-                (1000.0, 0),  // < 1s
-                (2500.0, 0),  // < 2.5s
-                (5000.0, 0),  // < 5s
+                (1.0, 0),           // < 1ms
+                (5.0, 0),           // < 5ms
+                (10.0, 0),          // < 10ms
+                (25.0, 0),          // < 25ms
+                (50.0, 0),          // < 50ms
+                (100.0, 0),         // < 100ms
+                (250.0, 0),         // < 250ms
+                (500.0, 0),         // < 500ms
+                (1000.0, 0),        // < 1s
+                (2500.0, 0),        // < 2.5s
+                (5000.0, 0),        // < 5s
                 (f64::INFINITY, 0), // >= 5s
             ],
             count: 0,
             sum: 0.0,
         }
     }
-    
+
     pub fn record(&mut self, value: f64) {
         self.count += 1;
         self.sum += value;
-        
+
         for (upper_bound, count) in &mut self.buckets {
             if value <= *upper_bound {
                 *count += 1;
@@ -855,22 +898,22 @@ impl LatencyHistogram {
             }
         }
     }
-    
+
     pub fn percentile(&self, p: f64) -> f64 {
         if self.count == 0 {
             return 0.0;
         }
-        
+
         let target_count = (self.count as f64 * p / 100.0) as u64;
         let mut cumulative = 0;
-        
+
         for (upper_bound, count) in &self.buckets {
             cumulative += count;
             if cumulative >= target_count {
                 return *upper_bound;
             }
         }
-        
+
         0.0
     }
 }
@@ -882,7 +925,7 @@ impl SlowQueryLogger {
             config,
         }
     }
-    
+
     pub fn log_slow_query(&self, record: SlowQueryRecord) {
         if let Ok(mut queries) = self.slow_queries.lock() {
             // Maintain circular buffer
@@ -891,18 +934,14 @@ impl SlowQueryLogger {
             }
             queries.push_back(record);
         }
-        
+
         // TODO: Also write to log file if configured
     }
-    
+
     pub fn get_recent_slow_queries(&self, limit: Option<usize>) -> Vec<SlowQueryRecord> {
         if let Ok(queries) = self.slow_queries.lock() {
             let limit = limit.unwrap_or(queries.len());
-            queries.iter()
-                .rev()
-                .take(limit)
-                .cloned()
-                .collect()
+            queries.iter().rev().take(limit).cloned().collect()
         } else {
             Vec::new()
         }
@@ -917,10 +956,10 @@ impl GraphProfiler {
             config,
         }
     }
-    
+
     pub fn start_session(&self, operation: &str) -> String {
         let session_id = Uuid::new_v4().to_string();
-        
+
         let session = ProfileSession {
             session_id: session_id.clone(),
             start_time: Instant::now(),
@@ -929,62 +968,81 @@ impl GraphProfiler {
             resource_samples: Vec::new(),
             metadata: HashMap::new(),
         };
-        
+
         if let Ok(mut profiles) = self.active_profiles.write() {
             profiles.insert(session_id.clone(), session);
         }
-        
+
         session_id
     }
-    
+
     pub fn end_session(&self, session_id: &str) -> Option<ProfileSummary> {
         let session = if let Ok(mut profiles) = self.active_profiles.write() {
             profiles.remove(session_id)
         } else {
             return None;
         };
-        
+
         if let Some(session) = session {
             let total_time = session.start_time.elapsed();
             let summary = ProfileSummary {
                 session_id: session.session_id,
                 operation: session.operation,
                 total_time_ms: total_time.as_millis() as u64,
-                time_breakdown: session.timings.iter()
+                time_breakdown: session
+                    .timings
+                    .iter()
                     .map(|(k, v)| (k.clone(), v.as_millis() as u64))
                     .collect(),
-                peak_cpu_percent: session.resource_samples.iter()
+                peak_cpu_percent: session
+                    .resource_samples
+                    .iter()
                     .map(|s| s.cpu_percent)
                     .fold(0.0, f64::max),
-                peak_memory_mb: session.resource_samples.iter()
+                peak_memory_mb: session
+                    .resource_samples
+                    .iter()
                     .map(|s| s.memory_mb)
                     .fold(0.0, f64::max),
                 avg_cpu_percent: if !session.resource_samples.is_empty() {
-                    session.resource_samples.iter().map(|s| s.cpu_percent).sum::<f64>() / 
-                    session.resource_samples.len() as f64
-                } else { 0.0 },
+                    session
+                        .resource_samples
+                        .iter()
+                        .map(|s| s.cpu_percent)
+                        .sum::<f64>()
+                        / session.resource_samples.len() as f64
+                } else {
+                    0.0
+                },
                 avg_memory_mb: if !session.resource_samples.is_empty() {
-                    session.resource_samples.iter().map(|s| s.memory_mb).sum::<f64>() / 
-                    session.resource_samples.len() as f64
-                } else { 0.0 },
+                    session
+                        .resource_samples
+                        .iter()
+                        .map(|s| s.memory_mb)
+                        .sum::<f64>()
+                        / session.resource_samples.len() as f64
+                } else {
+                    0.0
+                },
                 sample_count: session.resource_samples.len(),
                 completed_at: SystemTime::now(),
             };
-            
+
             // Add to completed profiles
             if let Ok(mut completed) = self.completed_profiles.write() {
-                if completed.len() >= 1000 { // Keep last 1000 profiles
+                if completed.len() >= 1000 {
+                    // Keep last 1000 profiles
                     completed.pop_front();
                 }
                 completed.push_back(summary.clone());
             }
-            
+
             Some(summary)
         } else {
             None
         }
     }
-    
+
     pub fn record_timing(&self, session_id: &str, checkpoint: &str, duration: Duration) {
         if let Ok(mut profiles) = self.active_profiles.write() {
             if let Some(session) = profiles.get_mut(session_id) {
@@ -992,15 +1050,11 @@ impl GraphProfiler {
             }
         }
     }
-    
+
     pub fn get_recent_summaries(&self, limit: Option<usize>) -> Vec<ProfileSummary> {
         if let Ok(completed) = self.completed_profiles.read() {
             let limit = limit.unwrap_or(completed.len());
-            completed.iter()
-                .rev()
-                .take(limit)
-                .cloned()
-                .collect()
+            completed.iter().rev().take(limit).cloned().collect()
         } else {
             Vec::new()
         }
@@ -1010,7 +1064,7 @@ impl GraphProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_monitoring_config_default() {
         let config = MonitoringConfig::default();
@@ -1018,39 +1072,42 @@ mod tests {
         assert_eq!(config.slow_query_threshold_ms, 1000);
         assert_eq!(config.max_slow_queries, 1000);
     }
-    
+
     #[test]
     fn test_latency_histogram() {
         let mut histogram = LatencyHistogram::new();
-        
+
         // Record some values
         histogram.record(5.0);
         histogram.record(15.0);
         histogram.record(150.0);
-        
+
         assert_eq!(histogram.count, 3);
         assert_eq!(histogram.sum, 170.0);
-        
+
         // Check percentiles (approximate)
         let p50 = histogram.percentile(50.0);
         assert!(p50 > 0.0);
     }
-    
+
     #[test]
     fn test_graph_monitor_creation() {
         let config = MonitoringConfig::default();
         let monitor = GraphMonitor::new(config);
-        
+
         assert!(monitor.config.enabled);
     }
-    
+
     #[tokio::test]
     async fn test_health_check() {
         let config = MonitoringConfig::default();
         let monitor = GraphMonitor::new(config);
         let memory_pool = Arc::new(GraphMemoryPool::new());
-        
+
         let health = monitor.health_check(&memory_pool).await;
-        assert!(matches!(health.status, HealthStatus::Healthy | HealthStatus::Degraded));
+        assert!(matches!(
+            health.status,
+            HealthStatus::Healthy | HealthStatus::Degraded
+        ));
     }
 }

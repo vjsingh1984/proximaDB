@@ -85,9 +85,9 @@ pub struct FastLanesMetadata {
     /// Number of exceptions that don't fit base encoding
     pub patch_count: Option<usize>,
     /// Statistics for adaptive decoding
-    pub min_value: f32,       // Minimum value in block
-    pub max_value: f32,       // Maximum value in block
-    pub range_bits: u8,       // Bits needed for value range
+    pub min_value: f32, // Minimum value in block
+    pub max_value: f32, // Maximum value in block
+    pub range_bits: u8, // Bits needed for value range
     /// Compression ratio achieved (original_size / compressed_size)
     pub compression_ratio: f32,
 }
@@ -111,7 +111,7 @@ pub struct BlockMetadataStats {
 }
 
 /// Shared data block structure using FastLanes columnar encoding
-/// 
+///
 /// This is the core data structure for storing vectors in both SST and SWIFT engines.
 /// It provides SIMD-optimized columnar storage with multiple encoding schemes,
 /// quantization levels, and compression algorithms.
@@ -125,10 +125,10 @@ pub struct BlockMetadataStats {
 #[derive(Debug, Clone)]
 pub struct FastLanesDataBlock {
     /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
-    /// 
+    ///
     /// This marker identifies the encoding scheme used for the block.
     /// Format: [7:4] Major encoding type | [3:0] Sub-variant
-    /// 
+    ///
     /// Encoding Types:
     /// - 0x00: Raw/Uncompressed (backward compatible)
     /// - 0x10-0x1F: FastLanes BitPacked variants (pack integers using minimum bits)
@@ -144,12 +144,12 @@ pub struct FastLanesDataBlock {
     pub encoding_metadata: Option<FastLanesMetadata>,
 
     /// Block identification - u32 supports 4.3 billion blocks
-    /// 
+    ///
     /// ## Capacity Planning:
     /// - u32 = 4,294,967,296 blocks maximum
     /// - With 1000 vectors/block = 4.3 trillion vectors
     /// - With 384D vectors @ 2KB each = 8.6 petabytes
-    /// 
+    ///
     /// ## Why u32 instead of u16?
     /// - u16 limit: 65,536 blocks = 65M vectors (too small)
     /// - Real-world: 100GB file = 100,000 blocks (exceeds u16)
@@ -421,7 +421,7 @@ impl FastLanesDataBlock {
         let has_deletes = records.iter().any(|r| {
             r.metadata.iter().any(|kv| {
             kv.key == "_deleted" && matches!(
-                kv.value.as_ref(), 
+                kv.value.as_ref(),
                 Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "true"
             )
         })
@@ -770,12 +770,17 @@ impl FastLanesDataBlock {
 
                     // Serialize value
                     if let Some(value) = &item.value {
-                        
                         // Encode the metadata value based on its type
                         let value_bytes = match value {
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => s.as_bytes().to_vec(),
-                            crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => n.to_le_bytes().to_vec(),
-                            crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                                s.as_bytes().to_vec()
+                            }
+                            crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
+                                n.to_le_bytes().to_vec()
+                            }
+                            crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                                vec![if *b { 1 } else { 0 }]
+                            }
                         };
                         sparse_values.write_all(&(value_bytes.len() as u32).to_le_bytes())?;
                         sparse_values.write_all(&value_bytes)?;

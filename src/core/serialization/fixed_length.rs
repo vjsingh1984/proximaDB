@@ -304,20 +304,21 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
             FixedSerializationFormat::Sparse => {
                 // Sparse format: stores indices and values for non-zero elements
                 // Format: [num_non_zero (u32)] [indices (u32 array)] [values (T array)]
-                
+
                 if payload.len() < 4 {
                     return Err(anyhow::anyhow!("Sparse data too short"));
                 }
-                
-                let num_non_zero = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
+
+                let num_non_zero =
+                    u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]) as usize;
                 let mut offset = 4;
-                
+
                 // Read indices
                 let indices_size = num_non_zero * 4;
                 if offset + indices_size > payload.len() {
                     return Err(anyhow::anyhow!("Sparse indices data truncated"));
                 }
-                
+
                 let mut indices = Vec::with_capacity(num_non_zero);
                 for i in 0..num_non_zero {
                     let idx_start = offset + i * 4;
@@ -330,31 +331,31 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
                     indices.push(idx);
                 }
                 offset += indices_size;
-                
+
                 // Read values based on element type (assuming f32 for now)
                 let element_size = std::mem::size_of::<f32>();
                 let values_size = num_non_zero * element_size;
-                
+
                 if offset + values_size > payload.len() {
                     return Err(anyhow::anyhow!("Sparse values data truncated"));
                 }
-                
+
                 // Reconstruct dense vector
                 let mut dense_data = vec![0u8; D::DIMENSION * element_size];
-                
+
                 for (i, &idx) in indices.iter().enumerate() {
                     if idx >= D::DIMENSION {
                         return Err(anyhow::anyhow!("Sparse index {} out of bounds", idx));
                     }
-                    
+
                     let src_start = offset + i * element_size;
                     let src_end = src_start + element_size;
                     let dst_start = idx * element_size;
                     let dst_end = dst_start + element_size;
-                    
+
                     dense_data[dst_start..dst_end].copy_from_slice(&payload[src_start..src_end]);
                 }
-                
+
                 dense_data
             }
         };

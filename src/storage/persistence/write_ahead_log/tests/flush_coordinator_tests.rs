@@ -110,7 +110,6 @@ impl UnifiedStorageEngine for MockStorageEngine {
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
         panic!("Mock engine doesn't have filesystem factory")
     }
-
 }
 
 /// Create test vector
@@ -120,9 +119,9 @@ fn create_test_vector(id: &str) -> VectorRecord {
         vector: vec![0.1; 128],
         metadata: vec![MetadataItem {
             key: "test".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "true".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string()),
+            ),
         }],
         timestamp: 1234567890,
         updated_at: Some(1234567890),

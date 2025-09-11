@@ -197,7 +197,11 @@ impl NovaHierarchicalCache {
         Self {
             superblock_cache: Arc::new(DashMap::new()),
             block_cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
-                if block_cache_size == 0 { 100 } else { block_cache_size }
+                if block_cache_size == 0 {
+                    100
+                } else {
+                    block_cache_size
+                },
             ))),
             rowgroup_cache: Arc::new(RwLock::new(HashMap::new())),
             rowgroup_ttl_sec,

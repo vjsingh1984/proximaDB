@@ -10,11 +10,11 @@ mod tests {
         CollectionConfig, CollectionOperation, CollectionRequest, IncludeFields, SearchQuery,
         VectorBatchRequest, VectorOperation, VectorRecord, VectorSearchRequest,
     };
+    use crate::utils::uuid::Uuid;
     use chrono::Utc;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use crate::utils::uuid::Uuid;
 
     /// Helper to create test collection config
     fn create_test_collection_config(name: &str) -> CollectionConfig {

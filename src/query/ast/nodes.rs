@@ -52,7 +52,7 @@ pub enum SetOp {
 #[derive(Debug, Clone)]
 pub struct TableRef {
     pub name: Option<String>,
-    pub subquery: Option<Box<Query>>, 
+    pub subquery: Option<Box<Query>>,
     pub alias: Option<String>,
 }
 
@@ -82,11 +82,24 @@ pub enum Expr {
     Identifier(String),
     Literal(Literal),
     Param(String),
-    Unary { op: UnaryOp, expr: Box<Expr> },
-    Binary { left: Box<Expr>, op: BinaryOp, right: Box<Expr> },
-    FuncCall { name: String, args: Vec<Expr> },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+    Binary {
+        left: Box<Expr>,
+        op: BinaryOp,
+        right: Box<Expr>,
+    },
+    FuncCall {
+        name: String,
+        args: Vec<Expr>,
+    },
     // Aggregates
-    AggCall { name: String, args: Vec<Expr> },
+    AggCall {
+        name: String,
+        args: Vec<Expr>,
+    },
     // Table functions (SIMILAR, FOLLOW, ASSEMBLE) lowered as function calls
     // SKS-specific functions (structured for planner)
     SksSimilar {
@@ -111,12 +124,24 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone)]
-pub enum UnaryOp { Not, Neg }
+pub enum UnaryOp {
+    Not,
+    Neg,
+}
 
 #[derive(Debug, Clone)]
 pub enum BinaryOp {
-    Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
     Like,
-    Add, Sub, Mul, Div,
+    Add,
+    Sub,
+    Mul,
+    Div,
 }

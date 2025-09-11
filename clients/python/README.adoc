@@ -160,6 +160,107 @@ make gen-proto  # Requires: pip install grpcio grpcio-tools
 This now generates stubs for:
 - `proximadb/v1/vector.proto` → VectorService
 - `proximadb/v1/sql.proto` → SqlService
+- `proximadb/v1/graph.proto` → GraphService
+
+== Graph Operations
+
+=== Shortest Path (gRPC, per-call prefetch overrides)
+
+[source,python]
+----
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+
+client = ProximaDBSyncGrpcClient("localhost:5679")
+resp = client.shortest_path(
+    start_node_id="n1",
+    target_node_id="n8",
+    algorithm="DIJKSTRA",
+    max_depth=10,
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp.node_ids, resp.total_weight)
+----
+
+=== Shortest Path (REST, header overrides)
+
+[source,python]
+----
+from proximadb.protocols.rest_sync import ProximaDBClient
+
+rest = ProximaDBClient(url="http://localhost:5678")
+resp = rest.graph_shortest_path(
+    start_node_id="n1",
+    target_node_id="n8",
+    algorithm="ASTAR",
+    max_depth=10,
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp)
+----
+
+=== Traverse (REST, header overrides)
+
+[source,python]
+----
+
+=== Async Examples
+
+==== gRPC (async) — Shortest Path
+
+[source,python]
+----
+import asyncio
+from proximadb.protocols.grpc_async import ProximaDBClient as GrpcAsync
+
+async def main():
+    client = GrpcAsync(endpoint="localhost:5679")
+    resp = client.shortest_path(
+        start_node_id="n1",
+        target_node_id="n8",
+        algorithm="DIJKSTRA",
+        max_depth=10,
+        enable_prefetch=True,
+        prefetch_budget=8,
+    )
+    print(resp.node_ids, resp.total_weight)
+
+asyncio.run(main())
+----
+
+==== REST (async) — Traversal with header overrides
+
+[source,python]
+----
+import asyncio
+from proximadb.protocols.rest_async import ProximaDBAsyncClient
+
+async def main():
+    client = ProximaDBAsyncClient(url="http://localhost:5678")
+    resp = await client.graph_traverse(
+        start_node_id="n1",
+        max_depth=3,
+        edge_types=["REL"],
+        algorithm="BFS",
+        enable_prefetch=True,
+        prefetch_budget=8,
+    )
+    print(resp)
+    await client.aclose()
+
+asyncio.run(main())
+----
+resp = rest.graph_traverse(
+    start_node_id="n1",
+    max_depth=3,
+    edge_types=["REL"],
+    algorithm="BFS",
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp)
+----
 ----
 
 === Running Tests

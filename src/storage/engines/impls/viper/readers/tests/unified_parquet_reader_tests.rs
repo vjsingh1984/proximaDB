@@ -408,15 +408,20 @@ mod tests {
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            format!("cat_{}", i % 3),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                                "cat_{}",
+                                i % 3
+                            )),
+                        ),
                     },
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            (i as f32 * 0.5).to_string(),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                (i as f32 * 0.5).to_string(),
+                            ),
+                        ),
                     },
                 ],
                 timestamp: chrono::Utc::now().timestamp() as u32,

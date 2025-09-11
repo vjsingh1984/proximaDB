@@ -15,10 +15,9 @@ use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::clustering::{
-    HilbertKey, LiquidClusteringConfig, PCAModel, QueryPatternTracker,
-    sort_by_hilbert,
+    HilbertKey, LiquidClusteringConfig, PCAModel, QueryPatternTracker, sort_by_hilbert,
 };
-use super::fastlane::{write_helix_sstable, extract_helix_metadata};
+use super::fastlane::{extract_helix_metadata, write_helix_sstable};
 use super::liquid_clustering::LiquidClusteringCoordinator;
 use super::{HelixConfig, SStableMetadata};
 
@@ -34,11 +33,7 @@ pub struct LeveledCompactor {
 
 impl LeveledCompactor {
     /// Create a new compactor
-    pub fn new(
-        config: HelixConfig,
-        filesystem: Arc<dyn FileSystem>,
-        data_dir: PathBuf,
-    ) -> Self {
+    pub fn new(config: HelixConfig, filesystem: Arc<dyn FileSystem>, data_dir: PathBuf) -> Self {
         Self {
             config,
             filesystem,
@@ -68,15 +63,18 @@ impl LeveledCompactor {
 
         // Check if all L0 files have Hilbert ranges (sorted flush optimization)
         let all_sorted = l0_files.iter().all(|f| f.hilbert_range.is_some());
-        
+
         if all_sorted {
-            info!("All {} L0 files are pre-sorted by Hilbert key - using optimized merge", l0_files.len());
+            info!(
+                "All {} L0 files are pre-sorted by Hilbert key - using optimized merge",
+                l0_files.len()
+            );
             // Optimized path: merge pre-sorted files
             return self.merge_sorted_l0_files(levels, l0_files).await;
         }
 
         info!("Mixed sorted/unsorted L0 files - using full re-clustering");
-        
+
         // Fallback path: read all records and re-cluster
         let mut all_records = Vec::new();
         for sstable in &l0_files {
@@ -84,7 +82,11 @@ impl LeveledCompactor {
             all_records.extend(records);
         }
 
-        info!("Read {} vectors from {} L0 files", all_records.len(), l0_files.len());
+        info!(
+            "Read {} vectors from {} L0 files",
+            all_records.len(),
+            l0_files.len()
+        );
 
         // Train PCA model if we have enough data
         let pca_model = if all_records.len() > 100 {
@@ -98,10 +100,12 @@ impl LeveledCompactor {
             all_records
                 .iter()
                 .map(|record| {
-                    model.project_and_compute_hilbert_with_config(
-                        &record.vector,
-                        self.config.hilbert_bits_per_dimension
-                    ).unwrap_or(0)
+                    model
+                        .project_and_compute_hilbert_with_config(
+                            &record.vector,
+                            self.config.hilbert_bits_per_dimension,
+                        )
+                        .unwrap_or(0)
                 })
                 .collect()
         } else {
@@ -138,7 +142,8 @@ impl LeveledCompactor {
                 self.config.fastlane_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
-            ).await?;
+            )
+            .await?;
 
             bytes_written += bytes;
 
@@ -153,10 +158,14 @@ impl LeveledCompactor {
                 num_vectors: chunk.len(),
                 size_bytes: bytes,
                 created_at: chrono::Utc::now(),
-                blocks: extract_helix_metadata(chunk, self.config.fastlane_block_size, Some(chunk_keys))
-                    .into_iter()
-                    .map(|h| h.fastlanes_metadata)
-                    .collect(),
+                blocks: extract_helix_metadata(
+                    chunk,
+                    self.config.fastlane_block_size,
+                    Some(chunk_keys),
+                )
+                .into_iter()
+                .map(|h| h.fastlanes_metadata)
+                .collect(),
                 bloom_filter: None,
             };
 
@@ -166,22 +175,29 @@ impl LeveledCompactor {
         // Update levels
         {
             let mut levels_write = levels.write().await;
-            
+
             // Remove L0 files
             levels_write.remove(&0);
-            
+
             // Add new L1 files
-            levels_write.entry(1)
+            levels_write
+                .entry(1)
                 .or_insert_with(Vec::new)
                 .extend(new_l1_files);
         }
 
         // Delete old L0 files
         for sstable in &l0_files {
-            self.filesystem.delete(sstable.path.to_str().unwrap_or("")).await?;
+            self.filesystem
+                .delete(sstable.path.to_str().unwrap_or(""))
+                .await?;
         }
 
-        info!("Compacted {} L0 files into L1, wrote {} bytes", l0_files.len(), bytes_written);
+        info!(
+            "Compacted {} L0 files into L1, wrote {} bytes",
+            l0_files.len(),
+            bytes_written
+        );
 
         Ok((l0_files.len(), bytes_written))
     }
@@ -192,19 +208,22 @@ impl LeveledCompactor {
         levels: Arc<RwLock<HashMap<usize, Vec<SStableMetadata>>>>,
         l0_files: Vec<SStableMetadata>,
     ) -> Result<(usize, u64)> {
-        info!("Performing optimized k-way merge of {} pre-sorted L0 files", l0_files.len());
-        
+        info!(
+            "Performing optimized k-way merge of {} pre-sorted L0 files",
+            l0_files.len()
+        );
+
         // Since files are already sorted by Hilbert key, we can do a k-way merge
         // This is much more efficient than reading all records and re-sorting
-        
+
         let mut all_records = Vec::new();
         let mut all_keys = Vec::new();
-        
+
         // For simplicity, read all records but preserve sorting
         // In production, implement proper k-way merge with iterators
         for sstable in &l0_files {
             let records = self.read_sstable(&sstable.path).await?;
-            
+
             // Records are already sorted, just append
             if let Some((min_key, max_key)) = sstable.hilbert_range {
                 let num_records = records.len();
@@ -215,7 +234,7 @@ impl LeveledCompactor {
                     } else {
                         0
                     };
-                    
+
                     for (i, record) in records.into_iter().enumerate() {
                         let key = min_key + (i as u64 * step);
                         all_keys.push(key);
@@ -228,22 +247,25 @@ impl LeveledCompactor {
                 all_keys.extend(vec![0; all_records.len() - all_keys.len()]);
             }
         }
-        
-        info!("Merged {} records from pre-sorted L0 files", all_records.len());
-        
+
+        info!(
+            "Merged {} records from pre-sorted L0 files",
+            all_records.len()
+        );
+
         // Write merged L1 files
         let target_file_size = 100; // vectors per file
         let mut bytes_written = 0u64;
         let mut new_l1_files = Vec::new();
-        
+
         for (chunk_idx, chunk) in all_records.chunks(target_file_size).enumerate() {
             let filename = self.filename_codec.generate(1, "helix");
             let file_path = self.data_dir.join(&filename);
-            
+
             let chunk_start = chunk_idx * target_file_size;
             let chunk_end = std::cmp::min(chunk_start + chunk.len(), all_keys.len());
             let chunk_keys = &all_keys[chunk_start..chunk_end];
-            
+
             let bytes = write_helix_sstable(
                 &self.filesystem,
                 &file_path,
@@ -251,10 +273,11 @@ impl LeveledCompactor {
                 self.config.fastlane_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
-            ).await?;
-            
+            )
+            .await?;
+
             bytes_written += bytes;
-            
+
             let metadata = SStableMetadata {
                 path: file_path,
                 level: 1,
@@ -265,29 +288,42 @@ impl LeveledCompactor {
                 num_vectors: chunk.len(),
                 size_bytes: bytes,
                 created_at: chrono::Utc::now(),
-                blocks: extract_helix_metadata(chunk, self.config.fastlane_block_size, Some(chunk_keys))
-                    .into_iter()
-                    .map(|h| h.fastlanes_metadata)
-                    .collect(),
+                blocks: extract_helix_metadata(
+                    chunk,
+                    self.config.fastlane_block_size,
+                    Some(chunk_keys),
+                )
+                .into_iter()
+                .map(|h| h.fastlanes_metadata)
+                .collect(),
                 bloom_filter: None,
             };
-            
+
             new_l1_files.push(metadata);
         }
-        
+
         // Update levels
         let num_l1_files = new_l1_files.len();
         let mut levels_write = levels.write().await;
         levels_write.remove(&0);
-        levels_write.entry(1).or_insert_with(Vec::new).extend(new_l1_files);
-        
+        levels_write
+            .entry(1)
+            .or_insert_with(Vec::new)
+            .extend(new_l1_files);
+
         // Delete L0 files
         for sstable in &l0_files {
-            self.filesystem.delete(&sstable.path.to_string_lossy()).await?;
+            self.filesystem
+                .delete(&sstable.path.to_string_lossy())
+                .await?;
         }
-        info!("Optimized merge complete: {} L0 files -> {} L1 files, {} bytes", 
-              l0_files.len(), num_l1_files, bytes_written);
-        
+        info!(
+            "Optimized merge complete: {} L0 files -> {} L1 files, {} bytes",
+            l0_files.len(),
+            num_l1_files,
+            bytes_written
+        );
+
         Ok((l0_files.len(), bytes_written))
     }
 
@@ -298,7 +334,11 @@ impl LeveledCompactor {
         level: usize,
         pca_model: Arc<RwLock<Option<PCAModel>>>,
     ) -> Result<(usize, u64)> {
-        info!("Starting L{} to L{} compaction with liquid clustering", level, level + 1);
+        info!(
+            "Starting L{} to L{} compaction with liquid clustering",
+            level,
+            level + 1
+        );
 
         // Get files from current and next level
         let (curr_files, next_files) = {
@@ -331,10 +371,12 @@ impl LeveledCompactor {
             all_records
                 .iter()
                 .map(|record| {
-                    model.project_and_compute_hilbert_with_config(
-                        &record.vector,
-                        self.config.hilbert_bits_per_dimension
-                    ).unwrap_or(0)
+                    model
+                        .project_and_compute_hilbert_with_config(
+                            &record.vector,
+                            self.config.hilbert_bits_per_dimension,
+                        )
+                        .unwrap_or(0)
                 })
                 .collect()
         } else {
@@ -343,8 +385,9 @@ impl LeveledCompactor {
 
         // Apply liquid clustering if enabled (now that we have Hilbert keys)
         if self.liquid_config.enabled {
-            let (reorganized_records, reorganized_keys) = 
-                self.apply_liquid_clustering(all_records, hilbert_keys).await?;
+            let (reorganized_records, reorganized_keys) = self
+                .apply_liquid_clustering(all_records, hilbert_keys)
+                .await?;
             all_records = reorganized_records;
             hilbert_keys = reorganized_keys;
         }
@@ -374,7 +417,8 @@ impl LeveledCompactor {
                 self.config.fastlane_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
-            ).await?;
+            )
+            .await?;
 
             bytes_written += bytes;
 
@@ -393,10 +437,14 @@ impl LeveledCompactor {
                 num_vectors: chunk.len(),
                 size_bytes: bytes,
                 created_at: chrono::Utc::now(),
-                blocks: extract_helix_metadata(chunk, self.config.fastlane_block_size, Some(chunk_keys))
-                    .into_iter()
-                    .map(|h| h.fastlanes_metadata)
-                    .collect(),
+                blocks: extract_helix_metadata(
+                    chunk,
+                    self.config.fastlane_block_size,
+                    Some(chunk_keys),
+                )
+                .into_iter()
+                .map(|h| h.fastlanes_metadata)
+                .collect(),
                 bloom_filter: None,
             };
 
@@ -406,26 +454,29 @@ impl LeveledCompactor {
         // Update levels
         {
             let mut levels_write = levels.write().await;
-            
+
             // Remove compacted files from current level
             if let Some(curr_level_files) = levels_write.get_mut(&level) {
                 curr_level_files.retain(|f| !files_to_compact.iter().any(|cf| cf.path == f.path));
             }
-            
+
             // Remove compacted files from next level
             if let Some(next_level_files) = levels_write.get_mut(&(level + 1)) {
                 next_level_files.retain(|f| !files_to_compact.iter().any(|cf| cf.path == f.path));
             }
-            
+
             // Add new files to next level
-            levels_write.entry(level + 1)
+            levels_write
+                .entry(level + 1)
                 .or_insert_with(Vec::new)
                 .extend(new_files);
         }
 
         // Delete old files
         for sstable in &files_to_compact {
-            self.filesystem.delete(sstable.path.to_str().unwrap_or("")).await?;
+            self.filesystem
+                .delete(sstable.path.to_str().unwrap_or(""))
+                .await?;
         }
 
         info!(
@@ -481,23 +532,23 @@ impl LeveledCompactor {
             self.liquid_config.clone(),
             self.query_tracker.clone(),
         );
-        
+
         // Apply liquid clustering to reorganize based on access patterns
         let (reorganized_records, reorganized_keys) = coordinator
             .apply_liquid_clustering(records, &hilbert_keys)
             .await?;
-        
+
         // Check if we should trigger re-clustering
         if coordinator.should_recluster().await {
             info!("Liquid clustering: Re-clustering triggered based on access patterns");
         }
-        
+
         // Calculate and log clustering quality
         let quality = coordinator
             .calculate_clustering_quality(&reorganized_records, &reorganized_keys)
             .await;
         info!("Liquid clustering quality: {:.2}", quality);
-        
+
         // Get optimization suggestions
         let suggestions = coordinator.get_optimization_suggestions().await;
         for suggestion in suggestions {
@@ -508,7 +559,7 @@ impl LeveledCompactor {
                 suggestion.estimated_improvement * 100.0
             );
         }
-        
+
         Ok((reorganized_records, reorganized_keys))
     }
 
@@ -517,39 +568,42 @@ impl LeveledCompactor {
         // Read file data
         let file_data = self.filesystem.read(path.to_str().unwrap_or("")).await?;
         let mut cursor = std::io::Cursor::new(file_data);
-        
+
         // Skip magic and version
         cursor.set_position(8);
-        
+
         // Read number of blocks
         let mut num_blocks_bytes = [0u8; 4];
         std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
         let num_blocks = u32::from_le_bytes(num_blocks_bytes);
-        
+
         let mut records = Vec::new();
         let current_time = chrono::Utc::now().timestamp() as u64;
-        
+
         // Read blocks
         for _ in 0..num_blocks {
             // Read block size
             let mut size_bytes = [0u8; 4];
             std::io::Read::read_exact(&mut cursor, &mut size_bytes)?;
             let block_size = u32::from_le_bytes(size_bytes) as usize;
-            
+
             // Read block data
             let mut block_data = vec![0u8; block_size];
             std::io::Read::read_exact(&mut cursor, &mut block_data)?;
-            
+
             // Deserialize block
             use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
             let block = FastLanesDataBlock::deserialize(&block_data)?;
-            
+
             // Filter out expired records (physical delete during compaction)
             for record in block.records {
                 if let Some(expires_at) = record.expires_at {
                     if expires_at as u64 <= current_time {
                         // Record is expired, skip it (physical delete)
-                        debug!("Filtering expired record: {} (expired at {})", record.id, expires_at);
+                        debug!(
+                            "Filtering expired record: {} (expired at {})",
+                            record.id, expires_at
+                        );
                         continue;
                     }
                 }
@@ -557,7 +611,7 @@ impl LeveledCompactor {
                 records.push(record);
             }
         }
-        
+
         Ok(records)
     }
 
@@ -568,35 +622,36 @@ impl LeveledCompactor {
         pca_model: Arc<RwLock<Option<PCAModel>>>,
     ) -> Result<()> {
         let max_level = self.config.max_levels - 1;
-        
+
         info!("Starting re-clustering at L{}", max_level);
-        
+
         // Get files at max level
         let max_level_files = {
             let levels_read = levels.read().await;
             levels_read.get(&max_level).cloned().unwrap_or_default()
         };
-        
+
         if max_level_files.is_empty() {
             return Ok(());
         }
-        
+
         // Read all vectors
         let mut all_records = Vec::new();
         for sstable in &max_level_files {
             let records = self.read_sstable(&sstable.path).await?;
             all_records.extend(records);
         }
-        
+
         // Update PCA model with current data
         if !all_records.is_empty() {
             let new_model = PCAModel::train(&all_records, self.config.pca_dimensions)?;
             *pca_model.write().await = Some(new_model);
         }
-        
+
         // Re-compact with new model
-        self.compact_level_to_next(levels, max_level - 1, pca_model).await?;
-        
+        self.compact_level_to_next(levels, max_level - 1, pca_model)
+            .await?;
+
         Ok(())
     }
 }
@@ -611,7 +666,7 @@ mod tests {
         let config = HelixConfig::default();
         let filesystem = FilesystemFactory::create_local().unwrap();
         let data_dir = PathBuf::from("/tmp/helix_test");
-        
+
         let compactor = LeveledCompactor::new(config, filesystem, data_dir);
         assert!(compactor.liquid_config.enabled);
     }

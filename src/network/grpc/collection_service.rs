@@ -2,16 +2,22 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 use crate::api_handlers::UnifiedHandlers;
-use crate::proto::proximadb_v1::collection_service_server::{CollectionService, CollectionServiceServer};
 use crate::proto::proximadb_v1;
+use crate::proto::proximadb_v1::collection_service_server::{
+    CollectionService, CollectionServiceServer,
+};
 
 pub struct CollectionServiceImpl {
     unified_handlers: Arc<UnifiedHandlers>,
 }
 
 impl CollectionServiceImpl {
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self { Self { unified_handlers } }
-    pub fn into_server(self) -> CollectionServiceServer<Self> { CollectionServiceServer::new(self) }
+    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
+        Self { unified_handlers }
+    }
+    pub fn into_server(self) -> CollectionServiceServer<Self> {
+        CollectionServiceServer::new(self)
+    }
 }
 
 #[tonic::async_trait]
@@ -51,7 +57,9 @@ impl CollectionService for CollectionServiceImpl {
         if let Some(collection) = resp.collection {
             Ok(Response::new(collection))
         } else {
-            Err(Status::internal("CreateCollection did not return a collection"))
+            Err(Status::internal(
+                "CreateCollection did not return a collection",
+            ))
         }
     }
 
@@ -98,7 +106,9 @@ impl CollectionService for CollectionServiceImpl {
             .await
             .map_err(|e| Status::internal(format!("ListCollections failed: {}", e)))?;
         let collections = resp.collections;
-        Ok(Response::new(proximadb_v1::ListCollectionsResponse { collections }))
+        Ok(Response::new(proximadb_v1::ListCollectionsResponse {
+            collections,
+        }))
     }
 
     async fn delete_collection(
@@ -119,6 +129,8 @@ impl CollectionService for CollectionServiceImpl {
             .handle_collection_operation(request)
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {}", e)))?;
-        Ok(Response::new(proximadb_v1::DeleteCollectionResponse { success: true }))
+        Ok(Response::new(proximadb_v1::DeleteCollectionResponse {
+            success: true,
+        }))
     }
 }

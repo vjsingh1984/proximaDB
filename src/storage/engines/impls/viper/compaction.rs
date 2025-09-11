@@ -1238,8 +1238,11 @@ impl Compaction {
                     })?;
 
                 // Create StreamingParquetWriter with temp file
-                let mut writer =
-                    StreamingParquetWriter::new(&temp_file_path, dimension as usize, writer_config)?;
+                let mut writer = StreamingParquetWriter::new(
+                    &temp_file_path,
+                    dimension as usize,
+                    writer_config,
+                )?;
 
                 // Convert RecordData to VectorRecord for writing
                 let vector_records: Vec<VectorRecord> = file_records
@@ -1258,12 +1261,20 @@ impl Compaction {
                             .unwrap_or_default();
 
                         // Convert metadata to HashMap<String, SqlValue>
-                        let metadata: std::collections::HashMap<String, crate::storage::engines::impls::viper::FilterValue> = record
+                        let metadata: std::collections::HashMap<
+                            String,
+                            crate::storage::engines::impls::viper::FilterValue,
+                        > = record
                             .row_data
                             .iter()
                             .filter(|(k, _)| *k != "vector")
                             .map(|(k, v)| {
-                                (k.clone(), crate::storage::engines::impls::viper::FilterValue::String(v.to_string()))
+                                (
+                                    k.clone(),
+                                    crate::storage::engines::impls::viper::FilterValue::String(
+                                        v.to_string(),
+                                    ),
+                                )
                             })
                             .collect();
 

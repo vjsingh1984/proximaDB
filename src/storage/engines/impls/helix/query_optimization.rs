@@ -12,7 +12,6 @@ use tracing::{debug, info};
 
 use crate::core::search::results::OptimizedSearchRecord;
 
-
 /// Query pattern for tracking and prediction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryPattern {
@@ -59,13 +58,13 @@ impl PredictivePrefetcher {
     /// Record a query pattern for learning
     pub async fn record_query(&self, pattern: QueryPattern) {
         let mut history = self.query_history.write().await;
-        
+
         // Update access frequency for files
         let mut frequency = self.access_frequency.write().await;
         for file in &pattern.accessed_files {
             *frequency.entry(file.clone()).or_insert(0.0) += 1.0;
         }
-        
+
         // Add to history (maintain max size)
         if history.len() >= self.max_history_size {
             history.pop_front();
@@ -77,31 +76,31 @@ impl PredictivePrefetcher {
     pub async fn predict_prefetch(&self, query_hilbert: Option<u64>) -> Vec<String> {
         let history = self.query_history.read().await;
         let frequency = self.access_frequency.read().await;
-        
+
         if history.is_empty() {
             return Vec::new();
         }
-        
+
         // Simple prediction: find similar queries and their accessed files
         let mut candidate_files = HashMap::new();
-        
+
         if let Some(query_key) = query_hilbert {
             // Find queries with similar Hilbert keys
             for pattern in history.iter() {
                 if let Some(pattern_key) = pattern.hilbert_key {
                     let distance = (query_key as i64 - pattern_key as i64).abs();
-                    
+
                     // Consider queries within Hilbert distance threshold
                     if distance < 1000 {
                         for file in &pattern.accessed_files {
-                            *candidate_files.entry(file.clone()).or_insert(0.0) += 
+                            *candidate_files.entry(file.clone()).or_insert(0.0) +=
                                 1.0 / (1.0 + distance as f32);
                         }
                     }
                 }
             }
         }
-        
+
         // Rank candidates by score
         let mut ranked_files: Vec<_> = candidate_files
             .into_iter()
@@ -113,9 +112,9 @@ impl PredictivePrefetcher {
             })
             .filter(|(_, score)| *score >= self.confidence_threshold)
             .collect();
-        
+
         ranked_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        
+
         // Return top files to prefetch
         ranked_files
             .into_iter()
@@ -129,10 +128,10 @@ impl PredictivePrefetcher {
         if files.is_empty() {
             return;
         }
-        
+
         debug!("Prefetching {} files based on prediction", files.len());
         *self.prefetch_queue.write().await = files;
-        
+
         // Note: Actual file reading would be done by the cache system
         // This just marks files for prefetching
     }
@@ -174,7 +173,7 @@ impl SmartResultCache {
     pub fn new(capacity: usize, default_ttl_secs: u64) -> Self {
         Self {
             cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
-                if capacity == 0 { 100 } else { capacity }
+                if capacity == 0 { 100 } else { capacity },
             ))),
             invalidation_tracker: Arc::new(RwLock::new(HashMap::new())),
             default_ttl: Duration::from_secs(default_ttl_secs),
@@ -184,7 +183,7 @@ impl SmartResultCache {
     /// Get cached result if available and valid
     pub async fn get(&self, query_hash: u64) -> Option<Vec<OptimizedSearchRecord>> {
         let mut cache = self.cache.write().await;
-        
+
         if let Some(cached) = cache.get(&query_hash) {
             // Check TTL
             if cached.cached_at.elapsed() < self.default_ttl {
@@ -196,7 +195,7 @@ impl SmartResultCache {
                 self.remove_from_tracker(query_hash).await;
             }
         }
-        
+
         None
     }
 
@@ -212,32 +211,37 @@ impl SmartResultCache {
             cached_at: Instant::now(),
             accessed_files: accessed_files.clone(),
         };
-        
+
         // Add to cache
         self.cache.write().await.put(query_hash, cached_result);
-        
+
         // Update invalidation tracker
         let mut tracker = self.invalidation_tracker.write().await;
         for file in accessed_files {
-            tracker.entry(file).or_insert_with(Vec::new).push(query_hash);
+            tracker
+                .entry(file)
+                .or_insert_with(Vec::new)
+                .push(query_hash);
         }
-        
+
         debug!("Cached result for query hash {}", query_hash);
     }
 
     /// Invalidate cache entries that depend on a file
     pub async fn invalidate_file(&self, file_path: &str) {
         let mut tracker = self.invalidation_tracker.write().await;
-        
+
         if let Some(query_hashes) = tracker.remove(file_path) {
             let mut cache = self.cache.write().await;
             let num_entries = query_hashes.len();
             for hash in query_hashes {
                 cache.pop(&hash);
             }
-            
-            info!("Invalidated {} cache entries for file {}", 
-                  num_entries, file_path);
+
+            info!(
+                "Invalidated {} cache entries for file {}",
+                num_entries, file_path
+            );
         }
     }
 
@@ -252,7 +256,7 @@ impl SmartResultCache {
     pub async fn get_stats(&self) -> CacheStats {
         let cache = self.cache.read().await;
         let tracker = self.invalidation_tracker.read().await;
-        
+
         CacheStats {
             entries: cache.len(),
             tracked_files: tracker.len(),
@@ -301,11 +305,7 @@ struct QueryStats {
 
 impl QueryOptimizer {
     /// Create a new query optimizer
-    pub fn new(
-        max_history: usize,
-        cache_capacity: usize,
-        cache_ttl_secs: u64,
-    ) -> Self {
+    pub fn new(max_history: usize, cache_capacity: usize, cache_ttl_secs: u64) -> Self {
         Self {
             prefetcher: Arc::new(PredictivePrefetcher::new(max_history, 0.3)),
             cache: Arc::new(SmartResultCache::new(cache_capacity, cache_ttl_secs)),
@@ -321,7 +321,7 @@ impl QueryOptimizer {
     ) -> QueryOptimizationHints {
         let mut stats = self.query_stats.write().await;
         stats.total_queries += 1;
-        
+
         // Check cache first
         let cached_result = self.cache.get(query_hash).await;
         if cached_result.is_some() {
@@ -329,13 +329,15 @@ impl QueryOptimizer {
         } else {
             stats.cache_misses += 1;
         }
-        
+
         // Predict files to prefetch
         let prefetch_files = self.prefetcher.predict_prefetch(query_hilbert).await;
-        
+
         // Execute prefetch
-        self.prefetcher.execute_prefetch(prefetch_files.clone()).await;
-        
+        self.prefetcher
+            .execute_prefetch(prefetch_files.clone())
+            .await;
+
         QueryOptimizationHints {
             cached_result,
             prefetch_files,
@@ -357,10 +359,9 @@ impl QueryOptimizer {
         {
             let mut stats = self.query_stats.write().await;
             let alpha = 0.1; // Exponential moving average factor
-            stats.avg_latency_ms = stats.avg_latency_ms * (1.0 - alpha) + 
-                                   latency_ms as f64 * alpha;
+            stats.avg_latency_ms = stats.avg_latency_ms * (1.0 - alpha) + latency_ms as f64 * alpha;
         }
-        
+
         // Record query pattern
         let pattern = QueryPattern {
             query_hash,
@@ -374,7 +375,7 @@ impl QueryOptimizer {
             result_count: results.len(),
         };
         self.prefetcher.record_query(pattern).await;
-        
+
         // Cache results if query was expensive
         if latency_ms > 20 {
             self.cache.put(query_hash, results, accessed_files).await;
@@ -415,7 +416,7 @@ mod tests {
     #[tokio::test]
     async fn test_predictive_prefetcher() {
         let prefetcher = PredictivePrefetcher::new(100, 0.3);
-        
+
         // Record some query patterns
         let pattern1 = QueryPattern {
             query_hash: 123,
@@ -428,9 +429,9 @@ mod tests {
             latency_ms: 25,
             result_count: 10,
         };
-        
+
         prefetcher.record_query(pattern1).await;
-        
+
         // Predict for similar query
         let predictions = prefetcher.predict_prefetch(Some(1050)).await;
         assert!(!predictions.is_empty());
@@ -439,24 +440,28 @@ mod tests {
     #[tokio::test]
     async fn test_result_cache() {
         let cache = SmartResultCache::new(100, 60);
-        
+
         // Cache a result
-        let results = vec![OptimizedSearchRecord::new("test".to_string(), 0.9)
-            .with_similarity(0.1)
-            .add_vector(vec![1.0, 2.0, 3.0])
-            .with_metadata(TypedMetadata::new())
-            .with_version_info(0, 0)];
-        
-        cache.put(123, results.clone(), vec!["file1.helix".to_string()]).await;
-        
+        let results = vec![
+            OptimizedSearchRecord::new("test".to_string(), 0.9)
+                .with_similarity(0.1)
+                .add_vector(vec![1.0, 2.0, 3.0])
+                .with_metadata(TypedMetadata::new())
+                .with_version_info(0, 0),
+        ];
+
+        cache
+            .put(123, results.clone(), vec!["file1.helix".to_string()])
+            .await;
+
         // Retrieve cached result
         let cached = cache.get(123).await;
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().len(), 1);
-        
+
         // Invalidate file
         cache.invalidate_file("file1.helix").await;
-        
+
         // Should be gone
         let cached = cache.get(123).await;
         assert!(cached.is_none());

@@ -53,7 +53,7 @@ impl ZoneMap {
         let mut dim_max = vec![f32::NEG_INFINITY; dimensions];
         let mut dim_sum = vec![0.0; dimensions];
         let mut dim_sum_sq = vec![0.0; dimensions];
-        
+
         // Calculate min/max and sums for statistics
         for record in vectors {
             for (i, &value) in record.vector.iter().enumerate() {
@@ -68,7 +68,7 @@ impl ZoneMap {
         let n = vectors.len() as f32;
         let mut mean = vec![0.0; dimensions];
         let mut std_dev = vec![0.0; dimensions];
-        
+
         for i in 0..dimensions {
             mean[i] = dim_sum[i] / n;
             let variance = (dim_sum_sq[i] / n) - (mean[i] * mean[i]);
@@ -97,18 +97,18 @@ impl ZoneMap {
     /// Create bloom filter for vector IDs
     fn create_id_bloom(vectors: &[VectorRecord]) -> Vec<u8> {
         use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
-        
+
         let config = BloomFilterConfig {
             expected_items: vectors.len(),
             false_positive_rate: Some(0.01),
             ..Default::default()
         };
-        
+
         let mut bloom = BloomFilterFactory::create(&config);
         for record in vectors {
             bloom.insert(record.id.as_bytes());
         }
-        
+
         bloom.serialize().unwrap_or_default()
     }
 
@@ -137,13 +137,13 @@ impl ZoneMap {
         }
 
         let mut min_distance = 0.0;
-        
+
         // Calculate minimum possible distance to block
         for i in 0..query_vector.len() {
             let q = query_vector[i];
             let min = self.dim_min[i];
             let max = self.dim_max[i];
-            
+
             if q < min {
                 min_distance += (min - q).powi(2);
             } else if q > max {
@@ -151,7 +151,7 @@ impl ZoneMap {
             }
             // If q is within [min, max], contributes 0 to min distance
         }
-        
+
         min_distance.sqrt()
     }
 
@@ -162,30 +162,30 @@ impl ZoneMap {
         }
 
         let mut selectivity = 1.0;
-        
+
         for i in 0..self.dim_min.len() {
             let block_min = self.dim_min[i];
             let block_max = self.dim_max[i];
             let query_min = min_bounds[i];
             let query_max = max_bounds[i];
-            
+
             // Calculate overlap
             let overlap_min = block_min.max(query_min);
             let overlap_max = block_max.min(query_max);
-            
+
             if overlap_min > overlap_max {
                 return 0.0; // No overlap in this dimension
             }
-            
+
             // Estimate selectivity for this dimension
             let block_range = block_max - block_min;
             let overlap_range = overlap_max - overlap_min;
-            
+
             if block_range > 0.0 {
                 selectivity *= overlap_range / block_range;
             }
         }
-        
+
         selectivity
     }
 }
@@ -215,7 +215,7 @@ impl ZoneMapIndex {
                 self.global_max[i] = self.global_max[i].max(zone_map.dim_max[i]);
             }
         }
-        
+
         self.total_vectors += zone_map.vector_count;
         self.maps.insert(zone_map.block_id, zone_map);
     }
@@ -223,17 +223,18 @@ impl ZoneMapIndex {
     /// Prune blocks based on query vector
     pub fn prune_blocks(&self, query_vector: &[f32], k: usize) -> Vec<u32> {
         // Calculate pruning scores for all blocks
-        let mut block_scores: Vec<(u32, f32)> = self.maps
+        let mut block_scores: Vec<(u32, f32)> = self
+            .maps
             .iter()
             .map(|(id, map)| {
                 let score = map.pruning_score(query_vector, f32::INFINITY);
                 (*id, score)
             })
             .collect();
-        
+
         // Sort by score (lower is better)
         block_scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        
+
         // Select blocks likely to contain top-k results
         let blocks_to_scan = (k as f32 * 1.5).ceil() as usize; // Scan 1.5x blocks
         block_scores
@@ -246,14 +247,14 @@ impl ZoneMapIndex {
     /// Estimate query selectivity
     pub fn estimate_query_selectivity(&self, query_vector: &[f32], radius: f32) -> f32 {
         let mut selected_vectors = 0;
-        
+
         for zone_map in self.maps.values() {
             let distance = zone_map.pruning_score(query_vector, radius);
             if distance <= radius {
                 selected_vectors += zone_map.vector_count;
             }
         }
-        
+
         selected_vectors as f32 / self.total_vectors.max(1) as f32
     }
 
@@ -266,12 +267,13 @@ impl ZoneMapIndex {
             avg_selectivity: vec![0.0; dimensions],
             cardinality_estimate: vec![0; dimensions],
         };
-        
+
         for i in 0..dimensions {
             summary.range_per_dim[i] = self.global_max[i] - self.global_min[i];
-            
+
             // Estimate cardinality from zone maps
-            let unique_values: std::collections::HashSet<u32> = self.maps
+            let unique_values: std::collections::HashSet<u32> = self
+                .maps
                 .values()
                 .flat_map(|map| {
                     vec![
@@ -282,7 +284,7 @@ impl ZoneMapIndex {
                 .collect();
             summary.cardinality_estimate[i] = unique_values.len() as u32;
         }
-        
+
         summary
     }
 }
@@ -317,21 +319,18 @@ impl ZoneMapBuilder {
     /// Add a vector to the builder
     pub fn add_vector(&mut self, record: VectorRecord) -> Result<()> {
         self.current_block.push(record);
-        
+
         if self.current_block.len() >= self.block_size {
             self.finalize_block()?;
         }
-        
+
         Ok(())
     }
 
     /// Finalize current block and create zone map
     fn finalize_block(&mut self) -> Result<()> {
         if !self.current_block.is_empty() {
-            let zone_map = ZoneMap::from_vectors(
-                self.current_block_id,
-                &self.current_block,
-            )?;
+            let zone_map = ZoneMap::from_vectors(self.current_block_id, &self.current_block)?;
             self.zone_maps.push(zone_map);
             self.current_block.clear();
             self.current_block_id += 1;
@@ -343,12 +342,12 @@ impl ZoneMapBuilder {
     pub fn build(mut self) -> Result<ZoneMapIndex> {
         // Finalize any remaining vectors
         self.finalize_block()?;
-        
+
         let mut index = ZoneMapIndex::default();
         for zone_map in self.zone_maps {
             index.add_zone_map(zone_map);
         }
-        
+
         Ok(index)
     }
 }
@@ -377,7 +376,7 @@ mod tests {
         ];
 
         let zone_map = ZoneMap::from_vectors(0, &vectors).unwrap();
-        
+
         assert_eq!(zone_map.dim_min, vec![1.0, 2.0, 3.0]);
         assert_eq!(zone_map.dim_max, vec![4.0, 5.0, 6.0]);
         assert_eq!(zone_map.vector_count, 2);
@@ -407,15 +406,17 @@ mod tests {
     #[test]
     fn test_zone_map_builder() {
         let mut builder = ZoneMapBuilder::new(2);
-        
+
         for i in 0..5 {
-            builder.add_vector(VectorRecord {
-                id: format!("v{}", i),
-                vector: vec![i as f32, i as f32 * 2.0],
-                metadata: None,
-                timestamp: 0,
-                expires_at: None,
-            }).unwrap();
+            builder
+                .add_vector(VectorRecord {
+                    id: format!("v{}", i),
+                    vector: vec![i as f32, i as f32 * 2.0],
+                    metadata: None,
+                    timestamp: 0,
+                    expires_at: None,
+                })
+                .unwrap();
         }
 
         let index = builder.build().unwrap();

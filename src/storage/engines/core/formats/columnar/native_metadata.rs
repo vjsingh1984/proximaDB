@@ -11,10 +11,9 @@
 //! - Optimized predicate pushdown for metadata queries
 
 use anyhow::Result;
-use arrow_array::{ArrayRef,
-    builder::{
-        BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, StringBuilder,
-    },
+use arrow_array::{
+    ArrayRef,
+    builder::{BooleanBuilder, Float64Builder, Int64Builder, ListBuilder, StringBuilder},
 };
 use arrow_schema::{DataType, Field, Schema};
 use serde_json::{Map as JsonMap, Value as JsonValue};

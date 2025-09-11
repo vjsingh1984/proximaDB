@@ -203,7 +203,6 @@ pub struct ScanCostEstimate {
 
 /// Engine-specific implementations based on actual code patterns
 pub mod engine_impl {
-    
 
     /// SST scan implementation traits
     pub struct SSTScanIterator {

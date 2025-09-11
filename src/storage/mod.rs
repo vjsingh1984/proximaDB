@@ -221,8 +221,11 @@ pub mod cache;
 
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
-pub mod relations;
 pub mod provenance;
+pub mod relations;
+
+// Key-value storage interface
+pub mod kv;
 
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations

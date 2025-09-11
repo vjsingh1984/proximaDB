@@ -101,9 +101,9 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
             .collect(),
         metadata: vec![MetadataItem {
             key: "compaction_test".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "true".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string()),
+            ),
         }],
         timestamp: chrono::Utc::now().timestamp() as u32,
         updated_at: Some(chrono::Utc::now().timestamp() as u32),
@@ -1202,9 +1202,11 @@ async fn test_compaction_with_metadata_filtering() {
             let mut vector = create_test_vector(&format!("meta_{}_{}", category, i), 128);
             vector.metadata.push(MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    category.to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        category.to_string(),
+                    ),
+                ),
             });
             vectors.push(vector);
         }

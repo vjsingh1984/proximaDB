@@ -334,14 +334,16 @@ pub mod metadata {
                 .filter_map(|(key, value)| {
                     let proto_value = match value {
                         JsonValue::String(s) => Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                s.clone(),
+                            ),
                         ),
                         JsonValue::Number(n) => n
                             .as_f64()
                             .map(crate::proto::proximadb_v1::metadata_item::Value::NumberValue),
-                        JsonValue::Bool(b) => {
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b))
-                        }
+                        JsonValue::Bool(b) => Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b),
+                        ),
                         _ => None,
                     };
 
@@ -439,8 +441,8 @@ mod tests {
 
     #[test]
     fn test_concurrent_vector_store() {
-        use crate::proto::proximadb_v1::VectorRecord;
         use crate::proto::proximadb_v1::MetadataItem;
+        use crate::proto::proximadb_v1::VectorRecord;
 
         let store = IndexVectorStore::new(3);
 

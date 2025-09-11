@@ -21,23 +21,12 @@
 //!
 //! It uses the `nom` parser-combinator library for robust and efficient parsing.
 
-use crate::core::error::ProximaDBError;
 use super::ast::{
-    CompiledPattern,
-    NodePattern,
-    EdgePattern,
-    PathPattern,
-    PropertyConstraint,
-    EdgeDirection,
+    CompiledPattern, EdgeDirection, EdgePattern, LogicalOperator, NodePattern, OrderBy,
+    PathElement, PathPattern, PropertyConstraint, PropertyProjection, ReturnSpec, VariableBinding,
     WhereClause,
-    LogicalOperator,
-    ReturnSpec,
-    PropertyProjection,
-    OrderBy,
-    VariableBinding,
-    PathElement,
 };
-use std::collections::HashMap;
+use crate::core::error::ProximaDBError;
 use nom::{
     IResult,
     branch::alt,
@@ -47,6 +36,7 @@ use nom::{
     multi::{many0, separated_list0},
     sequence::{delimited, preceded, separated_pair, tuple},
 };
+use std::collections::HashMap;
 
 type QueryResult<T> = std::result::Result<T, ProximaDBError>;
 
@@ -62,7 +52,10 @@ impl QueryParser {
     pub fn parse(&self, input: &str) -> QueryResult<CompiledPattern> {
         match parse_query(input) {
             Ok((_, compiled_pattern)) => Ok(compiled_pattern),
-            Err(e) => Err(ProximaDBError::invalid_argument(&format!("Failed to parse query: {}", e))),
+            Err(e) => Err(ProximaDBError::invalid_argument(&format!(
+                "Failed to parse query: {}",
+                e
+            ))),
         }
     }
 }
@@ -71,17 +64,20 @@ impl QueryParser {
 
 // Helper to parse identifiers (variable names, labels, property keys)
 fn identifier(input: &str) -> IResult<&str, String> {
-    map(recognize(tuple(( 
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_"))))
-    ))), String::from)(input)
+    map(
+        recognize(tuple((
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        ))),
+        String::from,
+    )(input)
 }
 
 // Helper to parse string literals (e.g., "value" or 'value')
 fn string_literal(input: &str) -> IResult<&str, String> {
     alt((
         delimited(char('"'), take_while1(|c| c != '"'), char('"')),
-        delimited(char('\''), take_while1(|c| c != '\''), char('\''))
+        delimited(char('\''), take_while1(|c| c != '\''), char('\'')),
     ))
     .map(|s| s.to_string())
     .parse(input)
@@ -89,41 +85,48 @@ fn string_literal(input: &str) -> IResult<&str, String> {
 
 // Helper to parse integer literals
 fn integer_literal(input: &str) -> IResult<&str, i64> {
-    map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| s.parse::<i64>().unwrap())(input)
+    map(take_while1(|c: char| c.is_ascii_digit()), |s: &str| {
+        s.parse::<i64>().unwrap()
+    })(input)
 }
 
 // Helper to parse boolean literals
 fn boolean_literal(input: &str) -> IResult<&str, bool> {
-    alt((
-        map(tag("true"), |_| true),
-        map(tag("false"), |_| false)
-    ))(input)
+    alt((map(tag("true"), |_| true), map(tag("false"), |_| false)))(input)
 }
 
 // Helper to parse property values (simplified to string, int, bool for now)
 fn property_value(input: &str) -> IResult<&str, serde_json::Value> {
     alt((
         map(string_literal, serde_json::Value::String),
-        map(integer_literal, |i| serde_json::Value::Number(serde_json::Number::from(i))),
+        map(integer_literal, |i| {
+            serde_json::Value::Number(serde_json::Number::from(i))
+        }),
         map(boolean_literal, serde_json::Value::Bool),
     ))(input)
 }
 
 // Helper to parse property assignments (e.g., key: value)
 fn property_assignment(input: &str) -> IResult<&str, (String, PropertyConstraint)> {
-    map(separated_pair(
-        identifier,
-        delimited(multispace0, char(':'), multispace0),
-        property_value
-    ), |(key, value)| (key, PropertyConstraint::Equals(value)))(input)
+    map(
+        separated_pair(
+            identifier,
+            delimited(multispace0, char(':'), multispace0),
+            property_value,
+        ),
+        |(key, value)| (key, PropertyConstraint::Equals(value)),
+    )(input)
 }
 
 // Helper to parse property map (e.g., {key: value, key2: value2})
 fn property_map(input: &str) -> IResult<&str, HashMap<String, PropertyConstraint>> {
     delimited(
         char('{'),
-        separated_list0(delimited(multispace0, char(','), multispace0), property_assignment),
-        char('}')
+        separated_list0(
+            delimited(multispace0, char(','), multispace0),
+            property_assignment,
+        ),
+        char('}'),
     )
     .map(|assignments| assignments.into_iter().collect())
     .parse(input)
@@ -134,19 +137,19 @@ fn parse_node_pattern(input: &str) -> IResult<&str, NodePattern> {
     map(
         delimited(
             char('('),
-            tuple(( 
-                identifier, // Variable
-                opt(preceded(char(':'), identifier)), // Optional Label
+            tuple((
+                identifier,                               // Variable
+                opt(preceded(char(':'), identifier)),     // Optional Label
                 opt(preceded(multispace0, property_map)), // Optional Properties
             )),
-            char(')')
+            char(')'),
         ),
         |(variable, label_opt, properties_opt)| NodePattern {
             variable,
             labels: label_opt.map(|l| vec![l]).unwrap_or_default(),
             properties: properties_opt.unwrap_or_default(),
             optional: false, // Not handling OPTIONAL MATCH yet
-        }
+        },
     )(input)
 }
 
@@ -154,7 +157,13 @@ fn parse_node_pattern(input: &str) -> IResult<&str, NodePattern> {
 fn parse_match_clause(input: &str) -> IResult<&str, Vec<NodePattern>> {
     preceded(
         tag("MATCH"),
-        preceded(multispace1, separated_list0(delimited(multispace0, char(','), multispace0), parse_node_pattern))
+        preceded(
+            multispace1,
+            separated_list0(
+                delimited(multispace0, char(','), multispace0),
+                parse_node_pattern,
+            ),
+        ),
     )(input)
 }
 
@@ -162,21 +171,27 @@ fn parse_match_clause(input: &str) -> IResult<&str, Vec<NodePattern>> {
 fn parse_return_clause(input: &str) -> IResult<&str, ReturnSpec> {
     preceded(
         tag("RETURN"),
-        preceded(multispace1, map(separated_list0(delimited(multispace0, char(','), multispace0), identifier), |vars| ReturnSpec {
-            variables: vars,
-            projections: Vec::new(), // Not handling projections yet
-            distinct: false,
-            order_by: Vec::new(),
-            limit: None,
-            skip: None,
-        }))
+        preceded(
+            multispace1,
+            map(
+                separated_list0(delimited(multispace0, char(','), multispace0), identifier),
+                |vars| ReturnSpec {
+                    variables: vars,
+                    projections: Vec::new(), // Not handling projections yet
+                    distinct: false,
+                    order_by: Vec::new(),
+                    limit: None,
+                    skip: None,
+                },
+            ),
+        ),
     )(input)
 }
 
 // Main query parser
 fn parse_query(input: &str) -> IResult<&str, CompiledPattern> {
     map(
-        tuple(( 
+        tuple((
             parse_match_clause,
             multispace0,
             parse_return_clause,
@@ -189,7 +204,7 @@ fn parse_query(input: &str) -> IResult<&str, CompiledPattern> {
             where_clauses: Vec::new(),
             return_spec,
             variables: HashMap::new(), // Populated during planning/execution
-        }
+        },
     )(input)
 }
 
@@ -223,9 +238,18 @@ mod tests {
         assert_eq!(node_pattern.variable, "p");
         assert_eq!(node_pattern.labels, vec!["Person"]);
         assert_eq!(node_pattern.properties.len(), 3);
-        assert_eq!(node_pattern.properties["name"], PropertyConstraint::Equals(serde_json::Value::String("Alice".to_string())));
-        assert_eq!(node_pattern.properties["age"], PropertyConstraint::Equals(serde_json::Value::Number(serde_json::Number::from(30))));
-        assert_eq!(node_pattern.properties["active"], PropertyConstraint::Equals(serde_json::Value::Bool(true)));
+        assert_eq!(
+            node_pattern.properties["name"],
+            PropertyConstraint::Equals(serde_json::Value::String("Alice".to_string()))
+        );
+        assert_eq!(
+            node_pattern.properties["age"],
+            PropertyConstraint::Equals(serde_json::Value::Number(serde_json::Number::from(30)))
+        );
+        assert_eq!(
+            node_pattern.properties["active"],
+            PropertyConstraint::Equals(serde_json::Value::Bool(true))
+        );
     }
 
     #[test]

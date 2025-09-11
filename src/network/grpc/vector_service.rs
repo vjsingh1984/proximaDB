@@ -14,7 +14,9 @@ impl VectorServiceImpl {
         Self { unified_handlers }
     }
 
-    pub fn into_server(self) -> VectorServiceServer<Self> { VectorServiceServer::new(self) }
+    pub fn into_server(self) -> VectorServiceServer<Self> {
+        VectorServiceServer::new(self)
+    }
 }
 
 #[tonic::async_trait]
@@ -51,7 +53,12 @@ impl VectorService for VectorServiceImpl {
         let include_vector = req.include_vector.unwrap_or(false);
         let include_metadata = req.include_metadata.unwrap_or(true);
         self.unified_handlers
-            .handle_vector_v1(&req.collection_id, &req.vector_id, include_vector, include_metadata)
+            .handle_vector_v1(
+                &req.collection_id,
+                &req.vector_id,
+                include_vector,
+                include_metadata,
+            )
             .await
             .map(Response::new)
             .map_err(|e| Status::internal(format!("Vector get failed: {}", e)))

@@ -714,9 +714,9 @@ impl SstCompactor {
                             .metadata
                             .get(key)
                             .and_then(|sql_val| match &sql_val.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                    Some(s.as_str())
-                                }
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ) => Some(s.as_str()),
                                 _ => None,
                             });
 
@@ -724,9 +724,9 @@ impl SstCompactor {
                             .metadata
                             .get(key)
                             .and_then(|sql_val| match &sql_val.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                    Some(s.as_str())
-                                }
+                                Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ) => Some(s.as_str()),
                                 _ => None,
                             });
 

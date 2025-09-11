@@ -19,16 +19,18 @@
 //! Monitoring integration with ProximaDB's unified metrics framework.
 //! For MVP: Single-node monitoring with interfaces ready for distributed expansion.
 
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use anyhow::Result;
-use serde::{Serialize, Deserialize};
 use tokio::sync::RwLock;
 
-use crate::core::error::ProximaDBError;
-use crate::metrics::collectors::{UnifiedMetricsCollector, PulsarMetricsCollector, MetricsCollector};
 use super::PulsarGraphEngine;
+use crate::core::error::ProximaDBError;
+use crate::metrics::collectors::{
+    MetricsCollector, PulsarMetricsCollector, UnifiedMetricsCollector,
+};
 
 /// PULSAR engine health monitor integrated with unified metrics
 pub struct PulsarMonitor {
@@ -142,7 +144,7 @@ impl PulsarMonitor {
     /// Get simplified PULSAR metrics (detailed metrics available from unified collector)
     pub async fn get_metrics(&self) -> PulsarMetrics {
         let health = self.get_health().await;
-        
+
         PulsarMetrics {
             uptime_seconds: self.start_time.elapsed().as_secs(),
             active_shards: 1, // MVP: single node
@@ -159,9 +161,17 @@ impl PulsarMonitor {
         // The unified metrics collector will automatically pick up metrics from PulsarMetricsCollector
         // For MVP, we just log for observability
         if !success {
-            tracing::warn!("PULSAR query failed: type={}, duration={:?}", query_type, duration);
+            tracing::warn!(
+                "PULSAR query failed: type={}, duration={:?}",
+                query_type,
+                duration
+            );
         } else if duration.as_millis() > 100 {
-            tracing::info!("PULSAR slow query: type={}, duration={:?}", query_type, duration);
+            tracing::info!(
+                "PULSAR slow query: type={}, duration={:?}",
+                query_type,
+                duration
+            );
         }
     }
 
@@ -175,44 +185,33 @@ impl PulsarMonitor {
         let mut issues = Vec::new();
 
         // Check engine availability
-        match engine.get_statistics().await {
-            Ok(stats) => {
-                components.insert("engine".to_string(), ComponentStatus::Healthy);
-                
-                // Check for potential issues
-                if stats.total_nodes == 0 && stats.total_edges == 0 {
-                    issues.push(HealthIssue {
-                        severity: IssueSeverity::Info,
-                        component: "engine".to_string(),
-                        description: "No graph data loaded".to_string(),
-                        detected_at: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                        suggestion: Some("Consider loading graph data for optimal performance".to_string()),
-                    });
-                }
-            }
-            Err(_) => {
-                components.insert("engine".to_string(), ComponentStatus::Unhealthy);
-                issues.push(HealthIssue {
-                    severity: IssueSeverity::Critical,
-                    component: "engine".to_string(),
-                    description: "Engine statistics unavailable".to_string(),
-                    detected_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs(),
-                    suggestion: Some("Check engine connectivity and restart if necessary".to_string()),
-                });
-            }
+        let stats = engine.get_stats().await;
+        components.insert("engine".to_string(), ComponentStatus::Healthy);
+
+        // Check for potential issues
+        if stats.total_nodes == 0 && stats.total_edges == 0 {
+            issues.push(HealthIssue {
+                severity: IssueSeverity::Info,
+                component: "engine".to_string(),
+                description: "No graph data loaded".to_string(),
+                detected_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                suggestion: Some(
+                    "Consider loading graph data for optimal performance".to_string(),
+                ),
+            });
         }
 
         // Check memory usage (simplified for MVP)
         components.insert("memory".to_string(), ComponentStatus::Healthy);
 
         // Overall status determination
-        let overall_status = if components.values().any(|s| *s == ComponentStatus::Unhealthy) {
+        let overall_status = if components
+            .values()
+            .any(|s| *s == ComponentStatus::Unhealthy)
+        {
             ComponentStatus::Unhealthy
         } else if components.values().any(|s| *s == ComponentStatus::Degraded) {
             ComponentStatus::Degraded
@@ -239,7 +238,7 @@ impl PulsarMonitor {
         let metrics = self.get_metrics().await;
 
         let mut output = String::new();
-        
+
         // Health status
         let status_value = match health.status {
             ComponentStatus::Healthy => 1.0,
@@ -247,38 +246,29 @@ impl PulsarMonitor {
             ComponentStatus::Unhealthy => 0.0,
             ComponentStatus::Unknown => -1.0,
         };
-        
+
         output.push_str(&format!(
             "# HELP pulsar_health_status Overall health status of PULSAR engine (1=healthy, 0.5=degraded, 0=unhealthy, -1=unknown)\n"
         ));
-        output.push_str(&format!(
-            "# TYPE pulsar_health_status gauge\n"
-        ));
-        output.push_str(&format!(
-            "pulsar_health_status {}\n", status_value
-        ));
+        output.push_str(&format!("# TYPE pulsar_health_status gauge\n"));
+        output.push_str(&format!("pulsar_health_status {}\n", status_value));
 
         // Uptime
         output.push_str(&format!(
             "# HELP pulsar_uptime_seconds Uptime of PULSAR engine in seconds\n"
         ));
+        output.push_str(&format!("# TYPE pulsar_uptime_seconds counter\n"));
         output.push_str(&format!(
-            "# TYPE pulsar_uptime_seconds counter\n"
-        ));
-        output.push_str(&format!(
-            "pulsar_uptime_seconds {}\n", metrics.uptime_seconds
+            "pulsar_uptime_seconds {}\n",
+            metrics.uptime_seconds
         ));
 
         // Active shards
         output.push_str(&format!(
             "# HELP pulsar_active_shards Number of active shards\n"
         ));
-        output.push_str(&format!(
-            "# TYPE pulsar_active_shards gauge\n"
-        ));
-        output.push_str(&format!(
-            "pulsar_active_shards {}\n", metrics.active_shards
-        ));
+        output.push_str(&format!("# TYPE pulsar_active_shards gauge\n"));
+        output.push_str(&format!("pulsar_active_shards {}\n", metrics.active_shards));
 
         output
     }
@@ -315,7 +305,7 @@ mod tests {
     async fn test_pulsar_monitor_creation() {
         let engine = Arc::new(PulsarGraphEngine::new());
         let monitor = PulsarMonitor::new(engine);
-        
+
         let health = monitor.get_health().await;
         assert_eq!(health.status, ComponentStatus::Unknown);
     }
@@ -324,7 +314,7 @@ mod tests {
     async fn test_metrics_collection() {
         let engine = Arc::new(PulsarGraphEngine::new());
         let monitor = PulsarMonitor::new(engine);
-        
+
         let metrics = monitor.get_metrics().await;
         assert_eq!(metrics.active_shards, 1);
         assert!(metrics.uptime_seconds < 10); // Should be very small for new engine
@@ -334,12 +324,12 @@ mod tests {
     async fn test_health_check() {
         let engine = Arc::new(PulsarGraphEngine::new());
         let monitor = PulsarMonitor::new(engine);
-        
+
         monitor.start_monitoring().await.unwrap();
-        
+
         // Wait a bit for health check to run
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         let health = monitor.get_health().await;
         // Initial health should have some status
         assert!(!health.components.is_empty() || health.status != ComponentStatus::Unknown);
@@ -349,7 +339,7 @@ mod tests {
     async fn test_prometheus_export() {
         let engine = Arc::new(PulsarGraphEngine::new());
         let monitor = PulsarMonitor::new(engine);
-        
+
         let prometheus_output = monitor.export_prometheus().await;
         assert!(prometheus_output.contains("pulsar_health_status"));
         assert!(prometheus_output.contains("pulsar_uptime_seconds"));

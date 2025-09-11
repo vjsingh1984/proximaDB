@@ -25,7 +25,7 @@ use crate::index::axis::integration::tiering_manager::AxisTieringManager;
 use crate::index::axis::storage::serialization::{
     DeltaManager, Index, IndexCheckpoint, IndexDelta, IndexSerializer, SerializationError,
 };
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileStorageTier};
+use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory};
 use dashmap::DashMap;
 use std::future::Future;
 use std::pin::Pin;

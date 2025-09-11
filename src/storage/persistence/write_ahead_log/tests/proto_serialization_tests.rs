@@ -51,15 +51,17 @@ fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "proto_version".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "3".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("3".to_string()),
+                ),
             },
             MetadataItem {
                 key: "encoding".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "protobuf".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "protobuf".to_string(),
+                    ),
+                ),
             },
         ],
         timestamp: 1234567890,
@@ -132,21 +134,25 @@ async fn test_proto_metadata_encoding() {
     vector.metadata = vec![
         MetadataItem {
             key: "unicode".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "Hello 世界 🌍".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "Hello 世界 🌍".to_string(),
+                ),
+            ),
         },
         MetadataItem {
             key: "special_chars".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
+                ),
+            ),
         },
         MetadataItem {
             key: "empty".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                "".to_string(),
-            )),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("".to_string()),
+            ),
         },
     ];
 

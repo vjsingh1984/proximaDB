@@ -5,14 +5,14 @@
 #[cfg(test)]
 mod edge_tests {
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::core::VectorRecord;
     use crate::core::bloom::BloomFilterConfig;
     use crate::core::config::SstConfig;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::storage::engines::impls::sst::SstableWriter;
     use crate::storage::engines::impls::sst::readers::sst_query_engine::{
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
-    use crate::storage::engines::impls::sst::SstableWriter;
-    use crate::core::VectorRecord;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use chrono::Utc;
     use serde_json::json;
@@ -847,9 +847,11 @@ mod edge_tests {
                 vector: vec![],
                 metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                     key: "deletion_reason".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "user_requested".to_string(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                            "user_requested".to_string(),
+                        ),
+                    ),
                 }],
                 timestamp: 101,
                 updated_at: Some(101),

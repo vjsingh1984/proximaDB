@@ -1,9 +1,9 @@
 // Shared Header and Metadata Structures for SST and SWIFT engines
 
+use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::utils::uuid::Uuid;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;

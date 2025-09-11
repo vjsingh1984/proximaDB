@@ -13,8 +13,8 @@ use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
-use super::{SStableMetadata, HelixConfig};
 use super::clustering::HilbertKey;
+use super::{HelixConfig, SStableMetadata};
 
 /// Progressive search coordinator for HELIX
 pub struct ProgressiveSearchCoordinator {
@@ -76,7 +76,8 @@ impl ProgressiveSearchCoordinator {
                 distance_metric,
                 filesystem,
                 quant_engine,
-            ).await?
+            )
+            .await?
         } else {
             // Fallback to direct FP32 search
             self.execute_fp32_search(
@@ -85,7 +86,8 @@ impl ProgressiveSearchCoordinator {
                 k,
                 distance_metric,
                 filesystem,
-            ).await?
+            )
+            .await?
         };
 
         Ok(results)
@@ -110,7 +112,7 @@ impl ProgressiveSearchCoordinator {
                         } else {
                             0 // Within range
                         };
-                        
+
                         // Use configurable threshold
                         let threshold = 1000u64 * (self.config.max_levels as u64);
                         distance_to_range <= threshold
@@ -136,53 +138,56 @@ impl ProgressiveSearchCoordinator {
         quant_engine: &Arc<StorageQuantizationEngine>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut candidates = Vec::new();
-        
+
         // Stage 2: Binary quantization for ultra-fast filtering
         info!("Stage 2: Binary quantization filtering");
-        let binary_candidates = self.search_with_quantization(
-            query_vector,
-            sstables,
-            k * 10, // Get more candidates for refinement
-            distance_metric,
-            filesystem,
-            UnifiedQuantizationLevel::binary(),
-        ).await?;
+        let binary_candidates = self
+            .search_with_quantization(
+                query_vector,
+                sstables,
+                k * 10, // Get more candidates for refinement
+                distance_metric,
+                filesystem,
+                UnifiedQuantizationLevel::binary(),
+            )
+            .await?;
         candidates.extend(binary_candidates);
 
         // Stage 3: INT8 quantization for better precision
         if candidates.len() > k * 5 {
             info!("Stage 3: INT8 quantization refinement");
-            let int8_candidates = self.refine_with_quantization(
-                query_vector,
-                candidates,
-                k * 5,
-                distance_metric,
-                UnifiedQuantizationLevel::int8(),
-            ).await?;
+            let int8_candidates = self
+                .refine_with_quantization(
+                    query_vector,
+                    candidates,
+                    k * 5,
+                    distance_metric,
+                    UnifiedQuantizationLevel::int8(),
+                )
+                .await?;
             candidates = int8_candidates;
         }
 
         // Stage 4: Product Quantization for high precision
         if self.config.storage_quantization && candidates.len() > k * 2 {
             info!("Stage 4: Product Quantization refinement");
-            let pq_candidates = self.refine_with_quantization(
-                query_vector,
-                candidates,
-                k * 2,
-                distance_metric,
-                UnifiedQuantizationLevel::pq8(32), // PQ8 with 32 subspaces
-            ).await?;
+            let pq_candidates = self
+                .refine_with_quantization(
+                    query_vector,
+                    candidates,
+                    k * 2,
+                    distance_metric,
+                    UnifiedQuantizationLevel::pq8(32), // PQ8 with 32 subspaces
+                )
+                .await?;
             candidates = pq_candidates;
         }
 
         // Stage 5: Final FP32 reranking
         info!("Stage 5: FP32 final reranking for top-{}", k);
-        let final_results = self.final_fp32_rerank(
-            query_vector,
-            candidates,
-            k,
-            distance_metric,
-        ).await?;
+        let final_results = self
+            .final_fp32_rerank(query_vector, candidates, k, distance_metric)
+            .await?;
 
         Ok(final_results)
     }
@@ -198,24 +203,26 @@ impl ProgressiveSearchCoordinator {
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut all_results = Vec::new();
-        
+
         for sstable in sstables {
             // Read SSTable blocks with quantized vectors
-            let results = self.search_sstable_quantized(
-                query_vector,
-                sstable,
-                k,
-                distance_metric,
-                filesystem,
-                &quantization_level,
-            ).await?;
+            let results = self
+                .search_sstable_quantized(
+                    query_vector,
+                    sstable,
+                    k,
+                    distance_metric,
+                    filesystem,
+                    &quantization_level,
+                )
+                .await?;
             all_results.extend(results);
         }
 
         // Sort and take top-k
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         all_results.truncate(k);
-        
+
         Ok(all_results)
     }
 
@@ -229,24 +236,21 @@ impl ProgressiveSearchCoordinator {
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut refined = Vec::new();
-        
+
         for mut candidate in candidates {
             // Re-compute distance with higher precision
             if let Some(ref vector) = candidate.vector {
-                let distance = self.distance_compute.distance(
-                    query_vector,
-                    vector,
-                );
+                let distance = self.distance_compute.distance(query_vector, vector);
                 candidate.score = 1.0 / (1.0 + distance);
                 candidate.similarity = Some(distance);
             }
             refined.push(candidate);
         }
-        
+
         // Sort and take top-k
         refined.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         refined.truncate(k);
-        
+
         Ok(refined)
     }
 
@@ -259,31 +263,28 @@ impl ProgressiveSearchCoordinator {
         distance_metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut final_results = Vec::new();
-        
+
         for mut candidate in candidates {
             if let Some(ref vector) = candidate.vector {
                 // Compute exact FP32 distance
-                let exact_distance = self.distance_compute.distance(
-                    query_vector,
-                    vector,
-                );
+                let exact_distance = self.distance_compute.distance(query_vector, vector);
                 candidate.score = 1.0 / (1.0 + exact_distance);
                 candidate.similarity = Some(exact_distance);
             }
             final_results.push(candidate);
         }
-        
+
         // Final sort and take exactly k
         final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         final_results.truncate(k);
-        
+
         debug!(
             "Progressive search complete: {} results with scores {:.4}-{:.4}",
             final_results.len(),
             final_results.last().map(|r| r.score).unwrap_or(0.0),
             final_results.first().map(|r| r.score).unwrap_or(0.0),
         );
-        
+
         Ok(final_results)
     }
 
@@ -297,7 +298,7 @@ impl ProgressiveSearchCoordinator {
         filesystem: &Arc<dyn FileSystem>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut all_results = Vec::new();
-        
+
         for sstable in sstables {
             let results = super::readers::search_sstable(
                 filesystem,
@@ -306,15 +307,16 @@ impl ProgressiveSearchCoordinator {
                 k,
                 &distance_metric,
                 None,
-                None,  // candidate_ids
-            ).await?;
+                None, // candidate_ids
+            )
+            .await?;
             all_results.extend(results);
         }
-        
+
         // Sort and take top-k
         all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         all_results.truncate(k);
-        
+
         Ok(all_results)
     }
 
@@ -337,8 +339,9 @@ impl ProgressiveSearchCoordinator {
             k,
             &distance_metric,
             None,
-            None,  // candidate_ids
-        ).await
+            None, // candidate_ids
+        )
+        .await
     }
 }
 
@@ -358,23 +361,17 @@ pub struct ProgressiveSearchStats {
 }
 
 impl ProgressiveSearchStats {
-    pub fn record_search(
-        &mut self,
-        pruned: usize,
-        scanned: usize,
-        vectors: usize,
-        total_ms: u64,
-    ) {
+    pub fn record_search(&mut self, pruned: usize, scanned: usize, vectors: usize, total_ms: u64) {
         self.total_searches += 1;
         self.sstables_pruned += pruned as u64;
         self.sstables_scanned += scanned as u64;
         self.vectors_evaluated += vectors as u64;
         self.total_time_ms += total_ms;
-        
+
         // Update average pruning ratio
         let pruning_ratio = pruned as f32 / (pruned + scanned).max(1) as f32;
-        self.avg_pruning_ratio = 
-            (self.avg_pruning_ratio * (self.total_searches - 1) as f32 + pruning_ratio) 
+        self.avg_pruning_ratio = (self.avg_pruning_ratio * (self.total_searches - 1) as f32
+            + pruning_ratio)
             / self.total_searches as f32;
     }
 
@@ -403,11 +400,7 @@ mod tests {
     fn test_hilbert_pruning() {
         let config = HelixConfig::default();
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-        let coordinator = ProgressiveSearchCoordinator::new(
-            config,
-            distance_compute,
-            None,
-        );
+        let coordinator = ProgressiveSearchCoordinator::new(config, distance_compute, None);
 
         let sstables = vec![
             SStableMetadata {
@@ -441,10 +434,10 @@ mod tests {
     #[test]
     fn test_search_stats() {
         let mut stats = ProgressiveSearchStats::default();
-        
+
         stats.record_search(5, 3, 1000, 50);
         stats.record_search(6, 2, 800, 40);
-        
+
         assert_eq!(stats.total_searches, 2);
         assert_eq!(stats.sstables_pruned, 11);
         assert_eq!(stats.sstables_scanned, 5);

@@ -1,12 +1,14 @@
 //! Base64 encoding/decoding implementation - replaces base64 crate
-//! 
+//!
 //! Provides standard base64 encoding and decoding with optional URL-safe variant.
 
 use std::fmt;
 
 /// Base64 encoding alphabet
-const STANDARD_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const URL_SAFE_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const STANDARD_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const URL_SAFE_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /// Base64 decoding table
 const INVALID: u8 = 255;
@@ -48,7 +50,7 @@ impl Base64Config {
             url_safe: false,
         }
     }
-    
+
     /// URL-safe base64 configuration
     pub fn url_safe() -> Self {
         Base64Config {
@@ -57,7 +59,7 @@ impl Base64Config {
             url_safe: true,
         }
     }
-    
+
     /// Create decoding table for the alphabet
     fn create_decode_table(&self) -> [u8; 256] {
         let mut table = [INVALID; 256];
@@ -73,23 +75,23 @@ pub fn base64_encode_config(data: &[u8], config: Base64Config) -> String {
     if data.is_empty() {
         return String::new();
     }
-    
+
     let mut result = Vec::with_capacity(((data.len() + 2) / 3) * 4);
     let chunks = data.chunks_exact(3);
     let remainder = chunks.remainder();
-    
+
     // Process complete 3-byte chunks
     for chunk in chunks {
         let b1 = chunk[0];
         let b2 = chunk[1];
         let b3 = chunk[2];
-        
+
         result.push(config.alphabet[(b1 >> 2) as usize]);
         result.push(config.alphabet[(((b1 & 0x03) << 4) | (b2 >> 4)) as usize]);
         result.push(config.alphabet[(((b2 & 0x0f) << 2) | (b3 >> 6)) as usize]);
         result.push(config.alphabet[(b3 & 0x3f) as usize]);
     }
-    
+
     // Process remainder
     match remainder.len() {
         1 => {
@@ -113,7 +115,7 @@ pub fn base64_encode_config(data: &[u8], config: Base64Config) -> String {
         }
         _ => {}
     }
-    
+
     String::from_utf8(result).unwrap()
 }
 
@@ -122,32 +124,40 @@ pub fn base64_decode_config(encoded: &str, config: Base64Config) -> Result<Vec<u
     if encoded.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     let decode_table = config.create_decode_table();
     let mut result = Vec::with_capacity((encoded.len() * 3) / 4);
-    
+
     let bytes = encoded.as_bytes();
     let mut i = 0;
-    
+
     // Process 4-character groups
     while i + 4 <= bytes.len() {
         let c1 = decode_table[bytes[i] as usize];
         let c2 = decode_table[bytes[i + 1] as usize];
-        let c3 = if bytes[i + 2] == b'=' { 64 } else { decode_table[bytes[i + 2] as usize] };
-        let c4 = if bytes[i + 3] == b'=' { 64 } else { decode_table[bytes[i + 3] as usize] };
-        
+        let c3 = if bytes[i + 2] == b'=' {
+            64
+        } else {
+            decode_table[bytes[i + 2] as usize]
+        };
+        let c4 = if bytes[i + 3] == b'=' {
+            64
+        } else {
+            decode_table[bytes[i + 3] as usize]
+        };
+
         if c1 == INVALID || c2 == INVALID {
             return Err(Base64Error::InvalidCharacter);
         }
-        
+
         result.push((c1 << 2) | (c2 >> 4));
-        
+
         if c3 != 64 {
             if c3 == INVALID {
                 return Err(Base64Error::InvalidCharacter);
             }
             result.push((c2 << 4) | (c3 >> 2));
-            
+
             if c4 != 64 {
                 if c4 == INVALID {
                     return Err(Base64Error::InvalidCharacter);
@@ -155,26 +165,26 @@ pub fn base64_decode_config(encoded: &str, config: Base64Config) -> Result<Vec<u
                 result.push((c3 << 6) | c4);
             }
         }
-        
+
         i += 4;
     }
-    
+
     // Handle remaining characters (for unpadded input)
     let remaining = bytes.len() - i;
     if remaining > 0 {
         if remaining == 1 {
             return Err(Base64Error::InvalidLength);
         }
-        
+
         let c1 = decode_table[bytes[i] as usize];
         let c2 = decode_table[bytes[i + 1] as usize];
-        
+
         if c1 == INVALID || c2 == INVALID {
             return Err(Base64Error::InvalidCharacter);
         }
-        
+
         result.push((c1 << 2) | (c2 >> 4));
-        
+
         if remaining == 3 {
             let c3 = decode_table[bytes[i + 2] as usize];
             if c3 == INVALID {
@@ -183,7 +193,7 @@ pub fn base64_decode_config(encoded: &str, config: Base64Config) -> Result<Vec<u
             result.push((c2 << 4) | (c3 >> 2));
         }
     }
-    
+
     Ok(result)
 }
 
@@ -208,14 +218,14 @@ impl std::error::Error for Base64Error {}
 /// Helper functions for common use cases
 pub mod helpers {
     use super::*;
-    
+
     /// Encode to base64 and wrap at specified column
     pub fn base64_encode_wrap(data: &[u8], wrap_at: usize) -> String {
         let encoded = base64_encode(data);
         if wrap_at == 0 || encoded.len() <= wrap_at {
             return encoded;
         }
-        
+
         let mut wrapped = String::with_capacity(encoded.len() + (encoded.len() / wrap_at));
         for (i, chunk) in encoded.as_bytes().chunks(wrap_at).enumerate() {
             if i > 0 {
@@ -225,12 +235,10 @@ pub mod helpers {
         }
         wrapped
     }
-    
+
     /// Decode base64 ignoring whitespace
     pub fn base64_decode_ignore_whitespace(encoded: &str) -> Result<Vec<u8>, Base64Error> {
-        let cleaned: String = encoded.chars()
-            .filter(|c| !c.is_whitespace())
-            .collect();
+        let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
         base64_decode(&cleaned)
     }
 }
@@ -238,9 +246,9 @@ pub mod helpers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use std::sync::Arc;
-    
+    use std::thread;
+
     #[test]
     fn test_base64_encode_decode() {
         let test_cases = vec![
@@ -253,47 +261,47 @@ mod tests {
             (b"foobar", "Zm9vYmFy"),
             (b"Hello, World!", "SGVsbG8sIFdvcmxkIQ=="),
         ];
-        
+
         for (input, expected) in test_cases {
             let encoded = base64_encode(input);
             assert_eq!(encoded, expected);
-            
+
             let decoded = base64_decode(&encoded).unwrap();
             assert_eq!(decoded, input);
         }
     }
-    
+
     #[test]
     fn test_url_safe_encoding() {
         let data = b"sure.";
         let standard = base64_encode(data);
         let url_safe = base64_encode_url_safe(data);
-        
+
         assert_eq!(standard, "c3VyZS4=");
         assert_eq!(url_safe, "c3VyZS4"); // No padding
-        
+
         let decoded = base64_decode_url_safe(&url_safe).unwrap();
         assert_eq!(decoded, data);
     }
-    
+
     #[test]
     fn test_invalid_input() {
         assert!(base64_decode("!!!").is_err());
         assert!(base64_decode("A").is_err());
     }
-    
+
     #[test]
     fn test_wrapped_encoding() {
         let data = b"The quick brown fox jumps over the lazy dog";
         let wrapped = helpers::base64_encode_wrap(data, 16);
         assert!(wrapped.contains('\n'));
-        
+
         let decoded = helpers::base64_decode_ignore_whitespace(&wrapped).unwrap();
         assert_eq!(decoded, data);
     }
-    
+
     // Comprehensive test suite additions
-    
+
     #[test]
     fn test_base64_all_ascii_characters() {
         // Test all ASCII characters
@@ -304,7 +312,7 @@ mod tests {
             assert_eq!(decoded, data, "Failed for byte {:#04x}", i);
         }
     }
-    
+
     #[test]
     fn test_base64_binary_data() {
         // Test with random binary data
@@ -313,7 +321,7 @@ mod tests {
         let decoded = base64_decode(&encoded).unwrap();
         assert_eq!(decoded, binary_data);
     }
-    
+
     #[test]
     fn test_base64_large_data() {
         // Test with large data (10MB)
@@ -322,7 +330,7 @@ mod tests {
         let decoded = base64_decode(&encoded).unwrap();
         assert_eq!(decoded, large_data);
     }
-    
+
     #[test]
     fn test_base64_chunk_boundaries() {
         // Test data that aligns and misaligns with 3-byte boundaries
@@ -333,7 +341,7 @@ mod tests {
             assert_eq!(decoded, data, "Failed for size {}", size);
         }
     }
-    
+
     #[test]
     fn test_base64_config_standard() {
         let config = Base64Config::standard();
@@ -341,7 +349,7 @@ mod tests {
         assert!(config.padding);
         assert!(!config.url_safe);
     }
-    
+
     #[test]
     fn test_base64_config_url_safe() {
         let config = Base64Config::url_safe();
@@ -349,55 +357,55 @@ mod tests {
         assert!(!config.padding);
         assert!(config.url_safe);
     }
-    
+
     #[test]
     fn test_base64_encode_config() {
         let data = b"Hello, World!";
-        
+
         // Test with standard config
         let standard_config = Base64Config::standard();
         let encoded_standard = base64_encode_config(data, standard_config);
         assert_eq!(encoded_standard, base64_encode(data));
-        
+
         // Test with URL-safe config
         let url_safe_config = Base64Config::url_safe();
         let encoded_url_safe = base64_encode_config(data, url_safe_config);
         assert_eq!(encoded_url_safe, base64_encode_url_safe(data));
     }
-    
+
     #[test]
     fn test_base64_decode_config() {
         let data = b"Hello, World!";
         let encoded = base64_encode(data);
-        
+
         // Test with standard config
         let standard_config = Base64Config::standard();
         let decoded_standard = base64_decode_config(&encoded, standard_config).unwrap();
         assert_eq!(decoded_standard, data);
-        
+
         // Test with URL-safe config
         let url_safe_encoded = base64_encode_url_safe(data);
         let url_safe_config = Base64Config::url_safe();
         let decoded_url_safe = base64_decode_config(&url_safe_encoded, url_safe_config).unwrap();
         assert_eq!(decoded_url_safe, data);
     }
-    
+
     #[test]
     fn test_base64_decode_table_creation() {
         let config = Base64Config::standard();
         let table = config.create_decode_table();
-        
+
         // Check that alphabet characters map correctly
         for (i, &ch) in config.alphabet.iter().enumerate() {
             assert_eq!(table[ch as usize], i as u8);
         }
-        
+
         // Check that non-alphabet characters map to INVALID
         assert_eq!(table[b'!' as usize], INVALID);
         assert_eq!(table[b'@' as usize], INVALID);
         assert_eq!(table[b' ' as usize], INVALID);
     }
-    
+
     #[test]
     fn test_base64_padding_variants() {
         let test_cases = [
@@ -405,176 +413,201 @@ mod tests {
             (b"fo", "Zm8=", "Zm8"),
             (b"foo", "Zm9v", "Zm9v"), // No padding needed
         ];
-        
+
         for (data, with_padding, without_padding) in test_cases {
             let standard = base64_encode(data);
             let url_safe = base64_encode_url_safe(data);
-            
+
             assert_eq!(standard, with_padding);
             assert_eq!(url_safe, without_padding);
-            
+
             // Both should decode correctly
             assert_eq!(base64_decode(&standard).unwrap(), data);
             assert_eq!(base64_decode_url_safe(&url_safe).unwrap(), data);
         }
     }
-    
+
     #[test]
     fn test_base64_decode_errors() {
         // Invalid characters
-        assert!(matches!(base64_decode("SGVsbG8h!"), Err(Base64Error::InvalidCharacter)));
-        assert!(matches!(base64_decode("@#$%"), Err(Base64Error::InvalidCharacter)));
-        
+        assert!(matches!(
+            base64_decode("SGVsbG8h!"),
+            Err(Base64Error::InvalidCharacter)
+        ));
+        assert!(matches!(
+            base64_decode("@#$%"),
+            Err(Base64Error::InvalidCharacter)
+        ));
+
         // Invalid length (single character)
-        assert!(matches!(base64_decode("A"), Err(Base64Error::InvalidLength)));
-        
+        assert!(matches!(
+            base64_decode("A"),
+            Err(Base64Error::InvalidLength)
+        ));
+
         // Empty string should succeed
         assert!(base64_decode("").is_ok());
     }
-    
+
     #[test]
     fn test_base64_decode_padding_variants() {
         let data = b"sure.";
-        
+
         // Test with different padding scenarios
         assert_eq!(base64_decode("c3VyZS4=").unwrap(), data); // Correct padding
-        assert_eq!(base64_decode("c3VyZS4").unwrap(), data);  // No padding
-        
+        assert_eq!(base64_decode("c3VyZS4").unwrap(), data); // No padding
+
         // URL-safe should handle both
         assert_eq!(base64_decode_url_safe("c3VyZS4").unwrap(), data);
         assert_eq!(base64_decode_url_safe("c3VyZS4=").unwrap(), data);
     }
-    
+
     #[test]
     fn test_base64_special_characters() {
         // Test data containing characters that differ between standard and URL-safe
         let data_with_special = [0xFE, 0xFF, 0x3E, 0x3F]; // Should produce +/ in standard, -_ in URL-safe
-        
+
         let standard = base64_encode(&data_with_special);
         let url_safe = base64_encode_url_safe(&data_with_special);
-        
+
         // Standard should contain + and /
         assert!(standard.contains('+') || standard.contains('/'));
-        
+
         // URL-safe should contain - and/or _
         assert!(url_safe.contains('-') || url_safe.contains('_'));
-        
+
         // Both should decode to same data
         assert_eq!(base64_decode(&standard).unwrap(), data_with_special);
-        assert_eq!(base64_decode_url_safe(&url_safe).unwrap(), data_with_special);
+        assert_eq!(
+            base64_decode_url_safe(&url_safe).unwrap(),
+            data_with_special
+        );
     }
-    
+
     #[test]
     fn test_base64_error_display() {
         let invalid_char_error = Base64Error::InvalidCharacter;
         let invalid_length_error = Base64Error::InvalidLength;
-        
-        assert_eq!(format!("{}", invalid_char_error), "Invalid base64 character");
+
+        assert_eq!(
+            format!("{}", invalid_char_error),
+            "Invalid base64 character"
+        );
         assert_eq!(format!("{}", invalid_length_error), "Invalid base64 length");
     }
-    
+
     #[test]
     fn test_base64_error_debug() {
         let error = Base64Error::InvalidCharacter;
         let debug_str = format!("{:?}", error);
         assert!(debug_str.contains("InvalidCharacter"));
     }
-    
+
     #[test]
     fn test_base64_helpers_wrap_edge_cases() {
         let data = b"short";
-        
+
         // Test with wrap_at = 0 (should not wrap)
         let no_wrap = helpers::base64_encode_wrap(data, 0);
         assert!(!no_wrap.contains('\n'));
         assert_eq!(no_wrap, base64_encode(data));
-        
+
         // Test with wrap_at larger than encoded length
         let long_wrap = helpers::base64_encode_wrap(data, 1000);
         assert!(!long_wrap.contains('\n'));
         assert_eq!(long_wrap, base64_encode(data));
-        
+
         // Test with wrap_at = 1 (wrap after every character)
         let char_wrap = helpers::base64_encode_wrap(data, 1);
         let newline_count = char_wrap.matches('\n').count();
         assert!(newline_count > 0);
     }
-    
+
     #[test]
     fn test_base64_helpers_ignore_whitespace() {
         let data = b"Hello, World!";
         let encoded = base64_encode(data);
-        
+
         // Add various whitespace characters
-        let with_whitespace = format!("{}\n  \t{}\r\n{}", 
-            &encoded[..4], &encoded[4..8], &encoded[8..]);
-        
+        let with_whitespace = format!(
+            "{}\n  \t{}\r\n{}",
+            &encoded[..4],
+            &encoded[4..8],
+            &encoded[8..]
+        );
+
         let decoded = helpers::base64_decode_ignore_whitespace(&with_whitespace).unwrap();
         assert_eq!(decoded, data);
-        
+
         // Test with only whitespace
         let whitespace_result = helpers::base64_decode_ignore_whitespace("   \t\r\n   ").unwrap();
         assert_eq!(whitespace_result, b"");
     }
-    
+
     #[test]
     fn test_base64_consistency_across_configs() {
         let data = b"Test data for consistency check";
-        
+
         // Standard encoding/decoding
         let standard_encoded = base64_encode(data);
         let standard_decoded = base64_decode(&standard_encoded).unwrap();
         assert_eq!(standard_decoded, data);
-        
+
         // URL-safe encoding/decoding
         let url_safe_encoded = base64_encode_url_safe(data);
         let url_safe_decoded = base64_decode_url_safe(&url_safe_encoded).unwrap();
         assert_eq!(url_safe_decoded, data);
-        
+
         // Cross-decoding with custom configs
         let std_config = Base64Config::standard();
         let url_config = Base64Config::url_safe();
-        
+
         // Standard encoded should decode with standard config
-        assert_eq!(base64_decode_config(&standard_encoded, std_config.clone()).unwrap(), data);
-        
+        assert_eq!(
+            base64_decode_config(&standard_encoded, std_config.clone()).unwrap(),
+            data
+        );
+
         // URL-safe encoded should decode with URL-safe config
-        assert_eq!(base64_decode_config(&url_safe_encoded, url_config.clone()).unwrap(), data);
+        assert_eq!(
+            base64_decode_config(&url_safe_encoded, url_config.clone()).unwrap(),
+            data
+        );
     }
-    
+
     #[test]
     fn test_base64_concurrent_encoding() {
         let data = Arc::new(b"concurrent encoding test data".to_vec());
         let mut handles = vec![];
         let results = Arc::new(std::sync::Mutex::new(Vec::new()));
-        
+
         // Spawn multiple threads
         for _ in 0..10 {
             let data = Arc::clone(&data);
             let results = Arc::clone(&results);
-            
+
             let handle = thread::spawn(move || {
                 let mut local_results = Vec::new();
-                
+
                 for _ in 0..1000 {
                     let encoded = base64_encode(&data);
                     let decoded = base64_decode(&encoded).unwrap();
                     local_results.push((encoded, decoded));
                 }
-                
+
                 results.lock().unwrap().extend(local_results);
             });
-            
+
             handles.push(handle);
         }
-        
+
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         let all_results = results.lock().unwrap();
         let (first_encoded, first_decoded) = &all_results[0];
-        
+
         // All results should be identical
         for (encoded, decoded) in all_results.iter() {
             assert_eq!(encoded, first_encoded);
@@ -582,78 +615,85 @@ mod tests {
             assert_eq!(decoded, &**data);
         }
     }
-    
+
     #[test]
     fn test_base64_memory_efficiency() {
         // Test that encoding doesn't use excessive memory
         let small_data = b"small";
         let encoded = base64_encode(small_data);
-        
+
         // Encoded length should be approximately 4/3 of input + padding
         let expected_len = ((small_data.len() + 2) / 3) * 4;
         assert_eq!(encoded.len(), expected_len);
     }
-    
+
     #[test]
     fn test_base64_alphabet_coverage() {
         // Generate data that will use all characters in the alphabet
         let mut test_data = Vec::new();
-        
+
         // Add bytes that will generate all possible 6-bit patterns
         for i in 0..=255 {
             test_data.push(i);
         }
-        
+
         let encoded = base64_encode(&test_data);
         let url_safe_encoded = base64_encode_url_safe(&test_data);
-        
+
         // Check that we get a good variety of characters
         let standard_chars: std::collections::HashSet<char> = encoded.chars().collect();
         let url_safe_chars: std::collections::HashSet<char> = url_safe_encoded.chars().collect();
-        
+
         // Should have many different characters
         assert!(standard_chars.len() > 50);
         assert!(url_safe_chars.len() > 50);
-        
+
         // Both should decode correctly
         assert_eq!(base64_decode(&encoded).unwrap(), test_data);
-        assert_eq!(base64_decode_url_safe(&url_safe_encoded).unwrap(), test_data);
+        assert_eq!(
+            base64_decode_url_safe(&url_safe_encoded).unwrap(),
+            test_data
+        );
     }
-    
+
     #[test]
     fn test_base64_streaming_compatibility() {
         // Test that our implementation is compatible with streaming
         let data = b"This is a test of streaming compatibility";
-        
+
         // Encode in one shot
         let full_encoded = base64_encode(data);
-        
+
         // Simulate streaming by encoding in chunks
         let chunk_size = 6; // Multiple of 3 for clean encoding
         let mut chunked_encoded = String::new();
-        
+
         for chunk in data.chunks(chunk_size) {
             chunked_encoded.push_str(&base64_encode(chunk));
         }
-        
+
         // For proper streaming, we'd need more complex logic, but this tests basic chunking
         let full_decoded = base64_decode(&full_encoded).unwrap();
         assert_eq!(full_decoded, data);
     }
-    
+
     #[test]
     fn test_base64_performance_characteristics() {
         // Test that encoding/decoding performs well
         let data = vec![0xCC; 10000]; // 10KB of data
-        
+
         let start = std::time::Instant::now();
         for _ in 0..100 {
             let encoded = base64_encode(&data);
             let _ = base64_decode(&encoded).unwrap();
         }
         let duration = start.elapsed();
-        
+
         // Should complete 100 encode/decode cycles in reasonable time
-        assert!(duration.as_millis() < 1000, "Base64 performance too slow: {:?}", duration);
+        assert!(
+            duration.as_millis() < 1000,
+            "Base64 performance too slow: {:?}",
+            duration
+        );
     }
 }

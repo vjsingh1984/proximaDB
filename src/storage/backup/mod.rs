@@ -48,9 +48,7 @@ impl BackupManager {
     /// Returns the backup backend for the given backup path.
     fn get_backup_backend(&self, backup_path: &str) -> Result<Arc<dyn Backup>> {
         if backup_path.starts_with("file://") {
-            Ok(Arc::new(LocalBackup::new(
-                self.filesystem_factory.clone(),
-            )))
+            Ok(Arc::new(LocalBackup::new(self.filesystem_factory.clone())))
         } else {
             unimplemented!("Only local backups are supported at the moment.")
         }

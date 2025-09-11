@@ -144,11 +144,7 @@ where
         let mut removed_size = 0;
 
         // Collect keys to remove (lock-free iteration)
-        let keys_to_remove: Vec<K> = self
-            .data
-            .range(..=threshold)
-            .map(|(key, _)| key)
-            .collect();
+        let keys_to_remove: Vec<K> = self.data.range(..=threshold).map(|(key, _)| key).collect();
 
         // Remove entries (each remove is lock-free)
         for key in keys_to_remove {
@@ -179,11 +175,7 @@ where
 
     async fn get_all_ordered(&self) -> Result<Vec<(K, V)>> {
         // Lock-free iteration in sorted order
-        let results = self
-            .data
-            .iter()
-            .map(|entry| entry)
-            .collect();
+        let results = self.data.iter().map(|entry| entry).collect();
 
         Ok(results)
     }
@@ -226,12 +218,11 @@ where
     ) -> Result<Vec<(K, V)>> {
         let mut results = Vec::new();
 
-        let iter: Box<dyn Iterator<Item = (K, V)>> =
-            if let Some(to) = to {
-                Box::new(self.data.range(from..=to))
-            } else {
-                Box::new(self.data.range(from..))
-            };
+        let iter: Box<dyn Iterator<Item = (K, V)>> = if let Some(to) = to {
+            Box::new(self.data.range(from..=to))
+        } else {
+            Box::new(self.data.range(from..))
+        };
 
         for (key, value) in iter {
             if let Some(limit) = limit {
@@ -247,12 +238,11 @@ where
 
     /// Count entries in range without loading values (memory efficient)
     pub async fn count_range(&self, from: K, to: Option<K>) -> usize {
-        let iter: Box<dyn Iterator<Item = (K, V)>> =
-            if let Some(to) = to {
-                Box::new(self.data.range(from..=to))
-            } else {
-                Box::new(self.data.range(from..))
-            };
+        let iter: Box<dyn Iterator<Item = (K, V)>> = if let Some(to) = to {
+            Box::new(self.data.range(from..=to))
+        } else {
+            Box::new(self.data.range(from..))
+        };
 
         iter.count()
     }

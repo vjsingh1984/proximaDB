@@ -4,8 +4,8 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::storage::engines::impls::sst::SstableWriter;
 use crate::core::VectorRecord;
+use crate::storage::engines::impls::sst::SstableWriter;
 // use crate::core::config::{BloomFilterConfig, SstConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
@@ -55,21 +55,23 @@ async fn test_metadata_filtering_basic() {
         let metadata = vec![
             crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "A".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
+                ),
             },
             crate::proto::proximadb_v1::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                    (i * 10) as f64,
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue((i * 10) as f64),
+                ),
             },
             crate::proto::proximadb_v1::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "document".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "document".to_string(),
+                    ),
+                ),
             },
         ];
 
@@ -93,21 +95,25 @@ async fn test_metadata_filtering_basic() {
         let metadata = vec![
             crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "B".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string()),
+                ),
             },
             crate::proto::proximadb_v1::MetadataItem {
                 key: "score".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                    (i * 10 + 5) as f64,
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                        (i * 10 + 5) as f64,
+                    ),
+                ),
             },
             crate::proto::proximadb_v1::MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "image".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "image".to_string(),
+                    ),
+                ),
             },
         ];
 
@@ -314,15 +320,19 @@ async fn test_metadata_bloom_filter_optimization() {
         let metadata = vec![
             crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    if i % 2 == 0 { "even" } else { "odd" }.to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        if i % 2 == 0 { "even" } else { "odd" }.to_string(),
+                    ),
+                ),
             },
             crate::proto::proximadb_v1::MetadataItem {
                 key: "status".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    if i < 10 { "active" } else { "inactive" }.to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        if i < 10 { "active" } else { "inactive" }.to_string(),
+                    ),
+                ),
             },
         ];
 

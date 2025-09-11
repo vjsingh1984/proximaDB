@@ -17,7 +17,7 @@
 //!
 //! let pattern = GlobPattern::new("*.parquet").unwrap();
 //! let matcher = GlobMatcher::new(&pattern);
-//! 
+//!
 //! assert!(matcher.is_match("data.parquet"));
 //! assert!(!matcher.is_match("data.txt"));
 //! ```
@@ -116,7 +116,7 @@ impl GlobPattern {
         };
 
         let compiled = Self::compile(&normalized_pattern)?;
-        
+
         Ok(GlobPattern {
             pattern: normalized_pattern,
             compiled,
@@ -158,10 +158,13 @@ impl GlobPattern {
     }
 
     /// Parse character class like [abc] or [a-z]
-    fn parse_character_class(chars: &[char], start: usize) -> Result<(CharacterClass, usize), GlobError> {
+    fn parse_character_class(
+        chars: &[char],
+        start: usize,
+    ) -> Result<(CharacterClass, usize), GlobError> {
         let mut i = start + 1; // Skip opening '['
         let mut negated = false;
-        
+
         if i < chars.len() && chars[i] == '^' {
             negated = true;
             i += 1;
@@ -169,21 +172,21 @@ impl GlobPattern {
 
         let mut set = HashSet::new();
         let mut found_range = false;
-        
+
         while i < chars.len() && chars[i] != ']' {
             if i + 2 < chars.len() && chars[i + 1] == '-' && chars[i + 2] != ']' {
                 // Character range like a-z
                 let start_char = chars[i];
                 let end_char = chars[i + 2];
-                
+
                 if start_char > end_char {
                     return Err(GlobError::InvalidCharacterClass);
                 }
-                
+
                 for ch in start_char..=end_char {
                     set.insert(ch);
                 }
-                
+
                 found_range = true;
                 i += 3;
             } else {
@@ -216,7 +219,10 @@ impl GlobPattern {
     }
 
     /// Parse alternatives like {foo,bar,baz}
-    fn parse_alternatives(chars: &[char], start: usize) -> Result<(Vec<CompiledPattern>, usize), GlobError> {
+    fn parse_alternatives(
+        chars: &[char],
+        start: usize,
+    ) -> Result<(Vec<CompiledPattern>, usize), GlobError> {
         let mut i = start + 1; // Skip opening '{'
         let mut alternatives = Vec::new();
         let mut current_alt = String::new();
@@ -297,23 +303,31 @@ impl<'a> GlobMatcher<'a> {
     }
 
     /// Match pattern elements against text recursively
-    fn matches_elements(&self, elements: &[PatternElement], text: &str, elem_idx: usize, text_idx: usize) -> bool {
+    fn matches_elements(
+        &self,
+        elements: &[PatternElement],
+        text: &str,
+        elem_idx: usize,
+        text_idx: usize,
+    ) -> bool {
         // Convert text to chars for indexing
         let text_chars: Vec<char> = text.chars().collect();
-        
+
         if elem_idx >= elements.len() {
             return text_idx >= text_chars.len();
         }
 
         if text_idx >= text_chars.len() {
             // Check if remaining elements can match empty string
-            return elements[elem_idx..].iter().all(|e| matches!(e, PatternElement::Star));
+            return elements[elem_idx..]
+                .iter()
+                .all(|e| matches!(e, PatternElement::Star));
         }
 
         match &elements[elem_idx] {
             PatternElement::Literal(ch) => {
-                text_chars[text_idx] == *ch &&
-                self.matches_elements(elements, text, elem_idx + 1, text_idx + 1)
+                text_chars[text_idx] == *ch
+                    && self.matches_elements(elements, text, elem_idx + 1, text_idx + 1)
             }
             PatternElement::Question => {
                 self.matches_elements(elements, text, elem_idx + 1, text_idx + 1)
@@ -323,7 +337,7 @@ impl<'a> GlobMatcher<'a> {
                 if self.matches_elements(elements, text, elem_idx + 1, text_idx) {
                     return true;
                 }
-                
+
                 // Try matching one or more characters
                 for i in text_idx + 1..=text_chars.len() {
                     if self.matches_elements(elements, text, elem_idx + 1, i) {
@@ -333,15 +347,16 @@ impl<'a> GlobMatcher<'a> {
                 false
             }
             PatternElement::CharacterClass(class) => {
-                class.matches(text_chars[text_idx]) &&
-                self.matches_elements(elements, text, elem_idx + 1, text_idx + 1)
+                class.matches(text_chars[text_idx])
+                    && self.matches_elements(elements, text, elem_idx + 1, text_idx + 1)
             }
             PatternElement::Alternatives(alternatives) => {
                 // Try each alternative
                 for alt in alternatives {
                     if self.matches_alternative_at(alt, &text_chars, text_idx) {
                         let consumed = self.count_alternative_chars(alt, &text_chars, text_idx);
-                        if self.matches_elements(elements, text, elem_idx + 1, text_idx + consumed) {
+                        if self.matches_elements(elements, text, elem_idx + 1, text_idx + consumed)
+                        {
                             return true;
                         }
                     }
@@ -352,12 +367,27 @@ impl<'a> GlobMatcher<'a> {
     }
 
     /// Check if an alternative pattern matches at a specific position
-    fn matches_alternative_at(&self, alt: &CompiledPattern, text_chars: &[char], start_idx: usize) -> bool {
-        self.matches_elements(&alt.elements, &text_chars[start_idx..].iter().collect::<String>(), 0, 0)
+    fn matches_alternative_at(
+        &self,
+        alt: &CompiledPattern,
+        text_chars: &[char],
+        start_idx: usize,
+    ) -> bool {
+        self.matches_elements(
+            &alt.elements,
+            &text_chars[start_idx..].iter().collect::<String>(),
+            0,
+            0,
+        )
     }
 
     /// Count characters consumed by an alternative match
-    fn count_alternative_chars(&self, alt: &CompiledPattern, text_chars: &[char], start_idx: usize) -> usize {
+    fn count_alternative_chars(
+        &self,
+        alt: &CompiledPattern,
+        text_chars: &[char],
+        start_idx: usize,
+    ) -> usize {
         let mut consumed = 0;
         let mut elem_idx = 0;
         let mut text_idx = start_idx;
@@ -414,7 +444,7 @@ mod tests {
     fn test_literal_matching() {
         let pattern = GlobPattern::new("hello").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("hello"));
         assert!(!matcher.is_match("Hello"));
         assert!(!matcher.is_match("world"));
@@ -424,7 +454,7 @@ mod tests {
     fn test_case_insensitive_matching() {
         let pattern = GlobPattern::new_with_options("Hello", false).unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("hello"));
         assert!(matcher.is_match("Hello"));
         assert!(matcher.is_match("HELLO"));
@@ -434,7 +464,7 @@ mod tests {
     fn test_wildcard_matching() {
         let pattern = GlobPattern::new("*.txt").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("file.txt"));
         assert!(matcher.is_match("document.txt"));
         assert!(!matcher.is_match("file.doc"));
@@ -445,7 +475,7 @@ mod tests {
     fn test_question_mark_matching() {
         let pattern = GlobPattern::new("test?.txt").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("test1.txt"));
         assert!(matcher.is_match("testA.txt"));
         assert!(!matcher.is_match("test.txt"));
@@ -456,7 +486,7 @@ mod tests {
     fn test_character_class_matching() {
         let pattern = GlobPattern::new("test[123].txt").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("test1.txt"));
         assert!(matcher.is_match("test2.txt"));
         assert!(matcher.is_match("test3.txt"));
@@ -468,7 +498,7 @@ mod tests {
     fn test_character_range_matching() {
         let pattern = GlobPattern::new("file[a-z].txt").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("filea.txt"));
         assert!(matcher.is_match("filez.txt"));
         assert!(!matcher.is_match("fileA.txt"));
@@ -479,7 +509,7 @@ mod tests {
     fn test_negated_character_class() {
         let pattern = GlobPattern::new("file[^0-9].txt").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("filea.txt"));
         assert!(matcher.is_match("fileZ.txt"));
         assert!(!matcher.is_match("file1.txt"));
@@ -490,7 +520,7 @@ mod tests {
     fn test_alternatives_matching() {
         let pattern = GlobPattern::new("file.{txt,doc,pdf}").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("file.txt"));
         assert!(matcher.is_match("file.doc"));
         assert!(matcher.is_match("file.pdf"));
@@ -501,7 +531,7 @@ mod tests {
     fn test_complex_pattern() {
         let pattern = GlobPattern::new("data_[0-9][0-9]_*.{parquet,orc}").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("data_01_vectors.parquet"));
         assert!(matcher.is_match("data_99_metadata.orc"));
         assert!(!matcher.is_match("data_1_vectors.parquet")); // Single digit
@@ -511,22 +541,31 @@ mod tests {
     #[test]
     fn test_path_matching() {
         use std::path::PathBuf;
-        
+
         let pattern = GlobPattern::new("*.parquet").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         let path = PathBuf::from("vectors.parquet");
         assert!(matcher.is_path_match(&path));
-        
+
         let path = PathBuf::from("data.txt");
         assert!(!matcher.is_path_match(&path));
     }
 
     #[test]
     fn test_error_handling() {
-        assert!(matches!(GlobPattern::new("[abc"), Err(GlobError::UnbalancedBrackets)));
-        assert!(matches!(GlobPattern::new("{foo,bar"), Err(GlobError::UnbalancedBrackets)));
-        assert!(matches!(GlobPattern::new("[z-a]"), Err(GlobError::InvalidCharacterClass)));
+        assert!(matches!(
+            GlobPattern::new("[abc"),
+            Err(GlobError::UnbalancedBrackets)
+        ));
+        assert!(matches!(
+            GlobPattern::new("{foo,bar"),
+            Err(GlobError::UnbalancedBrackets)
+        ));
+        assert!(matches!(
+            GlobPattern::new("[z-a]"),
+            Err(GlobError::InvalidCharacterClass)
+        ));
     }
 
     #[test]
@@ -540,7 +579,7 @@ mod tests {
     fn test_empty_patterns() {
         let pattern = GlobPattern::new("").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match(""));
         assert!(!matcher.is_match("anything"));
     }
@@ -549,7 +588,7 @@ mod tests {
     fn test_multiple_stars() {
         let pattern = GlobPattern::new("**/*.txt").unwrap();
         let matcher = GlobMatcher::new(&pattern);
-        
+
         assert!(matcher.is_match("file.txt"));
         assert!(matcher.is_match("dir/file.txt"));
         assert!(matcher.is_match("dir/subdir/file.txt"));

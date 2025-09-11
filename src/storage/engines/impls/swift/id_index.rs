@@ -221,7 +221,11 @@ impl IdIndex {
         match node {
             BPlusNode::Leaf { .. } => 1,
             BPlusNode::Internal { children, .. } => {
-                1 + children.iter().map(|c| self.node_height(c)).max().unwrap_or(0)
+                1 + children
+                    .iter()
+                    .map(|c| self.node_height(c))
+                    .max()
+                    .unwrap_or(0)
             }
         }
     }

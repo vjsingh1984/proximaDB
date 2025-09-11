@@ -56,18 +56,19 @@
 //! - **Performance Optimized**: SIMD-ready operations and cache-friendly access patterns
 
 use crate::core::error::ProximaDBError;
-use crate::metrics::updater::OperationMetricsUpdate;
 use crate::graph::{
-    Node, Edge, NodeId, EdgeId, GraphMemoryPool, OperationMode,
-    TraversalRequest, TraversalResponse, NodeQuery, EdgeQuery,
-    engines::{GraphEngine, orion::OrionGraphEngine}
+    Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, NodeId, NodeQuery, OperationMode,
+    TraversalRequest, TraversalResponse,
+    engines::{GraphEngine, orion::OrionGraphEngine},
 };
-use std::sync::Arc;
-use std::collections::HashSet;
-use tokio::sync::RwLock;
+use crate::metrics::updater::OperationMetricsUpdate;
 use dashmap::DashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats};
 use std::time::Instant;
+use tokio::sync::RwLock;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -75,19 +76,20 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 pub struct GraphService {
     /// Current operation mode (vector-only, graph-only, unified)
     mode: OperationMode,
-    
+
     /// Primary graph engine (ORION for in-memory operations)
     engine: Arc<OrionGraphEngine>,
-    
+
     /// Shared memory pool for Arc-based zero-copy operations
     memory_pool: Arc<GraphMemoryPool>,
     /// Optional unified metrics updater
-    metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>, 
+    metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
     /// Edge statistics
     stats_edges: Arc<AtomicU64>,
     /// Edge type counts
     edge_type_counts: Arc<DashMap<String, AtomicU64>>,
-    
+    /// Graph traversal runtime settings
+    graph_settings: crate::core::context::GraphTraversalSettings,
     // Transaction coordinator (future: integrate with existing WAL)
     // transaction_coordinator: Arc<TransactionCoordinator>,
 }
@@ -97,15 +99,47 @@ impl GraphService {
     pub fn new() -> Self {
         let memory_pool = Arc::new(GraphMemoryPool::new());
         let engine = Arc::new(OrionGraphEngine::new());
-        
-        Self {
+
+        // Initialize graph settings from global if available
+        let default_settings = crate::core::context::global_graph_settings()
+            .unwrap_or_default();
+
+        let service = Self {
             mode: OperationMode::Unified,
             engine,
             memory_pool,
             metrics_updater: None,
             stats_edges: Arc::new(AtomicU64::new(0)),
             edge_type_counts: Arc::new(DashMap::new()),
+            graph_settings: default_settings,
+        };
+
+        // Register lightweight graph cache providers with orchestrator
+        if let Some(orch) = CrossCacheOrchestrator::global() {
+            // Use edge stats as a proxy for adjacency/edge access frequency for now
+            let edge_counter = service.stats_edges.clone();
+            let provider_adj: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(SimpleCounterProvider::new(edge_counter.clone(), 256, 0.0));
+            let provider_edge: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(SimpleCounterProvider::new(edge_counter.clone(), 256, 0.0));
+            // Node provider uses same counter as placeholder
+            let provider_node: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(SimpleCounterProvider::new(edge_counter, 256, 0.0));
+            orch.register_cache_provider(CacheType::GraphAdjacency, provider_adj);
+            orch.register_cache_provider(CacheType::GraphEdge, provider_edge);
+            orch.register_cache_provider(CacheType::GraphNode, provider_node);
         }
+
+        service
+    }
+
+    /// Create a new GraphService with SharedContext (future-proof DI)
+    pub fn new_with_context(ctx: &crate::core::context::SharedContext) -> Self {
+        let mut s = Self::new();
+        if let Some(gs) = &ctx.graph_settings {
+            s.graph_settings = gs.clone();
+        }
+        s
     }
 
     /// Compute shortest path with algorithm selection and optional k-shortest support.
@@ -117,6 +151,8 @@ impl GraphService {
         edge_types: Option<Vec<String>>,
         algorithm: Option<crate::proto::proximadb_v1::ShortestPathAlgorithm>,
         k: Option<u32>,
+        override_enable_prefetch: Option<bool>,
+        override_prefetch_budget: Option<usize>,
     ) -> Result<Option<(Vec<NodeId>, f64)>> {
         let t0 = Instant::now();
         if !self.graph_enabled() {
@@ -125,7 +161,7 @@ impl GraphService {
             ));
         }
         use crate::graph::engines::orion::traversal::{
-            dijkstra_shortest_path, astar_shortest_path, k_shortest_paths, TraversalConfig,
+            TraversalConfig, astar_shortest_path, dijkstra_shortest_path, k_shortest_paths,
         };
         let config = TraversalConfig {
             max_depth,
@@ -137,6 +173,10 @@ impl GraphService {
             parallel_processing: false,
             timeout_ms: Some(500),
             max_frontier: Some(100_000),
+            enable_prefetch: override_enable_prefetch
+                .unwrap_or(self.graph_settings.enable_prefetch),
+            prefetch_budget: override_prefetch_budget
+                .unwrap_or(self.graph_settings.prefetch_budget),
         };
         if let Some(kk) = k {
             if kk > 1 {
@@ -152,68 +192,76 @@ impl GraphService {
             }
         }
         let result = match algorithm.unwrap_or(
-            crate::proto::proximadb_v1::ShortestPathAlgorithm::SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+            crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra,
         ) {
-            crate::proto::proximadb_v1::ShortestPathAlgorithm::SHORTEST_PATH_ALGORITHM_ASTAR => {
+            crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar => {
                 astar_shortest_path(&self.engine, start_node_id, target_node_id, config).await
             }
             _ => dijkstra_shortest_path(&self.engine, start_node_id, target_node_id, config).await,
         }?;
         if let Some(updater) = &self.metrics_updater {
-            let _ = updater.record_operation(
-                "graph",
-                OperationMetricsUpdate {
-                    operation_type: "graph.shortest_path".into(),
-                    latency_us: t0.elapsed().as_micros() as f64,
-                    success: result.is_some(),
-                    bytes_processed: 0,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as i64,
-                },
-            ).await;
+            let _ = updater
+                .record_operation(
+                    "graph",
+                    OperationMetricsUpdate {
+                        operation_type: "graph.shortest_path".into(),
+                        latency_us: t0.elapsed().as_micros() as f64,
+                        success: result.is_some(),
+                        bytes_processed: 0,
+                        timestamp: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as i64,
+                    },
+                )
+                .await;
         }
         Ok(result)
     }
-    
+
     /// Create a new GraphService with specific mode
     pub fn with_mode(mode: OperationMode) -> Self {
         let mut service = Self::new();
         service.mode = mode;
         service
     }
-    
+
     /// Get current operation mode
     pub fn mode(&self) -> OperationMode {
         self.mode
     }
-    
+
     /// Set operation mode
     pub fn set_mode(&mut self, mode: OperationMode) {
         self.mode = mode;
     }
 
     /// Set metrics updater
-    pub fn set_metrics_updater(&mut self, updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>) {
+    pub fn set_metrics_updater(
+        &mut self,
+        updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>,
+    ) {
         self.metrics_updater = Some(updater);
     }
-    
+
     /// Check if graph operations are enabled
     pub fn graph_enabled(&self) -> bool {
         matches!(self.mode, OperationMode::GraphOnly | OperationMode::Unified)
     }
-    
+
     /// Check if vector operations are enabled  
     pub fn vector_enabled(&self) -> bool {
-        matches!(self.mode, OperationMode::VectorOnly | OperationMode::Unified)
+        matches!(
+            self.mode,
+            OperationMode::VectorOnly | OperationMode::Unified
+        )
     }
-    
+
     /// Create a new node
     pub fn create_node(&self, node: Node) -> Result<Arc<Node>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
         // Enforce unique constraints per label/property
@@ -223,23 +271,23 @@ impl GraphService {
         self.register_node_in_unique_constraints(&node_arc);
         Ok(node_arc)
     }
-    
+
     /// Get a node by ID
     pub fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         self.engine.get_node(id)
     }
-    
+
     /// Update a node
     pub fn update_node(&self, node: Node) -> Result<Arc<Node>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
         // Enforce unique constraints before update
@@ -249,12 +297,12 @@ impl GraphService {
         self.register_node_in_unique_constraints(&node_arc);
         Ok(node_arc)
     }
-    
+
     /// Delete a node
     pub fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
 
@@ -273,12 +321,12 @@ impl GraphService {
         }
         self.engine.delete_node(id)
     }
-    
+
     /// Create a new edge
     pub fn create_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
 
@@ -300,7 +348,11 @@ impl GraphService {
         if self
             .memory_pool
             .edge_composite_index
-            .get(&(edge.from_node_id.clone(), edge.to_node_id.clone(), edge.edge_type.clone()))
+            .get(&(
+                edge.from_node_id.clone(),
+                edge.to_node_id.clone(),
+                edge.edge_type.clone(),
+            ))
             .is_some()
         {
             return Err(ProximaDBError::InvalidInput(format!(
@@ -312,7 +364,10 @@ impl GraphService {
         let edge_arc = self.engine.insert_edge(edge)?;
         // Update edge stats
         self.stats_edges.fetch_add(1, Ordering::Relaxed);
-        self.edge_type_counts.entry(edge_arc.edge_type.clone()).or_insert_with(|| AtomicU64::new(0)).fetch_add(1, Ordering::Relaxed);
+        self.edge_type_counts
+            .entry(edge_arc.edge_type.clone())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Relaxed);
         Ok(edge_arc)
     }
 
@@ -320,7 +375,7 @@ impl GraphService {
     pub fn delete_node_detach(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
 
@@ -356,7 +411,9 @@ impl GraphService {
         // Build from existing nodes
         for entry in self.memory_pool.nodes.iter() {
             let node = entry.value();
-            if !node.labels.contains(&label.to_string()) { continue; }
+            if !node.labels.contains(&label.to_string()) {
+                continue;
+            }
             if let Some(val) = node.properties.get(property) {
                 let k = Self::index_key_for_value_internal(val);
                 if let Some(existing) = map.get(&k) {
@@ -387,7 +444,7 @@ impl GraphService {
                 let (clabel, cprop) = entry.key();
                 let map = entry.value();
                 if clabel == label {
-                    if let Some(val) = node.properties.get(&cprop) {
+                    if let Some(val) = node.properties.get(cprop) {
                         let k = Self::index_key_for_value_internal(val);
                         if let Some(existing) = map.get(&k) {
                             if existing.value() != &node.id {
@@ -411,7 +468,7 @@ impl GraphService {
                 let (clabel, cprop) = entry.key();
                 let map = entry.value();
                 if *clabel == label {
-                    if let Some(val) = node.properties.get(&cprop) {
+                    if let Some(val) = node.properties.get(cprop) {
                         let k = Self::index_key_for_value_internal(val);
                         map.insert(k, node.id.clone());
                     }
@@ -427,7 +484,7 @@ impl GraphService {
                 let (clabel, cprop) = entry.key();
                 let map = entry.value();
                 if *clabel == label {
-                    if let Some(val) = node.properties.get(&cprop) {
+                    if let Some(val) = node.properties.get(cprop) {
                         let k = Self::index_key_for_value_internal(val);
                         if let Some(existing) = map.get(&k) {
                             if existing.value() == &node.id {
@@ -440,35 +497,33 @@ impl GraphService {
         }
     }
 
-
-    
     /// Get an edge by ID
     pub fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         self.engine.get_edge(id)
     }
-    
+
     /// Update an edge
     pub fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         self.engine.update_edge(edge)
     }
-    
+
     /// Delete an edge
     pub fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
         let deleted = self.engine.delete_edge(id)?;
@@ -480,12 +535,12 @@ impl GraphService {
         }
         Ok(deleted)
     }
-    
+
     /// Query nodes by labels and properties
     pub fn query_nodes(&self, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
 
@@ -494,7 +549,9 @@ impl GraphService {
             let mut set = HashSet::new();
             for label in &query.labels {
                 if let Ok(nodes) = self.engine.get_nodes_by_label(label) {
-                    for n in nodes { set.insert(n.id.clone()); }
+                    for n in nodes {
+                        set.insert(n.id.clone());
+                    }
                 }
             }
             set
@@ -509,11 +566,13 @@ impl GraphService {
         // Use property indexes / ordered indexes for prefiltering
         for filter in &query.filters {
             use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
-            match filter.operator {
-                Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
+            match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                Op::Equals => {
                     // Look up index for this property
-                    if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key) {
-                        let key = Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
+                    if let Some(index_map) = self.memory_pool.node_property_indexes.get(&filter.key)
+                    {
+                        let key =
+                            Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
                             candidates = candidates
@@ -530,72 +589,108 @@ impl GraphService {
                         continue;
                     }
                 }
-                Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => {
-                    if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap()) {
-                        if let Some(map_lock) = self.memory_pool.node_property_str_ordered.get(&filter.key) {
+                Op::StartsWith => {
+                    if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap())
+                    {
+                        if let Some(map_lock) =
+                            self.memory_pool.node_property_str_ordered.get(&filter.key)
+                        {
                             let map = map_lock.read().unwrap();
                             let mut matched: HashSet<NodeId> = HashSet::new();
-                            for (k, ids) in map.range(prefix.to_string()..).take_while(|(k, _)| k.starts_with(prefix)) {
+                            for (k, ids) in map
+                                .range(prefix.to_string()..)
+                                .take_while(|(k, _)| k.starts_with(prefix))
+                            {
                                 matched.extend(ids.iter().cloned());
                             }
-                            candidates = candidates.into_iter().filter(|id| matched.contains(id)).collect();
+                            candidates = candidates
+                                .into_iter()
+                                .filter(|id| matched.contains(id))
+                                .collect();
                         }
                     }
                 }
-                Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN
-                | Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL
-                | Op::PROPERTY_FILTER_OPERATOR_LESS_THAN
-                | Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
+                Op::GreaterThan
+                | Op::GreaterEqual
+                | Op::LessThan
+                | Op::LessEqual => {
                     if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap()) {
-                        if let Some(map_lock) = self.memory_pool.node_property_num_indexes.get(&filter.key) {
+                        if let Some(map_lock) =
+                            self.memory_pool.node_property_num_indexes.get(&filter.key)
+                        {
                             let map = map_lock.read().unwrap();
                             let mut matched: HashSet<NodeId> = HashSet::new();
-                            match filter.operator {
-                                Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
+                            match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                                Op::GreaterThan => {
                                     for (k, ids) in map.iter() {
-                                        if *k > num { matched.extend(ids.iter().cloned()); }
+                                        if (*k as f64) > num {
+                                            matched.extend(ids.iter().cloned());
+                                        }
                                     }
                                 }
-                                Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
+                                Op::GreaterEqual => {
                                     for (k, ids) in map.iter() {
-                                        if *k >= num { matched.extend(ids.iter().cloned()); }
+                                        if (*k as f64) >= num {
+                                            matched.extend(ids.iter().cloned());
+                                        }
                                     }
                                 }
-                                Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
+                                Op::LessThan => {
                                     for (k, ids) in map.iter() {
-                                        if *k < num { matched.extend(ids.iter().cloned()); }
+                                        if (*k as f64) < num {
+                                            matched.extend(ids.iter().cloned());
+                                        }
                                     }
                                 }
-                                Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
+                                Op::LessEqual => {
                                     for (k, ids) in map.iter() {
-                                        if *k <= num { matched.extend(ids.iter().cloned()); }
+                                        if (*k as f64) <= num {
+                                            matched.extend(ids.iter().cloned());
+                                        }
                                     }
                                 }
                                 _ => {}
                             }
-                            candidates = candidates.into_iter().filter(|id| matched.contains(id)).collect();
+                            candidates = candidates
+                                .into_iter()
+                                .filter(|id| matched.contains(id))
+                                .collect();
                         }
-                    } else if let Some(map_lock) = self.memory_pool.node_property_str_ordered.get(&filter.key) {
+                    } else if let Some(map_lock) =
+                        self.memory_pool.node_property_str_ordered.get(&filter.key)
+                    {
                         let map = map_lock.read().unwrap();
                         let mut matched: HashSet<NodeId> = HashSet::new();
-                        let s = extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
+                        let s =
+                            extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
                         use std::ops::Bound::{Excluded, Included, Unbounded};
-                        match filter.operator {
-                            Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
-                                for (_k, ids) in map.range((Excluded(s.to_string()), Unbounded)) { matched.extend(ids.iter().cloned()); }
+                        match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                            Op::GreaterThan => {
+                                for (_k, ids) in map.range((Excluded(s.to_string()), Unbounded)) {
+                                    matched.extend(ids.iter().cloned());
+                                }
                             }
-                            Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
-                                for (_k, ids) in map.range((Included(s.to_string()), Unbounded)) { matched.extend(ids.iter().cloned()); }
+                            Op::GreaterEqual => {
+                                for (_k, ids) in map.range((Included(s.to_string()), Unbounded)) {
+                                    matched.extend(ids.iter().cloned());
+                                }
                             }
-                            Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
-                                for (_k, ids) in map.range((Unbounded, Excluded(s.to_string()))) { matched.extend(ids.iter().cloned()); }
+                            Op::LessThan => {
+                                for (_k, ids) in map.range((Unbounded, Excluded(s.to_string()))) {
+                                    matched.extend(ids.iter().cloned());
+                                }
                             }
-                            Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
-                                for (_k, ids) in map.range((Unbounded, Included(s.to_string()))) { matched.extend(ids.iter().cloned()); }
+                            Op::LessEqual => {
+                                for (_k, ids) in map.range((Unbounded, Included(s.to_string()))) {
+                                    matched.extend(ids.iter().cloned());
+                                }
                             }
                             _ => {}
                         }
-                        candidates = candidates.into_iter().filter(|id| matched.contains(id)).collect();
+                        candidates = candidates
+                            .into_iter()
+                            .filter(|id| matched.contains(id))
+                            .collect();
                     }
                 }
                 _ => {
@@ -613,21 +708,37 @@ impl GraphService {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
                     let pass = match filter.operator {
-                        Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
-                            match prop_val_opt { Some(v) => v.value == filter.value.as_ref().unwrap().value, None => false }
+                        Op::Equals => match prop_val_opt {
+                            Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                            None => false,
+                        },
+                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => match prop_val_opt {
+                            Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                            None => true,
+                        },
+                        Op::GreaterThan => {
+                            cmp_prop_gt(prop_val_opt, &filter.value)
                         }
-                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => {
-                            match prop_val_opt { Some(v) => v.value != filter.value.as_ref().unwrap().value, None => true }
+                        Op::GreaterEqual => {
+                            cmp_prop_ge(prop_val_opt, &filter.value)
                         }
-                        Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => cmp_prop_gt(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => cmp_prop_ge(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => cmp_prop_lt(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => cmp_prop_le(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => prop_starts_with(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => prop_contains(prop_val_opt, &filter.value),
+                        Op::LessThan => {
+                            cmp_prop_lt(prop_val_opt, &filter.value)
+                        }
+                        Op::LessEqual => {
+                            cmp_prop_le(prop_val_opt, &filter.value)
+                        }
+                        Op::StartsWith => {
+                            prop_starts_with(prop_val_opt, &filter.value)
+                        }
+                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => {
+                            prop_contains(prop_val_opt, &filter.value)
+                        }
                         _ => false,
                     };
-                    if !pass { continue 'outer; }
+                    if !pass {
+                        continue 'outer;
+                    }
                 }
                 results.push(node_arc);
             }
@@ -637,19 +748,21 @@ impl GraphService {
         let mut res = results;
         let offset = query.offset.unwrap_or(0) as usize;
         let limit = query.limit.unwrap_or(res.len() as u32) as usize;
-        if offset >= res.len() { return Ok(Vec::new()); }
+        if offset >= res.len() {
+            return Ok(Vec::new());
+        }
         let end = (offset + limit).min(res.len());
         Ok(res.drain(offset..end).collect())
     }
-    
+
     /// Query edges by type and properties
     pub fn query_edges(&self, query: EdgeQuery) -> Result<Vec<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         // For now, implement simple edge querying based on from/to node IDs
         // TODO: Add edge type and property filtering
         let mut results = Vec::new();
@@ -659,7 +772,7 @@ impl GraphService {
                 Err(_) => {} // Continue if node doesn't exist
             }
         }
-        
+
         if let Some(to_node_id) = &query.to_node_id {
             match self.engine.get_incoming_edges(to_node_id, None) {
                 Ok(edges) => results.extend(edges),
@@ -667,84 +780,147 @@ impl GraphService {
             }
         }
         // If neither from nor to specified and filters exist, prefilter by edge property indexes
-        if query.from_node_id.is_none() && query.to_node_id.is_none() && (!query.filters.is_empty()) {
+        if query.from_node_id.is_none() && query.to_node_id.is_none() && (!query.filters.is_empty())
+        {
             use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
             let mut candidate_ids: Option<std::collections::HashSet<EdgeId>> = None;
             for filter in &query.filters {
                 // Only handle equality and range/prefix on stringified keys
-                match filter.operator {
-                    Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
-                        if let Some(index_map) = self.memory_pool.edge_property_indexes.get(&filter.key) {
-                            let key = Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
+                match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                    Op::Equals => {
+                        if let Some(index_map) =
+                            self.memory_pool.edge_property_indexes.get(&filter.key)
+                        {
+                            let key =
+                                Self::index_key_for_value_internal(filter.value.as_ref().unwrap());
                             if let Some(ids) = index_map.get(&key) {
-                                let set: std::collections::HashSet<EdgeId> = ids.iter().cloned().collect();
-                                candidate_ids = Some(match candidate_ids { None => set, Some(prev) => prev.intersection(&set).cloned().collect() });
-                            } else { candidate_ids = Some(std::collections::HashSet::new()); }
-                        }
-                    }
-                    Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => {
-                        if let Some(prefix) = extract_string_from_value(filter.value.as_ref().unwrap()) {
-                            if let Some(map_lock) = self.memory_pool.edge_property_str_ordered.get(&filter.key) {
-                                let map = map_lock.read().unwrap();
-                                let mut matched = std::collections::HashSet::new();
-                                for (k, ids) in map.range(prefix.to_string()..).take_while(|(k, _)| k.starts_with(prefix)) {
-                                    matched.extend(ids.iter().cloned());
-                                }
-                                candidate_ids = Some(match candidate_ids { None => matched, Some(prev) => prev.intersection(&matched).cloned().collect() });
+                                let set: std::collections::HashSet<EdgeId> =
+                                    ids.iter().cloned().collect();
+                                candidate_ids = Some(match candidate_ids {
+                                    None => set,
+                                    Some(prev) => prev.intersection(&set).cloned().collect(),
+                                });
+                            } else {
+                                candidate_ids = Some(std::collections::HashSet::new());
                             }
                         }
                     }
-                    Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN | Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL | Op::PROPERTY_FILTER_OPERATOR_LESS_THAN | Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
-                        // Prefer numeric range if value numeric, else fallback to string ordered
-                        if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap()) {
-                            if let Some(map_lock) = self.memory_pool.edge_property_num_indexes.get(&filter.key) {
+                    Op::StartsWith => {
+                        if let Some(prefix) =
+                            extract_string_from_value(filter.value.as_ref().unwrap())
+                        {
+                            if let Some(map_lock) =
+                                self.memory_pool.edge_property_str_ordered.get(&filter.key)
+                            {
                                 let map = map_lock.read().unwrap();
                                 let mut matched = std::collections::HashSet::new();
-                                match filter.operator {
-                                    Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
+                                for (k, ids) in map
+                                    .range(prefix.to_string()..)
+                                    .take_while(|(k, _)| k.starts_with(prefix))
+                                {
+                                    matched.extend(ids.iter().cloned());
+                                }
+                                candidate_ids = Some(match candidate_ids {
+                                    None => matched,
+                                    Some(prev) => prev.intersection(&matched).cloned().collect(),
+                                });
+                            }
+                        }
+                    }
+                    Op::GreaterThan
+                    | Op::GreaterEqual
+                    | Op::LessThan
+                    | Op::LessEqual => {
+                        // Prefer numeric range if value numeric, else fallback to string ordered
+                        if let Some(num) = extract_number_from_value(filter.value.as_ref().unwrap())
+                        {
+                            if let Some(map_lock) =
+                                self.memory_pool.edge_property_num_indexes.get(&filter.key)
+                            {
+                                let map = map_lock.read().unwrap();
+                                let mut matched = std::collections::HashSet::new();
+                                match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                                    Op::GreaterThan => {
                                         for (k, ids) in map.iter() {
-                                            if *k > num { matched.extend(ids.iter().cloned()); }
+                                            if (*k as f64) > num {
+                                                matched.extend(ids.iter().cloned());
+                                            }
                                         }
                                     }
-                                    Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
+                                    Op::GreaterEqual => {
                                         for (k, ids) in map.iter() {
-                                            if *k >= num { matched.extend(ids.iter().cloned()); }
+                                            if (*k as f64) >= num {
+                                                matched.extend(ids.iter().cloned());
+                                            }
                                         }
                                     }
-                                    Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
+                                    Op::LessThan => {
                                         for (k, ids) in map.iter() {
-                                            if *k < num { matched.extend(ids.iter().cloned()); }
+                                            if (*k as f64) < num {
+                                                matched.extend(ids.iter().cloned());
+                                            }
                                         }
                                     }
-                                    Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
+                                    Op::LessEqual => {
                                         for (k, ids) in map.iter() {
-                                            if *k <= num { matched.extend(ids.iter().cloned()); }
+                                            if (*k as f64) <= num {
+                                                matched.extend(ids.iter().cloned());
+                                            }
                                         }
                                     }
                                     _ => {}
                                 }
-                                candidate_ids = Some(match candidate_ids { None => matched, Some(prev) => prev.intersection(&matched).cloned().collect() });
+                                candidate_ids = Some(match candidate_ids {
+                                    None => matched,
+                                    Some(prev) => prev.intersection(&matched).cloned().collect(),
+                                });
                             }
-                        } else if let Some(map_lock) = self.memory_pool.edge_property_str_ordered.get(&filter.key) {
+                        } else if let Some(map_lock) =
+                            self.memory_pool.edge_property_str_ordered.get(&filter.key)
+                        {
                             let map = map_lock.read().unwrap();
                             let mut matched = std::collections::HashSet::new();
-                            let s = extract_string_from_value(filter.value.as_ref().unwrap()).unwrap_or("");
-                            match filter.operator {
-                                Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => {
-                                    for (_k, ids) in map.range((std::ops::Bound::Excluded(s.to_string()), std::ops::Bound::Unbounded)) { matched.extend(ids.iter().cloned()); }
+                            let s = extract_string_from_value(filter.value.as_ref().unwrap())
+                                .unwrap_or("");
+                            match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
+                                Op::GreaterThan => {
+                                    for (_k, ids) in map.range((
+                                        std::ops::Bound::Excluded(s.to_string()),
+                                        std::ops::Bound::Unbounded,
+                                    )) {
+                                        matched.extend(ids.iter().cloned());
+                                    }
                                 }
-                                Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => {
-                                    for (_k, ids) in map.range((std::ops::Bound::Included(s.to_string()), std::ops::Bound::Unbounded)) { matched.extend(ids.iter().cloned()); }
+                                Op::GreaterEqual => {
+                                    for (_k, ids) in map.range((
+                                        std::ops::Bound::Included(s.to_string()),
+                                        std::ops::Bound::Unbounded,
+                                    )) {
+                                        matched.extend(ids.iter().cloned());
+                                    }
                                 }
-                                Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => {
-                                    for (_k, ids) in map.range((std::ops::Bound::Unbounded, std::ops::Bound::Excluded(s.to_string()))) { matched.extend(ids.iter().cloned()); }
+                                Op::LessThan => {
+                                    for (_k, ids) in map.range((
+                                        std::ops::Bound::Unbounded,
+                                        std::ops::Bound::Excluded(s.to_string()),
+                                    )) {
+                                        matched.extend(ids.iter().cloned());
+                                    }
                                 }
-                                Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
-                                    for (_k, ids) in map.range((std::ops::Bound::Unbounded, std::ops::Bound::Included(s.to_string()))) { matched.extend(ids.iter().cloned()); }
+                                Op::LessEqual => {
+                                    for (_k, ids) in map.range((
+                                        std::ops::Bound::Unbounded,
+                                        std::ops::Bound::Included(s.to_string()),
+                                    )) {
+                                        matched.extend(ids.iter().cloned());
+                                    }
                                 }
                                 _ => {}
                             }
-                            candidate_ids = Some(match candidate_ids { None => matched, Some(prev) => prev.intersection(&matched).cloned().collect() });
+                            candidate_ids = Some(match candidate_ids {
+                                None => matched,
+                                Some(prev) => prev.intersection(&matched).cloned().collect(),
+                            });
                         }
                     }
                     _ => {}
@@ -776,21 +952,37 @@ impl GraphService {
                 for filter in &query.filters {
                     let prop_val_opt = edge.properties.get(&filter.key);
                     let pass = match filter.operator {
-                        Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
-                            match prop_val_opt { Some(v) => v.value == filter.value.as_ref().unwrap().value, None => false }
+                        Op::Equals => match prop_val_opt {
+                            Some(v) => v.value == filter.value.as_ref().unwrap().value,
+                            None => false,
+                        },
+                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => match prop_val_opt {
+                            Some(v) => v.value != filter.value.as_ref().unwrap().value,
+                            None => true,
+                        },
+                        Op::GreaterThan => {
+                            cmp_prop_gt(prop_val_opt, &filter.value)
                         }
-                        Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => {
-                            match prop_val_opt { Some(v) => v.value != filter.value.as_ref().unwrap().value, None => true }
+                        Op::GreaterEqual => {
+                            cmp_prop_ge(prop_val_opt, &filter.value)
                         }
-                        Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN => cmp_prop_gt(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => cmp_prop_ge(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_LESS_THAN => cmp_prop_lt(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => cmp_prop_le(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => prop_starts_with(prop_val_opt, &filter.value),
-                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => prop_contains(prop_val_opt, &filter.value),
+                        Op::LessThan => {
+                            cmp_prop_lt(prop_val_opt, &filter.value)
+                        }
+                        Op::LessEqual => {
+                            cmp_prop_le(prop_val_opt, &filter.value)
+                        }
+                        Op::StartsWith => {
+                            prop_starts_with(prop_val_opt, &filter.value)
+                        }
+                        Op::PROPERTY_FILTER_OPERATOR_CONTAINS => {
+                            prop_contains(prop_val_opt, &filter.value)
+                        }
                         _ => false,
                     };
-                    if !pass { return false; }
+                    if !pass {
+                        return false;
+                    }
                 }
                 true
             });
@@ -798,19 +990,21 @@ impl GraphService {
         // Apply offset/limit for pagination
         let offset = query.offset.unwrap_or(0) as usize;
         let limit = query.limit.unwrap_or(results.len() as u32) as usize;
-        if offset >= results.len() { return Ok(Vec::new()); }
+        if offset >= results.len() {
+            return Ok(Vec::new());
+        }
         let end = (offset + limit).min(results.len());
         Ok(results.drain(offset..end).collect())
     }
-    
+
     /// Get neighbors of a node
     pub fn get_neighbors(&self, node_id: &NodeId) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         self.engine.get_neighbors(node_id, None)
     }
 
@@ -819,11 +1013,19 @@ impl GraphService {
         match &value.value {
             Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
             Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
-            Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
+            Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                d.to_string()
+            }
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
-            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => format!("bytes:{}", b.len()),
-            Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => "array".to_string(),
-            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => "object".to_string(),
+            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+                format!("bytes:{}", b.len())
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
+                "array".to_string()
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
+                "object".to_string()
+            }
             None => "null".to_string(),
         }
     }
@@ -832,37 +1034,39 @@ impl GraphService {
     pub fn get_stats(&self) -> Result<crate::proto::proximadb_v1::GraphStats> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         let stats = crate::proto::proximadb_v1::GraphStats {
             total_nodes: self.engine.node_count(),
             total_edges: self.stats_edges.load(std::sync::atomic::Ordering::Relaxed),
             label_stats: vec![], // TODO: Implement detailed label stats
-            edge_type_stats: self.edge_type_counts.iter()
+            edge_type_stats: self
+                .edge_type_counts
+                .iter()
                 .map(|entry| crate::proto::proximadb_v1::EdgeTypeStats {
                     edge_type: entry.key().clone(),
                     count: *entry.value(),
                 })
                 .collect(),
-            total_properties: 0, // TODO: Track property count
+            total_properties: 0,   // TODO: Track property count
             memory_usage_bytes: 0, // TODO: Calculate memory usage
-            average_degree: 0.0, // TODO: Calculate average degree
+            average_degree: 0.0,   // TODO: Calculate average degree
             max_degree: 0,
             connected_components: 1, // TODO: Calculate connected components
         };
         Ok(stats)
     }
-    
+
     /// Batch create nodes for high-performance ingestion
     pub fn batch_create_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
             results.push(self.engine.insert_node(node)?);
@@ -871,29 +1075,38 @@ impl GraphService {
     }
 
     /// Batch create nodes with upsert strategy
-    pub fn batch_create_nodes_with_strategy(&self, nodes: Vec<Node>, if_exists: &str) -> Result<Vec<Arc<Node>>> {
+    pub fn batch_create_nodes_with_strategy(
+        &self,
+        nodes: Vec<Node>,
+        if_exists: &str,
+    ) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
             match if_exists {
                 "update" => {
                     // TODO: Implement upsert logic
                     results.push(self.engine.insert_node(node)?);
-                },
+                }
                 "skip" => {
                     // TODO: Check if exists, skip if it does
                     results.push(self.engine.insert_node(node)?);
-                },
+                }
                 "error" => {
                     // TODO: Check if exists, error if it does
                     results.push(self.engine.insert_node(node)?);
-                },
-                _ => return Err(ProximaDBError::InvalidInput(format!("Invalid if_exists strategy: {}", if_exists))),
+                }
+                _ => {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "Invalid if_exists strategy: {}",
+                        if_exists
+                    )));
+                }
             }
         }
         Ok(results)
@@ -903,10 +1116,10 @@ impl GraphService {
     pub fn batch_create_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
+                "Graph operations disabled in current mode".to_string(),
             ));
         }
-        
+
         let mut results = Vec::with_capacity(edges.len());
         for edge in edges {
             results.push(self.engine.insert_edge(edge)?);
@@ -914,8 +1127,93 @@ impl GraphService {
         Ok(results)
     }
 
-    // Helpers for range/string comparisons  
-    fn parse_f64_key(s: &str) -> Option<f64> { s.parse::<f64>().ok() }
+    // Helpers for range/string comparisons
+    fn parse_f64_key(s: &str) -> Option<f64> {
+        s.parse::<f64>().ok()
+    }
+
+    /// Perform graph traversal (basic implementation)
+    pub async fn traverse(&self, request: crate::proto::proximadb_v1::TraversalRequest) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
+        use std::time::Instant;
+        let _t0 = Instant::now();
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string()
+            ));
+        }
+
+        // Basic implementation - return empty response for now
+        // TODO: Implement full traversal logic
+        Ok(crate::proto::proximadb_v1::TraversalResponse {
+            nodes: vec![],
+            edges: vec![],
+            paths: vec![],
+            stats: None,
+        })
+    }
+
+    /// Perform graph traversal with per-call override hints (prefetch settings)
+    pub async fn traverse_with_overrides(
+        &self,
+        request: crate::proto::proximadb_v1::TraversalRequest,
+        _override_enable_prefetch: Option<bool>,
+        _override_prefetch_budget: Option<usize>,
+    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
+        // TODO: when traversal is fully implemented, construct TraversalConfig using overrides
+        // For now, delegate to existing stub implementation
+        self.traverse(request).await
+    }
+
+    /// Get connected components (basic implementation)
+    pub async fn connected_components(&self) -> Result<Vec<Vec<crate::graph::NodeId>>> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string()
+            ));
+        }
+
+        // Basic implementation - return empty response for now
+        // TODO: Implement full connected components logic
+        Ok(vec![])
+    }
+
+    /// Check for cycles (basic implementation) 
+    pub async fn has_cycle(&self) -> Result<bool> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string()
+            ));
+        }
+
+        // Basic implementation - return false for now
+        // TODO: Implement full cycle detection logic
+        Ok(false)
+    }
+}
+
+/// Minimal provider that surfaces a counter as access frequency
+struct SimpleCounterProvider {
+    counter: Arc<AtomicU64>,
+    avg_entry_size: usize,
+    fixed_hit_rate: f64,
+}
+
+impl SimpleCounterProvider {
+    fn new(counter: Arc<AtomicU64>, avg_entry_size: usize, fixed_hit_rate: f64) -> Self {
+        Self { counter, avg_entry_size, fixed_hit_rate }
+    }
+}
+
+impl CacheStatsProvider for SimpleCounterProvider {
+    fn snapshot(&self) -> UsageStats {
+        let freq = self.counter.load(Ordering::Relaxed) as f64;
+        UsageStats {
+            hit_rate: self.fixed_hit_rate,
+            avg_entry_size: self.avg_entry_size,
+            access_frequency: freq,
+            last_rebalance: std::time::SystemTime::now(),
+        }
+    }
 }
 
 fn extract_number_from_value(value: &crate::graph::PropertyValue) -> Option<f64> {
@@ -930,199 +1228,275 @@ fn extract_number_from_value(value: &crate::graph::PropertyValue) -> Option<f64>
 
 fn extract_string_from_value(value: &crate::graph::PropertyValue) -> Option<&str> {
     use crate::proto::proximadb_v1::property_value::Value as V;
-    match &value.value { Some(V::StringValue(s)) => Some(s.as_str()), _ => None }
+    match &value.value {
+        Some(V::StringValue(s)) => Some(s.as_str()),
+        _ => None,
+    }
 }
 
 fn cmp_key_gt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target { if let Some(k) = key.parse::<f64>().ok() { return k > *t; } }
-    if let Some(t) = str_target { return key > t; }
+    if let Some(t) = num_target {
+        if let Some(k) = key.parse::<f64>().ok() {
+            return k > *t;
+        }
+    }
+    if let Some(t) = str_target {
+        return key > t;
+    }
     false
 }
 
 fn cmp_key_ge(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target { if let Some(k) = key.parse::<f64>().ok() { return k >= *t; } }
-    if let Some(t) = str_target { return key >= t; }
+    if let Some(t) = num_target {
+        if let Some(k) = key.parse::<f64>().ok() {
+            return k >= *t;
+        }
+    }
+    if let Some(t) = str_target {
+        return key >= t;
+    }
     false
 }
 
 fn cmp_key_lt(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target { if let Some(k) = key.parse::<f64>().ok() { return k < *t; } }
-    if let Some(t) = str_target { return key < t; }
+    if let Some(t) = num_target {
+        if let Some(k) = key.parse::<f64>().ok() {
+            return k < *t;
+        }
+    }
+    if let Some(t) = str_target {
+        return key < t;
+    }
     false
 }
 
 fn cmp_key_le(key: &str, num_target: &Option<f64>, str_target: Option<&str>) -> bool {
-    if let Some(t) = num_target { if let Some(k) = key.parse::<f64>().ok() { return k <= *t; } }
-    if let Some(t) = str_target { return key <= t; }
+    if let Some(t) = num_target {
+        if let Some(k) = key.parse::<f64>().ok() {
+            return k <= *t;
+        }
+    }
+    if let Some(t) = str_target {
+        return key <= t;
+    }
     false
 }
 
-fn cmp_prop_gt(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate::graph::PropertyValue) -> bool {
-    match prop_val_opt { Some(v) => extract_number_from_value(v).zip(extract_number_from_value(rhs)).map(|(l,r)| l>r).unwrap_or(false), None => false }
-}
-fn cmp_prop_ge(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate::graph::PropertyValue) -> bool {
-    match prop_val_opt { Some(v) => extract_number_from_value(v).zip(extract_number_from_value(rhs)).map(|(l,r)| l>=r).unwrap_or(false), None => false }
-}
-fn cmp_prop_lt(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate::graph::PropertyValue) -> bool {
-    match prop_val_opt { Some(v) => extract_number_from_value(v).zip(extract_number_from_value(rhs)).map(|(l,r)| l<r).unwrap_or(false), None => false }
-}
-fn cmp_prop_le(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate::graph::PropertyValue) -> bool {
-    match prop_val_opt { Some(v) => extract_number_from_value(v).zip(extract_number_from_value(rhs)).map(|(l,r)| l<=r).unwrap_or(false), None => false }
-}
-fn prop_starts_with(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate::graph::PropertyValue) -> bool {
-    match (prop_val_opt.and_then(extract_string_from_value), extract_string_from_value(rhs)) {
-        (Some(l), Some(r)) => l.starts_with(r), _ => false
+fn cmp_prop_gt(
+    prop_val_opt: Option<&crate::graph::PropertyValue>,
+    rhs: &crate::graph::PropertyValue,
+) -> bool {
+    match prop_val_opt {
+        Some(v) => extract_number_from_value(v)
+            .zip(extract_number_from_value(rhs))
+            .map(|(l, r)| l > r)
+            .unwrap_or(false),
+        None => false,
     }
 }
-fn prop_contains(prop_val_opt: Option<&crate::graph::PropertyValue>, rhs: &crate::graph::PropertyValue) -> bool {
-    match (prop_val_opt.and_then(extract_string_from_value), extract_string_from_value(rhs)) {
-        (Some(l), Some(r)) => l.contains(r), _ => false
+fn cmp_prop_ge(
+    prop_val_opt: Option<&crate::graph::PropertyValue>,
+    rhs: &crate::graph::PropertyValue,
+) -> bool {
+    match prop_val_opt {
+        Some(v) => extract_number_from_value(v)
+            .zip(extract_number_from_value(rhs))
+            .map(|(l, r)| l >= r)
+            .unwrap_or(false),
+        None => false,
     }
 }
-    
-    /*
-    /// Perform graph traversal using advanced algorithms
-    pub async fn traverse(&self, request: TraversalRequest) -> Result<TraversalResponse> {
-        let t0 = Instant::now();
-        if !self.graph_enabled() {
-            return Err(ProximaDBError::InvalidInput(
-                "Graph operations disabled in current mode".to_string()
-            ));
+fn cmp_prop_lt(
+    prop_val_opt: Option<&crate::graph::PropertyValue>,
+    rhs: &crate::graph::PropertyValue,
+) -> bool {
+    match prop_val_opt {
+        Some(v) => extract_number_from_value(v)
+            .zip(extract_number_from_value(rhs))
+            .map(|(l, r)| l < r)
+            .unwrap_or(false),
+        None => false,
+    }
+}
+fn cmp_prop_le(
+    prop_val_opt: Option<&crate::graph::PropertyValue>,
+    rhs: &crate::graph::PropertyValue,
+) -> bool {
+    match prop_val_opt {
+        Some(v) => extract_number_from_value(v)
+            .zip(extract_number_from_value(rhs))
+            .map(|(l, r)| l <= r)
+            .unwrap_or(false),
+        None => false,
+    }
+}
+fn prop_starts_with(
+    prop_val_opt: Option<&crate::graph::PropertyValue>,
+    rhs: &crate::graph::PropertyValue,
+) -> bool {
+    match (
+        prop_val_opt.and_then(extract_string_from_value),
+        extract_string_from_value(rhs),
+    ) {
+        (Some(l), Some(r)) => l.starts_with(r),
+        _ => false,
+    }
+}
+fn prop_contains(
+    prop_val_opt: Option<&crate::graph::PropertyValue>,
+    rhs: &crate::graph::PropertyValue,
+) -> bool {
+    match (
+        prop_val_opt.and_then(extract_string_from_value),
+        extract_string_from_value(rhs),
+    ) {
+        (Some(l), Some(r)) => l.contains(r),
+        _ => false,
+    }
+}
+
+/*
+/// Perform graph traversal using advanced algorithms
+pub async fn traverse(&self, request: TraversalRequest) -> Result<TraversalResponse> {
+    let t0 = Instant::now();
+    if !self.graph_enabled() {
+        return Err(ProximaDBError::InvalidInput(
+            "Graph operations disabled in current mode".to_string()
+        ));
+    }
+
+    use crate::graph::engines::orion::traversal::{
+        breadth_first_search, depth_first_search, TraversalConfig
+    };
+    use crate::proto::proximadb_v1::TraversalAlgorithm;
+
+    // Configure traversal
+    let config = TraversalConfig {
+        max_depth: if request.max_depth == 0 { None } else { Some(request.max_depth) },
+        max_nodes: request.limit.map(|l| l as usize),
+        edge_types: if request.edge_types.is_empty() { None } else { Some(request.edge_types) },
+        node_filter: None, // TODO: Re-implement filter closure if needed
+        early_stop: None,
+        track_paths: true,
+        parallel_processing: true,
+        timeout_ms: request.timeout_ms.map(|v| v as u64).or(Some(500)),
+        max_frontier: request.max_frontier.map(|v| v as usize).or(Some(50_000)),
+    };
+
+    // Perform traversal based on algorithm
+    let traversal_result = match request.algorithm() {
+        TraversalAlgorithm::Dfs => {
+            depth_first_search(&*self.engine, &request.start_node_id, config).await?
+        },
+        TraversalAlgorithm::ParallelBfs => {
+            // For now, use regular BFS (parallel implementation pending)
+            breadth_first_search(&*self.engine, &request.start_node_id, config).await?
+        },
+        TraversalAlgorithm::Bfs | _ => {
+            breadth_first_search(&*self.engine, &request.start_node_id, config).await?
         }
-        
-        use crate::graph::engines::orion::traversal::{
-            breadth_first_search, depth_first_search, TraversalConfig
-        };
-        use crate::proto::proximadb_v1::TraversalAlgorithm;
-        
-        // Configure traversal
-        let config = TraversalConfig {
-            max_depth: if request.max_depth == 0 { None } else { Some(request.max_depth) },
-            max_nodes: request.limit.map(|l| l as usize),
-            edge_types: if request.edge_types.is_empty() { None } else { Some(request.edge_types) },
-            node_filter: None, // TODO: Re-implement filter closure if needed
-            early_stop: None,
-            track_paths: true,
-            parallel_processing: true,
-            timeout_ms: request.timeout_ms.map(|v| v as u64).or(Some(500)),
-            max_frontier: request.max_frontier.map(|v| v as usize).or(Some(50_000)),
-        };
-        
-        // Perform traversal based on algorithm
-        let traversal_result = match request.algorithm() {
-            TraversalAlgorithm::Dfs => {
-                depth_first_search(&*self.engine, &request.start_node_id, config).await?
+    };
+
+    // Convert to proto format
+    let nodes = traversal_result
+        .nodes
+        .into_iter()
+        .map(|n| (*n).clone())
+        .collect();
+    let edges = traversal_result
+        .edges
+        .into_iter()
+        .map(|e| (*e).clone())
+        .collect();
+
+    let paths = traversal_result.paths.into_iter()
+        .map(|path| crate::proto::proximadb_v1::GraphPath {
+            node_ids: path,
+            total_weight: None,
+        })
+        .collect();
+
+    let resp = TraversalResponse {
+        nodes,
+        edges,
+        paths,
+        stats: Some(crate::proto::proximadb_v1::TraversalStats {
+            nodes_visited: traversal_result.stats.nodes_visited as u32,
+            edges_traversed: traversal_result.stats.edges_traversed as u32,
+            max_depth_reached: traversal_result.stats.max_depth_reached,
+            execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
+        }),
+    };
+    if let Some(updater) = &self.metrics_updater {
+        let _ = updater.record_operation(
+            "graph",
+            OperationMetricsUpdate {
+                operation_type: "graph.traverse".into(),
+                latency_us: t0.elapsed().as_micros() as f64,
+                success: true,
+                bytes_processed: 0,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64,
             },
-            TraversalAlgorithm::ParallelBfs => {
-                // For now, use regular BFS (parallel implementation pending)
-                breadth_first_search(&*self.engine, &request.start_node_id, config).await?
-            },
-            TraversalAlgorithm::Bfs | _ => {
-                breadth_first_search(&*self.engine, &request.start_node_id, config).await?
-            }
-        };
-        
-        // Convert to proto format
-        let nodes = traversal_result
-            .nodes
-            .into_iter()
-            .map(|n| (*n).clone())
-            .collect();
-        let edges = traversal_result
-            .edges
-            .into_iter()
-            .map(|e| (*e).clone())
-            .collect();
-        
-        let paths = traversal_result.paths.into_iter()
-            .map(|path| crate::proto::proximadb_v1::GraphPath {
-                node_ids: path,
-                total_weight: None,
-            })
-            .collect();
-        
-        let resp = TraversalResponse {
-            nodes,
-            edges,
-            paths,
-            stats: Some(crate::proto::proximadb_v1::TraversalStats {
-                nodes_visited: traversal_result.stats.nodes_visited as u32,
-                edges_traversed: traversal_result.stats.edges_traversed as u32,
-                max_depth_reached: traversal_result.stats.max_depth_reached,
-                execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
-            }),
-        };
-        if let Some(updater) = &self.metrics_updater {
-            let _ = updater.record_operation(
-                "graph",
-                OperationMetricsUpdate {
-                    operation_type: "graph.traverse".into(),
-                    latency_us: t0.elapsed().as_micros() as f64,
-                    success: true,
-                    bytes_processed: 0,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as i64,
-                },
-            ).await;
+        ).await;
+    }
+    Ok(resp)
+}
+
+/// Compute weakly connected components; returns list of components (each is list of node IDs)
+pub async fn connected_components(&self) -> Result<Vec<Vec<NodeId>>> {
+    use crate::graph::engines::orion::traversal::connected_components;
+    connected_components(&self.engine).await
+}
+
+/// Detect if the directed graph contains a cycle
+pub async fn has_cycle(&self) -> Result<bool> {
+    use crate::graph::engines::orion::traversal::has_cycle;
+    has_cycle(&self.engine).await
+}
+
+/// Sweep expired nodes/edges based on internal TTL property "__expires_at" (unix millis)
+pub async fn sweep_expired(&self) -> Result<(u64, u64)> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    // Collect expired nodes
+    let mut expired_nodes: Vec<NodeId> = Vec::new();
+    for entry in self.memory_pool.nodes.iter() {
+        let node = entry.value();
+        if let Some(val) = node.properties.get("__expires_at") {
+            if let Some(ts) = extract_number_from_value(val) { if (ts as i64) <= now_ms { expired_nodes.push(node.id.clone()); } }
         }
-        Ok(resp)
     }
 
-    /// Compute weakly connected components; returns list of components (each is list of node IDs)
-    pub async fn connected_components(&self) -> Result<Vec<Vec<NodeId>>> {
-        use crate::graph::engines::orion::traversal::connected_components;
-        connected_components(&self.engine).await
+    // Collect expired edges
+    let mut expired_edges: Vec<EdgeId> = Vec::new();
+    for entry in self.memory_pool.edges.iter() {
+        let edge = entry.value();
+        if let Some(val) = edge.properties.get("__expires_at") {
+            if let Some(ts) = extract_number_from_value(val) { if (ts as i64) <= now_ms { expired_edges.push(edge.id.clone()); } }
+        }
     }
 
-    /// Detect if the directed graph contains a cycle
-    pub async fn has_cycle(&self) -> Result<bool> {
-        use crate::graph::engines::orion::traversal::has_cycle;
-        has_cycle(&self.engine).await
+    // Delete edges first
+    let mut edges_removed = 0u64;
+    for eid in expired_edges {
+        if self.delete_edge(&eid)?.is_some() { edges_removed += 1; }
     }
 
-    /// Sweep expired nodes/edges based on internal TTL property "__expires_at" (unix millis)
-    pub async fn sweep_expired(&self) -> Result<(u64, u64)> {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-
-        // Collect expired nodes
-        let mut expired_nodes: Vec<NodeId> = Vec::new();
-        for entry in self.memory_pool.nodes.iter() {
-            let node = entry.value();
-            if let Some(val) = node.properties.get("__expires_at") {
-                if let Some(ts) = extract_number_from_value(val) { if (ts as i64) <= now_ms { expired_nodes.push(node.id.clone()); } }
-            }
-        }
-
-        // Collect expired edges
-        let mut expired_edges: Vec<EdgeId> = Vec::new();
-        for entry in self.memory_pool.edges.iter() {
-            let edge = entry.value();
-            if let Some(val) = edge.properties.get("__expires_at") {
-                if let Some(ts) = extract_number_from_value(val) { if (ts as i64) <= now_ms { expired_edges.push(edge.id.clone()); } }
-            }
-        }
-
-        // Delete edges first
-        let mut edges_removed = 0u64;
-        for eid in expired_edges {
-            if self.delete_edge(&eid)?.is_some() { edges_removed += 1; }
-        }
-
-        // Delete nodes (detach to remove incident edges)
-        let mut nodes_removed = 0u64;
-        for nid in expired_nodes {
-            if self.delete_node_detach(&nid)?.is_some() { nodes_removed += 1; }
-        }
-
-        Ok((nodes_removed, edges_removed))
+    // Delete nodes (detach to remove incident edges)
+    let mut nodes_removed = 0u64;
+    for nid in expired_nodes {
+        if self.delete_node_detach(&nid)?.is_some() { nodes_removed += 1; }
     }
-    */
 
+    Ok((nodes_removed, edges_removed))
+}
+*/
 
 impl Default for GraphService {
     fn default() -> Self {
@@ -1133,9 +1507,9 @@ impl Default for GraphService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::property_value::Value;
     use crate::graph::PropertyValue;
-    
+    use crate::proto::proximadb_v1::property_value::Value;
+
     #[tokio::test]
     async fn test_service_creation() {
         let service = GraphService::new();
@@ -1143,72 +1517,73 @@ mod tests {
         assert!(service.graph_enabled());
         assert!(service.vector_enabled());
     }
-    
+
     #[tokio::test]
     async fn test_operation_modes() {
         let mut service = GraphService::new();
-        
+
         // Test graph-only mode
         service.set_mode(OperationMode::GraphOnly);
         assert_eq!(service.mode(), OperationMode::GraphOnly);
         assert!(service.graph_enabled());
         assert!(!service.vector_enabled());
-        
+
         // Test vector-only mode
         service.set_mode(OperationMode::VectorOnly);
         assert_eq!(service.mode(), OperationMode::VectorOnly);
         assert!(!service.graph_enabled());
         assert!(service.vector_enabled());
-        
+
         // Test unified mode
         service.set_mode(OperationMode::Unified);
         assert_eq!(service.mode(), OperationMode::Unified);
         assert!(service.graph_enabled());
         assert!(service.vector_enabled());
     }
-    
+
     #[test]
     fn test_node_operations() {
         let service = GraphService::new();
-        
+
         // Create a test node
         let node = Node {
             id: "test_node_1".to_string(),
             labels: vec!["Person".to_string()],
-            properties: std::collections::HashMap::from([
-                ("name".to_string(), PropertyValue {
+            properties: std::collections::HashMap::from([(
+                "name".to_string(),
+                PropertyValue {
                     value: Some(Value::StringValue("Alice".to_string())),
-                }),
-            ]),
+                },
+            )]),
             embedding: None,
             created_at: None,
             updated_at: None,
         };
-        
+
         // Test node creation
         let created_node = service.create_node(node.clone()).unwrap();
         assert_eq!(created_node.id, "test_node_1");
         assert_eq!(created_node.labels[0], "Person");
-        
+
         // Test node retrieval
         let retrieved_node = service.get_node("test_node_1").unwrap().unwrap();
         assert_eq!(retrieved_node.id, "test_node_1");
         assert!(Arc::ptr_eq(&created_node, &retrieved_node));
-        
+
         // Test node deletion
         let deleted_node = service.delete_node("test_node_1").unwrap().unwrap();
         assert_eq!(deleted_node.id, "test_node_1");
-        
+
         // Verify node is deleted
         let missing_node = service.get_node("test_node_1").unwrap();
         assert!(missing_node.is_none());
     }
-    
+
     #[test]
     fn test_mode_restrictions() {
         let mut service = GraphService::new();
         service.set_mode(OperationMode::VectorOnly);
-        
+
         // Create a test node
         let node = Node {
             id: "test_node_1".to_string(),
@@ -1218,10 +1593,15 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        
+
         // Should fail in vector-only mode
         let result = service.create_node(node);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Graph operations disabled"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Graph operations disabled")
+        );
     }
 }

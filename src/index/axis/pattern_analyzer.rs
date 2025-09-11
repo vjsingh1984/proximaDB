@@ -334,7 +334,8 @@ mod tests {
         if let Some(rec) = recommendation {
             tracing::debug!(
                 "Recommendation: {} -> {:?}",
-                rec.collection_id, rec.recommended_tier
+                rec.collection_id,
+                rec.recommended_tier
             );
         }
     }

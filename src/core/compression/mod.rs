@@ -1197,7 +1197,10 @@ mod tests {
         assert_eq!(mapping.len(), 4);
         assert_eq!(mapping.get("id"), Some(&CompressionAlgorithm::Gzip));
         assert_eq!(mapping.get("vector"), Some(&CompressionAlgorithm::Lz4));
-        assert_eq!(mapping.get("binary_quantized"), Some(&CompressionAlgorithm::None));
+        assert_eq!(
+            mapping.get("binary_quantized"),
+            Some(&CompressionAlgorithm::None)
+        );
         assert_eq!(
             mapping.get("extra_metadata_info"),
             Some(&CompressionAlgorithm::Brotli)

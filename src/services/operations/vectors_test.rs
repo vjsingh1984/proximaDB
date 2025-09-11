@@ -13,7 +13,9 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::{Config, VectorRecord};
-    use crate::proto::proximadb_v1::{MetadataItem, VectorRecord as ProtoVectorRecord, metadata_item};
+    use crate::proto::proximadb_v1::{
+        MetadataItem, VectorRecord as ProtoVectorRecord, metadata_item,
+    };
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstStorage;
     use crate::storage::engines::impls::viper::ViperEngine;
@@ -76,7 +78,9 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
         let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(DistanceMetric::Cosine),
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                DistanceMetric::Cosine,
+            ),
         );
 
         let sst_engine = Arc::new(
@@ -114,7 +118,7 @@ mod tests {
     #[tokio::test]
     async fn test_service_creation() {
         let (service, _temp_dir) = create_test_service().await;
-        
+
         // Test basic service creation works
         assert!(true, "Service created successfully");
     }
@@ -123,12 +127,12 @@ mod tests {
     async fn test_vector_record_creation() {
         let vector = vec![1.0, 2.0, 3.0, 4.0];
         let metadata = vec![("key1", "value1"), ("key2", "value2")];
-        
+
         let proto_record = create_test_vector_record("test_id", vector.clone(), metadata);
         assert_eq!(proto_record.id, Some("test_id".to_string()));
         assert_eq!(proto_record.vector, vector);
         assert_eq!(proto_record.metadata.len(), 2);
-        
+
         let core_record = create_core_test_vector("test_id", vector.clone());
         assert_eq!(core_record.id, "test_id");
         assert_eq!(core_record.vector, vector);
@@ -139,22 +143,22 @@ mod tests {
     async fn test_service_with_vectors() {
         let (service, _temp_dir) = create_test_service().await;
         let test_vector = create_core_test_vector("test_vector", vec![1.0, 2.0, 3.0]);
-        
+
         // Test that service can handle vector records
         assert_eq!(test_vector.id, "test_vector");
         assert_eq!(test_vector.vector.len(), 3);
-        
+
         // Basic service validation
         assert!(true, "Service can process vectors");
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_different_vector_dimensions() {
         // Test various vector dimensions
         let vector_128d = create_core_test_vector("test_128", vec![0.0; 128]);
         let vector_512d = create_core_test_vector("test_512", vec![0.0; 512]);
         let vector_1536d = create_core_test_vector("test_1536", vec![0.0; 1536]);
-        
+
         assert_eq!(vector_128d.vector.len(), 128);
         assert_eq!(vector_512d.vector.len(), 512);
         assert_eq!(vector_1536d.vector.len(), 1536);
@@ -167,10 +171,10 @@ mod tests {
             ("source", "unit_test"),
             ("timestamp", "2025-01-01"),
         ];
-        
+
         let record = create_test_vector_record("meta_test", vec![1.0, 2.0], metadata_pairs);
         assert_eq!(record.metadata.len(), 3);
-        
+
         // Check metadata structure
         for meta in &record.metadata {
             assert!(!meta.key.is_empty());
@@ -181,7 +185,7 @@ mod tests {
     #[tokio::test]
     async fn test_timestamp_fields() {
         let record = create_test_vector_record("time_test", vec![1.0], vec![]);
-        
+
         assert!(record.timestamp > 0);
         assert!(record.updated_at.is_some());
         assert!(record.updated_at.unwrap() > 0);
@@ -190,9 +194,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_metadata() {
-        let record_with_empty_meta = create_test_vector_record("empty_meta", vec![1.0, 2.0], vec![]);
+        let record_with_empty_meta =
+            create_test_vector_record("empty_meta", vec![1.0, 2.0], vec![]);
         assert_eq!(record_with_empty_meta.metadata.len(), 0);
-        
+
         let core_record = create_core_test_vector("empty_core", vec![1.0, 2.0]);
         assert_eq!(core_record.metadata.len(), 0);
     }
@@ -202,8 +207,8 @@ mod tests {
         // Test that we can create multiple services
         let (_service1, _temp_dir1) = create_test_service().await;
         let (_service2, _temp_dir2) = create_test_service().await;
-        
-        // Both should be created successfully 
+
+        // Both should be created successfully
         assert!(true, "Multiple services can be created");
     }
 
@@ -212,12 +217,12 @@ mod tests {
         // Test zero-length vector
         let empty_vector = create_core_test_vector("empty_vec", vec![]);
         assert_eq!(empty_vector.vector.len(), 0);
-        
+
         // Test single element vector
         let single_elem = create_core_test_vector("single", vec![42.0]);
         assert_eq!(single_elem.vector.len(), 1);
         assert_eq!(single_elem.vector[0], 42.0);
-        
+
         // Test vector with negative values
         let negative_vec = create_core_test_vector("negative", vec![-1.0, -2.0, -3.0]);
         assert!(negative_vec.vector.iter().all(|&x| x < 0.0));

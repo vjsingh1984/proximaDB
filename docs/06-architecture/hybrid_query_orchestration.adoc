@@ -1,0 +1,54 @@
+ = Hybrid Query Orchestration
+ :toc:
+ :toclevels: 2
+
+ == Overview
+ Hybrid queries combine vector similarity and graph traversal within one plan. ProximaDB supports a federated orchestration path today and a storage‑coupled SKS path in progress.
+
+== Federated Orchestration (Current)
+ - Parsing: `sql_frontend/{parser,lowering}.rs` map SIMILAR/FOLLOW to internal AST.
+ - Planning: `query/execution/planner.rs` emits `ExecutionOperation::{VectorSearch, GraphTraversal, Fusion, Project, Aggregate}`.
+ - Execution: `query/execution/executor.rs`
+   - Runs vector and graph operations in parallel where possible
+   - Optional seed handoff (vector seeds → FOLLOW; graph seeds → SIMILAR)
+   - Applies fusion (RRF default) → paginate/stream
+
+== Storage‑Coupled SKS (Planned v1)
+ - Storage: `storage/entity_store.rs` implements `EntityStore` with shared headers (Arc) and embedding pointers; `CsrRelationsStore` for adjacency.
+ - Benefits: Zero‑copy headers, unified indexes, lower latency for SIMILAR→FOLLOW.
+ - Fallback: Feature flag toggles to federated path.
+
+== ExecutionOperation Contracts
+ - VectorSearch { collection_id, query_vector, filters, top_k, distance_metric }
+ - GraphTraversal { start_nodes, edge_types, max_depth, filters }
+ - Fusion { strategy: RRF|Additive|Adaptive, weights }
+ - Project/Aggregate (optional)
+
+== Seed Handoff Patterns
+- Vector→Graph: Use vector ids as start_nodes for FOLLOW depth D.
+- Graph→Vector: Use visited node ids as SIMILAR seeds (e.g., average embeddings or per‑node embeddings).
+
+=== Seeding Strategy Controls
+- SQL hints: `-- SEEDING: AVERAGE | PER_SEED | NONE` (or `SEED USING ...`)
+- REST field: `seeding: "average" | "per_seed" | "none"` in `/api/v1/sql/execute` body
+- Behavior:
+  - AVERAGE: Averages up to 32 seeds into one query vector (fast)
+  - PER_SEED: Runs per‑seed vector queries (higher recall; costlier)
+  - NONE: Disables graph→vector seeding (id‑only rows)
+
+== Pagination & Streaming
+ - Emit paged results from executor; when enabled, stream fused rows incrementally.
+ - REST/gRPC surfaces via UnifiedHandlers.
+
+== Acceptance Criteria
+ - Deterministic fusion with ties; stable pagination
+ - Backpressure‑friendly streaming
+- Clear EXPLAIN with operations and costs
+
+== Graph Engines (MVP)
+
+- ORION (default): In‑memory CSR engine used by `GraphService` for traversal in hybrid queries.
+- PULSAR (single‑process MVP): Runs as a single shard in‑process; can back `GraphService` for larger graphs without network.
+- QUASAR (single‑process MVP): Hot/cold tiering with ORION as hot tier inside one process; suitable for cost‑aware workloads.
+
+Integration: The Hybrid Orchestrator is engine‑agnostic; `GraphTraversal` routes through `GraphService`. Engine selection is a construction‑time concern (factory/config). Default is ORION; PULSAR/QUASAR can be enabled in single‑process deployments.

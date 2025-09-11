@@ -344,15 +344,19 @@ mod tests {
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        category.to_string(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                            category.to_string(),
+                        ),
+                    ),
                 },
                 MetadataItem {
                     key: "priority".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        priority.to_string(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                            priority.to_string(),
+                        ),
+                    ),
                 },
             ],
             timestamp: chrono::Utc::now().timestamp() as u32,

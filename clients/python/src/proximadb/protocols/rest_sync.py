@@ -1125,6 +1125,111 @@ class ProximaDBClient:
         results = self.search(collection_id, vector, top_k, include_vectors=include_vectors, include_metadata=include_metadata, timeout=timeout)
         return SearchEnvelope(items=results, total=None, cursor=None, has_more=False, progress=None)
 
+    # -----------------------------
+    # Graph Operations (REST)
+    # -----------------------------
+    def graph_shortest_path(
+        self,
+        start_node_id: str,
+        target_node_id: str,
+        max_depth: Optional[int] = None,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "DIJKSTRA",
+        k: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Compute shortest path via REST with optional prefetch overrides.
+
+        Per-call overrides can be sent as JSON fields or HTTP headers. This method
+        sends overrides as headers to keep the body stable.
+        """
+        body = {
+            "start_node_id": start_node_id,
+            "target_node_id": target_node_id,
+            "algorithm": algorithm,
+        }
+        if max_depth is not None:
+            body["max_depth"] = max_depth
+        if edge_types:
+            body["edge_types"] = edge_types
+        if k is not None:
+            body["k"] = k
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if enable_prefetch is not None:
+            headers["x-graph-prefetch-enabled"] = "true" if enable_prefetch else "false"
+        if prefetch_budget is not None:
+            headers["x-graph-prefetch-budget"] = str(prefetch_budget)
+
+        # Also include overrides in body for endpoints that accept JSON fields
+        if enable_prefetch is not None:
+            body["enable_prefetch"] = bool(enable_prefetch)
+        if prefetch_budget is not None:
+            body["prefetch_budget"] = int(prefetch_budget)
+
+        resp = self._make_request(
+            "POST",
+            "/api/v1/graph/shortest_path",
+            json=body,
+            headers=headers,
+            timeout=timeout or self.config.timeout,
+        )
+        return resp.json()
+
+    def graph_traverse(
+        self,
+        start_node_id: str,
+        max_depth: int = 3,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "BFS",
+        limit: Optional[int] = None,
+        timeout_ms: Optional[int] = None,
+        max_frontier: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Perform graph traversal via REST with optional prefetch overrides.
+
+        Overrides are sent via headers. Returns the traversal response JSON.
+        """
+        body: Dict[str, Any] = {
+            "start_node_id": start_node_id,
+            "max_depth": max_depth,
+            "algorithm": algorithm,
+        }
+        if edge_types:
+            body["edge_types"] = edge_types
+        if limit is not None:
+            body["limit"] = limit
+        if timeout_ms is not None:
+            body["timeout_ms"] = timeout_ms
+        if max_frontier is not None:
+            body["max_frontier"] = max_frontier
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if enable_prefetch is not None:
+            headers["x-graph-prefetch-enabled"] = "true" if enable_prefetch else "false"
+        if prefetch_budget is not None:
+            headers["x-graph-prefetch-budget"] = str(prefetch_budget)
+
+        # Also include overrides in body for compatibility
+        if enable_prefetch is not None:
+            body["enable_prefetch"] = bool(enable_prefetch)
+        if prefetch_budget is not None:
+            body["prefetch_budget"] = int(prefetch_budget)
+
+        resp = self._make_request(
+            "POST",
+            "/api/v1/graph/traverse",
+            json=body,
+            headers=headers,
+            timeout=timeout or self.config.timeout,
+        )
+        return resp.json()
+
     def search_next_page(
         self,
         collection_id: str,

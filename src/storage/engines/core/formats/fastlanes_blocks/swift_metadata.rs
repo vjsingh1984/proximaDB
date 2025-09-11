@@ -132,12 +132,12 @@ impl EngineMetadata for SwiftMetadata {
                 // Mixed query - use average selectivity
                 0.5
             }
-            
+
             QueryType::VectorSearch => {
                 // Vector search requires scanning all segments
                 1.0
             }
-            
+
             QueryType::FullScan => {
                 // Full scan always processes everything
                 1.0
@@ -209,8 +209,11 @@ impl SwiftMetadata {
                 required_segments
             }
 
-            QueryType::SimilaritySearch | QueryType::MetadataFilter | QueryType::Batch
-            | QueryType::VectorSearch | QueryType::FullScan => {
+            QueryType::SimilaritySearch
+            | QueryType::MetadataFilter
+            | QueryType::Batch
+            | QueryType::VectorSearch
+            | QueryType::FullScan => {
                 // Need all segments for these query types
                 (0..self.segments.len() as u32).collect()
             }
@@ -508,7 +511,7 @@ impl MetadataSerializer for SwiftMetadataSerializer {
                 // Conservative approach for batch queries
                 false
             }
-            
+
             QueryType::VectorSearch | QueryType::FullScan => {
                 // Can't skip for vector search or full scan
                 false

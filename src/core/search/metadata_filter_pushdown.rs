@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
-        use crate::proto::proximadb_v1::{metadata_item::Value, MetadataItem, VectorRecord};
+        use crate::proto::proximadb_v1::{MetadataItem, VectorRecord, metadata_item::Value};
 
         let mut builder = MetadataBloomBuilder::new(1000);
 

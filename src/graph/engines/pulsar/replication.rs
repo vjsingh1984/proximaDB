@@ -21,11 +21,11 @@
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::{Node, Edge, NodeId, EdgeId};
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
+use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 
@@ -65,16 +65,13 @@ pub enum ReplicationStrategy {
 
 impl ReplicationManager {
     /// Create a new replication manager
-    pub fn new(
-        replication_factor: u8,
-        shards: &Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
-    ) -> Self {
+    pub fn new(replication_factor: u8, shards: &Arc<DashMap<u32, Arc<OrionGraphEngine>>>) -> Self {
         if replication_factor == 0 || replication_factor > 3 {
             panic!("Replication factor must be between 1 and 3");
         }
-        
+
         let replica_mapping = Self::build_replica_mapping(replication_factor, shards);
-        
+
         Self {
             replication_factor,
             replica_mapping: Arc::new(RwLock::new(replica_mapping)),
@@ -82,7 +79,7 @@ impl ReplicationManager {
             stats: Arc::new(RwLock::new(ReplicationStats::default())),
         }
     }
-    
+
     /// Build initial replica mapping
     fn build_replica_mapping(
         replication_factor: u8,
@@ -91,85 +88,91 @@ impl ReplicationManager {
         let mut mapping = HashMap::new();
         let all_shards: Vec<u32> = shards.iter().map(|entry| *entry.key()).collect();
         let shard_count = all_shards.len();
-        
+
         if shard_count == 0 {
             return mapping;
         }
-        
+
         for (i, &primary_shard) in all_shards.iter().enumerate() {
             let mut replicas = Vec::new();
-            
+
             // Add replicas in a round-robin fashion
             for j in 1..replication_factor {
                 let replica_index = (i + j as usize) % shard_count;
                 let replica_shard = all_shards[replica_index];
-                
+
                 // Don't replicate to self
                 if replica_shard != primary_shard {
                     replicas.push(replica_shard);
                 }
             }
-            
+
             mapping.insert(primary_shard, replicas);
         }
-        
+
         mapping
     }
-    
+
     /// Get replica shards for a primary shard
     pub async fn get_replicas(&self, primary_shard: u32) -> Result<Vec<u32>> {
         let mapping = self.replica_mapping.read().await;
         Ok(mapping.get(&primary_shard).cloned().unwrap_or_default())
     }
-    
+
     /// Replicate node insertion to replica shards
     pub async fn replicate_node_insert(&self, node: Node) -> Result<()> {
         self.replicate_operation(
             ReplicationOperation::InsertNode(node),
             ReplicationStrategy::Asynchronous,
-        ).await
+        )
+        .await
     }
-    
+
     /// Replicate edge insertion to replica shards
     pub async fn replicate_edge_insert(&self, edge: Edge) -> Result<()> {
         self.replicate_operation(
             ReplicationOperation::InsertEdge(edge),
             ReplicationStrategy::Asynchronous,
-        ).await
+        )
+        .await
     }
-    
+
     /// Replicate node update to replica shards
     pub async fn replicate_node_update(&self, node: Node) -> Result<()> {
         self.replicate_operation(
             ReplicationOperation::UpdateNode(node),
             ReplicationStrategy::SemiSynchronous,
-        ).await
+        )
+        .await
     }
-    
+
     /// Replicate edge update to replica shards
     pub async fn replicate_edge_update(&self, edge: Edge) -> Result<()> {
         self.replicate_operation(
             ReplicationOperation::UpdateEdge(edge),
             ReplicationStrategy::SemiSynchronous,
-        ).await
+        )
+        .await
     }
-    
+
     /// Replicate node deletion to replica shards
     pub async fn replicate_node_delete(&self, node_id: NodeId) -> Result<()> {
         self.replicate_operation(
             ReplicationOperation::DeleteNode(node_id),
             ReplicationStrategy::Synchronous,
-        ).await
+        )
+        .await
     }
-    
+
     /// Replicate edge deletion to replica shards
     pub async fn replicate_edge_delete(&self, edge_id: EdgeId) -> Result<()> {
         self.replicate_operation(
             ReplicationOperation::DeleteEdge(edge_id),
             ReplicationStrategy::Synchronous,
-        ).await
+        )
+        .await
     }
-    
+
     /// Execute replication operation with specified strategy
     async fn replicate_operation(
         &self,
@@ -177,49 +180,55 @@ impl ReplicationManager {
         strategy: ReplicationStrategy,
     ) -> Result<()> {
         let start_time = Instant::now();
-        
+
         let primary_shard = self.get_primary_shard_for_operation(&operation)?;
         let replicas = self.get_replicas(primary_shard).await?;
-        
+
         if replicas.is_empty() {
             // No replication needed
             return Ok(());
         }
-        
+
         match strategy {
             ReplicationStrategy::Synchronous => {
-                self.execute_synchronous_replication(operation, &replicas).await
-            },
+                self.execute_synchronous_replication(operation, &replicas)
+                    .await
+            }
             ReplicationStrategy::Asynchronous => {
-                self.execute_asynchronous_replication(operation, &replicas).await
-            },
+                self.execute_asynchronous_replication(operation, &replicas)
+                    .await
+            }
             ReplicationStrategy::SemiSynchronous => {
-                self.execute_semi_synchronous_replication(operation, &replicas).await
-            },
+                self.execute_semi_synchronous_replication(operation, &replicas)
+                    .await
+            }
         }?;
-        
+
         // Update statistics
         let duration = start_time.elapsed();
         let mut stats = self.stats.write().await;
         stats.successful_replications += 1;
-        
+
         // Update average replication time
         let new_avg = if stats.successful_replications == 1 {
             duration.as_millis() as f64
         } else {
             (stats.average_replication_time_ms * (stats.successful_replications - 1) as f64
-                + duration.as_millis() as f64) / stats.successful_replications as f64
+                + duration.as_millis() as f64)
+                / stats.successful_replications as f64
         };
         stats.average_replication_time_ms = new_avg;
-        
+
         // Update last replication time for replicas
         for &replica_shard in &replicas {
-            stats.last_replication_times.insert(replica_shard, Instant::now());
+            stats
+                .last_replication_times
+                .insert(replica_shard, Instant::now());
         }
-        
+
         Ok(())
     }
-    
+
     /// Execute synchronous replication (wait for all replicas)
     async fn execute_synchronous_replication(
         &self,
@@ -227,26 +236,27 @@ impl ReplicationManager {
         replicas: &[u32],
     ) -> Result<()> {
         let mut tasks = Vec::new();
-        
+
         for &replica_shard in replicas {
             if let Some(shard) = self.shards.get(&replica_shard) {
                 let shard = Arc::clone(&shard);
                 let op = operation.clone();
-                
+
                 tasks.push(tokio::spawn(async move {
                     Self::execute_operation_on_shard(&shard, op).await
                 }));
             }
         }
-        
+
         // Wait for all replications to complete
         for task in tasks {
-            task.await.map_err(|e| ProximaDBError::Internal(e.to_string()))??;
+            task.await
+                .map_err(|e| ProximaDBError::Internal(e.to_string()))??;
         }
-        
+
         Ok(())
     }
-    
+
     /// Execute asynchronous replication (fire and forget)
     async fn execute_asynchronous_replication(
         &self,
@@ -258,11 +268,15 @@ impl ReplicationManager {
                 let shard = Arc::clone(&shard);
                 let op = operation.clone();
                 let stats = Arc::clone(&self.stats);
-                
+
                 tokio::spawn(async move {
                     if let Err(e) = Self::execute_operation_on_shard(&shard, op).await {
-                        tracing::error!("Async replication failed for shard {}: {:?}", replica_shard, e);
-                        
+                        tracing::error!(
+                            "Async replication failed for shard {}: {:?}",
+                            replica_shard,
+                            e
+                        );
+
                         // Update failure stats
                         let mut stats = stats.write().await;
                         stats.failed_replications += 1;
@@ -270,10 +284,10 @@ impl ReplicationManager {
                 });
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Execute semi-synchronous replication (wait for at least one replica)
     async fn execute_semi_synchronous_replication(
         &self,
@@ -283,30 +297,30 @@ impl ReplicationManager {
         if replicas.is_empty() {
             return Ok(());
         }
-        
+
         let mut tasks = Vec::new();
-        
+
         for &replica_shard in replicas {
             if let Some(shard) = self.shards.get(&replica_shard) {
                 let shard = Arc::clone(&shard);
                 let op = operation.clone();
-                
+
                 tasks.push(tokio::spawn(async move {
                     Self::execute_operation_on_shard(&shard, op).await
                 }));
             }
         }
-        
+
         if tasks.is_empty() {
             return Ok(());
         }
-        
+
         // Wait for at least one replication to succeed
         let (result, _index, remaining) = futures::future::select_all(tasks).await;
-        
+
         // Check if the first completed task succeeded
         result.map_err(|e| ProximaDBError::Internal(e.to_string()))??;
-        
+
         // Let remaining tasks complete in background
         for task in remaining {
             tokio::spawn(async move {
@@ -315,10 +329,10 @@ impl ReplicationManager {
                 }
             });
         }
-        
+
         Ok(())
     }
-    
+
     /// Execute operation on a specific shard
     async fn execute_operation_on_shard(
         shard: &OrionGraphEngine,
@@ -327,27 +341,27 @@ impl ReplicationManager {
         match operation {
             ReplicationOperation::InsertNode(node) => {
                 shard.insert_node(node)?;
-            },
+            }
             ReplicationOperation::InsertEdge(edge) => {
                 shard.insert_edge(edge)?;
-            },
+            }
             ReplicationOperation::UpdateNode(node) => {
                 shard.update_node(node)?;
-            },
+            }
             ReplicationOperation::UpdateEdge(edge) => {
                 shard.update_edge(edge)?;
-            },
+            }
             ReplicationOperation::DeleteNode(node_id) => {
                 shard.delete_node(&node_id)?;
-            },
+            }
             ReplicationOperation::DeleteEdge(edge_id) => {
                 shard.delete_edge(&edge_id)?;
-            },
+            }
         }
-        
+
         Ok(())
     }
-    
+
     /// Get primary shard for an operation (for determining replicas)
     fn get_primary_shard_for_operation(&self, operation: &ReplicationOperation) -> Result<u32> {
         // For now, simple hash-based assignment
@@ -360,14 +374,14 @@ impl ReplicationManager {
             ReplicationOperation::UpdateEdge(edge) => &edge.from_node_id,
             ReplicationOperation::DeleteEdge(edge_id) => edge_id,
         };
-        
+
         // Simple hash function for demo purposes
         let hash = key.chars().map(|c| c as u32).sum::<u32>();
         let shard_count = self.shards.len() as u32;
-        
+
         Ok(hash % shard_count)
     }
-    
+
     /// Get replication statistics
     pub async fn get_stats(&self) -> ReplicationStats {
         let stats = self.stats.read().await;
@@ -379,19 +393,19 @@ impl ReplicationManager {
             last_replication_times: stats.last_replication_times.clone(),
         }
     }
-    
+
     /// Update replica mapping (for dynamic scaling)
     pub async fn update_replica_mapping(&self, new_mapping: HashMap<u32, Vec<u32>>) {
         let mut mapping = self.replica_mapping.write().await;
         *mapping = new_mapping;
     }
-    
+
     /// Check replica health and detect lag
     pub async fn check_replica_health(&self) -> Result<HashMap<u32, ReplicaHealth>> {
         let mut health_map = HashMap::new();
         let stats = self.stats.read().await;
         let now = Instant::now();
-        
+
         let mapping = self.replica_mapping.read().await;
         for (&primary_shard, replicas) in mapping.iter() {
             for &replica_shard in replicas {
@@ -401,7 +415,7 @@ impl ReplicationManager {
                 } else {
                     u64::MAX // Never replicated
                 };
-                
+
                 let health = if lag_ms < 1000 {
                     ReplicaHealth::Healthy
                 } else if lag_ms < 5000 {
@@ -409,11 +423,11 @@ impl ReplicationManager {
                 } else {
                     ReplicaHealth::Unhealthy
                 };
-                
+
                 health_map.insert(replica_shard, health);
             }
         }
-        
+
         Ok(health_map)
     }
 }
@@ -441,39 +455,39 @@ pub enum ReplicaHealth {
 mod tests {
     use super::*;
     use crate::graph::GraphMemoryPool;
-    use crate::proto::proximadb_v1::property_value::Value;
     use crate::graph::PropertyValue;
-    
+    use crate::proto::proximadb_v1::property_value::Value;
+
     fn create_test_shards(count: u32) -> Arc<DashMap<u32, Arc<OrionGraphEngine>>> {
         let shards = Arc::new(DashMap::new());
         let memory_pool = Arc::new(GraphMemoryPool::new());
-        
+
         for i in 0..count {
             let engine = Arc::new(OrionGraphEngine::with_memory_pool(Arc::clone(&memory_pool)));
             shards.insert(i, engine);
         }
-        
+
         shards
     }
-    
+
     #[tokio::test]
     async fn test_replication_manager_creation() {
         let shards = create_test_shards(4);
         let manager = ReplicationManager::new(2, &shards);
-        
+
         assert_eq!(manager.replication_factor, 2);
-        
+
         // Test replica mapping
         let replicas_0 = manager.get_replicas(0).await.unwrap();
         assert!(!replicas_0.is_empty());
         assert!(replicas_0.len() <= 1); // Replication factor - 1
     }
-    
+
     #[tokio::test]
     async fn test_node_replication() {
         let shards = create_test_shards(3);
         let manager = ReplicationManager::new(2, &shards);
-        
+
         let test_node = Node {
             id: "test_node".to_string(),
             labels: vec!["Test".to_string()],
@@ -482,50 +496,50 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        
+
         // Test replication
         let result = manager.replicate_node_insert(test_node).await;
         assert!(result.is_ok());
-        
+
         // Check stats
         tokio::time::sleep(Duration::from_millis(10)).await;
         let stats = manager.get_stats().await;
         assert_eq!(stats.successful_replications, 1);
     }
-    
+
     #[tokio::test]
     async fn test_replica_health_check() {
         let shards = create_test_shards(2);
         let manager = ReplicationManager::new(2, &shards);
-        
+
         // Initially no replication history
         let health = manager.check_replica_health().await.unwrap();
-        
+
         // All replicas should be unhealthy (never replicated)
         for status in health.values() {
             assert_eq!(*status, ReplicaHealth::Unhealthy);
         }
     }
-    
+
     #[test]
     fn test_replica_mapping_generation() {
         let shards = create_test_shards(4);
         let mapping = ReplicationManager::build_replica_mapping(2, &shards);
-        
+
         // Should have mapping for all shards
         assert_eq!(mapping.len(), 4);
-        
+
         // Each shard should have exactly 1 replica (replication_factor - 1)
         for replicas in mapping.values() {
             assert_eq!(replicas.len(), 1);
         }
-        
+
         // No shard should replicate to itself
         for (&primary, replicas) in &mapping {
             assert!(!replicas.contains(&primary));
         }
     }
-    
+
     #[test]
     fn test_replication_operation_cloning() {
         let node = Node {
@@ -536,14 +550,14 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        
+
         let op1 = ReplicationOperation::InsertNode(node);
         let op2 = op1.clone();
-        
+
         match (op1, op2) {
             (ReplicationOperation::InsertNode(n1), ReplicationOperation::InsertNode(n2)) => {
                 assert_eq!(n1.id, n2.id);
-            },
+            }
             _ => panic!("Unexpected operation types"),
         }
     }

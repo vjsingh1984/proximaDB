@@ -1,0 +1,1071 @@
+= ProximaDB Master Implementation Roadmap 2025
+:toc:
+:toclevels: 4
+:icons: font
+:numbered:
+
+== Executive Summary
+
+This master roadmap provides a comprehensive, phased approach to evolving ProximaDB from its current state (912 compilation errors, foundational architecture complete) to a production-ready, distributed vector-graph database that competes with industry leaders like Pinecone, Qdrant, and Neo4j.
+
+**Current State Assessment (2025-09-10)**:
+- ✅ **Core Architecture**: Proto-first design, 7 storage engines, unified operations
+- ✅ **Major Features**: SKS implementation, hybrid queries, cache orchestrator
+- ⚠️ **Critical Issues**: 912 compilation errors, incomplete engine implementations
+- ❌ **Missing Enterprise Features**: Multi-tenancy, horizontal scaling, advanced security
+
+**Performance Targets**:
+- **Vector Search**: 35K+ QPS (current: 20.8K) - Target: Match Pinecone
+- **Latency**: <5ms p99 (current: <10ms) - Target: Industry leading
+- **Memory Efficiency**: 60% reduction through optimization
+- **Scalability**: Single-node → Distributed enterprise-grade
+
+== Phase Structure Overview
+
+The roadmap is organized into 5 major phases with clear dependencies:
+
+[cols="1,2,2,1,2"]
+|===
+|Phase |Name |Focus |Duration |Dependencies
+
+|**Phase 0** |Stabilization Foundation |Fix compilation errors, complete core implementations |2-3 weeks |None
+|**Phase 1** |Core Feature Completion |Complete engines, optimize performance |6-8 weeks |Phase 0
+|**Phase 2** |Enterprise Fundamentals |Security, monitoring, operational features |8-10 weeks |Phase 1
+|**Phase 3** |Distributed Architecture |Clustering, replication, high availability |12-14 weeks |Phase 2
+|**Phase 4** |Advanced Features |ML integration, advanced algorithms, ecosystem |16-20 weeks |Phase 3
+|===
+
+== Phase 0: Stabilization Foundation (Critical - 2-3 weeks)
+
+=== Overview
+Address critical compilation errors and complete foundational implementations to achieve a stable, runnable system.
+
+=== Priority 0.1: Compilation Error Resolution (Week 1)
+**Target**: Reduce from 912 to 0 compilation errors
+
+==== Task 0.1.1: PropertyFilterOperator Enum Variants
+**Files**: `src/proto/proximadb.v1.rs`, `src/graph/service.rs`
+**Issue**: Missing enum variants (`PROPERTY_FILTER_OPERATOR_EQUALS`, `PROPERTY_FILTER_OPERATOR_STARTS_WITH`, etc.)
+
+**Implementation**:
+```rust
+// Add missing variants to PropertyFilterOperator
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum PropertyFilterOperator {
+    Unspecified = 0,
+    Equals = 1,
+    NotEquals = 2,
+    GreaterThan = 3,
+    GreaterEqual = 4,
+    LessThan = 5,
+    LessEqual = 6,
+    StartsWith = 7,
+    EndsWith = 8,
+    Contains = 9,
+    In = 10,
+    NotIn = 11,
+}
+
+// Update constant mappings
+impl PropertyFilterOperator {
+    pub const PROPERTY_FILTER_OPERATOR_EQUALS: Self = Self::Equals;
+    pub const PROPERTY_FILTER_OPERATOR_STARTS_WITH: Self = Self::StartsWith;
+    // ... add all missing constants
+}
+```
+
+**Acceptance Criteria**:
+- All PropertyFilterOperator references compile
+- Graph service filter matching works correctly
+- Tests pass for all filter operators
+
+==== Task 0.1.2: SqlValue Pattern Matching Resolution
+**Files**: Storage engines (`sst/mod.rs`, `nova/engine.rs`, `swift/engine.rs`, `raptor/rowgroup_manager.rs`)
+**Issue**: SqlValue enum pattern matching inconsistencies
+
+**Implementation**:
+```rust
+// Standardize SqlValue pattern matching across all engines
+match value {
+    SqlValue::Text(s) => handle_string(s),
+    SqlValue::Integer(i) => handle_integer(*i),
+    SqlValue::Real(f) => handle_float(*f),
+    SqlValue::Blob(b) => handle_bytes(b),
+    SqlValue::Null => handle_null(),
+}
+```
+
+**Acceptance Criteria**:
+- All storage engines compile without SqlValue errors
+- Metadata filtering works consistently across engines
+- Type safety maintained for all value conversions
+
+==== Task 0.1.3: Type System Alignment
+**Files**: Various modules with type mismatches
+**Issue**: HashMap type conversions, Arc<T> vs &T mismatches
+
+**Implementation**:
+```rust
+// Standardize metadata type conversions
+fn convert_metadata_to_json(
+    metadata: HashMap<String, String>
+) -> HashMap<String, serde_json::Value> {
+    metadata.into_iter()
+        .map(|(k, v)| (k, serde_json::Value::String(v)))
+        .collect()
+}
+
+// Standardize Arc dereferencing patterns
+fn process_node(node: &Arc<Node>) {
+    let node_ref: &Node = node;  // Use consistent dereferencing
+    // Process node_ref
+}
+```
+
+=== Priority 0.2: Storage Engine Completion (Week 2)
+**Target**: Complete partial engine implementations
+
+==== Task 0.2.1: NOVA Engine Zone Maps Integration
+**Files**: `src/storage/engines/impls/nova/`
+**Completion**: 90% → 100%
+
+**Implementation Details**:
+```rust
+// Complete zone map integration for columnar optimization
+impl NovaEngine {
+    async fn scan_with_zone_maps(&self, filters: &[Filter]) -> Result<Vec<Record>> {
+        let zone_maps = self.load_zone_maps().await?;
+        let pruned_rowgroups = self.prune_rowgroups_with_zone_maps(&zone_maps, filters)?;
+        
+        let mut results = Vec::new();
+        for rowgroup in pruned_rowgroups {
+            let rowgroup_data = self.read_rowgroup(rowgroup).await?;
+            results.extend(self.apply_filters(rowgroup_data, filters)?);
+        }
+        Ok(results)
+    }
+    
+    fn prune_rowgroups_with_zone_maps(
+        &self, 
+        zone_maps: &[ZoneMap], 
+        filters: &[Filter]
+    ) -> Result<Vec<RowGroupId>> {
+        zone_maps.iter()
+            .enumerate()
+            .filter_map(|(idx, zone_map)| {
+                if self.zone_map_matches_filters(zone_map, filters) {
+                    Some(RowGroupId(idx))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+```
+
+**Acceptance Criteria**:
+- Zone maps fully integrated with query execution
+- Pruning effectiveness > 80% for typical workloads
+- Performance improvement of 25-40% for filtered scans
+
+==== Task 0.2.2: SWIFT Engine Superblock Cache
+**Files**: `src/storage/engines/impls/swift/`
+**Completion**: 85% → 100%
+
+**Implementation Details**:
+```rust
+// Complete superblock cache implementation
+pub struct SuperblockCache {
+    cache: Arc<DashMap<SuperblockId, Arc<Superblock>>>,
+    orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    max_size: usize,
+    current_size: AtomicUsize,
+}
+
+impl SuperblockCache {
+    async fn get_or_load(&self, id: SuperblockId) -> Result<Arc<Superblock>> {
+        if let Some(cached) = self.cache.get(&id) {
+            self.track_cache_hit(id).await;
+            return Ok(cached.clone());
+        }
+        
+        let superblock = self.load_superblock(id).await?;
+        let superblock_arc = Arc::new(superblock);
+        
+        self.cache.insert(id, superblock_arc.clone());
+        self.track_cache_miss(id).await;
+        
+        Ok(superblock_arc)
+    }
+    
+    async fn track_cache_hit(&self, id: SuperblockId) {
+        if let Some(orch) = &self.orchestrator {
+            let key = format!("superblock::{}", id.0);
+            orch.pattern_tracker().track_access_async(key, CacheType::Metadata);
+        }
+    }
+}
+```
+
+=== Priority 0.3: Core Service Stabilization (Week 2-3)
+**Target**: Stable services with proper error handling
+
+==== Task 0.3.1: VectorOperationsService Refactoring Preparation
+**Files**: `src/services/operations/vectors.rs`
+**Issue**: 2,207-line god object with excessive complexity
+
+**Phase 0 Actions** (Preparation for Phase 1 full refactoring):
+```rust
+// Extract key interfaces for future refactoring
+pub trait VectorSearchService {
+    async fn search(&self, request: SearchRequest) -> Result<SearchResponse>;
+    async fn hybrid_search(&self, request: HybridRequest) -> Result<HybridResponse>;
+}
+
+pub trait VectorWriteService {
+    async fn upsert(&self, request: UpsertRequest) -> Result<UpsertResponse>;
+    async fn delete(&self, request: DeleteRequest) -> Result<DeleteResponse>;
+}
+
+// Prepare modular structure (implementation in Phase 1)
+pub struct VectorOperationsServiceV2 {
+    search_service: Arc<dyn VectorSearchService>,
+    write_service: Arc<dyn VectorWriteService>,
+    cache_service: Arc<VectorCacheService>,
+    coordinator: Arc<VectorCoordinator>,
+}
+```
+
+**Phase 0 Acceptance Criteria**:
+- All compilation errors in VectorOperationsService resolved
+- Service interfaces defined for Phase 1 refactoring
+- Current functionality preserved with improved error handling
+
+== Phase 1: Core Feature Completion (6-8 weeks)
+
+=== Overview
+Complete advanced storage engines, optimize performance, and implement missing core features.
+
+=== Priority 1.1: Advanced Storage Engine Completion (Weeks 1-3)
+
+==== Task 1.1.1: PRISM Engine Progressive Quantization
+**Files**: `src/storage/engines/impls/prism/`
+**Completion**: 75% → 100%
+
+**Detailed Implementation**:
+```rust
+// Complete progressive quantization implementation
+pub struct ProgressiveQuantizer {
+    stages: Vec<QuantizationStage>,
+    orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    metrics: QuantizationMetrics,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuantizationStage {
+    pub stage_id: u8,
+    pub quantization_type: QuantizationType,
+    pub compression_ratio: f32,
+    pub accuracy_threshold: f32,
+    pub recall_target: f32,
+}
+
+#[derive(Debug, Clone)]
+pub enum QuantizationType {
+    Binary { threshold: f32 },
+    Int8 { scale: f32, offset: f32 },
+    ProductQuantization { 
+        subvectors: usize, 
+        codebook_size: usize,
+        centroids: Vec<Vec<f32>>
+    },
+    AdaptivePQ {
+        base_subvectors: usize,
+        adaptation_rate: f32,
+        learned_centroids: HashMap<String, Vec<Vec<f32>>>
+    }
+}
+
+impl ProgressiveQuantizer {
+    async fn progressive_search(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        accuracy_target: f32
+    ) -> Result<Vec<ScoredVector>> {
+        let mut candidates = Vec::new();
+        let mut current_recall = 0.0;
+        
+        // Stage 1: Binary quantization for initial filtering
+        let binary_candidates = self.binary_search(query, top_k * 10).await?;
+        candidates.extend(binary_candidates);
+        current_recall = self.estimate_recall(&candidates, accuracy_target);
+        
+        if current_recall >= accuracy_target {
+            return Ok(self.refine_results(candidates, query, top_k).await?);
+        }
+        
+        // Stage 2: INT8 quantization for refinement
+        let int8_candidates = self.int8_search(query, &candidates, top_k * 5).await?;
+        candidates = int8_candidates;
+        current_recall = self.estimate_recall(&candidates, accuracy_target);
+        
+        if current_recall >= accuracy_target {
+            return Ok(self.refine_results(candidates, query, top_k).await?);
+        }
+        
+        // Stage 3: Product quantization for higher precision
+        let pq_candidates = self.pq_search(query, &candidates, top_k * 2).await?;
+        candidates = pq_candidates;
+        
+        // Stage 4: Full precision for final results
+        let final_results = self.full_precision_search(query, &candidates, top_k).await?;
+        
+        Ok(final_results)
+    }
+    
+    async fn binary_search(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredVector>> {
+        let binary_query = self.binarize_vector(query);
+        let mut results = Vec::new();
+        
+        // Use SIMD-optimized hamming distance
+        for chunk in self.binary_index.chunks() {
+            let distances = self.simd_hamming_distance(&binary_query, &chunk.vectors);
+            for (idx, distance) in distances.iter().enumerate() {
+                results.push(ScoredVector {
+                    id: chunk.base_id + idx,
+                    score: 1.0 - (*distance as f32 / query.len() as f32),
+                    vector: None, // Will be loaded in refinement stage
+                });
+            }
+        }
+        
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        results.truncate(limit);
+        Ok(results)
+    }
+    
+    fn simd_hamming_distance(&self, query: &BitVec, vectors: &[BitVec]) -> Vec<u32> {
+        // SIMD-optimized hamming distance computation
+        vectors.iter()
+            .map(|vec| self.hardware_capabilities.hamming_distance_simd(query, vec))
+            .collect()
+    }
+}
+```
+
+**Acceptance Criteria**:
+- Progressive quantization achieves target recall rates (95%+) with 40% performance improvement
+- SIMD optimization for all quantization stages
+- Integration with cache orchestrator for stage prediction
+- Comprehensive benchmarks showing 2.5x search performance improvement
+
+==== Task 1.1.2: HELIX Engine Unified Operations Integration
+**Files**: `src/storage/engines/impls/helix/`
+**Completion**: 80% → 100%
+
+**Implementation Details**:
+```rust
+// Complete unified operations with flush coordination
+pub struct HelixUnifiedOperations {
+    flush_coordinator: Arc<FlushCoordinator>,
+    compaction_scheduler: Arc<CompactionScheduler>,
+    rebalance_manager: Arc<RebalanceManager>,
+    metrics_collector: Arc<OperationsMetrics>,
+}
+
+impl HelixUnifiedOperations {
+    async fn coordinate_flush(&self, collection_id: &str) -> Result<FlushResult> {
+        let flush_plan = self.flush_coordinator.create_plan(collection_id).await?;
+        
+        // Phase 1: Prepare all components
+        let preparation_results = futures::future::try_join_all(
+            flush_plan.components.iter().map(|component| {
+                self.prepare_component_flush(component)
+            })
+        ).await?;
+        
+        // Phase 2: Execute coordinated flush
+        let flush_barrier = Arc::new(Barrier::new(flush_plan.components.len()));
+        let flush_results = futures::future::try_join_all(
+            preparation_results.into_iter().zip(flush_plan.components.iter()).map(|(prep, component)| {
+                let barrier = flush_barrier.clone();
+                async move {
+                    barrier.wait().await;
+                    self.execute_component_flush(component, prep).await
+                }
+            })
+        ).await?;
+        
+        // Phase 3: Commit and cleanup
+        let commit_result = self.commit_coordinated_flush(flush_results).await?;
+        
+        Ok(FlushResult {
+            duration: flush_plan.start_time.elapsed(),
+            bytes_flushed: commit_result.total_bytes,
+            components_flushed: flush_plan.components.len(),
+            next_flush_hint: self.calculate_next_flush_time(&commit_result),
+        })
+    }
+    
+    async fn intelligent_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
+        let compaction_analysis = self.compaction_scheduler
+            .analyze_compaction_candidates(collection_id).await?;
+            
+        if compaction_analysis.urgency_score < 0.7 {
+            return Ok(CompactionResult::Skipped { 
+                reason: "Low urgency score".into() 
+            });
+        }
+        
+        let compaction_plan = self.compaction_scheduler
+            .create_compaction_plan(&compaction_analysis).await?;
+            
+        // Execute with orchestrator hints for cache warming
+        if let Some(orch) = &self.orchestrator {
+            for file in &compaction_plan.input_files {
+                let key = format!("compaction_input::{}", file.id);
+                orch.request_prefetch(&key, CacheType::StorageBlock).await;
+            }
+        }
+        
+        let result = self.execute_compaction_plan(compaction_plan).await?;
+        
+        Ok(result)
+    }
+}
+```
+
+=== Priority 1.2: Performance Optimization (Weeks 2-4)
+
+==== Task 1.2.1: VectorOperationsService Decomposition
+**Files**: `src/services/operations/vectors.rs` → Multiple specialized services
+
+**Implementation Strategy**:
+```rust
+// Phase 1: Extract Search Service
+pub struct VectorSearchServiceImpl {
+    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    hardware_capabilities: Arc<HardwareCapabilities>,
+}
+
+impl VectorSearchService for VectorSearchServiceImpl {
+    async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
+        // Optimized search pipeline with zero-copy operations
+        let search_plan = self.create_search_plan(&request).await?;
+        
+        match search_plan.strategy {
+            SearchStrategy::Progressive => {
+                self.progressive_search(request).await
+            },
+            SearchStrategy::DirectAccess => {
+                self.direct_search(request).await
+            },
+            SearchStrategy::CachedResults => {
+                self.cached_search(request).await
+            }
+        }
+    }
+    
+    async fn progressive_search(&self, request: SearchRequest) -> Result<SearchResponse> {
+        let mut pipeline = ProgressiveSearchPipeline::new(&request);
+        
+        // Stage 1: Bloom filter pre-filtering
+        if let Some(filters) = &request.filters {
+            pipeline = pipeline.with_bloom_filters(filters);
+        }
+        
+        // Stage 2: Quantized search
+        let quantized_results = self.quantization_engine
+            .progressive_search(&request.query_vector, &pipeline)
+            .await?;
+            
+        // Stage 3: Refinement with full precision
+        let refined_results = self.refine_with_full_precision(
+            quantized_results, 
+            &request.query_vector,
+            request.top_k * 2
+        ).await?;
+        
+        // Stage 4: Final ranking and metadata enrichment
+        let final_results = self.enrich_with_metadata(refined_results, &request).await?;
+        
+        Ok(SearchResponse {
+            results: final_results,
+            took_ms: pipeline.elapsed_ms(),
+            total_candidates: pipeline.total_candidates(),
+            stages_executed: pipeline.stages_count(),
+        })
+    }
+}
+
+// Phase 1: Extract Write Service
+pub struct VectorWriteServiceImpl {
+    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    wal: Arc<WriteAheadLog>,
+    index_manager: Arc<IndexManager>,
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+}
+
+impl VectorWriteService for VectorWriteServiceImpl {
+    async fn upsert(&self, request: UpsertRequest) -> Result<UpsertResponse> {
+        // Optimized write pipeline with batching
+        let write_batch = self.prepare_write_batch(request).await?;
+        
+        // Phase 1: WAL write for durability
+        let wal_result = self.wal.write_batch(&write_batch).await?;
+        
+        // Phase 2: Storage engine write
+        let storage_result = self.storage_engine
+            .write_batch(&write_batch)
+            .await?;
+            
+        // Phase 3: Index updates (async)
+        tokio::spawn({
+            let index_manager = self.index_manager.clone();
+            let updates = write_batch.index_updates();
+            async move {
+                if let Err(e) = index_manager.update_batch(updates).await {
+                    tracing::error!("Index update failed: {}", e);
+                }
+            }
+        });
+        
+        Ok(UpsertResponse {
+            written_count: write_batch.len(),
+            wal_lsn: wal_result.lsn,
+            took_ms: write_batch.elapsed_ms(),
+        })
+    }
+}
+```
+
+**Performance Targets**:
+- 40% reduction in VectorOperationsService complexity
+- 25% improvement in search latency through specialization
+- 15% improvement in memory usage through better Arc usage
+
+==== Task 1.2.2: Zero-Copy Data Path Implementation
+**Files**: Various services and storage engines
+
+**Implementation Focus**:
+```rust
+// Implement zero-copy vector operations
+pub struct ZeroCopyVectorPipeline {
+    vector_pool: Arc<VectorPool>,
+    buffer_manager: Arc<BufferManager>,
+}
+
+impl ZeroCopyVectorPipeline {
+    async fn process_vectors(&self, vectors: &[VectorRef]) -> Result<ProcessedVectors> {
+        // Use memory-mapped buffers for large vector operations
+        let buffer = self.buffer_manager.allocate_aligned(vectors.len())?;
+        
+        // SIMD-optimized copy operations
+        self.hardware_capabilities.batch_copy_vectors(vectors, &buffer)?;
+        
+        // Return buffer reference without copying
+        Ok(ProcessedVectors::from_buffer(buffer))
+    }
+}
+
+// Optimize Arc usage patterns
+pub struct OptimizedSearchRecord {
+    vector: Arc<Vec<f32>>,  // Shared vector data
+    metadata: Arc<TypedMetadata>,  // Shared metadata
+    similarity_score: f32,  // Small data copied
+}
+
+impl OptimizedSearchRecord {
+    pub fn merge_results(
+        storage_results: Vec<Self>,
+        wal_results: Vec<Self>
+    ) -> Vec<Self> {
+        // Zero-allocation merge using iterators
+        let mut all_results: Vec<_> = storage_results.into_iter()
+            .chain(wal_results.into_iter())
+            .collect();
+            
+        // Efficient in-place sort
+        all_results.sort_unstable_by(|a, b| 
+            b.similarity_score.partial_cmp(&a.similarity_score).unwrap()
+        );
+        
+        all_results
+    }
+}
+```
+
+=== Priority 1.3: Graph Engine Enhancement (Weeks 3-5)
+
+==== Task 1.3.1: Graph Algorithm Suite Implementation
+**Files**: `src/graph/algorithms/`
+
+**New Module Structure**:
+```rust
+// src/graph/algorithms/mod.rs
+pub mod centrality;
+pub mod community;
+pub mod pathfinding;
+pub mod traversal;
+pub mod analytics;
+
+// src/graph/algorithms/centrality.rs
+pub trait CentralityAlgorithms {
+    async fn pagerank(
+        &self, 
+        config: PageRankConfig
+    ) -> Result<HashMap<NodeId, f64>>;
+    
+    async fn betweenness_centrality(
+        &self,
+        config: BetweennessCentralityConfig
+    ) -> Result<HashMap<NodeId, f64>>;
+    
+    async fn closeness_centrality(
+        &self,
+        config: ClosenessCentralityConfig
+    ) -> Result<HashMap<NodeId, f64>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct PageRankConfig {
+    pub damping_factor: f64,
+    pub max_iterations: u32,
+    pub convergence_threshold: f64,
+    pub parallel_execution: bool,
+}
+
+impl CentralityAlgorithms for OrionGraphEngine {
+    async fn pagerank(&self, config: PageRankConfig) -> Result<HashMap<NodeId, f64>> {
+        let all_nodes = self.get_all_node_ids().await?;
+        let mut scores = HashMap::new();
+        let mut new_scores = HashMap::new();
+        
+        // Initialize scores
+        let initial_score = 1.0 / all_nodes.len() as f64;
+        for node_id in &all_nodes {
+            scores.insert(node_id.clone(), initial_score);
+        }
+        
+        // Parallel PageRank iterations
+        for iteration in 0..config.max_iterations {
+            new_scores.clear();
+            
+            if config.parallel_execution {
+                let chunk_size = (all_nodes.len() / num_cpus::get()).max(1);
+                let chunks: Vec<_> = all_nodes.chunks(chunk_size).collect();
+                
+                let chunk_results = futures::future::try_join_all(
+                    chunks.into_iter().map(|chunk| {
+                        self.compute_pagerank_chunk(chunk, &scores, &config)
+                    })
+                ).await?;
+                
+                for chunk_result in chunk_results {
+                    new_scores.extend(chunk_result);
+                }
+            } else {
+                for node_id in &all_nodes {
+                    let new_score = self.compute_pagerank_score(node_id, &scores, &config).await?;
+                    new_scores.insert(node_id.clone(), new_score);
+                }
+            }
+            
+            // Check convergence
+            let max_change = scores.iter()
+                .map(|(id, &old_score)| {
+                    let new_score = new_scores.get(id).unwrap_or(&0.0);
+                    (old_score - new_score).abs()
+                })
+                .fold(0.0, f64::max);
+                
+            if max_change < config.convergence_threshold {
+                break;
+            }
+            
+            std::mem::swap(&mut scores, &mut new_scores);
+        }
+        
+        Ok(scores)
+    }
+}
+```
+
+==== Task 1.3.2: Cypher Query Language Foundation
+**Files**: `src/graph/cypher/`
+
+**Phase 1 Implementation**:
+```rust
+// Basic Cypher parser and executor
+pub struct CypherEngine {
+    graph_engine: Arc<dyn GraphEngine>,
+    parser: CypherParser,
+    planner: CypherPlanner,
+    executor: CypherExecutor,
+}
+
+// Support basic Cypher patterns
+// MATCH (n:Label) WHERE n.property = value RETURN n
+// MATCH (n)-[r:RELATIONSHIP]->(m) RETURN n, r, m
+
+pub struct CypherQuery {
+    pub match_clauses: Vec<MatchClause>,
+    pub where_clause: Option<WhereClause>,
+    pub return_clause: ReturnClause,
+}
+
+impl CypherEngine {
+    async fn execute(&self, query: &str) -> Result<CypherResult> {
+        let parsed = self.parser.parse(query)?;
+        let plan = self.planner.create_plan(parsed)?;
+        let result = self.executor.execute(plan).await?;
+        Ok(result)
+    }
+}
+```
+
+== Phase 2: Enterprise Fundamentals (8-10 weeks)
+
+=== Overview
+Implement security, monitoring, operational features, and multi-tenancy support.
+
+=== Priority 2.1: Security Implementation (Weeks 1-4)
+
+==== Task 2.1.1: Authentication and Authorization
+**Files**: `src/security/`, `src/middleware/`
+
+**Implementation**:
+```rust
+// Authentication system
+pub struct AuthenticationService {
+    jwt_validator: JwtValidator,
+    api_key_store: Arc<ApiKeyStore>,
+    oauth_provider: Option<OAuthProvider>,
+}
+
+// Authorization with RBAC
+pub struct AuthorizationService {
+    policy_engine: Arc<PolicyEngine>,
+    role_manager: Arc<RoleManager>,
+    audit_logger: Arc<AuditLogger>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Permission {
+    pub resource: Resource,
+    pub action: Action,
+    pub conditions: Vec<Condition>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Resource {
+    Collection(String),
+    Vector(String, String), // collection_id, vector_id
+    Graph(String),          // graph_id
+    Entity(String),         // entity_id
+    System,
+}
+
+#[derive(Debug, Clone)]
+pub enum Action {
+    Read,
+    Write,
+    Delete,
+    Admin,
+    Query,
+    Upsert,
+}
+```
+
+==== Task 2.1.2: Multi-tenancy Implementation
+**Files**: `src/tenant/`, middleware updates
+
+**Tenant Isolation**:
+```rust
+pub struct TenantManager {
+    tenant_store: Arc<TenantStore>,
+    resource_quotas: Arc<QuotaManager>,
+    isolation_enforcer: Arc<IsolationEnforcer>,
+}
+
+pub struct Tenant {
+    pub id: TenantId,
+    pub name: String,
+    pub quotas: TenantQuotas,
+    pub isolation_level: IsolationLevel,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TenantQuotas {
+    pub max_collections: u32,
+    pub max_vectors_per_collection: u64,
+    pub max_storage_bytes: u64,
+    pub max_queries_per_second: u32,
+    pub max_concurrent_connections: u32,
+}
+
+#[derive(Debug, Clone)]
+pub enum IsolationLevel {
+    Logical,    // Shared resources with logical separation
+    Physical,   // Dedicated resources
+    Hybrid,     // Mix of shared and dedicated
+}
+```
+
+=== Priority 2.2: Monitoring and Observability (Weeks 2-5)
+
+==== Task 2.2.1: Comprehensive Metrics Implementation
+**Files**: `src/monitoring/`, `src/metrics/`
+
+**Metrics Framework**:
+```rust
+// Comprehensive metrics collection
+pub struct ProximaDBMetrics {
+    pub vector_operations: VectorOperationMetrics,
+    pub graph_operations: GraphOperationMetrics,
+    pub storage_metrics: StorageMetrics,
+    pub cache_metrics: CacheMetrics,
+    pub system_metrics: SystemMetrics,
+}
+
+pub struct VectorOperationMetrics {
+    pub search_latency: HistogramVec,
+    pub search_throughput: CounterVec,
+    pub index_build_time: HistogramVec,
+    pub vector_dimension_distribution: HistogramVec,
+    pub quantization_effectiveness: GaugeVec,
+}
+
+// OpenTelemetry integration
+pub struct TracingService {
+    tracer: Arc<dyn Tracer>,
+    span_processor: Arc<dyn SpanProcessor>,
+}
+
+impl TracingService {
+    pub fn trace_vector_search<F, Fut, R>(&self, operation: F) -> impl Future<Output = R>
+    where
+        F: FnOnce(Span) -> Fut,
+        Fut: Future<Output = R>,
+    {
+        let span = self.tracer.span_builder("vector_search")
+            .with_kind(SpanKind::Server)
+            .start(&*self.tracer);
+            
+        async move {
+            let _guard = span.enter();
+            operation(span).await
+        }
+    }
+}
+```
+
+=== Priority 2.3: Operational Features (Weeks 3-6)
+
+==== Task 2.3.1: Backup and Restore System
+**Files**: `src/backup/`, `src/restore/`
+
+**Implementation**:
+```rust
+pub struct BackupService {
+    storage_engines: Vec<Arc<dyn UnifiedStorageEngine>>,
+    backup_store: Arc<dyn BackupStore>,
+    scheduler: Arc<BackupScheduler>,
+}
+
+pub trait BackupStore {
+    async fn store_backup(&self, backup: Backup) -> Result<BackupId>;
+    async fn list_backups(&self, filter: BackupFilter) -> Result<Vec<BackupMetadata>>;
+    async fn restore_backup(&self, backup_id: BackupId) -> Result<BackupData>;
+}
+
+// Incremental backup support
+pub struct IncrementalBackup {
+    pub base_backup_id: Option<BackupId>,
+    pub changes: Vec<BackupChange>,
+    pub wal_position: WalPosition,
+}
+```
+
+== Phase 3: Distributed Architecture (12-14 weeks)
+
+=== Overview
+Implement clustering, replication, and high availability features.
+
+=== Priority 3.1: Sharding and Clustering (Weeks 1-6)
+
+==== Task 3.1.1: Distributed Coordinator Implementation
+**Files**: `src/distributed/`, `src/cluster/`
+
+**Architecture**:
+```rust
+// Cluster coordinator with consistent hashing
+pub struct ClusterCoordinator {
+    node_manager: Arc<NodeManager>,
+    shard_manager: Arc<ShardManager>,
+    metadata_store: Arc<MetadataStore>,
+    consensus: Arc<dyn ConsensusProtocol>,
+}
+
+pub struct ShardManager {
+    shard_map: Arc<RwLock<ShardMap>>,
+    placement_policy: Arc<dyn PlacementPolicy>,
+    rebalancer: Arc<ShardRebalancer>,
+}
+
+// Shard-aware query routing
+pub struct DistributedQueryExecutor {
+    local_executor: Arc<QueryExecutor>,
+    cluster_coordinator: Arc<ClusterCoordinator>,
+    result_merger: Arc<ResultMerger>,
+}
+
+impl DistributedQueryExecutor {
+    async fn execute_distributed_query(&self, query: Query) -> Result<QueryResult> {
+        let shard_queries = self.partition_query(query).await?;
+        
+        let shard_results = futures::future::try_join_all(
+            shard_queries.into_iter().map(|(shard_id, shard_query)| {
+                self.execute_on_shard(shard_id, shard_query)
+            })
+        ).await?;
+        
+        let merged_result = self.result_merger.merge(shard_results).await?;
+        Ok(merged_result)
+    }
+}
+```
+
+=== Priority 3.2: Replication and High Availability (Weeks 4-8)
+
+==== Task 3.2.1: Raft Consensus Implementation
+**Files**: `src/consensus/`, `src/replication/`
+
+**Replication System**:
+```rust
+// Raft-based replication for metadata
+pub struct RaftConsensus {
+    raft_node: Arc<RaftNode>,
+    log_store: Arc<dyn LogStore>,
+    state_machine: Arc<dyn StateMachine>,
+}
+
+// Data replication with configurable consistency
+pub struct DataReplicationService {
+    replication_factor: u8,
+    consistency_level: ConsistencyLevel,
+    replica_manager: Arc<ReplicaManager>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConsistencyLevel {
+    One,        // Single replica acknowledgment
+    Quorum,     // Majority replica acknowledgment
+    All,        // All replica acknowledgment
+    Timeline,   // Timeline consistency with eventual convergence
+}
+```
+
+== Phase 4: Advanced Features (16-20 weeks)
+
+=== Overview
+Implement ML integration, advanced algorithms, and ecosystem features.
+
+=== Priority 4.1: Machine Learning Integration (Weeks 1-8)
+
+==== Task 4.1.1: Embedding Service Integration
+**Implementation**:
+```rust
+// Built-in embedding generation
+pub struct EmbeddingService {
+    models: HashMap<String, Arc<dyn EmbeddingModel>>,
+    model_cache: Arc<ModelCache>,
+    gpu_executor: Option<Arc<GpuExecutor>>,
+}
+
+pub trait EmbeddingModel {
+    async fn embed_text(&self, text: &str) -> Result<Vec<f32>>;
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+    fn dimension(&self) -> usize;
+    fn model_info(&self) -> ModelInfo;
+}
+
+// Support for popular embedding models
+pub struct OpenAIEmbeddingModel {
+    api_client: OpenAIClient,
+    model_name: String,
+}
+
+pub struct HuggingFaceEmbeddingModel {
+    model: Arc<BertModel>,
+    tokenizer: Arc<BertTokenizer>,
+}
+```
+
+=== Priority 4.2: Advanced Indexing Algorithms (Weeks 4-12)
+
+==== Task 4.2.1: DiskANN Implementation
+**Implementation**:
+```rust
+// State-of-the-art indexing algorithm
+pub struct DiskANNIndex {
+    graph: DiskANNGraph,
+    disk_layout: DiskLayout,
+    search_params: SearchParams,
+}
+
+// ScaNN (Google's algorithm) integration
+pub struct ScaNNIndex {
+    quantizer: ScaNNQuantizer,
+    searcher: ScaNNSearcher,
+    training_data: Option<TrainingData>,
+}
+```
+
+== Dependencies and Risk Management
+
+=== Critical Path Dependencies
+1. **Phase 0 → Phase 1**: Compilation errors must be resolved before advanced features
+2. **Phase 1 → Phase 2**: Core engine stability required for security implementation
+3. **Phase 2 → Phase 3**: Security and monitoring needed before distributed deployment
+4. **Phase 3 → Phase 4**: Stable clustering required for advanced ML features
+
+=== Risk Mitigation Strategies
+1. **Technical Risk**: Maintain backward compatibility during refactoring
+2. **Performance Risk**: Continuous benchmarking with rollback triggers
+3. **Integration Risk**: Gradual rollout with feature flags
+4. **Operational Risk**: Comprehensive testing in staging environments
+
+=== Success Metrics by Phase
+
+**Phase 0**:
+- ✅ Zero compilation errors
+- ✅ All tests passing
+- ✅ Basic performance benchmarks stable
+
+**Phase 1**:
+- ✅ 35K+ QPS vector search performance
+- ✅ <5ms p99 latency
+- ✅ All 7 storage engines fully functional
+
+**Phase 2**:
+- ✅ Multi-tenant isolation working
+- ✅ RBAC system operational
+- ✅ Comprehensive monitoring deployed
+
+**Phase 3**:
+- ✅ Horizontal scaling demonstrated
+- ✅ High availability tested
+- ✅ Data consistency maintained
+
+**Phase 4**:
+- ✅ Advanced algorithms deployed
+- ✅ ML integration functional
+- ✅ Ecosystem partnerships established
+
+This master roadmap provides the foundation for detailed implementation. Each phase should be further broken down into weekly sprints with specific deliverables and acceptance criteria.

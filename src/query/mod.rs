@@ -158,14 +158,14 @@
 //! Estimated Rows: 10
 //! ```
 
+pub mod ast;
+pub mod execution; // New unified execution engine
+pub mod explain;
+pub mod sks_extensions;
 pub mod sql_engine;
 pub mod sql_frontend;
-pub mod execution; // New unified execution engine
 pub mod unified_query_optimizer;
 pub mod vector_search;
-pub mod sks_extensions;
-pub mod explain;
-pub mod ast;
 
 // Re-export main types
 pub use sql_engine::{QueryPlanner, SqlEngine, SqlExecutionResult, SqlParser};
@@ -285,7 +285,8 @@ impl QueryEngine {
     pub async fn explain_sql(&self, sql: &str) -> Result<explain::ExplainPlan> {
         // Until SQL frontend is wired, build a minimal plan and include VOS hint-only data if available.
         let mut plan = explain::ExplainPlan::new();
-        plan.orchestration_steps.push("Parse (SQL frontend)".to_string());
+        plan.orchestration_steps
+            .push("Parse (SQL frontend)".to_string());
         plan.orchestration_steps
             .push("Orchestrate (Query layer)".to_string());
         plan.orchestration_steps

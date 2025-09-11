@@ -12,12 +12,18 @@ Base URL: `http://localhost:5678`
 
 - REST: `POST /api/v1/sql/execute`
 
+Seeding strategy controls for hybrid graph→vector:
+
+- SQL hint (inline): `-- SEEDING: AVERAGE | PER_SEED | NONE` (or `SEED USING AVERAGE`)
+- REST body field: `"seeding": "average" | "per_seed" | "none"`
+
 Request
 ----
 {
-  "query": "SELECT id, metadata FROM my_collection ORDER BY COSINE_DISTANCE(vector, $1) LIMIT 5",
+  "query": "-- SEEDING: PER_SEED\nSELECT id FROM my_collection ORDER BY COSINE_DISTANCE(vector, $1) LIMIT 5",
   "parameters": [[0.1,0.2,0.3, ...]],
-  "collection": "my_collection"
+  "collection": "my_collection",
+  "seeding": "per_seed"
 }
 ----
 

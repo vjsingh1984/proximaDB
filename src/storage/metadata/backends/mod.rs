@@ -10,9 +10,9 @@
 //! - LocalRocksDbBackend - High-performance local RocksDB storage
 
 // Active backends
-pub mod universal_backend;
 #[cfg(feature = "rocksdb")]
 pub mod local_rocksdb_backend;
+pub mod universal_backend;
 
 // Utilities
 pub mod common_utils;
@@ -24,17 +24,17 @@ mod tests {
     // pub mod integration_tests; // TODO: Add integration tests module
 }
 
+use self::metrics_decorator::MetricsDecorator;
+use crate::storage::traits::UnifiedMetricsCollector;
 use anyhow::Result;
 use std::sync::Arc;
-use crate::storage::traits::UnifiedMetricsCollector;
-use self::metrics_decorator::MetricsDecorator;
 
 /// Factory for creating metadata backend instances
 pub struct MetadataBackendFactory;
 
 impl MetadataBackendFactory {
     /// Create a metadata backend based on URL scheme
-    /// 
+    ///
     /// # URL Schemes:
     /// - `file://` - Local filesystem
     /// - `s3://` - Amazon S3
@@ -83,7 +83,7 @@ impl MetadataBackendFactory {
                 backup_url: None,
                 temp_dir: None,
             };
-            
+
             // Create filesystem factory
             let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
                 default_fs: Some(url.to_string()),
@@ -93,25 +93,25 @@ impl MetadataBackendFactory {
                 performance_config: Default::default(),
                 scheme_mapping: Default::default(),
             };
-            
+
             let filesystem_factory = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?
+                crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?,
             );
-            
-            let backend = universal_backend::UniversalMetadataBackend::new(
-                config,
-                filesystem_factory,
-            ).await?;
-            
+
+            let backend =
+                universal_backend::UniversalMetadataBackend::new(config, filesystem_factory)
+                    .await?;
+
             Ok(Box::new(backend))
         }
     }
-    
+
     /// Create default metadata backend (local filesystem)
-    pub async fn create_default() -> Result<Box<dyn crate::storage::traits::InternalCollectionProvider>> {
+    pub async fn create_default()
+    -> Result<Box<dyn crate::storage::traits::InternalCollectionProvider>> {
         Self::create_from_url("file://./data/metadata_info").await
     }
-    
+
     /// Create a metadata backend with metrics collection
     pub async fn create_with_metrics(
         url: &str,
@@ -139,7 +139,10 @@ impl MetadataBackendFactory {
                     bloom_filter_bits_per_key: 10,
                 };
                 let backend = local_rocksdb_backend::LocalRocksDbBackend::new(config).await?;
-                Ok(Box::new(MetricsDecorator::new(backend, metrics)) as Box<dyn crate::storage::traits::InternalCollectionProvider>)
+                Ok(Box::new(MetricsDecorator::new(backend, metrics))
+                    as Box<
+                        dyn crate::storage::traits::InternalCollectionProvider,
+                    >)
             }
             #[cfg(not(feature = "rocksdb"))]
             {
@@ -155,7 +158,7 @@ impl MetadataBackendFactory {
                 backup_url: None,
                 temp_dir: None,
             };
-            
+
             let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
                 default_fs: Some(url.to_string()),
                 local: None,
@@ -164,17 +167,19 @@ impl MetadataBackendFactory {
                 performance_config: Default::default(),
                 scheme_mapping: Default::default(),
             };
-            
+
             let filesystem_factory = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?
+                crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?,
             );
-            
-            let backend = universal_backend::UniversalMetadataBackend::new(
-                config,
-                filesystem_factory,
-            ).await?;
-            
-            Ok(Box::new(MetricsDecorator::new(backend, metrics)) as Box<dyn crate::storage::traits::InternalCollectionProvider>)
+
+            let backend =
+                universal_backend::UniversalMetadataBackend::new(config, filesystem_factory)
+                    .await?;
+
+            Ok(Box::new(MetricsDecorator::new(backend, metrics))
+                as Box<
+                    dyn crate::storage::traits::InternalCollectionProvider,
+                >)
         }
     }
 }

@@ -154,9 +154,11 @@ mod tests {
 
             let metadata = vec![MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    (i % 2).to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        (i % 2).to_string(),
+                    ),
+                ),
             }];
 
             let record = create_test_record(format!("vec_{}", i), vec, metadata);

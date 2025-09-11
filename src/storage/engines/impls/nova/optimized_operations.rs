@@ -7,9 +7,7 @@ use arrow_array::RecordBatch;
 // use arrow::compute::kernels::aggregate;
 use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 use crate::core::{
-    VectorRecord,
-    hardware_capabilities::HardwareCapabilities,
-    memory::pool::VectorMemoryPool,
+    VectorRecord, hardware_capabilities::HardwareCapabilities, memory::pool::VectorMemoryPool,
 };
 use std::sync::Arc;
 use tracing::{debug, info};

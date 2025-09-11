@@ -1089,12 +1089,12 @@ impl UnifiedIvfIndex {
                     .map(|(i, v)| VectorRecord {
                         id: format!("training_{}", i),
                         vector: v.clone(),
-                        metadata: vec![],
+                        metadata: std::collections::HashMap::new(),
                         timestamp: 0,
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: None,
+                        quantized_vector: Vec::new(),
                         source: None,
                     })
                     .collect();
@@ -1670,9 +1670,9 @@ pub struct IvfStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::axis::*;
     use super::{IvfClusteringMethod, PartitionedKey};
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::index::axis::*;
 
     #[tokio::test]
     async fn test_unified_ivf_basic() {

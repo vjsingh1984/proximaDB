@@ -2,11 +2,65 @@
 
 use crate::compute::distance_computation::engine::SimilarityResult;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::metadata_types::TypedMetadata;
 use crate::proto::proximadb_v1::SourceContent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Convert SqlValue map to serde_json::Value map for compatibility
+fn convert_sql_value_map_to_json_map(
+    sql_map: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+) -> HashMap<String, serde_json::Value> {
+    sql_map
+        .iter()
+        .filter_map(|(key, sql_value)| {
+            use crate::proto::proximadb_v1::sql_value::Value;
+            let json_value = match &sql_value.value {
+                Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                Some(Value::NumberValue(n)) => serde_json::Value::Number(
+                    serde_json::Number::from_f64(*n)
+                        .unwrap_or_else(|| serde_json::Number::from(0)),
+                ),
+                Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                Some(Value::Int64Value(i)) => serde_json::Value::Number(
+                    serde_json::Number::from(*i)
+                ),
+                Some(Value::BytesValue(_)) => serde_json::Value::String("[binary data]".to_string()),
+                Some(Value::NullValue(_)) => serde_json::Value::Null,
+                Some(Value::ArrayValue(_)) => serde_json::Value::String("[array]".to_string()),
+                Some(Value::ObjectValue(_)) => serde_json::Value::String("[object]".to_string()),
+                None => return None,
+            };
+            Some((key.clone(), json_value))
+        })
+        .collect()
+}
+
+/// Convert serde_json::Value map to SqlValue map for compatibility
+fn convert_json_map_to_sql_value_map(
+    json_map: HashMap<String, serde_json::Value>,
+) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
+    json_map
+        .into_iter()
+        .map(|(key, json_value)| {
+            let sql_value = match json_value {
+                serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                },
+                serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                        n.as_f64().unwrap_or(0.0),
+                    )),
+                },
+                serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                },
+                _ => crate::proto::proximadb_v1::SqlValue { value: None },
+            };
+            (key, sql_value)
+        })
+        .collect()
+}
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -212,25 +266,12 @@ impl InternalSearchResult {
     }
 
     /// Create search result from VectorRecord with score - preserves all source information
-    pub fn from_vector_record(record: &crate::proto::proximadb_v1::VectorRecord, score: f32) -> Self {
-        // Convert metadata from proto MetadataItem to serde_json::Value
-        let metadata = record
-            .metadata
-            .iter()
-            .filter_map(|(key, sql_value)| {
-                use crate::proto::proximadb_v1::sql_value::Value;
-                let value = match &sql_value.value {
-                    Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                    Some(Value::NumberValue(n)) => serde_json::Value::Number(
-                        serde_json::Number::from_f64(*n)
-                            .unwrap_or_else(|| serde_json::Number::from(0)),
-                    ),
-                    Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                    None => return None,
-                };
-                Some((key.clone(), value))
-            })
-            .collect();
+    pub fn from_vector_record(
+        record: &crate::proto::proximadb_v1::VectorRecord,
+        score: f32,
+    ) -> Self {
+        // Convert SqlValue metadata to serde_json::Value for InternalSearchResult
+        let metadata = convert_sql_value_map_to_json_map(&record.metadata);
 
         Self {
             id: record.id.clone(),
@@ -240,11 +281,13 @@ impl InternalSearchResult {
             vector: Some(record.vector.clone()),
             metadata,
             debug_info: None,
-            version: record.version,
-            timestamp: Some(record.timestamp),
-            updated_at: record.updated_at,
-            expires_at: record.expires_at,
-            source: record.source.clone(), // Preserve source information
+            version: record.version.map(|v| v as u32),
+            timestamp: Some(record.timestamp as u32),
+            updated_at: record.updated_at.map(|v| v as u32),
+            expires_at: record.expires_at.map(|v| v as u32),
+            source: record.source.as_ref().map(|s| SourceContent {
+                data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(s.clone())),
+            }), // Convert String to SourceContent
             expanded_context: Vec::new(),  // Empty by default, can be populated later
             semantic_similarity: None,
             quantization_info: None,
@@ -286,28 +329,11 @@ impl InternalSearchResult {
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         use crate::proto::proximadb_v1::{MetadataItem, SearchVectorRecord, metadata_item::Value};
 
-        // Convert metadata back to proto format if requested
+        // Convert metadata to SqlValue format for SearchVectorRecord
         let metadata = if include_metadata {
-            self.metadata
-                .iter()
-                .map(|(key, value)| {
-                    let proto_value = match value {
-                        serde_json::Value::String(s) => Some(Value::StringValue(s.clone())),
-                        serde_json::Value::Number(n) => {
-                            Some(Value::NumberValue(n.as_f64().unwrap_or(0.0)))
-                        }
-                        serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
-                        _ => None, // Skip complex types for now
-                    };
-                    MetadataItem {
-                        key: key.clone(),
-                        value: proto_value,
-                    }
-                })
-                .filter(|(key, value)| value.is_some())
-                .collect()
+            convert_json_map_to_sql_value_map(self.metadata.clone())
         } else {
-            Vec::new()
+            HashMap::new()
         };
 
         SearchVectorRecord {
@@ -318,27 +344,48 @@ impl InternalSearchResult {
                 Vec::new()
             },
             metadata,
-            score: self.score,
+            score: self.score as f64,
             similarity: self.similarity,
-            version: self.version,
-            timestamp: self.timestamp,
+            version: self.version.map(|v| v as i64),
+            timestamp: self.timestamp.map(|v| v as i64),
             source: if include_source {
-                self.source.clone()
+                self.source.as_ref().and_then(|sc| match &sc.data {
+                    Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => Some(text.clone()),
+                    Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => Some("[Binary Content]".to_string()),
+                    Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(_)) => Some("[External Reference]".to_string()),
+                    None => None,
+                })
             } else {
                 None
-            }, // Preserve source info when requested
+            }, // Convert SourceContent to String
             expanded_context: if include_source {
-                self.expanded_context.iter().map(|sc| {
-                    match &sc.data {
-                        Some(crate::proto::proximadb_v1::source_content::Data::Text(text)) => text.clone(),
-                        Some(crate::proto::proximadb_v1::source_content::Data::Url(url)) => url.clone(),
-                        Some(crate::proto::proximadb_v1::source_content::Data::Binary(_)) => "[Binary Content]".to_string(),
+                self.expanded_context
+                    .iter()
+                    .map(|sc| match &sc.data {
+                        Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
+                            text.clone()
+                        }
+                        Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
+                            "[Binary Content]".to_string()
+                        }
+                        Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(_)) => {
+                            "[External Reference]".to_string()
+                        }
                         None => "[Empty Content]".to_string(),
-                    }
-                }).collect()
+                    })
+                    .collect()
             } else {
                 Vec::new()
             },
+            semantic_similarity: self.semantic_similarity.as_ref().map(|s| s.similarity_score),
+            quantization_info: self.quantization_info.as_ref().map(|q| format!("{:?}", q)),
+            engine_stats: self.engine_stats.as_ref().map(|stats| {
+                let mut map = HashMap::new();
+                map.insert("strategy".to_string(), stats.strategy_used.clone());
+                map.insert("bytes_read".to_string(), stats.bytes_read.to_string());
+                map
+            }).unwrap_or_default(),
+            index_path: self.index_path.clone(),
         }
     }
 
@@ -349,31 +396,23 @@ impl InternalSearchResult {
         include_metadata: bool,
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         // Convert metadata map to v1 SqlValue map if requested
-        let mut metadata: std::collections::HashMap<
-            String,
-            crate::proto::proximadb_v1::SqlValue,
-        > = std::collections::HashMap::new();
+        let mut metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
+            std::collections::HashMap::new();
         if include_metadata {
             for (key, value) in &self.metadata {
                 let sql_value = match value {
                     serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                        value: Some(
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                s.clone(),
-                            ),
-                        ),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            s.clone(),
+                        )),
                     },
                     serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                        value: Some(
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                n.as_f64().unwrap_or(0.0),
-                            ),
-                        ),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                            n.as_f64().unwrap_or(0.0),
+                        )),
                     },
                     serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                        value: Some(
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
-                        ),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
                     },
                     _ => crate::proto::proximadb_v1::SqlValue { value: None },
                 };
@@ -389,8 +428,34 @@ impl InternalSearchResult {
                 Vec::new()
             },
             metadata,
-            score: self.score,
+            score: self.score as f64,
             version: self.version.map(|v| v as i64),
+            similarity: self.similarity,
+            timestamp: self.timestamp.map(|v| v as i64),
+            source: self.source.as_ref().and_then(|sc| match &sc.data {
+                Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => Some(text.clone()),
+                Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => Some("[Binary Content]".to_string()),
+                Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(_)) => Some("[External Reference]".to_string()),
+                None => None,
+            }),
+            expanded_context: self.expanded_context
+                .iter()
+                .map(|sc| match &sc.data {
+                    Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
+                    Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
+                    Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(_)) => "[External Reference]".to_string(),
+                    None => "[Empty Content]".to_string(),
+                })
+                .collect(),
+            semantic_similarity: self.semantic_similarity.as_ref().map(|s| s.similarity_score),
+            quantization_info: self.quantization_info.as_ref().map(|q| format!("{:?}", q)),
+            engine_stats: self.engine_stats.as_ref().map(|stats| {
+                let mut map = HashMap::new();
+                map.insert("strategy".to_string(), stats.strategy_used.clone());
+                map.insert("bytes_read".to_string(), stats.bytes_read.to_string());
+                map
+            }).unwrap_or_default(),
+            index_path: self.index_path.clone(),
         }
     }
 
@@ -527,18 +592,18 @@ pub struct OptimizedSearchRecord {
     pub similarity: Option<f32>,
     /// Original vector data (using Arc to avoid cloning)
     pub vector: Option<Arc<Vec<f32>>>,
-    /// Associated metadata (using TypedMetadata for performance)
-    pub metadata: TypedMetadata,
+    /// Associated metadata (using HashMap<String, SqlValue> for full SQL type support and superior performance)
+    pub metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
     /// Debug information for result
     pub debug_info: Option<SearchDebugInfo>,
     /// Version for MVCC
-    pub version: Option<u32>,
+    pub version: Option<i64>,
     /// Record timestamp
-    pub timestamp: Option<u32>,
+    pub timestamp: Option<i64>,
     /// Update timestamp
-    pub updated_at: Option<u32>,
+    pub updated_at: Option<i64>,
     /// TTL expiration timestamp
-    pub expires_at: Option<u32>,
+    pub expires_at: Option<i64>,
     /// Original source content
     pub source: Option<SourceContent>,
     /// Expanded context for RAG applications
@@ -585,7 +650,7 @@ impl OptimizedSearchRecord {
             ..Default::default()
         }
     }
-    
+
     /// Standardized distance-to-similarity conversion for consistent ranking across all metrics
     /// This is a static method that can be used without an instance
     pub fn standardized_distance_to_similarity(
@@ -621,7 +686,7 @@ impl OptimizedSearchRecord {
             }
         }
     }
-    
+
     /// Create with ID, score and vector
     pub fn with_vector(id: String, score: f32, vector: Vec<f32>) -> Self {
         Self {
@@ -631,7 +696,7 @@ impl OptimizedSearchRecord {
             ..Default::default()
         }
     }
-    
+
     /// Create with ID, score and shared vector (Arc)
     pub fn with_arc_vector(id: String, score: f32, vector: Arc<Vec<f32>>) -> Self {
         Self {
@@ -641,38 +706,41 @@ impl OptimizedSearchRecord {
             ..Default::default()
         }
     }
-    
+
     /// Builder method to add vector
     pub fn add_vector(mut self, vector: Vec<f32>) -> Self {
         self.vector = Some(Arc::new(vector));
         self
     }
-    
-    /// Builder method to add metadata
-    pub fn with_metadata(mut self, metadata: TypedMetadata) -> Self {
+
+    /// Builder method to add metadata (using HashMap<String, SqlValue> for full SQL type support)
+    pub fn with_metadata(
+        mut self,
+        metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> Self {
         self.metadata = metadata;
         self
     }
-    
+
     /// Builder method to add similarity
     pub fn with_similarity(mut self, similarity: f32) -> Self {
         self.similarity = Some(similarity);
         self
     }
-    
+
     /// Builder method to add version info
-    pub fn with_version_info(mut self, version: u32, timestamp: u32) -> Self {
+    pub fn with_version_info(mut self, version: i64, timestamp: i64) -> Self {
         self.version = Some(version);
         self.timestamp = Some(timestamp);
         self
     }
-    
+
     /// Builder method to add source content
     pub fn with_source(mut self, source: SourceContent) -> Self {
         self.source = Some(source);
         self
     }
-    
+
     /// Convert from InternalSearchResult for migration
     pub fn from_internal(result: InternalSearchResult) -> Self {
         Self {
@@ -681,12 +749,12 @@ impl OptimizedSearchRecord {
             score: result.score,
             similarity: result.similarity,
             vector: result.vector.map(|v| Arc::new(v)),
-            metadata: TypedMetadata::from_json_map(result.metadata),
+            metadata: convert_json_map_to_sql_value_map(result.metadata),
             debug_info: result.debug_info,
-            version: result.version,
-            timestamp: result.timestamp,
-            updated_at: result.updated_at,
-            expires_at: result.expires_at,
+            version: result.version.map(|v| v as i64),
+            timestamp: result.timestamp.map(|v| v as i64),
+            updated_at: result.updated_at.map(|v| v as i64),
+            expires_at: result.expires_at.map(|v| v as i64),
             source: result.source,
             expanded_context: result.expanded_context,
             semantic_similarity: result.semantic_similarity,
@@ -695,7 +763,7 @@ impl OptimizedSearchRecord {
             index_path: result.index_path,
         }
     }
-    
+
     /// Convert to InternalSearchResult for compatibility
     pub fn to_internal(self) -> InternalSearchResult {
         InternalSearchResult {
@@ -704,12 +772,12 @@ impl OptimizedSearchRecord {
             score: self.score,
             similarity: self.similarity,
             vector: self.vector.map(|arc| (*arc).clone()),
-            metadata: self.metadata.to_json_map(),
+            metadata: convert_sql_value_map_to_json_map(&self.metadata),
             debug_info: self.debug_info,
-            version: self.version,
-            timestamp: self.timestamp,
-            updated_at: self.updated_at,
-            expires_at: self.expires_at,
+            version: self.version.map(|v| v as u32),
+            timestamp: self.timestamp.map(|v| v as u32),
+            updated_at: self.updated_at.map(|v| v as u32),
+            expires_at: self.expires_at.map(|v| v as u32),
             source: self.source,
             expanded_context: self.expanded_context,
             semantic_similarity: self.semantic_similarity,

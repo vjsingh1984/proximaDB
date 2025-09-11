@@ -295,43 +295,45 @@ impl SimdVectorParser {
     /// Parse vector using AVX2 SIMD instructions
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> { unsafe {
-        #[cfg(target_arch = "x86_64")]
-        use std::arch::x86_64::{_mm256_loadu_ps, _mm256_storeu_ps};
-        let mut result = Vec::with_capacity(parts.len());
+    unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> {
+        unsafe {
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::{_mm256_loadu_ps, _mm256_storeu_ps};
+            let mut result = Vec::with_capacity(parts.len());
 
-        // Process 8 elements at a time with AVX2
-        let mut i = 0;
-        while i + 8 <= parts.len() {
-            // Parse 8 consecutive string parts to floats
-            let mut batch = [0.0f32; 8];
-            for j in 0..8 {
-                batch[j] = parts[i + j].parse::<f32>().map_err(|_e| {
-                    anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j])
-                })?;
+            // Process 8 elements at a time with AVX2
+            let mut i = 0;
+            while i + 8 <= parts.len() {
+                // Parse 8 consecutive string parts to floats
+                let mut batch = [0.0f32; 8];
+                for j in 0..8 {
+                    batch[j] = parts[i + j].parse::<f32>().map_err(|_e| {
+                        anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j])
+                    })?;
+                }
+
+                // Load into AVX2 register for validation (could do additional processing here)
+                let avx_values = _mm256_loadu_ps(batch.as_ptr());
+
+                // Store results (in real implementation, we might do SIMD validation/processing)
+                let mut stored = [0.0f32; 8];
+                _mm256_storeu_ps(stored.as_mut_ptr(), avx_values);
+                result.extend_from_slice(&stored);
+
+                i += 8;
             }
 
-            // Load into AVX2 register for validation (could do additional processing here)
-            let avx_values = _mm256_loadu_ps(batch.as_ptr());
+            // Handle remaining elements with scalar processing
+            for part in &parts[i..] {
+                let value = part
+                    .parse::<f32>()
+                    .map_err(|_e| anyhow!("Invalid float: '{}'", part))?;
+                result.push(value);
+            }
 
-            // Store results (in real implementation, we might do SIMD validation/processing)
-            let mut stored = [0.0f32; 8];
-            _mm256_storeu_ps(stored.as_mut_ptr(), avx_values);
-            result.extend_from_slice(&stored);
-
-            i += 8;
+            Ok(result)
         }
-
-        // Handle remaining elements with scalar processing
-        for part in &parts[i..] {
-            let value = part
-                .parse::<f32>()
-                .map_err(|_e| anyhow!("Invalid float: '{}'", part))?;
-            result.push(value);
-        }
-
-        Ok(result)
-    }}
+    }
 
     #[cfg(not(target_arch = "x86_64"))]
     unsafe fn parse_with_avx2(&self, parts: &[&str]) -> Result<Vec<f32>> {
@@ -342,43 +344,45 @@ impl SimdVectorParser {
     /// Parse vector using SSE4.1 SIMD instructions
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "sse4.1")]
-    unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> { unsafe {
-        #[cfg(target_arch = "x86_64")]
-        use std::arch::x86_64::{_mm_loadu_ps, _mm_storeu_ps};
-        let mut result = Vec::with_capacity(parts.len());
+    unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> {
+        unsafe {
+            #[cfg(target_arch = "x86_64")]
+            use std::arch::x86_64::{_mm_loadu_ps, _mm_storeu_ps};
+            let mut result = Vec::with_capacity(parts.len());
 
-        // Process 4 elements at a time with SSE4.1
-        let mut i = 0;
-        while i + 4 <= parts.len() {
-            // Parse 4 consecutive string parts to floats
-            let mut batch = [0.0f32; 4];
-            for j in 0..4 {
-                batch[j] = parts[i + j].parse::<f32>().map_err(|_e| {
-                    anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j])
-                })?;
+            // Process 4 elements at a time with SSE4.1
+            let mut i = 0;
+            while i + 4 <= parts.len() {
+                // Parse 4 consecutive string parts to floats
+                let mut batch = [0.0f32; 4];
+                for j in 0..4 {
+                    batch[j] = parts[i + j].parse::<f32>().map_err(|_e| {
+                        anyhow!("Invalid float at position {}: '{}'", i + j, parts[i + j])
+                    })?;
+                }
+
+                // Load into SSE register for validation
+                let sse_values = _mm_loadu_ps(batch.as_ptr());
+
+                // Store results
+                let mut stored = [0.0f32; 4];
+                _mm_storeu_ps(stored.as_mut_ptr(), sse_values);
+                result.extend_from_slice(&stored);
+
+                i += 4;
             }
 
-            // Load into SSE register for validation
-            let sse_values = _mm_loadu_ps(batch.as_ptr());
+            // Handle remaining elements with scalar processing
+            for part in &parts[i..] {
+                let value = part
+                    .parse::<f32>()
+                    .map_err(|_e| anyhow!("Invalid float: '{}'", part))?;
+                result.push(value);
+            }
 
-            // Store results
-            let mut stored = [0.0f32; 4];
-            _mm_storeu_ps(stored.as_mut_ptr(), sse_values);
-            result.extend_from_slice(&stored);
-
-            i += 4;
+            Ok(result)
         }
-
-        // Handle remaining elements with scalar processing
-        for part in &parts[i..] {
-            let value = part
-                .parse::<f32>()
-                .map_err(|_e| anyhow!("Invalid float: '{}'", part))?;
-            result.push(value);
-        }
-
-        Ok(result)
-    }}
+    }
 
     #[cfg(not(target_arch = "x86_64"))]
     unsafe fn parse_with_sse41(&self, parts: &[&str]) -> Result<Vec<f32>> {

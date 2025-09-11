@@ -267,7 +267,9 @@ impl BackgroundFlushContext {
                     "custom_levels"
                 }
                 crate::proto::proximadb_v1::quantization_config::Strategy::Minimal => "minimal",
-                crate::proto::proximadb_v1::quantization_config::Strategy::Aggressive => "aggressive",
+                crate::proto::proximadb_v1::quantization_config::Strategy::Aggressive => {
+                    "aggressive"
+                }
             };
 
             QuantizationConfig {
@@ -280,12 +282,8 @@ impl BackgroundFlushContext {
 
         // Determine batch size hint based on dimension and engine
         let batch_size_hint = match storage_engine {
-            StorageEngineType::Viper => {
-                Some(1000.min(10000 / (config.dimension / 100).max(1)))
-            }
-            StorageEngineType::Sst => {
-                Some(500.min(5000 / (config.dimension / 100).max(1)))
-            }
+            StorageEngineType::Viper => Some(1000.min(10000 / (config.dimension / 100).max(1))),
+            StorageEngineType::Sst => Some(500.min(5000 / (config.dimension / 100).max(1))),
         };
 
         Ok(Self {

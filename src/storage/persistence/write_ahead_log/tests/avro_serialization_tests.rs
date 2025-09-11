@@ -50,15 +50,17 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "test".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "test".to_string(),
+                    ),
+                ),
             },
             MetadataItem {
                 key: "priority".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "1".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("1".to_string()),
+                ),
             },
         ],
         timestamp: 1234567890,
@@ -534,7 +536,6 @@ mod integration_tests {
         ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
             panic!("Mock engine doesn't have filesystem factory")
         }
-
     }
 
     #[tokio::test]

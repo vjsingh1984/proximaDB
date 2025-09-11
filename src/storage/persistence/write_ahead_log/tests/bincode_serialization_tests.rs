@@ -50,15 +50,19 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         metadata: vec![
             MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "bincode_test".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "bincode_test".to_string(),
+                    ),
+                ),
             },
             MetadataItem {
                 key: "value".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    value.to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        value.to_string(),
+                    ),
+                ),
             },
         ],
         timestamp: 1234567890,
@@ -460,21 +464,26 @@ async fn test_bincode_batch_metadata() {
         vector.metadata = vec![
             MetadataItem {
                 key: "index".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    i.to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(i.to_string()),
+                ),
             },
             MetadataItem {
                 key: "binary_data".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    format!("{:08b}", i),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                        "{:08b}",
+                        i
+                    )),
+                ),
             },
             MetadataItem {
                 key: "timestamp".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    (1234567890 + i * 1000).to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        (1234567890 + i * 1000).to_string(),
+                    ),
+                ),
             },
         ];
         vectors.push(vector);

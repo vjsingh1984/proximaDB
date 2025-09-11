@@ -3,7 +3,6 @@
 //! This module provides compile-time quantization for known vector dimensions
 //! and quantization levels, eliminating runtime overhead.
 
-
 /// Compile-time quantization trait
 pub trait CompileTimeQuantization {
     const DIMENSION: usize;
@@ -106,26 +105,28 @@ pub mod simd {
 
     /// SIMD INT8 quantization for 128-dimensional vectors
     #[target_feature(enable = "avx2")]
-    pub unsafe fn quantize_int8_128_simd(input: &[f32; 128]) -> [i8; 128] { unsafe {
-        let mut output = [0i8; 128];
+    pub unsafe fn quantize_int8_128_simd(input: &[f32; 128]) -> [i8; 128] {
+        unsafe {
+            let mut output = [0i8; 128];
 
-        // Process 8 floats at a time with AVX2
-        for i in (0..128).step_by(8) {
-            let vals = _mm256_loadu_ps(&input[i]);
-            let scaled = _mm256_mul_ps(vals, _mm256_set1_ps(127.0));
-            let ints = _mm256_cvtps_epi32(scaled);
+            // Process 8 floats at a time with AVX2
+            for i in (0..128).step_by(8) {
+                let vals = _mm256_loadu_ps(&input[i]);
+                let scaled = _mm256_mul_ps(vals, _mm256_set1_ps(127.0));
+                let ints = _mm256_cvtps_epi32(scaled);
 
-            // Pack to i8
-            let packed = _mm256_packs_epi32(ints, ints);
-            let packed = _mm256_packs_epi16(packed, packed);
+                // Pack to i8
+                let packed = _mm256_packs_epi32(ints, ints);
+                let packed = _mm256_packs_epi16(packed, packed);
 
-            // Store lower 8 bytes
-            let result = _mm256_extract_epi64(packed, 0);
-            *(output.as_mut_ptr().add(i) as *mut i64) = result;
+                // Store lower 8 bytes
+                let result = _mm256_extract_epi64(packed, 0);
+                *(output.as_mut_ptr().add(i) as *mut i64) = result;
+            }
+
+            output
         }
-
-        output
-    }}
+    }
 }
 
 #[cfg(test)]

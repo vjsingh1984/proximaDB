@@ -89,18 +89,17 @@ impl PostingListStorage {
             InfrastructureTier::Memory => Ok(PostingListStorage::Memory {
                 cache: Arc::new(dashmap::DashMap::new()),
             }),
-            InfrastructureTier::NvmeSsd { mount_path } | InfrastructureTier::HardDisk { mount_path } => {
-                match engine_type {
-                    StorageEngineType::SST => Ok(PostingListStorage::SstDisk {
-                        base_path: mount_path.clone(),
-                        collection_id,
-                    }),
-                    StorageEngineType::VIPER => Ok(PostingListStorage::ViperDisk {
-                        base_path: mount_path.clone(),
-                        collection_id,
-                    }),
-                }
-            }
+            InfrastructureTier::NvmeSsd { mount_path }
+            | InfrastructureTier::HardDisk { mount_path } => match engine_type {
+                StorageEngineType::SST => Ok(PostingListStorage::SstDisk {
+                    base_path: mount_path.clone(),
+                    collection_id,
+                }),
+                StorageEngineType::VIPER => Ok(PostingListStorage::ViperDisk {
+                    base_path: mount_path.clone(),
+                    collection_id,
+                }),
+            },
             InfrastructureTier::CloudExpressOneZone { provider, .. }
             | InfrastructureTier::CloudStandard { provider, .. }
             | InfrastructureTier::CloudInfrequentAccess { provider, .. }
@@ -381,8 +380,11 @@ impl TieredPostingListManager {
         disk_path: Option<String>,
         cloud_bucket: Option<String>,
     ) -> Result<Self> {
-        let memory_storage =
-            PostingListStorage::new(&InfrastructureTier::Memory, collection_id.clone(), engine_type)?;
+        let memory_storage = PostingListStorage::new(
+            &InfrastructureTier::Memory,
+            collection_id.clone(),
+            engine_type,
+        )?;
 
         let disk_storage = disk_path
             .map(|path| {
@@ -397,7 +399,7 @@ impl TieredPostingListManager {
         let cloud_storage = cloud_bucket.map(|bucket| {
             PostingListStorage::new(
                 &InfrastructureTier::CloudStandard {
-                    provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 { 
+                    provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                         bucket,
                         storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
                         lifecycle_enabled: false,

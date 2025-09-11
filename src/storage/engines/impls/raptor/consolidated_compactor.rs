@@ -13,8 +13,8 @@ use super::config::RaptorConfig;
 use super::consolidated_reader::RaptorReader;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::clustering::{
-    AxisClusteringEngine as AxisClustering,
-    ClusteringConfig as AxisClusteringConfig, ReusableClusteringEngine,
+    AxisClusteringEngine as AxisClustering, ClusteringConfig as AxisClusteringConfig,
+    ReusableClusteringEngine,
 };
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};

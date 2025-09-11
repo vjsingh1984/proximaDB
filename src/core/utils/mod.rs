@@ -22,7 +22,7 @@
 //! ## Migration Guide
 //!
 //! When refactoring existing code to use these utilities:
-//! 
+//!
 //! 1. Search for duplicate implementations of the same logic
 //! 2. Replace with calls to the appropriate utility function
 //! 3. Update imports to use `crate::core::utils::{module}::{function}`
@@ -30,35 +30,21 @@
 //! 5. Remove the old duplicate implementation
 
 pub mod metadata_conversions;
-pub mod vector_ops;
 pub mod validation;
+pub mod vector_ops;
 
 // Re-export commonly used functions for convenience
 pub use metadata_conversions::{
+    filter_metadata, json_to_metadata_item, json_to_proto_metadata, merge_metadata,
     proto_metadata_to_json,
-    json_to_proto_metadata,
-    json_to_metadata_item,
-    merge_metadata,
-    filter_metadata,
 };
 
 pub use vector_ops::{
-    normalize_l2,
+    cosine_similarity, dot_product, mean, normalize_l2, resize_vector, standard_deviation,
     validate_vector,
-    resize_vector,
-    dot_product,
-    cosine_similarity,
-    mean,
-    standard_deviation,
 };
 
 pub use validation::{
-    validate_vector_id,
-    validate_collection_name,
-    validate_field_name,
-    validate_dimension,
-    validate_batch_size,
-    validate_top_k,
-    validate_distance_metric,
-    validate_storage_engine,
+    validate_batch_size, validate_collection_name, validate_dimension, validate_distance_metric,
+    validate_field_name, validate_storage_engine, validate_top_k, validate_vector_id,
 };

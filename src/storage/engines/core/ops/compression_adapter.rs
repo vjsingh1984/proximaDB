@@ -6,13 +6,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use super::compression_common::{
-    AdaptiveCompressionSettings,
-    ContextAwareCompressionConfig,
-    UniversalCompressionConfig,
+    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
 };
 use crate::core::compression::{
-    CompressionAlgorithm, CompressionContext, CompressionProvider,
-    StandardCompression,
+    CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
@@ -534,8 +531,8 @@ impl CompressionPerformanceStats {
 mod tests {
     use super::*;
     use crate::storage::engines::core::ops::compression_common::{
-        AdaptiveCompressionSettings, AdaptiveStrategy,
-        ContextAwareCompressionConfig, UniversalCompressionConfig,
+        AdaptiveCompressionSettings, AdaptiveStrategy, ContextAwareCompressionConfig,
+        UniversalCompressionConfig,
     };
 
     #[test]

@@ -3,10 +3,12 @@ mod tests {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::hardware_capabilities::HardwareCapabilities;
+    use crate::core::search::metadata_filter_pushdown::{ColumnStatistics, MetadataFilterPushdown};
     use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
-    use crate::core::search::metadata_filter_pushdown::{MetadataFilterPushdown, ColumnStatistics};
-    use crate::core::search::unified_progressive_pipeline::{UnifiedProgressiveSearchPipeline, PipelineConfig};
     use crate::core::search::results::InternalSearchResult;
+    use crate::core::search::unified_progressive_pipeline::{
+        PipelineConfig, UnifiedProgressiveSearchPipeline,
+    };
     use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
     use crate::storage::cache::specialized::{MetadataStore, QueryCache, VectorStore};
     use crate::storage::persistence::write_ahead_log::parallel_search::ParallelWALSearch;
@@ -190,7 +192,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_smart_execution_strategy() {
-        use crate::core::search::smart_execution_strategy::{ExecutionStrategy, SmartExecutionStrategy, StrategyConfig};
+        use crate::core::search::smart_execution_strategy::{
+            ExecutionStrategy, SmartExecutionStrategy, StrategyConfig,
+        };
         init_test_environment();
 
         let config = StrategyConfig {
@@ -218,7 +222,6 @@ mod tests {
 
     #[tokio::test]
     // Removed outdated integrated search optimization end-to-end test
-
     #[tokio::test]
     async fn test_zero_copy_operations() {
         init_test_environment();

@@ -40,15 +40,11 @@ impl<T: MetadataProvider> MetricsDecorator<T> {
         let start = Instant::now();
         let result = operation.await;
         let duration = start.elapsed();
-        
+
         // Record metrics (fire and forget)
-        self.metrics.record(
-            op_type,
-            duration.as_millis() as u64,
-            result.is_ok(),
-            None,
-        );
-        
+        self.metrics
+            .record(op_type, duration.as_millis() as u64, result.is_ok(), None);
+
         result
     }
 }
@@ -80,11 +76,8 @@ impl<T: MetadataProvider + Send + Sync> MetadataProvider for MetricsDecorator<T>
     }
 
     async fn list_collections(&self) -> Result<Vec<Collection>> {
-        self.record_operation(
-            MetricsOperationType::List,
-            self.inner.list_collections(),
-        )
-        .await
+        self.record_operation(MetricsOperationType::List, self.inner.list_collections())
+            .await
     }
 
     async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()> {
@@ -106,7 +99,9 @@ impl<T: MetadataProvider + Send + Sync> MetadataProvider for MetricsDecorator<T>
 
 // If the inner type implements InternalCollectionProvider, so does the decorator
 #[async_trait]
-impl<T: InternalCollectionProvider + Send + Sync> InternalCollectionProvider for MetricsDecorator<T> {
+impl<T: InternalCollectionProvider + Send + Sync> InternalCollectionProvider
+    for MetricsDecorator<T>
+{
     // Marker trait - no additional methods
 }
 
@@ -114,12 +109,12 @@ impl<T: InternalCollectionProvider + Send + Sync> InternalCollectionProvider for
 mod tests {
     use super::*;
     use std::time::Duration;
-    
+
     // Mock implementation for testing
     struct MockProvider {
         fail_on_get: bool,
     }
-    
+
     #[async_trait]
     impl MetadataProvider for MockProvider {
         async fn get_uuid(&self, _collection_id: &str) -> Result<Option<String>> {
@@ -129,53 +124,53 @@ mod tests {
                 Ok(Some("test-uuid".to_string()))
             }
         }
-        
+
         async fn collection_metadata(&self, _collection_id: &str) -> Result<Option<Collection>> {
             Ok(None)
         }
-        
+
         async fn get_collection(&self, _collection_id: &str) -> Result<Option<Collection>> {
             Ok(None)
         }
-        
+
         async fn list_collections(&self) -> Result<Vec<Collection>> {
             Ok(vec![])
         }
-        
+
         async fn upsert_collection_proto(&self, _collection: &Collection) -> Result<()> {
             Ok(())
         }
-        
+
         async fn delete_collection(&self, _collection_id: &str) -> Result<()> {
             Ok(())
         }
     }
-    
+
     #[tokio::test]
     async fn test_metrics_decorator_success() {
         let provider = MockProvider { fail_on_get: false };
         let metrics = Arc::new(UnifiedMetricsCollector::new());
         let decorated = MetricsDecorator::new(provider, metrics.clone());
-        
+
         let result = decorated.get_uuid("test-collection").await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some("test-uuid".to_string()));
-        
+
         // Verify metrics were recorded
         let snapshot = metrics.get_snapshot().await;
         assert_eq!(snapshot.successful_operations, 1);
         assert_eq!(snapshot.failed_operations, 0);
     }
-    
+
     #[tokio::test]
     async fn test_metrics_decorator_failure() {
         let provider = MockProvider { fail_on_get: true };
         let metrics = Arc::new(UnifiedMetricsCollector::new());
         let decorated = MetricsDecorator::new(provider, metrics.clone());
-        
+
         let result = decorated.get_uuid("test-collection").await;
         assert!(result.is_err());
-        
+
         // Verify failure metrics were recorded
         let snapshot = metrics.get_snapshot().await;
         assert_eq!(snapshot.successful_operations, 0);

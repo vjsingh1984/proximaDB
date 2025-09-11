@@ -14,8 +14,8 @@ use tracing::debug;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 
@@ -443,7 +443,9 @@ impl SearchCandidate {
                 if let Some(value) = &item.value {
                     use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
-                        metadata_item::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
+                        metadata_item::Value::StringValue(s) => {
+                            MetadataValue::String(Arc::from(s.as_str()))
+                        }
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
                         metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
                     };
@@ -455,13 +457,10 @@ impl SearchCandidate {
             TypedMetadata::default()
         };
 
-        let mut result = OptimizedSearchRecord::new(
-            self.record.id.clone(),
-            self.score,
-        )
-        .with_similarity(self.score)
-        .with_metadata(metadata)
-        .with_version_info(self.record.version.unwrap_or(0), self.record.timestamp);
+        let mut result = OptimizedSearchRecord::new(self.record.id.clone(), self.score)
+            .with_similarity(self.score)
+            .with_metadata(metadata)
+            .with_version_info(self.record.version.unwrap_or(0), self.record.timestamp);
 
         if self.include_vectors {
             result = result.add_vector(self.record.vector.clone());

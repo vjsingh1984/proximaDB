@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::core::metadata_types::MetadataValue;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::FilterExpression;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1;
 use crate::services::operations::vectors::UnifiedSearchConfig;
 
@@ -19,7 +19,9 @@ pub struct NativeSearchInput {
 
 /// Convert a v1 VectorSearchRequest into native input for services.
 /// Note: v1 filter schema handling is pending; filter stays None until v1 filters land.
-pub fn v1_request_to_native(req: &proximadb_v1::VectorSearchRequest) -> Result<NativeSearchInput, String> {
+pub fn v1_request_to_native(
+    req: &proximadb_v1::VectorSearchRequest,
+) -> Result<NativeSearchInput, String> {
     let collection_id = req.collection_id.clone();
     let top_k = req.top_k as usize;
     let query_vector = req
@@ -111,4 +113,3 @@ pub fn native_records_to_v1(
         collection_id: Some(collection_id.to_string()),
     }
 }
-

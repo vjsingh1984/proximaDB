@@ -1,0 +1,41 @@
+ = Agent Guide: Implementing SKS + Hybrid Query
+ :toc:
+
+ == Purpose
+ Concrete steps for coding agents to implement Semantic Knowledge Store (SKS) and federated Hybrid Query in a modular, testable way.
+
+ == Prerequisites
+ - Build: `make build` or `make build-server`
+ - Tests: `make test`
+ - Style: `make fmt && make clippy`
+
+ == Tasks (Ordered)
+ 1) Hybrid Orchestrator (Federated)
+    - Files: `src/query/execution/{planner.rs,executor.rs,mod.rs}`
+    - Actions: Parallel VectorSearch + GraphTraversal; seed handoff both ways; Fusion (RRF) with weights; pagination/streaming; EXPLAIN.
+ 2) SQL Frontend Wiring
+    - Files: `src/query/sql_frontend/{parser.rs,lowering.rs}`
+    - Actions: Ensure SIMILAR/FOLLOW lower to ExecutionOperation; add tests in `sql_frontend/tests.rs`.
+ 3) SKS v1 Storage Coupling
+    - Files: `src/storage/entity_store.rs`
+    - Actions: Implement persistence for headers/embeddings; add `CsrRelationsStore`; add `InMemoryProvenanceRegistry`.
+ 4) API Exposure
+    - Files: `src/api_handlers/unified_handlers.rs`, `src/network/rest/v1/entities.rs`, `src/network/grpc/entity_service.rs`
+    - Actions: Expose pagination/streaming; add SKS routes as needed.
+
+== Design Patterns
+- Interfaces first: Traits (`EntityStore`, `RelationsStore`) with minimal stable methods
+- Zero‑copy: Share headers via Arc; avoid cloning large vectors in hot paths
+- Fusion strategy pattern: Enum + pluggable scoring functions
+- Backpressure: Stream fused rows with bounded buffers
+- Seeding strategy: Control graph→vector seeding via SQL hints or REST field (AVERAGE | PER_SEED | NONE)
+
+== Tests
+- Unit: fusion, CSR adjacency, keying
+- Integration: SIMILAR→FOLLOW and FOLLOW→SIMILAR pipelines; pagination stability
+- Bench: Compare federated vs SKS on sample datasets
+- Deep traversal (feature `deep_traversal_tests`): BFS up to `max_depth` for richer coverage
+
+ == Feature Flags
+ - `sql_frontend` (default on): use new frontend path
+ - `sks_coupled` (future): route hybrid to SKS when available; fallback to federated

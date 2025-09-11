@@ -11,13 +11,13 @@
 //! - Optimistic concurrency control
 //! - Atomic batch operations
 
+use crate::utils::uuid::Uuid;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use crate::utils::uuid::Uuid;
 
 use super::{
     MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
@@ -296,7 +296,11 @@ impl AtomicMetadataStore {
                             .as_ref()
                             .map(|c| c.name.clone())
                             .unwrap_or_default(),
-                        dimension: collection.config.as_ref().map(|c| c.dimension as usize).unwrap_or(0),
+                        dimension: collection
+                            .config
+                            .as_ref()
+                            .map(|c| c.dimension as usize)
+                            .unwrap_or(0),
                         distance_metric: collection
                             .config
                             .as_ref()
@@ -607,7 +611,10 @@ impl AtomicMetadataStore {
 
 #[async_trait]
 impl MetadataStoreInterface for AtomicMetadataStore {
-    async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()> {
+    async fn create_collection(
+        &self,
+        metadata: crate::proto::proximadb_v1::Collection,
+    ) -> Result<()> {
         let transaction_id = self
             .begin_transaction(IsolationLevel::ReadCommitted)
             .await?;

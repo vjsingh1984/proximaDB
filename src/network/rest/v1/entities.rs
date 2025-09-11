@@ -14,11 +14,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb_v1::{
-    Entity, EntityResult, MetadataFilter,
-};
+use crate::proto::proximadb_v1::{Entity, EntityResult, MetadataFilter};
 use crate::storage::entity_store::{EntityStore, ProximaEntityStore};
 
 /// REST API state containing the entity store
@@ -80,7 +78,7 @@ pub async fn upsert_entity(
     Json(request): Json<UpsertEntityRequest>,
 ) -> Result<Json<UpsertEntityResponse>, (StatusCode, Json<ErrorResponse>)> {
     info!("REST: Upserting entity in collection: {}", collection_id);
-    
+
     // Validate collection_id
     if collection_id.is_empty() {
         return Err((
@@ -91,14 +89,18 @@ pub async fn upsert_entity(
             }),
         ));
     }
-    
+
     // Validate entity has at least one embedding
     if request.entity.embeddings.is_empty() {
         warn!("Entity has no embeddings, this may affect search capabilities");
     }
-    
+
     // Store entity
-    match state.store.upsert_entity(&collection_id, request.entity).await {
+    match state
+        .store
+        .upsert_entity(&collection_id, request.entity)
+        .await
+    {
         Ok(entity_id) => {
             info!("Successfully upserted entity: {}", entity_id);
             Ok(Json(UpsertEntityResponse {
@@ -130,7 +132,7 @@ pub async fn get_entity(
         "REST: Getting entity {} from collection {}",
         entity_id, collection_id
     );
-    
+
     // Validate parameters
     if collection_id.is_empty() || entity_id.is_empty() {
         return Err((
@@ -141,17 +143,21 @@ pub async fn get_entity(
             }),
         ));
     }
-    
+
     let include_embeddings = params.include_embeddings.unwrap_or(false);
     let include_relations = params.include_relations.unwrap_or(false);
-    
+
     // Retrieve entity
-    match state.store.get_entity(
-        &collection_id,
-        &entity_id,
-        include_embeddings,
-        include_relations,
-    ).await {
+    match state
+        .store
+        .get_entity(
+            &collection_id,
+            &entity_id,
+            include_embeddings,
+            include_relations,
+        )
+        .await
+    {
         Ok(Some(entity)) => {
             debug!("Found entity: {}", entity_id);
             Ok(Json(entity))
@@ -190,9 +196,11 @@ pub async fn delete_entity(
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
     info!(
         "REST: Deleting entity {} from collection {} (hard_delete: {})",
-        entity_id, collection_id, params.hard_delete.unwrap_or(false)
+        entity_id,
+        collection_id,
+        params.hard_delete.unwrap_or(false)
     );
-    
+
     // Validate parameters
     if collection_id.is_empty() || entity_id.is_empty() {
         return Err((
@@ -203,11 +211,15 @@ pub async fn delete_entity(
             }),
         ));
     }
-    
+
     let hard_delete = params.hard_delete.unwrap_or(false);
-    
+
     // Delete entity
-    match state.store.delete_entity(&collection_id, &entity_id, hard_delete).await {
+    match state
+        .store
+        .delete_entity(&collection_id, &entity_id, hard_delete)
+        .await
+    {
         Ok(success) => {
             if success {
                 info!("Successfully deleted entity: {}", entity_id);
@@ -249,12 +261,12 @@ pub async fn search_entities(
     Json(request): Json<SearchEntitiesRequest>,
 ) -> Result<Json<SearchEntitiesResponse>, (StatusCode, Json<ErrorResponse>)> {
     let top_k = request.top_k.unwrap_or(10);
-    
+
     info!(
         "REST: Searching entities in collection {} (top_k: {})",
         collection_id, top_k
     );
-    
+
     // Validate parameters
     if collection_id.is_empty() {
         return Err((
@@ -265,7 +277,7 @@ pub async fn search_entities(
             }),
         ));
     }
-    
+
     if top_k == 0 || top_k > 10000 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -275,7 +287,7 @@ pub async fn search_entities(
             }),
         ));
     }
-    
+
     // Handle text query by converting to embedding
     let query_vector = if let Some(text) = request.query_text {
         // TODO: Implement text-to-embedding conversion
@@ -285,15 +297,19 @@ pub async fn search_entities(
     } else {
         request.query_vector
     };
-    
+
     // Perform search
-    match state.store.search_entities(
-        &collection_id,
-        query_vector,
-        request.filters,
-        // temporal_filter, // TODO: Add when available
-        top_k,
-    ).await {
+    match state
+        .store
+        .search_entities(
+            &collection_id,
+            query_vector,
+            request.filters,
+            // temporal_filter, // TODO: Add when available
+            top_k,
+        )
+        .await
+    {
         Ok(results) => {
             let entity_results: Vec<EntityResult> = results
                 .into_iter()
@@ -303,11 +319,11 @@ pub async fn search_entities(
                     debug_info: Default::default(),
                 })
                 .collect();
-            
+
             let total = entity_results.len() as u32;
-            
+
             info!("Search returned {} results", total);
-            
+
             Ok(Json(SearchEntitiesResponse {
                 results: entity_results,
                 total,
@@ -334,12 +350,12 @@ pub async fn list_entities(
 ) -> Result<Json<Vec<Entity>>, (StatusCode, Json<ErrorResponse>)> {
     let offset = params.offset.unwrap_or(0);
     let limit = params.limit.unwrap_or(100).min(1000); // Cap at 1000
-    
+
     debug!(
         "REST: Listing entities in collection {} (offset: {}, limit: {})",
         collection_id, offset, limit
     );
-    
+
     // Validate parameters
     if collection_id.is_empty() {
         return Err((
@@ -350,9 +366,13 @@ pub async fn list_entities(
             }),
         ));
     }
-    
+
     // List entities
-    match state.store.list_entities(&collection_id, offset, limit).await {
+    match state
+        .store
+        .list_entities(&collection_id, offset, limit)
+        .await
+    {
         Ok(entities) => {
             debug!("Listed {} entities", entities.len());
             Ok(Json(entities))
@@ -379,30 +399,36 @@ pub struct ListEntitiesQuery {
 
 /// Configure REST API routes for entities
 pub fn configure_routes() -> axum::Router<EntityApiState> {
-    use axum::routing::{get, post, delete};
-    
+    use axum::routing::{delete, get, post};
+
     axum::Router::new()
-        .route("/v1/collections/:collection_id/entities", 
-            post(upsert_entity).get(list_entities))
-        .route("/v1/collections/:collection_id/entities/:entity_id",
-            get(get_entity).delete(delete_entity))
-        .route("/v1/collections/:collection_id/entities/search",
-            post(search_entities))
+        .route(
+            "/v1/collections/:collection_id/entities",
+            post(upsert_entity).get(list_entities),
+        )
+        .route(
+            "/v1/collections/:collection_id/entities/:entity_id",
+            get(get_entity).delete(delete_entity),
+        )
+        .route(
+            "/v1/collections/:collection_id/entities/search",
+            post(search_entities),
+        )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     // TODO: Add integration tests for REST API handlers
-    
+
     #[test]
     fn test_error_response_serialization() {
         let error = ErrorResponse {
             error: "Test error".to_string(),
             details: Some("Test details".to_string()),
         };
-        
+
         let json = serde_json::to_string(&error).unwrap();
         assert!(json.contains("Test error"));
         assert!(json.contains("Test details"));

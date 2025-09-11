@@ -20,8 +20,8 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::TypedMetadata;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
@@ -317,12 +317,22 @@ impl SwiftEngine {
     }
 
     /// Hierarchical compression optimization using unified compression module (delegates to universal optimizer)
-    async fn compress_hierarchical_data(&self, data: &[u8], tier: DataFreshnessTier) -> Result<Vec<u8>> {
+    async fn compress_hierarchical_data(
+        &self,
+        data: &[u8],
+        tier: DataFreshnessTier,
+    ) -> Result<Vec<u8>> {
         // Convert from core::search::StorageTier to filesystem::StorageTier
         let fs_tier = match tier {
-            DataFreshnessTier::Unflushed => crate::storage::persistence::filesystem::FileStorageTier::Memory,
-            DataFreshnessTier::Flushed => crate::storage::persistence::filesystem::FileStorageTier::NVMe,
-            DataFreshnessTier::Compacted => crate::storage::persistence::filesystem::FileStorageTier::SSD,
+            DataFreshnessTier::Unflushed => {
+                crate::storage::persistence::filesystem::FileStorageTier::Memory
+            }
+            DataFreshnessTier::Flushed => {
+                crate::storage::persistence::filesystem::FileStorageTier::NVMe
+            }
+            DataFreshnessTier::Compacted => {
+                crate::storage::persistence::filesystem::FileStorageTier::SSD
+            }
         };
 
         // Use universal optimizer's tier-aware compression
@@ -793,15 +803,16 @@ impl UnifiedStorageEngine for SwiftEngine {
                     })
                     .collect();
 
-                let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                    .with_similarity(similarity_result.normalized_score)
-                    .add_vector(record.vector)
-                    .with_metadata(TypedMetadata::from_json_map(metadata_map));
-                
+                let mut search_record =
+                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                        .with_similarity(similarity_result.normalized_score)
+                        .add_vector(record.vector)
+                        .with_metadata(TypedMetadata::from_json_map(metadata_map));
+
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);
                 }
-                
+
                 search_record
             })
             .collect();
@@ -1007,15 +1018,17 @@ impl SwiftEngine {
                     .iter()
                     .map(|(key, value)| {
                         let value = match &value {
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
-                                serde_json::Value::String(s.clone())
-                            }
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                            Some(
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
+                            ) => serde_json::Value::String(s.clone()),
+                            Some(
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
+                            ) => {
                                 serde_json::json!(n)
                             }
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                                serde_json::Value::Bool(*b)
-                            }
+                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
+                                b,
+                            )) => serde_json::Value::Bool(*b),
                             None => serde_json::Value::Null,
                         };
                         (key.clone(), value)
@@ -1028,15 +1041,16 @@ impl SwiftEngine {
                     record.id.clone()
                 };
 
-                let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                    .with_similarity(similarity_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::from_json_map(metadata));
+                let mut search_record =
+                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                        .with_similarity(similarity_result.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::from_json_map(metadata));
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);
                 }
-                
+
                 search_record
             })
             .collect();

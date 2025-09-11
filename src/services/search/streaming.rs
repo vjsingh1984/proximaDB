@@ -23,11 +23,11 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::{MetadataValue, TypedMetadata};
-use std::collections::HashMap;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::metadata_item;
 use crate::services::operations::vectors::VectorOperationsService;
+use std::collections::HashMap;
 
 /// Helper function to convert proto metadata Value to TypedMetadata value
 fn convert_proto_value_to_typed(value: metadata_item::Value) -> MetadataValue {
@@ -442,18 +442,17 @@ impl StreamingSearchService {
                         let key = &item.key;
                         let value = &item.value;
                         if let Some(value) = value {
-                            metadata_map.insert(key.clone(), convert_proto_value_to_typed(value.clone()));
+                            metadata_map
+                                .insert(key.clone(), convert_proto_value_to_typed(value.clone()));
                         }
                     }
-                    
-                    let search_result = OptimizedSearchRecord::new(
-                        record.id.clone(),
-                        similarity.normalized_score
-                    )
-                    .with_similarity(similarity.rank_value)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::from_map(metadata_map))
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp);
+
+                    let search_result =
+                        OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
+                            .with_similarity(similarity.rank_value)
+                            .add_vector(record.vector.clone())
+                            .with_metadata(TypedMetadata::from_map(metadata_map))
+                            .with_version_info(record.version.unwrap_or(0), record.timestamp);
 
                     results.push(search_result);
                 }

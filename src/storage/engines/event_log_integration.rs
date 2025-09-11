@@ -11,9 +11,7 @@
 use std::sync::Arc;
 use tracing::{debug, trace};
 
-use crate::index::axis::eventlog::{
-    EventLogService, IndexEventBuilder, StorageEngineType,
-};
+use crate::index::axis::eventlog::{EventLogService, IndexEventBuilder, StorageEngineType};
 use crate::storage::engines::{CompactionParameters, FlushParameters};
 
 /// Helper trait for storage engines to notify EventLog

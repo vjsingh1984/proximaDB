@@ -26,8 +26,8 @@
 //! - S3 → Disk promotion uses /tmp (if NVMe not configured) or HDD as staging
 
 use crate::core::error::{ProximaDBError, StorageError};
-use anyhow::{Result, anyhow};
 use crate::utils::encoding::base64_encode;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -504,11 +504,16 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     vector: vec![], // Empty vector since we're storing serialized data
                     metadata: {
                         let mut map = std::collections::HashMap::new();
-                        map.insert("serialized_data".to_string(), crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                base64_encode(&value)
-                            ))
-                        });
+                        map.insert(
+                            "serialized_data".to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        base64_encode(&value),
+                                    ),
+                                ),
+                            },
+                        );
                         map
                     },
                     timestamp: std::time::SystemTime::now()
@@ -626,8 +631,8 @@ impl IndexData for LshBucket {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::axis::*;
     use super::{HnswNode, StorageEngine, UniversalIndexStorage};
+    use crate::index::axis::*;
 
     #[tokio::test]
     async fn test_tier_hierarchy() {

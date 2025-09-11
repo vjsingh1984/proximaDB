@@ -58,11 +58,11 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 // Import metrics service
-use crate::metrics::query_service::{MetricsQueryService, MetricsQueryOptions};
+use crate::metrics::query_service::{MetricsQueryOptions, MetricsQueryService};
 
 use crate::proto::proximadb_v1::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorBatchRequest,
-    VectorOperation, VectorOperationResponse, VectorSearchRequest, VectorRecord,
+    VectorOperation, VectorOperationResponse, VectorRecord, VectorSearchRequest,
 };
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;
@@ -161,7 +161,7 @@ impl UnifiedHandlers {
             success,
             operation: operation as i32,
             collection,
-            collections: collections.unwrap_or_default(),
+            collections: collections.unwrap_or_else(|| Vec::new()),
             affected_count,
             total_count: total_count.unwrap_or(0),
             metadata: Default::default(),
@@ -336,11 +336,12 @@ impl UnifiedHandlers {
                                     .filter_map(|v| v.as_str().map(String::from))
                                     .collect()
                             })
-                            .unwrap_or_default();
+                            .unwrap_or_else(|| Vec::new());
 
                         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                             success,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
+                                as i32,
                             metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                                 total_processed: vector_ids.len() as i64,
                                 successful_count: if success { vector_ids.len() as i64 } else { 0 },
@@ -363,7 +364,8 @@ impl UnifiedHandlers {
                         tracing::error!("Failed to parse vector batch response: {:?}", e);
                         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                             success: false,
-                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+                            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
+                                as i32,
                             metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                                 total_processed: 0,
                                 successful_count: 0,
@@ -385,7 +387,8 @@ impl UnifiedHandlers {
                 tracing::error!("Failed to process vector batch: {:?}", e);
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorBatch as i32,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
+                        as i32,
                     metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
                         total_processed: 0,
                         successful_count: 0,
@@ -436,24 +439,33 @@ impl UnifiedHandlers {
 
         match self
             .vector_operations_service
-            .vector(&resolved_collection_id, vector_id, include_vector, include_metadata)
+            .vector(
+                &resolved_collection_id,
+                vector_id,
+                include_vector,
+                include_metadata,
+            )
             .await
         {
             Ok(Some(vector_record)) => {
                 let rec = crate::proto::proximadb_v1::SearchVectorRecord {
-                    id: if vector_record.id.is_empty() { "unknown".to_string() } else { vector_record.id },
+                    id: if vector_record.id.is_empty() {
+                        "unknown".to_string()
+                    } else {
+                        vector_record.id
+                    },
                     score: 1.0,
                     vector: vector_record.vector,
                     metadata: vector_record.metadata,
                     version: vector_record.updated_at.map(|x| x as i64),
-                    engine_stats: None,
-                    expanded_context: None,
+                    engine_stats: std::collections::HashMap::new(),
+                    expanded_context: Vec::new(),
                     index_path: None,
                     timestamp: None,
-                    partition_id: None,
-                    quantization_level: None,
-                    distance_metric: None,
-                    debug_info: None,
+                    source: None,
+                    similarity: None,
+                    semantic_similarity: None,
+                    quantization_info: None,
                 };
 
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
@@ -480,7 +492,7 @@ impl UnifiedHandlers {
             }
             Ok(None) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                 success: false,
-                operation: crate::proto::proximadb_v1::VectorServiceOperation::VectorGet as i32,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VsGet as i32,
                 metrics: None,
                 results: None,
                 vector_ids: vec![],
@@ -513,20 +525,20 @@ impl UnifiedHandlers {
             "📋 UnifiedHandlers: Listing unflushed vectors for collection {}",
             collection_id
         );
-        
+
         // Access the global partitioned memtable through vector_operations_service
         // The VectorOperationsService maintains a unified view of both WAL and storage
         let unflushed_vectors = self
             .vector_operations_service
             .get_unflushed_vectors(collection_id)
             .await?;
-        
+
         debug!(
             "Found {} unflushed vectors for collection {}",
             unflushed_vectors.len(),
             collection_id
         );
-        
+
         Ok(unflushed_vectors)
     }
 
@@ -577,27 +589,25 @@ impl UnifiedHandlers {
                 to_timestamp: None,
                 metric_names: Vec::new(),
             };
-            
+
             let metrics = metrics_service
                 .collection_metrics(collection_id, options)
                 .await
                 .context("Failed to query collection metrics")?;
-            
+
             let mut response = serde_json::json!({
                 "collection_id": collection_id,
                 "metrics": serde_json::to_value(&metrics)?,
             });
-            
+
             // Include optimization hints if requested
             if include_hints {
-                let hints_result = metrics_service
-                    .query_hints(collection_id, None)
-                    .await;
+                let hints_result = metrics_service.query_hints(collection_id, None).await;
                 if let Ok(hints) = hints_result {
                     response["hints"] = serde_json::to_value(&hints)?;
                 }
             }
-            
+
             Ok(response)
         } else {
             // Fallback to collection service for basic metrics
@@ -638,16 +648,16 @@ impl UnifiedHandlers {
                 .query_hints(collection_id, query_type.clone())
                 .await
                 .context("Failed to get query hints")?;
-            
+
             // The hints are already filtered by query type in the service
             let hints_vec = hints_result.hints;
-            
+
             let response = serde_json::json!({
                 "collection_id": collection_id,
                 "hints": serde_json::to_value(&hints_vec)?,
                 "generated_at": chrono::Utc::now().timestamp_millis()
             });
-            
+
             Ok(response)
         } else {
             // Fallback response when metrics service not available
@@ -663,7 +673,7 @@ impl UnifiedHandlers {
                 ],
                 "generated_at": chrono::Utc::now().timestamp_millis()
             });
-            
+
             Ok(response)
         }
     }
@@ -674,7 +684,10 @@ impl UnifiedHandlers {
         request: crate::proto::proximadb_v1::HybridSearchRequest,
     ) -> Result<crate::proto::proximadb_v1::HybridSearchResponse> {
         let start_time = std::time::Instant::now();
-        info!("Executing hybrid query with strategy: {:?}", request.combination_strategy);
+        info!(
+            "Executing hybrid query with strategy: {:?}",
+            request.combination_strategy
+        );
 
         let mut nodes: Vec<crate::graph::Node> = Vec::new();
         let mut edges: Vec<crate::graph::Edge> = Vec::new();
@@ -685,26 +698,36 @@ impl UnifiedHandlers {
             crate::proto::proximadb_v1::CombinationStrategy::VectorThenGraph => {
                 // 1. Perform vector search
                 let vector_search_response = self
-                    .handle_vector_search_v1(request.vector_search_request.clone().unwrap_or_default())
+                    .handle_vector_search_v1(
+                        request
+                            .vector_search_request
+                            .clone()
+                            .unwrap_or_else(|| Default::default()),
+                    )
                     .await?;
                 if let Some(results) = vector_search_response.results {
                     vector_results.extend(results.results);
 
                     // Extract node IDs from vector search results (assuming vector IDs map to graph node IDs)
-                    let start_node_ids: Vec<String> = vector_results.iter()
-                        .map(|rec| rec.id.clone())
-                        .collect();
+                    let start_node_ids: Vec<String> =
+                        vector_results.iter().map(|rec| rec.id.clone()).collect();
 
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
-                        let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
+                        let graph_req = request
+                            .graph_traversal_request
+                            .clone()
+                            .unwrap_or_else(|| Default::default());
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
-                            start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
-                            max_depth: graph_req.max_depth.unwrap_or(3),
-                            edge_types: graph_req.edge_types.unwrap_or_default(),
-                            node_labels: graph_req.node_labels.unwrap_or_default(),
-                            filters: graph_req.filters.unwrap_or_default(),
-                            algorithm: graph_req.algorithm.unwrap_or_default(),
+                            start_node_id: start_node_ids
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| String::new()), // Use first for now, need to handle multiple starts
+                            max_depth: if graph_req.max_depth == 0 { 3 } else { graph_req.max_depth },
+                            edge_types: graph_req.edge_types,
+                            node_labels: graph_req.node_labels,
+                            filters: graph_req.filters,
+                            algorithm: if graph_req.algorithm == 0 { 1 } else { graph_req.algorithm }, // Default to BFS (1)
                             limit: request.limit,
                             max_frontier: None,
                             timeout_ms: None,
@@ -716,26 +739,28 @@ impl UnifiedHandlers {
                             nodes: vec![],
                             edges: vec![],
                             paths: vec![],
+                            stats: None,
                         };
                         nodes.extend(traversal_response.nodes);
                         edges.extend(traversal_response.edges);
                         paths.extend(traversal_response.paths);
                     }
                 }
-            },
+            }
             // TODO: Implement other combination strategies
             _ => return Err(anyhow::anyhow!("Unsupported combination strategy")),
         }
 
         let elapsed_time = start_time.elapsed().as_micros() as u64;
 
+        let nodes_count = nodes.len() as u32;
         Ok(crate::proto::proximadb_v1::HybridSearchResponse {
             nodes,
             edges,
             paths,
             stats: Some(crate::proto::proximadb_v1::HybridSearchStats {
                 vector_results_count: vector_results.len() as u32,
-                graph_traversal_count: nodes.len() as u32,
+                graph_traversal_count: nodes_count,
                 execution_time_microseconds: elapsed_time,
             }),
             vector_results,
@@ -1161,10 +1186,16 @@ impl UnifiedHandlers {
                 if let serde_json::Value::Object(map) = row {
                     for (k, v) in map {
                         let sv = Self::json_to_sql_value(&v);
-                        fields_vec.push(SqlRowField { key: k, value: Some(sv) });
+                        fields_vec.push(SqlRowField {
+                            key: k,
+                            value: Some(sv),
+                        });
                     }
                 }
-                rows.push(SqlRow { fields: fields_vec, similarity: None });
+                rows.push(SqlRow {
+                    fields: fields_vec,
+                    similarity: None,
+                });
             }
 
             Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
@@ -1189,12 +1220,16 @@ impl UnifiedHandlers {
             // Apply parameters if provided
             let processed_query = if let Some(params) = parameters.as_ref() {
                 Self::apply_query_parameters_sqlvalue(query, params)?
-            } else { query };
+            } else {
+                query
+            };
 
             // Apply collection hint
             let final_query = if let Some(coll) = collection.clone() {
                 format!("USE {}; {}", coll, processed_query)
-            } else { processed_query };
+            } else {
+                processed_query
+            };
 
             let engine_result = sql_engine.execute(&final_query).await?;
 
@@ -1220,18 +1255,18 @@ impl UnifiedHandlers {
         parameters: Vec<serde_json::Value>,
     ) -> Result<String> {
         let mut processed = query;
-        
+
         for (index, param) in parameters.iter().enumerate() {
             let placeholder = format!("${}", index + 1);
             let value = self.format_sql_value(param)?;
             processed = processed.replace(&placeholder, &value);
         }
-        
+
         // Also support ? placeholders (common in many SQL dialects)
         let mut result = String::new();
         let mut chars = processed.chars().peekable();
         let mut param_index = 0;
-        
+
         while let Some(ch) = chars.next() {
             if ch == '?' && param_index < parameters.len() {
                 result.push_str(&self.format_sql_value(&parameters[param_index])?);
@@ -1240,7 +1275,7 @@ impl UnifiedHandlers {
                 result.push(ch);
             }
         }
-        
+
         Ok(result)
     }
 
@@ -1296,21 +1331,38 @@ impl UnifiedHandlers {
     fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{self, sql_value::Value as V};
         match v {
-            serde_json::Value::String(s) => proximadb_v1::SqlValue { value: Some(V::StringValue(s.clone())) },
-            serde_json::Value::Number(n) => proximadb_v1::SqlValue {
-                value: Some(V::NumberValue(n.as_f64().unwrap_or(0.0)))
+            serde_json::Value::String(s) => proximadb_v1::SqlValue {
+                value: Some(V::StringValue(s.clone())),
             },
-            serde_json::Value::Bool(b) => proximadb_v1::SqlValue { value: Some(V::BoolValue(*b)) },
-            serde_json::Value::Null => proximadb_v1::SqlValue { value: Some(V::NullValue(0)) },
+            serde_json::Value::Number(n) => proximadb_v1::SqlValue {
+                value: Some(V::NumberValue(n.as_f64().unwrap_or(0.0))),
+            },
+            serde_json::Value::Bool(b) => proximadb_v1::SqlValue {
+                value: Some(V::BoolValue(*b)),
+            },
+            serde_json::Value::Null => proximadb_v1::SqlValue {
+                value: Some(V::NullValue(0)),
+            },
             serde_json::Value::Array(arr) => {
                 let values = arr.iter().map(Self::json_to_sql_value).collect();
-                proximadb_v1::SqlValue { value: Some(V::ArrayValue(proximadb_v1::SqlArray { values })) }
+                proximadb_v1::SqlValue {
+                    value: Some(V::ArrayValue(proximadb_v1::SqlArray { values })),
+                }
             }
             serde_json::Value::Object(map) => {
                 let mut fields = std::collections::BTreeMap::new();
-                for (k, sv) in map.iter() { fields.insert(k.clone(), Self::json_to_sql_value(sv)); }
-                let fields_hashmap: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = fields.into_iter().collect();
-                proximadb_v1::SqlValue { value: Some(V::ObjectValue(proximadb_v1::SqlObject { fields: fields_hashmap })) }
+                for (k, sv) in map.iter() {
+                    fields.insert(k.clone(), Self::json_to_sql_value(sv));
+                }
+                let fields_hashmap: std::collections::HashMap<
+                    String,
+                    crate::proto::proximadb_v1::SqlValue,
+                > = fields.into_iter().collect();
+                proximadb_v1::SqlValue {
+                    value: Some(V::ObjectValue(proximadb_v1::SqlObject {
+                        fields: fields_hashmap,
+                    })),
+                }
             }
         }
     }
@@ -1322,12 +1374,18 @@ impl UnifiedHandlers {
             Some(V::NumberValue(n)) => serde_json::json!(*n),
             Some(V::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(V::Int64Value(i)) => serde_json::json!(*i),
-            Some(V::BytesValue(b)) => serde_json::Value::Array(b.iter().map(|x| serde_json::json!(*x)).collect()),
+            Some(V::BytesValue(b)) => {
+                serde_json::Value::Array(b.iter().map(|x| serde_json::json!(*x)).collect())
+            }
             Some(V::NullValue(_)) => serde_json::Value::Null,
-            Some(V::ArrayValue(arr)) => serde_json::Value::Array(arr.values.iter().map(Self::sql_value_to_json).collect()),
+            Some(V::ArrayValue(arr)) => {
+                serde_json::Value::Array(arr.values.iter().map(Self::sql_value_to_json).collect())
+            }
             Some(V::ObjectValue(obj)) => {
                 let mut map = serde_json::Map::new();
-                for (k, sv) in &obj.fields { map.insert(k.clone(), Self::sql_value_to_json(sv)); }
+                for (k, sv) in &obj.fields {
+                    map.insert(k.clone(), Self::sql_value_to_json(sv));
+                }
                 serde_json::Value::Object(map)
             }
             None => serde_json::Value::Null,
@@ -1345,7 +1403,13 @@ impl UnifiedHandlers {
             let lit = match p.value.as_ref() {
                 Some(V::StringValue(s)) => format!("'{}'", s.replace("'", "''")),
                 Some(V::NumberValue(n)) => n.to_string(),
-                Some(V::BoolValue(b)) => if *b { "true".to_string() } else { "false".to_string() },
+                Some(V::BoolValue(b)) => {
+                    if *b {
+                        "true".to_string()
+                    } else {
+                        "false".to_string()
+                    }
+                }
                 Some(V::Int64Value(x)) => x.to_string(),
                 Some(V::NullValue(_)) => "NULL".to_string(),
                 Some(V::BytesValue(b)) => {
@@ -1354,12 +1418,16 @@ impl UnifiedHandlers {
                     format!("X'{}'", hex)
                 }
                 Some(V::ArrayValue(arr)) => {
-                    let json = serde_json::Value::Array(arr.values.iter().map(Self::sql_value_to_json).collect());
+                    let json = serde_json::Value::Array(
+                        arr.values.iter().map(Self::sql_value_to_json).collect(),
+                    );
                     format!("'{}'", json.to_string().replace("'", "''"))
                 }
                 Some(V::ObjectValue(obj)) => {
                     let mut map = serde_json::Map::new();
-                    for (k, sv) in &obj.fields { map.insert(k.clone(), Self::sql_value_to_json(sv)); }
+                    for (k, sv) in &obj.fields {
+                        map.insert(k.clone(), Self::sql_value_to_json(sv));
+                    }
                     let json = serde_json::Value::Object(map);
                     format!("'{}'", json.to_string().replace("'", "''"))
                 }
@@ -1371,10 +1439,10 @@ impl UnifiedHandlers {
     }
 
     /// Execute SQL using sql_frontend (new authoritative path with HashMap optimization)
-    /// 
+    ///
     /// This method implements the unified query layer specified in query_sql_alignment_consolidated.adoc
     /// providing 10x metadata filtering performance through HashMap.get() instead of linear scans.
-    /// 
+    ///
     /// Key improvements:
     /// - Uses sqlparser-rs for comprehensive SQL support
     /// - HashMap metadata filtering for O(1) vs O(n) performance  
@@ -1387,49 +1455,59 @@ impl UnifiedHandlers {
         collection: Option<String>,
     ) -> Result<SqlQueryResult> {
         let start_time = std::time::Instant::now();
-        
-        tracing::info!("🆕 Executing SQL via sql_frontend (HashMap optimized): {}", 
-                      sql.chars().take(100).collect::<String>());
+
+        tracing::info!(
+            "🆕 Executing SQL via sql_frontend (HashMap optimized): {}",
+            sql.chars().take(100).collect::<String>()
+        );
 
         // 1. Create query lowering service with collection resolution
         let query_lowering = crate::query::sql_frontend::lowering::QueryLowering::new(
-            self.collection_service.clone()
+            self.collection_service.clone(),
         );
 
         // 2. Lower SQL to internal AST with validation and optimization
-        let query_ast = query_lowering.lower_sql(&sql).await
+        let query_ast = query_lowering
+            .lower_sql(&sql)
+            .await
             .map_err(|e| anyhow::anyhow!("SQL lowering failed: {}", e))?;
 
         // 3. Create unified query engine with vector and graph services
         let graph_service = Arc::new(crate::graph::service::GraphService::new());
-        let query_engine = crate::query::execution::QueryEngine::new_with_params(
+        let seeding = Self::parse_seeding_strategy(&sql);
+        let query_engine = crate::query::execution::QueryEngine::new_with_options(
             self.vector_operations_service.clone(),
             graph_service,
             params.clone(),
+            seeding,
         );
 
-        // 4. Execute query with new engine (uses HashMap metadata optimization)  
-        let query_result = query_engine.execute_frontend(query_ast).await
+        // 4. Execute query with new engine (uses HashMap metadata optimization)
+        let query_result = query_engine
+            .execute_frontend(query_ast)
+            .await
             .map_err(|e| anyhow::anyhow!("Query execution failed: {}", e))?;
 
         // 5. Convert QueryResult to SqlQueryResult format (preserve API compatibility)
         let execution_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
-        
-        let rows: Vec<serde_json::Value> = query_result.rows.into_iter()
+
+        let rows: Vec<serde_json::Value> = query_result
+            .rows
+            .into_iter()
             .map(|row| {
                 let mut json_obj = serde_json::Map::new();
-                
+
                 // Add all field values (efficiently from HashMap)
                 for (key, value) in row.fields {
                     json_obj.insert(key, value);
                 }
-                
+
                 // Add similarity score if present
                 if let Some(score) = row.similarity_score {
                     json_obj.insert("_similarity_score".to_string(), serde_json::json!(score));
                 }
-                
-                // Add graph distance if present  
+
+                // Add graph distance if present
                 if let Some(distance) = row.graph_distance {
                     json_obj.insert("_graph_distance".to_string(), serde_json::json!(distance));
                 }
@@ -1438,7 +1516,7 @@ impl UnifiedHandlers {
                 if let Some(provenance) = row.provenance {
                     json_obj.insert("_provenance".to_string(), serde_json::json!(provenance));
                 }
-                
+
                 serde_json::Value::Object(json_obj)
             })
             .collect();
@@ -1459,15 +1537,35 @@ impl UnifiedHandlers {
             vec![]
         };
 
-        tracing::info!("✅ sql_frontend execution completed in {:.2}ms with {} rows (HashMap optimized)", 
-                      execution_time_ms, rows.len());
+        tracing::info!(
+            "✅ sql_frontend execution completed in {:.2}ms with {} rows (HashMap optimized)",
+            execution_time_ms,
+            rows.len()
+        );
 
+        let row_count = rows.len();
         Ok(SqlQueryResult {
             rows,
             columns,
-            row_count: rows.len(),
+            row_count,
             execution_time_ms: execution_time_ms as u64,
         })
+    }
+
+    fn parse_seeding_strategy(sql: &str) -> crate::query::execution::SeedingStrategy {
+        let s = sql.to_ascii_uppercase();
+        // Accept simple inline hints in comments or statements, e.g.:
+        // -- SEEDING: PER_SEED  or  /* SEEDING AVERAGE */ or  SEED USING PER_SEED
+        if s.contains("SEEDING: PER_SEED") || s.contains("SEED USING PER_SEED") {
+            return crate::query::execution::SeedingStrategy::PerSeed;
+        }
+        if s.contains("SEEDING: NONE") || s.contains("SEED USING NONE") {
+            return crate::query::execution::SeedingStrategy::None;
+        }
+        if s.contains("SEEDING: AVERAGE") || s.contains("SEED USING AVERAGE") {
+            return crate::query::execution::SeedingStrategy::Average;
+        }
+        crate::query::execution::SeedingStrategy::Average
     }
 }
 

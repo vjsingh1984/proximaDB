@@ -69,41 +69,41 @@ impl TypeSafeFilterEvaluator {
 
                 match (metadata_item, operator) {
                     (Some(item), ComparisonOperator::Equals) => {
-                        self.compare_typed_values(&value, value, expected_type)
+                        self.compare_typed_values(&item.value, value, expected_type)
                             == Some(Ordering::Equal)
                     }
                     (Some(item), ComparisonOperator::NotEquals) => {
-                        self.compare_typed_values(&value, value, expected_type)
+                        self.compare_typed_values(&item.value, value, expected_type)
                             != Some(Ordering::Equal)
                     }
                     (Some(item), ComparisonOperator::LessThan) => {
                         matches!(
-                            self.compare_typed_values(&value, value, expected_type),
+                            self.compare_typed_values(&item.value, value, expected_type),
                             Some(Ordering::Less)
                         )
                     }
                     (Some(item), ComparisonOperator::LessThanOrEqual) => {
                         matches!(
-                            self.compare_typed_values(&value, value, expected_type),
+                            self.compare_typed_values(&item.value, value, expected_type),
                             Some(Ordering::Less) | Some(Ordering::Equal)
                         )
                     }
                     (Some(item), ComparisonOperator::GreaterThan) => {
                         matches!(
-                            self.compare_typed_values(&value, value, expected_type),
+                            self.compare_typed_values(&item.value, value, expected_type),
                             Some(Ordering::Greater)
                         )
                     }
                     (Some(item), ComparisonOperator::GreaterThanOrEqual) => {
                         matches!(
-                            self.compare_typed_values(&value, value, expected_type),
+                            self.compare_typed_values(&item.value, value, expected_type),
                             Some(Ordering::Greater) | Some(Ordering::Equal)
                         )
                     }
                     (Some(item), ComparisonOperator::In) => {
                         if let serde_json::Value::Array(values) = value {
                             values.iter().any(|v| {
-                                self.compare_typed_values(&value, v, expected_type)
+                                self.compare_typed_values(&item.value, v, expected_type)
                                     == Some(Ordering::Equal)
                             })
                         } else {
@@ -113,7 +113,7 @@ impl TypeSafeFilterEvaluator {
                     (Some(item), ComparisonOperator::NotIn) => {
                         if let serde_json::Value::Array(values) = value {
                             !values.iter().any(|v| {
-                                self.compare_typed_values(&value, v, expected_type)
+                                self.compare_typed_values(&item.value, v, expected_type)
                                     == Some(Ordering::Equal)
                             })
                         } else {
@@ -124,7 +124,7 @@ impl TypeSafeFilterEvaluator {
                         if let (
                             Some(MetadataValue::StringValue(s)),
                             serde_json::Value::String(pattern),
-                        ) = (&value, value)
+                        ) = (&item.value, value)
                         {
                             s.contains(pattern)
                         } else {
@@ -135,7 +135,7 @@ impl TypeSafeFilterEvaluator {
                         if let (
                             Some(MetadataValue::StringValue(s)),
                             serde_json::Value::String(pattern),
-                        ) = (&value, value)
+                        ) = (&item.value, value)
                         {
                             s.starts_with(pattern)
                         } else {
@@ -146,7 +146,7 @@ impl TypeSafeFilterEvaluator {
                         if let (
                             Some(MetadataValue::StringValue(s)),
                             serde_json::Value::String(pattern),
-                        ) = (&value, value)
+                        ) = (&item.value, value)
                         {
                             s.ends_with(pattern)
                         } else {
@@ -158,7 +158,7 @@ impl TypeSafeFilterEvaluator {
                             if bounds.len() == 2 {
                                 let ge_lower = matches!(
                                     self.compare_typed_values(
-                                        &value,
+                                        &item.value,
                                         &bounds[0],
                                         expected_type
                                     ),
@@ -166,7 +166,7 @@ impl TypeSafeFilterEvaluator {
                                 );
                                 let le_upper = matches!(
                                     self.compare_typed_values(
-                                        &value,
+                                        &item.value,
                                         &bounds[1],
                                         expected_type
                                     ),

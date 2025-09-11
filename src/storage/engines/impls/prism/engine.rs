@@ -67,19 +67,19 @@
 //!    - Cache-friendly compressed representations
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::core::search::multi_tier_deduplication::DataFreshnessTier;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
+use crate::storage::persistence::filesystem::FileStorageTier;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 // Duration for cache TTL
+use crate::utils::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-use crate::utils::uuid::Uuid;
 
 // Performance optimization handled internally
 
@@ -920,7 +920,7 @@ impl PrismEngine {
         top_k: usize,
     ) -> Result<Vec<(String, f32)>> {
         use super::fastlanes_serializer::PrismFastLanesSerializer;
-        
+
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
         // Create default quantization config for PRISM
@@ -1008,7 +1008,9 @@ impl UnifiedStorageEngine for PrismEngine {
             ResolutionLevel::FP32,   // Full precision when needed
         ];
 
-        let serialized = serializer.serialize_progressive(&params.vector_records, &levels).await?;
+        let serialized = serializer
+            .serialize_progressive(&params.vector_records, &levels)
+            .await?;
         let bytes_written = serialized.len();
 
         // In production, would store in actual memory cache structures

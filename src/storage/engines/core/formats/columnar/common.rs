@@ -18,10 +18,7 @@ use super::schema::{ColumnarSchemaBuilder, ColumnarSchemaConfig};
 use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
-use super::{
-    ColumnarConfig, ColumnarFileMetadata, CompressionMetadata,
-    QuantizationConfig,
-};
+use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
@@ -796,7 +793,6 @@ impl CommonColumnarOperations {
         // For now, return placeholder data
         warn!("File metadata loading from disk not fully implemented");
 
-        
         use crate::compute::distance_computation::DistanceMetric;
 
         let metadata = ColumnarFileMetadata {

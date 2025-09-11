@@ -20,9 +20,9 @@
 //! 4. **Consistency**: Same validation rules across all components
 
 use anyhow::{Result, anyhow, bail};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashSet;
-use once_cell::sync::Lazy;
 
 /// ## ID Validation
 ///
@@ -43,25 +43,30 @@ pub fn validate_vector_id(id: &str) -> Result<()> {
     if id.is_empty() {
         bail!("Vector ID cannot be empty");
     }
-    
+
     if id.len() > 256 {
-        bail!("Vector ID exceeds maximum length of 256 characters: {}", id.len());
+        bail!(
+            "Vector ID exceeds maximum length of 256 characters: {}",
+            id.len()
+        );
     }
-    
+
     // Check first character
     if id.chars().next().unwrap().is_ascii_digit() {
         bail!("Vector ID cannot start with a number: {}", id);
     }
-    
+
     // Check allowed characters
-    static VALID_ID_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_.-]*$").unwrap()
-    });
-    
+    static VALID_ID_REGEX: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_.-]*$").unwrap());
+
     if !VALID_ID_REGEX.is_match(id) {
-        bail!("Vector ID contains invalid characters. Only alphanumeric, underscore, hyphen, and dot are allowed: {}", id);
+        bail!(
+            "Vector ID contains invalid characters. Only alphanumeric, underscore, hyphen, and dot are allowed: {}",
+            id
+        );
     }
-    
+
     Ok(())
 }
 
@@ -79,27 +84,36 @@ pub fn validate_vector_id(id: &str) -> Result<()> {
 /// * Ok(()) if valid, Err with description if invalid
 pub fn validate_collection_name(name: &str) -> Result<()> {
     if name.len() < 3 || name.len() > 64 {
-        bail!("Collection name must be between 3 and 64 characters: {}", name.len());
+        bail!(
+            "Collection name must be between 3 and 64 characters: {}",
+            name.len()
+        );
     }
-    
-    static COLLECTION_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^[a-z][a-z0-9_]*$").unwrap()
-    });
-    
+
+    static COLLECTION_NAME_REGEX: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^[a-z][a-z0-9_]*$").unwrap());
+
     if !COLLECTION_NAME_REGEX.is_match(name) {
-        bail!("Collection name must start with a lowercase letter and contain only lowercase letters, numbers, and underscores: {}", name);
+        bail!(
+            "Collection name must start with a lowercase letter and contain only lowercase letters, numbers, and underscores: {}",
+            name
+        );
     }
-    
+
     // Check for reserved names
     static RESERVED_NAMES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-        ["system", "admin", "config", "test", "temp", "tmp", "internal"]
-            .iter().cloned().collect()
+        [
+            "system", "admin", "config", "test", "temp", "tmp", "internal",
+        ]
+        .iter()
+        .cloned()
+        .collect()
     });
-    
+
     if RESERVED_NAMES.contains(name) {
         bail!("Collection name '{}' is reserved", name);
     }
-    
+
     Ok(())
 }
 
@@ -120,23 +134,31 @@ pub fn validate_field_name(field: &str) -> Result<()> {
     if field.is_empty() {
         bail!("Field name cannot be empty");
     }
-    
+
     if field.len() > 128 {
-        bail!("Field name exceeds maximum length of 128 characters: {}", field.len());
+        bail!(
+            "Field name exceeds maximum length of 128 characters: {}",
+            field.len()
+        );
     }
-    
+
     if field.starts_with("__") {
-        bail!("Field names starting with '__' are reserved for system use: {}", field);
+        bail!(
+            "Field names starting with '__' are reserved for system use: {}",
+            field
+        );
     }
-    
-    static FIELD_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap()
-    });
-    
+
+    static FIELD_NAME_REGEX: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap());
+
     if !FIELD_NAME_REGEX.is_match(field) {
-        bail!("Field name contains invalid characters. Only alphanumeric and underscore are allowed: {}", field);
+        bail!(
+            "Field name contains invalid characters. Only alphanumeric and underscore are allowed: {}",
+            field
+        );
     }
-    
+
     Ok(())
 }
 
@@ -159,12 +181,16 @@ pub fn validate_dimension(dimension: usize, max_allowed: Option<usize>) -> Resul
     if dimension == 0 {
         bail!("Vector dimension must be positive");
     }
-    
+
     let max = max_allowed.unwrap_or(65536);
     if dimension > max {
-        bail!("Vector dimension {} exceeds maximum allowed {}", dimension, max);
+        bail!(
+            "Vector dimension {} exceeds maximum allowed {}",
+            dimension,
+            max
+        );
     }
-    
+
     Ok(())
 }
 
@@ -184,12 +210,12 @@ pub fn validate_batch_size(batch_size: usize, max_allowed: Option<usize>) -> Res
     if batch_size == 0 {
         bail!("Batch size must be at least 1");
     }
-    
+
     let max = max_allowed.unwrap_or(10000);
     if batch_size > max {
         bail!("Batch size {} exceeds maximum allowed {}", batch_size, max);
     }
-    
+
     Ok(())
 }
 
@@ -209,12 +235,12 @@ pub fn validate_top_k(k: usize, max_allowed: Option<usize>) -> Result<()> {
     if k == 0 {
         bail!("Top-k must be at least 1");
     }
-    
+
     let max = max_allowed.unwrap_or(1000);
     if k > max {
         bail!("Top-k {} exceeds maximum allowed {}", k, max);
     }
-    
+
     Ok(())
 }
 
@@ -234,11 +260,14 @@ pub fn validate_score(score: f32, metric_type: &str) -> Result<()> {
     if !score.is_finite() {
         bail!("Score must be finite, got: {}", score);
     }
-    
+
     match metric_type.to_lowercase().as_str() {
         "cosine" | "cosine_similarity" => {
             if score < -1.0 || score > 1.0 {
-                bail!("Cosine similarity score must be in range [-1, 1], got: {}", score);
+                bail!(
+                    "Cosine similarity score must be in range [-1, 1], got: {}",
+                    score
+                );
             }
         }
         "euclidean" | "l2" | "manhattan" | "hamming" => {
@@ -250,7 +279,7 @@ pub fn validate_score(score: f32, metric_type: &str) -> Result<()> {
             // Unknown metric, just check for finite
         }
     }
-    
+
     Ok(())
 }
 
@@ -271,16 +300,17 @@ pub fn validate_json_path(path: &str) -> Result<()> {
     if path.is_empty() {
         bail!("JSON path cannot be empty");
     }
-    
+
     // Basic validation - can be extended based on actual JSON path library used
     static JSON_PATH_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(\$\.)?[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\[[0-9]+\])?$").unwrap()
+        Regex::new(r"^(\$\.)?[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\[[0-9]+\])?$")
+            .unwrap()
     });
-    
+
     if !JSON_PATH_REGEX.is_match(path) {
         bail!("Invalid JSON path format: {}", path);
     }
-    
+
     Ok(())
 }
 
@@ -298,17 +328,20 @@ pub fn validate_json_path(path: &str) -> Result<()> {
 /// * Ok(()) if valid, Err with description if invalid
 pub fn validate_url(url: &str, allowed_schemes: Option<&[&str]>) -> Result<()> {
     use url::Url;
-    
-    let parsed = Url::parse(url)
-        .map_err(|e| anyhow!("Invalid URL format: {}", e))?;
-    
+
+    let parsed = Url::parse(url).map_err(|e| anyhow!("Invalid URL format: {}", e))?;
+
     let default_schemes = vec!["http", "https", "s3", "file"];
     let schemes = allowed_schemes.unwrap_or(&default_schemes);
-    
+
     if !schemes.contains(&parsed.scheme()) {
-        bail!("URL scheme '{}' not allowed. Supported: {:?}", parsed.scheme(), schemes);
+        bail!(
+            "URL scheme '{}' not allowed. Supported: {:?}",
+            parsed.scheme(),
+            schemes
+        );
     }
-    
+
     Ok(())
 }
 
@@ -326,18 +359,33 @@ pub fn validate_url(url: &str, allowed_schemes: Option<&[&str]>) -> Result<()> {
 pub fn validate_distance_metric(metric: &str) -> Result<()> {
     static VALID_METRICS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         [
-            "cosine", "euclidean", "dot_product", "manhattan",
-            "hamming", "jaccard", "chebyshev", "canberra",
-            "minkowski", "angular", "bray_curtis", "hellinger"
-        ].iter().cloned().collect()
+            "cosine",
+            "euclidean",
+            "dot_product",
+            "manhattan",
+            "hamming",
+            "jaccard",
+            "chebyshev",
+            "canberra",
+            "minkowski",
+            "angular",
+            "bray_curtis",
+            "hellinger",
+        ]
+        .iter()
+        .cloned()
+        .collect()
     });
-    
+
     let metric_lower = metric.to_lowercase();
     if !VALID_METRICS.contains(metric_lower.as_str()) {
-        bail!("Unknown distance metric '{}'. Supported metrics: {:?}", 
-              metric, VALID_METRICS.iter().collect::<Vec<_>>());
+        bail!(
+            "Unknown distance metric '{}'. Supported metrics: {:?}",
+            metric,
+            VALID_METRICS.iter().collect::<Vec<_>>()
+        );
     }
-    
+
     Ok(())
 }
 
@@ -353,15 +401,20 @@ pub fn validate_distance_metric(metric: &str) -> Result<()> {
 pub fn validate_storage_engine(engine: &str) -> Result<()> {
     static VALID_ENGINES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         ["viper", "sst", "raptor", "nova", "swift", "prism", "helix"]
-            .iter().cloned().collect()
+            .iter()
+            .cloned()
+            .collect()
     });
-    
+
     let engine_lower = engine.to_lowercase();
     if !VALID_ENGINES.contains(engine_lower.as_str()) {
-        bail!("Unknown storage engine '{}'. Supported engines: {:?}",
-              engine, VALID_ENGINES.iter().collect::<Vec<_>>());
+        bail!(
+            "Unknown storage engine '{}'. Supported engines: {:?}",
+            engine,
+            VALID_ENGINES.iter().collect::<Vec<_>>()
+        );
     }
-    
+
     Ok(())
 }
 
@@ -376,16 +429,23 @@ pub fn validate_storage_engine(engine: &str) -> Result<()> {
 /// * Ok(()) if valid, Err with description if invalid
 pub fn validate_quantization_level(level: &str) -> Result<()> {
     static VALID_LEVELS: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-        ["binary", "int4", "int8", "pq4", "pq8", "pq16", "fp16", "fp32", "none"]
-            .iter().cloned().collect()
+        [
+            "binary", "int4", "int8", "pq4", "pq8", "pq16", "fp16", "fp32", "none",
+        ]
+        .iter()
+        .cloned()
+        .collect()
     });
-    
+
     let level_lower = level.to_lowercase();
     if !VALID_LEVELS.contains(level_lower.as_str()) {
-        bail!("Unknown quantization level '{}'. Supported levels: {:?}",
-              level, VALID_LEVELS.iter().collect::<Vec<_>>());
+        bail!(
+            "Unknown quantization level '{}'. Supported levels: {:?}",
+            level,
+            VALID_LEVELS.iter().collect::<Vec<_>>()
+        );
     }
-    
+
     Ok(())
 }
 
@@ -412,10 +472,10 @@ pub fn validate_insert_request(
     validate_vector_id(id)?;
     validate_collection_name(collection_name)?;
     validate_dimension(dimension, None)?;
-    
+
     // Validate vector
     crate::core::utils::vector_ops::validate_vector(vector, Some(dimension))?;
-    
+
     Ok(())
 }
 
@@ -440,17 +500,17 @@ pub fn validate_search_request(
     validate_dimension(dimension, None)?;
     validate_top_k(top_k, None)?;
     validate_distance_metric(metric)?;
-    
+
     // Validate vector
     crate::core::utils::vector_ops::validate_vector(vector, Some(dimension))?;
-    
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_vector_id_validation() {
         assert!(validate_vector_id("valid_id_123").is_ok());
@@ -458,7 +518,7 @@ mod tests {
         assert!(validate_vector_id("123_starts_with_number").is_err());
         assert!(validate_vector_id("has spaces").is_err());
     }
-    
+
     #[test]
     fn test_collection_name_validation() {
         assert!(validate_collection_name("my_collection").is_ok());
@@ -466,14 +526,14 @@ mod tests {
         assert!(validate_collection_name("MixedCase").is_err());
         assert!(validate_collection_name("system").is_err()); // Reserved
     }
-    
+
     #[test]
     fn test_dimension_validation() {
         assert!(validate_dimension(128, None).is_ok());
         assert!(validate_dimension(0, None).is_err());
         assert!(validate_dimension(100000, None).is_err());
     }
-    
+
     #[test]
     fn test_distance_metric_validation() {
         assert!(validate_distance_metric("cosine").is_ok());

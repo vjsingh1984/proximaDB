@@ -11,9 +11,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use super::pca_impl::EnhancedPCAModel;
 use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
-use super::pca_impl::EnhancedPCAModel;
 
 /// Configuration for PCA model management
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,14 +126,23 @@ impl PCAModelManager {
     /// Initialize manager and load existing models
     pub async fn initialize(&self) -> Result<()> {
         // Create model directory if it doesn't exist
-        self.filesystem.create_dir_all(&self.model_dir.to_string_lossy()).await?;
-        
+        self.filesystem
+            .create_dir_all(&self.model_dir.to_string_lossy())
+            .await?;
+
         // Load version history from metadata file
         let metadata_path = self.model_dir.join("versions.json");
-        if self.filesystem.exists(&metadata_path.to_string_lossy()).await? {
-            let metadata_bytes = self.filesystem.read(&metadata_path.to_string_lossy()).await?;
+        if self
+            .filesystem
+            .exists(&metadata_path.to_string_lossy())
+            .await?
+        {
+            let metadata_bytes = self
+                .filesystem
+                .read(&metadata_path.to_string_lossy())
+                .await?;
             let versions: Vec<ModelVersion> = serde_json::from_slice(&metadata_bytes)?;
-            
+
             // Load active model
             for version in &versions {
                 if version.is_active {
@@ -143,18 +152,21 @@ impl PCAModelManager {
                     break;
                 }
             }
-            
+
             *self.version_history.write().await = versions;
-            
+
             // Set next version
-            let max_version = self.version_history.read().await
+            let max_version = self
+                .version_history
+                .read()
+                .await
                 .iter()
                 .map(|v| v.version)
                 .max()
                 .unwrap_or(0);
             *self.next_version.write().await = max_version + 1;
         }
-        
+
         Ok(())
     }
 
@@ -169,27 +181,27 @@ impl PCAModelManager {
         }
 
         info!("Training new PCA model with {} vectors", vectors.len());
-        
+
         // Train the model
         let model = EnhancedPCAModel::train(vectors, n_components)?;
-        
+
         // Calculate metrics
-        let variance_explained = model.cumulative_variance.last()
-            .copied()
-            .unwrap_or(0.0);
-        
+        let variance_explained = model.cumulative_variance.last().copied().unwrap_or(0.0);
+
         let avg_reconstruction_error = self.calculate_avg_reconstruction_error(&model, vectors)?;
-        
+
         // Get version number
         let version = *self.next_version.read().await;
         *self.next_version.write().await = version + 1;
-        
+
         // Save model to disk
         let model_filename = format!("model_v{}.bin", version);
         let model_path = self.model_dir.join(&model_filename);
         let model_bytes = model.to_bytes()?;
-        self.filesystem.write(&model_path.to_string_lossy(), &model_bytes, None).await?;
-        
+        self.filesystem
+            .write(&model_path.to_string_lossy(), &model_bytes, None)
+            .await?;
+
         // Create version metadata
         let version_meta = ModelVersion {
             version,
@@ -201,22 +213,25 @@ impl PCAModelManager {
             is_active: false,
             drift_score: 0.0,
         };
-        
+
         // Add to history
-        self.version_history.write().await.push(version_meta.clone());
-        
+        self.version_history
+            .write()
+            .await
+            .push(version_meta.clone());
+
         // Cache the model
         self.model_cache.write().await.insert(version, model);
-        
+
         // Save version history
         self.save_version_history().await?;
-        
+
         info!(
             "Trained PCA model version {} with {:.2}% variance explained",
             version,
             variance_explained * 100.0
         );
-        
+
         Ok(version)
     }
 
@@ -225,26 +240,32 @@ impl PCAModelManager {
         // Load model if not in cache
         if !self.model_cache.read().await.contains_key(&version) {
             let model = self.load_model(version).await?;
-            self.model_cache.write().await.insert(version, model.clone());
+            self.model_cache
+                .write()
+                .await
+                .insert(version, model.clone());
         }
-        
+
         // Get model from cache
-        let model = self.model_cache.read().await
+        let model = self
+            .model_cache
+            .read()
+            .await
             .get(&version)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Model version {} not found", version))?;
-        
+
         // Update active model
         *self.active_model.write().await = Some(model);
-        
+
         // Update version history
         for v in self.version_history.write().await.iter_mut() {
             v.is_active = v.version == version;
         }
-        
+
         // Save version history
         self.save_version_history().await?;
-        
+
         // Reset drift metrics
         *self.drift_metrics.write().await = DriftMetrics {
             reconstruction_errors: VecDeque::with_capacity(1000),
@@ -252,7 +273,7 @@ impl PCAModelManager {
             variance_drift: 0.0,
             samples_since_training: 0,
         };
-        
+
         info!("Activated PCA model version {}", version);
         Ok(())
     }
@@ -264,16 +285,16 @@ impl PCAModelManager {
             return Ok(false);
         }
         let model = active_model.as_ref().unwrap();
-        
+
         // Calculate reconstruction errors
         let mut errors = Vec::new();
         for vector in recent_vectors.iter().take(self.config.evaluation_window) {
             let error = model.reconstruction_error(&vector.vector)?;
             errors.push(error);
         }
-        
+
         let avg_error = errors.iter().sum::<f32>() / errors.len() as f32;
-        
+
         // Update drift metrics
         let mut metrics = self.drift_metrics.write().await;
         metrics.reconstruction_errors.push_back(avg_error);
@@ -281,30 +302,32 @@ impl PCAModelManager {
             metrics.reconstruction_errors.pop_front();
         }
         metrics.samples_since_training += recent_vectors.len();
-        
+
         // Calculate drift score
-        let baseline_error = self.get_active_version_metadata().await?
+        let baseline_error = self
+            .get_active_version_metadata()
+            .await?
             .map(|v| v.avg_reconstruction_error)
             .unwrap_or(0.0);
-        
+
         let drift_score = if baseline_error > 0.0 {
             (avg_error - baseline_error).abs() / baseline_error
         } else {
             0.0
         };
-        
+
         metrics.distribution_shift = drift_score;
-        
+
         // Check if retraining is needed
         let needs_retraining = drift_score > self.config.drift_threshold;
-        
+
         if needs_retraining {
             warn!(
                 "Model drift detected: score={:.3} > threshold={:.3}",
                 drift_score, self.config.drift_threshold
             );
         }
-        
+
         Ok(needs_retraining)
     }
 
@@ -319,13 +342,16 @@ impl PCAModelManager {
         if let Some(model) = self.model_cache.read().await.get(&version) {
             return Ok(model.clone());
         }
-        
+
         // Load from disk
         let model = self.load_model(version).await?;
-        
+
         // Cache it
-        self.model_cache.write().await.insert(version, model.clone());
-        
+        self.model_cache
+            .write()
+            .await
+            .insert(version, model.clone());
+
         Ok(model)
     }
 
@@ -342,38 +368,45 @@ impl PCAModelManager {
     /// Cleanup old versions
     pub async fn cleanup_old_versions(&self) -> Result<()> {
         let mut history = self.version_history.write().await;
-        
+
         // Keep only the configured number of versions
         if history.len() > self.config.max_versions {
             // Sort by version (newest first)
             history.sort_by(|a, b| b.version.cmp(&a.version));
-            
+
             // Find versions to remove
-            let to_remove: Vec<_> = history.iter()
+            let to_remove: Vec<_> = history
+                .iter()
                 .skip(self.config.max_versions)
                 .filter(|v| !v.is_active)
                 .map(|v| v.version)
                 .collect();
-            
+
             // Remove from history
             history.retain(|v| !to_remove.contains(&v.version) || v.is_active);
-            
+
             // Remove from cache
             let mut cache = self.model_cache.write().await;
             for version in &to_remove {
                 cache.remove(version);
-                
+
                 // Delete model file
                 let model_filename = format!("model_v{}.bin", version);
                 let model_path = self.model_dir.join(&model_filename);
-                if self.filesystem.exists(&model_path.to_string_lossy()).await? {
-                    self.filesystem.delete(&model_path.to_string_lossy()).await?;
+                if self
+                    .filesystem
+                    .exists(&model_path.to_string_lossy())
+                    .await?
+                {
+                    self.filesystem
+                        .delete(&model_path.to_string_lossy())
+                        .await?;
                 }
-                
+
                 info!("Removed old PCA model version {}", version);
             }
         }
-        
+
         Ok(())
     }
 
@@ -382,10 +415,13 @@ impl PCAModelManager {
     async fn load_model(&self, version: u32) -> Result<EnhancedPCAModel> {
         let model_filename = format!("model_v{}.bin", version);
         let model_path = self.model_dir.join(&model_filename);
-        
-        let model_bytes = self.filesystem.read(&model_path.to_string_lossy()).await
+
+        let model_bytes = self
+            .filesystem
+            .read(&model_path.to_string_lossy())
+            .await
             .context(format!("Failed to read model version {}", version))?;
-        
+
         EnhancedPCAModel::from_bytes(&model_bytes)
     }
 
@@ -393,12 +429,17 @@ impl PCAModelManager {
         let metadata_path = self.model_dir.join("versions.json");
         let history = self.version_history.read().await;
         let json = serde_json::to_vec_pretty(&*history)?;
-        self.filesystem.write(&metadata_path.to_string_lossy(), &json, None).await?;
+        self.filesystem
+            .write(&metadata_path.to_string_lossy(), &json, None)
+            .await?;
         Ok(())
     }
 
     async fn get_active_version_metadata(&self) -> Result<Option<ModelVersion>> {
-        Ok(self.version_history.read().await
+        Ok(self
+            .version_history
+            .read()
+            .await
             .iter()
             .find(|v| v.is_active)
             .cloned())
@@ -411,11 +452,11 @@ impl PCAModelManager {
     ) -> Result<f32> {
         let sample_size = vectors.len().min(1000);
         let mut total_error = 0.0;
-        
+
         for vector in vectors.iter().take(sample_size) {
             total_error += model.reconstruction_error(&vector.vector)?;
         }
-        
+
         Ok(total_error / sample_size as f32)
     }
 }
@@ -446,7 +487,7 @@ impl IncrementalPCAUpdater {
     pub fn add_vectors(&mut self, vectors: &[VectorRecord]) {
         for vector in vectors {
             self.accumulated_updates.push(vector.vector.clone());
-            
+
             if self.accumulated_updates.len() >= self.batch_size {
                 self.apply_update();
             }
@@ -458,7 +499,7 @@ impl IncrementalPCAUpdater {
         // Simplified incremental PCA update
         // In production, this would use more sophisticated online PCA algorithms
         // such as CCIPCA (Candid Covariance-free Incremental PCA)
-        
+
         // Clear accumulated updates after processing
         self.accumulated_updates.clear();
     }

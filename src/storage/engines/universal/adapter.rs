@@ -3,17 +3,17 @@
 //! This module provides the main implementation of the universal distance adapter
 //! that integrates PQ and INT8 optimized distance computations across all storage engines.
 
+use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
-use crate::utils::uuid::Uuid;
 
 use crate::compute::distance_computation::{
-    DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData, SelectedFormat,
-    SimilarityResult, UnifiedDistanceCompute,
+    DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData,
+    SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
 };
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 

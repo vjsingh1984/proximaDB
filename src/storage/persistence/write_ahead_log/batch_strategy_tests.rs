@@ -305,9 +305,11 @@ mod write_ahead_log_batch_strategy_tests {
             vector,
             metadata: vec![MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "test".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "test".to_string(),
+                    ),
+                ),
             }],
             timestamp: now as u32,
             updated_at: Some(now as u32),

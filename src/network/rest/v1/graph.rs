@@ -58,18 +58,20 @@
 //! Proto timestamps are converted to ISO 8601 strings for JSON compatibility.
 
 use axum::{
+    Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-use crate::graph::{GraphService, Node, Edge, NodeId, EdgeId, TraversalRequest, NodeQuery, EdgeQuery};
+use crate::graph::{
+    Edge, EdgeId, EdgeQuery, GraphService, Node, NodeId, NodeQuery, TraversalRequest,
+};
 use crate::network::rest::v1::handlers::AppState;
 
 /// Graph API error response
@@ -150,7 +152,7 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/nodes/:id", put(update_node))
         .route("/nodes/:id", delete(delete_node))
         .route("/nodes/:id/neighbors", get(get_node_neighbors))
-        // Edge operations  
+        // Edge operations
         .route("/edges", post(create_edge))
         .route("/edges/:id", get(get_edge))
         .route("/edges/:id", put(update_edge))
@@ -179,15 +181,20 @@ pub async fn create_node(
     Json(request): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
     debug!("Creating node: {:?}", request.node.id);
-    
-    match app_state.unified_handlers.graph_service.create_node(request.node) {
+
+    match app_state
+        .unified_handlers
+        .graph_service
+        .create_node(request.node)
+    {
         Ok(node) => {
             info!("Successfully created node: {}", node.id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*node).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to create node: {}", err);
             (
@@ -196,8 +203,9 @@ pub async fn create_node(
                     error: "creation_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_NODE_CREATE_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -208,15 +216,16 @@ pub async fn get_node(
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Getting node: {}", node_id);
-    
+
     match app_state.unified_handlers.graph_service.get_node(&node_id) {
         Ok(Some(node)) => {
             info!("Successfully retrieved node: {}", node_id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*node).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Ok(None) => {
             warn!("Node not found: {}", node_id);
             (
@@ -225,9 +234,10 @@ pub async fn get_node(
                     error: "not_found".to_string(),
                     message: format!("Node '{}' not found", node_id),
                     code: "GRAPH_NODE_NOT_FOUND".to_string(),
-                })
-            ).into_response()
-        },
+                }),
+            )
+                .into_response()
+        }
         Err(err) => {
             error!("Failed to get node {}: {}", node_id, err);
             (
@@ -236,8 +246,9 @@ pub async fn get_node(
                     error: "retrieval_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_NODE_GET_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -249,18 +260,19 @@ pub async fn update_node(
     Json(mut node): Json<Node>,
 ) -> impl IntoResponse {
     debug!("Updating node: {}", node_id);
-    
+
     // Ensure the node ID matches the path parameter
     node.id = node_id.clone();
-    
+
     match app_state.unified_handlers.graph_service.update_node(node) {
         Ok(updated_node) => {
             info!("Successfully updated node: {}", node_id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*updated_node).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to update node {}: {}", node_id, err);
             (
@@ -269,8 +281,9 @@ pub async fn update_node(
                     error: "update_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_NODE_UPDATE_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -281,15 +294,20 @@ pub async fn delete_node(
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Deleting node: {}", node_id);
-    
-    match app_state.unified_handlers.graph_service.delete_node(&node_id) {
+
+    match app_state
+        .unified_handlers
+        .graph_service
+        .delete_node(&node_id)
+    {
         Ok(Some(deleted_node)) => {
             info!("Successfully deleted node: {}", node_id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*deleted_node).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Ok(None) => {
             warn!("Node not found for deletion: {}", node_id);
             (
@@ -298,9 +316,10 @@ pub async fn delete_node(
                     error: "not_found".to_string(),
                     message: format!("Node '{}' not found", node_id),
                     code: "GRAPH_NODE_NOT_FOUND".to_string(),
-                })
-            ).into_response()
-        },
+                }),
+            )
+                .into_response()
+        }
         Err(err) => {
             error!("Failed to delete node {}: {}", node_id, err);
             (
@@ -309,8 +328,9 @@ pub async fn delete_node(
                     error: "deletion_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_NODE_DELETE_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -321,15 +341,27 @@ pub async fn get_node_neighbors(
     Path(node_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Getting neighbors for node: {}", node_id);
-    
-    match app_state.unified_handlers.graph_service.get_neighbors(&node_id) {
+
+    match app_state
+        .unified_handlers
+        .graph_service
+        .get_neighbors(&node_id)
+    {
         Ok(neighbors) => {
-            info!("Successfully retrieved {} neighbors for node: {}", neighbors.len(), node_id);
+            info!(
+                "Successfully retrieved {} neighbors for node: {}",
+                neighbors.len(),
+                node_id
+            );
             Json(GraphSuccessResponse {
                 success: true,
-                data: neighbors.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
-            }).into_response()
-        },
+                data: neighbors
+                    .into_iter()
+                    .map(|n| (*n).clone())
+                    .collect::<Vec<_>>(),
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to get neighbors for node {}: {}", node_id, err);
             (
@@ -338,8 +370,9 @@ pub async fn get_node_neighbors(
                     error: "neighbors_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_NEIGHBORS_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -350,15 +383,20 @@ pub async fn create_edge(
     Json(request): Json<CreateEdgeRequest>,
 ) -> impl IntoResponse {
     debug!("Creating edge: {:?}", request.edge.id);
-    
-    match app_state.unified_handlers.graph_service.create_edge(request.edge) {
+
+    match app_state
+        .unified_handlers
+        .graph_service
+        .create_edge(request.edge)
+    {
         Ok(edge) => {
             info!("Successfully created edge: {}", edge.id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*edge).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to create edge: {}", err);
             (
@@ -367,8 +405,9 @@ pub async fn create_edge(
                     error: "creation_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_EDGE_CREATE_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -385,6 +424,10 @@ struct ShortestPathRequest {
     algorithm: Option<String>, // "DIJKSTRA" or "ASTAR"
     #[serde(default)]
     k: Option<u32>,
+    #[serde(default)]
+    enable_prefetch: Option<bool>,
+    #[serde(default)]
+    prefetch_budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -395,16 +438,35 @@ struct ShortestPathResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct UniqueConstraintRequest { label: String, property: String }
+struct UniqueConstraintRequest {
+    label: String,
+    property: String,
+}
 
 #[derive(Debug, Serialize)]
-struct DdlResponse { success: bool }
+struct DdlResponse {
+    success: bool,
+}
 
 /// Compute shortest path using Dijkstra algorithm
 pub async fn shortest_path(
     State(app_state): State<AppState>,
-    Json(req): Json<ShortestPathRequest>,
+    headers: axum::http::HeaderMap,
+    Json(mut req): Json<ShortestPathRequest>,
 ) -> impl IntoResponse {
+    // Header-based overrides if JSON fields not provided
+    if req.enable_prefetch.is_none() {
+        if let Some(v) = headers.get("x-graph-prefetch-enabled").and_then(|v| v.to_str().ok()) {
+            req.enable_prefetch = Some(v.eq_ignore_ascii_case("true") || v == "1");
+        }
+    }
+    if req.prefetch_budget.is_none() {
+        if let Some(v) = headers.get("x-graph-prefetch-budget").and_then(|v| v.to_str().ok()) {
+            if let Ok(n) = v.parse::<usize>() {
+                req.prefetch_budget = Some(n);
+            }
+        }
+    }
     match app_state
         .unified_handlers
         .graph_service
@@ -415,6 +477,8 @@ pub async fn shortest_path(
             req.edge_types,
             parse_sp_algorithm(req.algorithm.as_deref()),
             req.k,
+            req.enable_prefetch,
+            req.prefetch_budget,
         )
         .await
     {
@@ -445,10 +509,16 @@ pub async fn shortest_path(
     }
 }
 
-fn parse_sp_algorithm(s: Option<&str>) -> Option<crate::proto::proximadb_v1::ShortestPathAlgorithm> {
+fn parse_sp_algorithm(
+    s: Option<&str>,
+) -> Option<crate::proto::proximadb_v1::ShortestPathAlgorithm> {
     match s.unwrap_or("DIJKSTRA").to_ascii_uppercase().as_str() {
-        "ASTAR" => Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmAstar),
-        "DIJKSTRA" => Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmDijkstra),
+        "ASTAR" => {
+            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmAstar)
+        }
+        "DIJKSTRA" => {
+            Some(crate::proto::proximadb_v1::ShortestPathAlgorithm::ShortestPathAlgorithmDijkstra)
+        }
         _ => None,
     }
 }
@@ -489,28 +559,47 @@ pub async fn remove_unique_constraint(
 }
 
 /// Get connected components (weakly connected)
-pub async fn get_connected_components(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
-    match app_state.unified_handlers.graph_service.connected_components().await {
-        Ok(components) => Json(ComponentsResponse { success: true, components }).into_response(),
+pub async fn get_connected_components(State(app_state): State<AppState>) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .connected_components()
+        .await
+    {
+        Ok(components) => Json(ComponentsResponse {
+            success: true,
+            components,
+        })
+        .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(GraphErrorResponse { error: "components_failed".into(), message: e.to_string(), code: "GRAPH_COMPONENTS_ERROR".into() }),
-        ).into_response(),
+            Json(GraphErrorResponse {
+                error: "components_failed".into(),
+                message: e.to_string(),
+                code: "GRAPH_COMPONENTS_ERROR".into(),
+            }),
+        )
+            .into_response(),
     }
 }
 
 /// Detect directed cycles
-pub async fn check_cycles(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn check_cycles(State(app_state): State<AppState>) -> impl IntoResponse {
     match app_state.unified_handlers.graph_service.has_cycle().await {
-        Ok(has) => Json(CycleResponse { success: true, has_cycle: has }).into_response(),
+        Ok(has) => Json(CycleResponse {
+            success: true,
+            has_cycle: has,
+        })
+        .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(GraphErrorResponse { error: "cycles_failed".into(), message: e.to_string(), code: "GRAPH_CYCLE_ERROR".into() }),
-        ).into_response(),
+            Json(GraphErrorResponse {
+                error: "cycles_failed".into(),
+                message: e.to_string(),
+                code: "GRAPH_CYCLE_ERROR".into(),
+            }),
+        )
+            .into_response(),
     }
 }
 
@@ -520,15 +609,16 @@ pub async fn get_edge(
     Path(edge_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Getting edge: {}", edge_id);
-    
+
     match app_state.unified_handlers.graph_service.get_edge(&edge_id) {
         Ok(Some(edge)) => {
             info!("Successfully retrieved edge: {}", edge_id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*edge).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Ok(None) => {
             warn!("Edge not found: {}", edge_id);
             (
@@ -537,9 +627,10 @@ pub async fn get_edge(
                     error: "not_found".to_string(),
                     message: format!("Edge '{}' not found", edge_id),
                     code: "GRAPH_EDGE_NOT_FOUND".to_string(),
-                })
-            ).into_response()
-        },
+                }),
+            )
+                .into_response()
+        }
         Err(err) => {
             error!("Failed to get edge {}: {}", edge_id, err);
             (
@@ -548,8 +639,9 @@ pub async fn get_edge(
                     error: "retrieval_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_EDGE_GET_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -561,18 +653,19 @@ pub async fn update_edge(
     Json(mut edge): Json<Edge>,
 ) -> impl IntoResponse {
     debug!("Updating edge: {}", edge_id);
-    
+
     // Ensure the edge ID matches the path parameter
     edge.id = edge_id.clone();
-    
+
     match app_state.unified_handlers.graph_service.update_edge(edge) {
         Ok(updated_edge) => {
             info!("Successfully updated edge: {}", edge_id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*updated_edge).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to update edge {}: {}", edge_id, err);
             (
@@ -581,8 +674,9 @@ pub async fn update_edge(
                     error: "update_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_EDGE_UPDATE_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -593,15 +687,20 @@ pub async fn delete_edge(
     Path(edge_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Deleting edge: {}", edge_id);
-    
-    match app_state.unified_handlers.graph_service.delete_edge(&edge_id) {
+
+    match app_state
+        .unified_handlers
+        .graph_service
+        .delete_edge(&edge_id)
+    {
         Ok(Some(deleted_edge)) => {
             info!("Successfully deleted edge: {}", edge_id);
             Json(GraphSuccessResponse {
                 success: true,
                 data: (*deleted_edge).clone(),
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Ok(None) => {
             warn!("Edge not found for deletion: {}", edge_id);
             (
@@ -610,9 +709,10 @@ pub async fn delete_edge(
                     error: "not_found".to_string(),
                     message: format!("Edge '{}' not found", edge_id),
                     code: "GRAPH_EDGE_NOT_FOUND".to_string(),
-                })
-            ).into_response()
-        },
+                }),
+            )
+                .into_response()
+        }
         Err(err) => {
             error!("Failed to delete edge {}: {}", edge_id, err);
             (
@@ -621,8 +721,9 @@ pub async fn delete_edge(
                     error: "deletion_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_EDGE_DELETE_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -630,18 +731,38 @@ pub async fn delete_edge(
 /// Perform graph traversal
 pub async fn traverse_graph(
     State(app_state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<TraversalRequest>,
 ) -> impl IntoResponse {
-    debug!("Starting graph traversal from node: {}", request.start_node_id);
-    
-    match app_state.unified_handlers.graph_service.traverse(request).await {
+    debug!(
+        "Starting graph traversal from node: {}",
+        request.start_node_id
+    );
+
+    // Read per-call overrides from headers (if present)
+    let override_enable_prefetch = headers
+        .get("x-graph-prefetch-enabled")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.eq_ignore_ascii_case("true") || s == "1");
+    let override_prefetch_budget = headers
+        .get("x-graph-prefetch-budget")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok());
+
+    match app_state
+        .unified_handlers
+        .graph_service
+        .traverse_with_overrides(request, override_enable_prefetch, override_prefetch_budget)
+        .await
+    {
         Ok(response) => {
             info!("Successfully completed graph traversal");
             Json(GraphSuccessResponse {
                 success: true,
                 data: response,
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to traverse graph: {}", err);
             (
@@ -650,8 +771,9 @@ pub async fn traverse_graph(
                     error: "traversal_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_TRAVERSAL_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -667,25 +789,34 @@ pub async fn query_nodes(
     if q.offset.is_none() {
         if let Some(token) = &q.continuation_token {
             if let Some(rest) = token.strip_prefix("offset:") {
-                if let Ok(n) = rest.parse::<u32>() { q.offset = Some(n); }
+                if let Ok(n) = rest.parse::<u32>() {
+                    q.offset = Some(n);
+                }
             }
         }
     }
 
-    match app_state.unified_handlers.graph_service.query_nodes(q.clone()) {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .query_nodes(q.clone())
+    {
         Ok(nodes) => {
             info!("Successfully queried {} nodes", nodes.len());
             let mut next_token = None;
-            if let Some(lim) = q.limit { if (nodes.len() as u32) == lim {
-                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                next_token = Some(format!("offset:{}", next_off));
-            }}
+            if let Some(lim) = q.limit {
+                if (nodes.len() as u32) == lim {
+                    let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                    next_token = Some(format!("offset:{}", next_off));
+                }
+            }
             Json(GraphQueryResponse {
                 success: true,
                 data: nodes.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
                 next_token,
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to query nodes: {}", err);
             (
@@ -694,8 +825,9 @@ pub async fn query_nodes(
                     error: "query_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_NODE_QUERY_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -710,24 +842,33 @@ pub async fn query_edges(
     if q.offset.is_none() {
         if let Some(token) = &q.continuation_token {
             if let Some(rest) = token.strip_prefix("offset:") {
-                if let Ok(n) = rest.parse::<u32>() { q.offset = Some(n); }
+                if let Ok(n) = rest.parse::<u32>() {
+                    q.offset = Some(n);
+                }
             }
         }
     }
-    match app_state.unified_handlers.graph_service.query_edges(q.clone()) {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .query_edges(q.clone())
+    {
         Ok(edges) => {
             info!("Successfully queried {} edges", edges.len());
             let mut next_token = None;
-            if let Some(lim) = q.limit { if (edges.len() as u32) == lim {
-                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                next_token = Some(format!("offset:{}", next_off));
-            }}
+            if let Some(lim) = q.limit {
+                if (edges.len() as u32) == lim {
+                    let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                    next_token = Some(format!("offset:{}", next_off));
+                }
+            }
             Json(GraphQueryResponse {
                 success: true,
                 data: edges.into_iter().map(|e| (*e).clone()).collect::<Vec<_>>(),
                 next_token,
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to query edges: {}", err);
             (
@@ -736,8 +877,9 @@ pub async fn query_edges(
                     error: "query_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_EDGE_QUERY_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -749,7 +891,11 @@ pub async fn batch_create_nodes(
 ) -> impl IntoResponse {
     debug!("Batch creating {} nodes", request.nodes.len());
     let strategy = request.if_exists.unwrap_or_else(|| "error".into());
-    match app_state.unified_handlers.graph_service.batch_create_nodes_with_strategy(request.nodes, strategy.as_str()) {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .batch_create_nodes_with_strategy(request.nodes, strategy.as_str())
+    {
         Ok(nodes) => {
             info!("Successfully batch created {} nodes", nodes.len());
             Json(GraphBatchResponse {
@@ -758,8 +904,9 @@ pub async fn batch_create_nodes(
                 failed_count: 0,
                 results: nodes.into_iter().map(|n| (*n).clone()).collect::<Vec<_>>(),
                 errors: vec![],
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to batch create nodes: {}", err);
             (
@@ -768,8 +915,9 @@ pub async fn batch_create_nodes(
                     error: "batch_creation_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_BATCH_NODES_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -794,8 +942,9 @@ pub async fn batch_create_edges(
                 failed_count: 0,
                 results: edges.into_iter().map(|e| (*e).clone()).collect::<Vec<_>>(),
                 errors: vec![],
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to batch create edges: {}", err);
             (
@@ -804,32 +953,38 @@ pub async fn batch_create_edges(
                     error: "batch_creation_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_BATCH_EDGES_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }
 
 /// Get graph statistics
 #[derive(Debug, Serialize)]
-struct ComponentsResponse { success: bool, components: Vec<Vec<String>> }
+struct ComponentsResponse {
+    success: bool,
+    components: Vec<Vec<String>>,
+}
 
 #[derive(Debug, Serialize)]
-struct CycleResponse { success: bool, has_cycle: bool }
+struct CycleResponse {
+    success: bool,
+    has_cycle: bool,
+}
 
-pub async fn get_graph_stats(
-    State(app_state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn get_graph_stats(State(app_state): State<AppState>) -> impl IntoResponse {
     debug!("Getting graph statistics");
-    
+
     match app_state.unified_handlers.graph_service.get_stats() {
         Ok(stats) => {
             info!("Successfully retrieved graph statistics");
             Json(GraphSuccessResponse {
                 success: true,
                 data: stats,
-            }).into_response()
-        },
+            })
+            .into_response()
+        }
         Err(err) => {
             error!("Failed to get graph statistics: {}", err);
             (
@@ -838,8 +993,9 @@ pub async fn get_graph_stats(
                     error: "stats_failed".to_string(),
                     message: err.to_string(),
                     code: "GRAPH_STATS_ERROR".to_string(),
-                })
-            ).into_response()
+                }),
+            )
+                .into_response()
         }
     }
 }

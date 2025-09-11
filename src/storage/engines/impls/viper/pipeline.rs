@@ -2997,13 +2997,21 @@ impl CompactionEngine {
                     for (k, v) in metadata {
                         let sql_value = match v {
                             serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s))
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ),
                             },
                             serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)))
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        n.as_f64().unwrap_or(0.0),
+                                    ),
+                                ),
                             },
                             serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                                value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b))
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                ),
                             },
                             _ => crate::proto::proximadb_v1::SqlValue { value: None },
                         };

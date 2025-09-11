@@ -20,10 +20,19 @@
 == Shortest Path
 
 - REST: POST `/v1/graph/shortest_path`
-  - Body: `{ start_node_id, target_node_id, max_depth?, edge_types?, algorithm?: "DIJKSTRA"|"ASTAR", k?: number }`
+  - Body: `{ start_node_id, target_node_id, max_depth?, edge_types?, algorithm?: "DIJKSTRA"|"ASTAR", k?: number, enable_prefetch?: bool, prefetch_budget?: int }`
   - Response: `{ success, path: string[]?, total_weight?: number }`
 - gRPC: `ShortestPath(ShortestPathRequest) returns (ShortestPathResponse)`
   - ShortestPathRequest includes `algorithm` (enum) and `k` (for k-shortest if > 1)
+  - Per-call prefetch overrides via gRPC metadata headers:
+    - `x-graph-prefetch-enabled: true|false|1|0`
+    - `x-graph-prefetch-budget: <int>`
+
+=== Prefetch Controls (REST)
+- JSON fields (optional): `enable_prefetch`, `prefetch_budget`
+- Alternative headers:
+  - `x-graph-prefetch-enabled: true|false|1|0`
+  - `x-graph-prefetch-budget: <int>`
 
 == Streaming Traversal (gRPC)
 

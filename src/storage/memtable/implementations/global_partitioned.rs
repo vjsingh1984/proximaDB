@@ -93,7 +93,7 @@ use crate::core::VectorRecord;
 #[derive(Debug)]
 struct CollectionPartition {
     /// WAL Batches stored as native deserialized batches (PRIMARY STORAGE)
-    /// 
+    ///
     /// Key design: We store complete WALVectorBatch objects rather than individual
     /// vectors to preserve batch atomicity and enable efficient group operations.
     /// The batch ID is globally unique (CompactBatchId) ensuring no collisions.
@@ -101,19 +101,19 @@ struct CollectionPartition {
         HashMap<String, crate::storage::memtable::specialized::wal_behavior::WALVectorBatch>,
 
     /// Vector ID to batch lookup index for fast get operations
-    /// 
+    ///
     /// Secondary index mapping vector IDs to their containing batch.
     /// This enables O(1) retrieval of individual vectors by ID.
     /// Note: Only vectors with client-provided IDs are indexed.
     vector_id_index: HashMap<String, String>, // vector_id -> batch_id
 
     /// Collection statistics for monitoring and management
-    total_size: usize,          // Total bytes consumed by all batches
-    vector_count: usize,        // Total number of vectors across all batches
-    batch_count: usize,         // Number of batches in this partition
-    last_flush_sequence: u64,   // Sequence number of last successful flush
-    timestamp: std::time::SystemTime,     // Last modification time
-    created_at: std::time::SystemTime,    // Partition creation time
+    total_size: usize, // Total bytes consumed by all batches
+    vector_count: usize,      // Total number of vectors across all batches
+    batch_count: usize,       // Number of batches in this partition
+    last_flush_sequence: u64, // Sequence number of last successful flush
+    timestamp: std::time::SystemTime, // Last modification time
+    created_at: std::time::SystemTime, // Partition creation time
 }
 
 impl CollectionPartition {
@@ -225,7 +225,7 @@ impl CollectionPartition {
         }
 
         let current_time = chrono::Utc::now().timestamp_micros();
-        let mut latest_record: Option<(VectorRecord, u64, Option<u32>)> = None; // (record, sequence, version)
+        let mut latest_record: Option<(VectorRecord, u64, Option<i64>)> = None; // (record, sequence, version)
 
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
@@ -264,7 +264,7 @@ impl CollectionPartition {
         // Check the latest record we found
         if let Some((record, _, _)) = latest_record {
             // Check if it's expired (logical delete) - convert current_time to seconds
-            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
+            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
             let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
 
             if is_expired.unwrap_or(false) {
@@ -322,7 +322,7 @@ impl CollectionPartition {
     fn get_all_vectors(&self) -> Vec<VectorRecord> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<u32>)> = HashMap::new(); // (record, sequence, version)
+        let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<i64>)> = HashMap::new(); // (record, sequence, version)
         let mut vectors_without_id = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
 
@@ -362,7 +362,7 @@ impl CollectionPartition {
                     }
                 } else {
                     // No ID - include directly if not expired
-                    let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
+                    let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
                         .map(|expires| expires < current_time_secs);
@@ -378,7 +378,7 @@ impl CollectionPartition {
         let mut vectors = Vec::new();
 
         for (_, (record, _, _)) in id_to_latest {
-            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
+            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
             let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
 
             if !is_expired.unwrap_or(false) {
@@ -410,7 +410,7 @@ impl CollectionPartition {
     ) -> Vec<(SimilarityResult, VectorRecord)> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> =
+        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<i64>)> =
             HashMap::new(); // (score, record, sequence, version)
         let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
@@ -495,7 +495,7 @@ impl CollectionPartition {
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
-                    let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
+                    let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
                         .map(|expires| expires < current_time_secs);
@@ -518,7 +518,7 @@ impl CollectionPartition {
         let latest_versions_count = id_to_latest.len();
 
         for (id, (score, vector_record, _, _)) in id_to_latest {
-            let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
+            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
             let is_expired = vector_record
                 .expires_at
                 .map(|expires| expires < current_time_secs);

@@ -25,9 +25,7 @@ use tracing::{debug, error, info, warn};
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{
-    MetadataProvider, UnifiedMetricsCollector
-};
+use crate::storage::traits::{MetadataProvider, UnifiedMetricsCollector};
 
 /// Protobuf operation for incremental collection storage
 #[derive(Clone, Message)]
@@ -165,7 +163,7 @@ pub struct UniversalMetadataBackend {
 
     /// Unified atomic coordinator for metadata operations
     atomic_coordinator: Arc<TransactionCoordinator>,
-    
+
     /// Optional unified metrics collector (injected)
     metrics_collector: Option<UnifiedMetricsCollector>,
 }
@@ -1503,15 +1501,15 @@ impl MetadataProvider for UniversalMetadataBackend {
         // Fast check using in-memory index without full metadata retrieval
         Ok(self.index.exists_by_uuid(collection_id))
     }
-    
+
     async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()> {
         UniversalMetadataBackend::upsert_collection_proto(self, collection).await
     }
-    
+
     async fn delete_collection(&self, collection_id: &str) -> Result<()> {
         UniversalMetadataBackend::delete_collection(self, collection_id).await
     }
-    
+
     fn find_collection(&self, collection_id: &str) -> Option<Collection> {
         UniversalMetadataBackend::find_collection(self, collection_id)
     }

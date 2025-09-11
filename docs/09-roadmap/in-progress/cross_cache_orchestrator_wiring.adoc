@@ -1,0 +1,40 @@
+ = Cross‑Cache Orchestrator Wiring — Checklist (P0)
+ :toc:
+ :status: in-progress
+
+== Objective
+Complete end‑to‑end wiring for the Cross‑Cache Orchestrator across engines and services with safe, bounded prefetch and metrics.
+
+== Tasks
+
+- VIPER/SST Read‑Path Tracking [🟡 In Progress]
+  - Emit `track_access_async` for `Metadata` and `FilterBitmap` at concrete touchpoints:
+    - VIPER: `viper/engine.rs` around `UnifiedParquetReader` metadata/row‑group reads.
+    - SST: `impls/sst/mod.rs` at decompression cache lookups and manifest/meta reads.
+  - Prefetch: call `prefetch_urgent` only for small, bounded neighbor ranges (adjacent row groups; next block window). Guard by queue/size caps.
+
+- StorageKV (Embedded DB) [🔲 TODO]
+  - Implement `RocksDbKV: StorageKV` with `put/get/delete` and namespaces; feature‑flag via config (drop‑in for `FsKV`).
+  - Config keys: `[kv] engine = "rocksdb" | "fs"`, `path`, `ttl`, `namespaces`.
+  - Use for SKS headers, small indices, orchestrator hints.
+
+- SharedContext Threading [🟡 In Progress]
+  - Thread `SharedContext` through `ApiHandlers` → `QueryEngine` → services; pass into Parquet readers.
+  - Add `UnifiedParquetReader::with_context(..)` and update VIPER/NOVA constructors to forward `ctx`.
+
+- Cache Provider Registration [🔲 TODO]
+  - Implement `register_cache_provider` in VIPER/SST/HELIX to expose stats (hit_rate, entries, bytes, evictions, latency).
+  - Sources: Parquet footer cache, decompression cache, fastlanes block cache.
+
+- Unified Tracing (OTel) [🔲 TODO]
+  - Spans: handlers → parse/lower → plan → execute (vector/graph/hybrid) → engine I/O.
+  - Propagate context via `SharedContext`; export Prometheus/OTel metrics per Unified Metrics spec.
+  - Hook fastlanes (SST/SWIFT shared `FastLanesDataBlock`) to surface read/hit stats via orchestrator.
+
+== Acceptance
+- Metadata/filter tracking active in VIPER/SST; safe prefetch bounded by caps.
+- RocksDB KV enabled behind config with migration path from FsKV.
+- SharedContext propagates orchestrator to Parquet readers and services.
+- Orchestrator rebalances using engine‑reported stats; dashboards show cache efficacy.
+- OTel spans present across layers with consistent IDs.
+

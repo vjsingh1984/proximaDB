@@ -28,10 +28,10 @@ use tracing::{debug, info, trace};
 // Note: SearchResult is proto type, not in core::search anymore
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::search::OptimizedSearchRecord;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
 use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
 
@@ -278,7 +278,7 @@ impl ProgressiveSearchExecutor {
                     };
                     // Convert StorageQuantizedData to Vec<QuantizedRepresentation>
                     let mut representations = Vec::new();
-                    
+
                     // Add filter quantization (binary) if present
                     if let Some(filter) = &quantized_data.filter {
                         representations.push(QuantizedRepresentation {
@@ -287,7 +287,7 @@ impl ProgressiveSearchExecutor {
                             quant_type: QuantizationType::Binary,
                         });
                     }
-                    
+
                     // Add fast quantization (INT8) if present
                     if let Some(fast) = &quantized_data.fast {
                         representations.push(QuantizedRepresentation {
@@ -296,7 +296,7 @@ impl ProgressiveSearchExecutor {
                             quant_type: QuantizationType::Scalar,
                         });
                     }
-                    
+
                     // Add primary quantization (PQ) if present
                     if let Some(primary) = &quantized_data.primary {
                         representations.push(QuantizedRepresentation {
@@ -305,13 +305,17 @@ impl ProgressiveSearchExecutor {
                             quant_type: QuantizationType::Product,
                         });
                     }
-                    
+
                     representations
                 } else {
                     // ERROR: Runtime quantization not allowed for this collection/query
                     debug!(
                         "❌ Vector {} missing pre-quantized data (collection expects pre-quantization)",
-                        if record.id.is_empty() { "unknown" } else { &record.id }
+                        if record.id.is_empty() {
+                            "unknown"
+                        } else {
+                            &record.id
+                        }
                     );
                     // Return empty vec to skip this record
                     Vec::new()
@@ -595,22 +599,21 @@ impl ProgressiveSearchExecutor {
                 if let Some(value) = value {
                     use crate::proto::proximadb_v1::metadata_item;
                     let typed_value = match value {
-                        metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                        metadata_item::Value::StringValue(s) => {
+                            MetadataValue::String(std::sync::Arc::from(s.as_str()))
+                        }
                         metadata_item::Value::NumberValue(f) => MetadataValue::Number(f),
                         metadata_item::Value::BoolValue(b) => MetadataValue::Bool(b),
                     };
                     metadata_map.insert(key, typed_value);
                 }
             }
-            
+
             results.push(
-                OptimizedSearchRecord::new(
-                    record.id.clone(),
-                    distance
-                )
-                .with_similarity(distance)
-                .add_vector(record.vector)
-                .with_metadata(TypedMetadata::from_map(metadata_map))
+                OptimizedSearchRecord::new(record.id.clone(), distance)
+                    .with_similarity(distance)
+                    .add_vector(record.vector)
+                    .with_metadata(TypedMetadata::from_map(metadata_map)),
             );
         }
 
@@ -630,17 +633,14 @@ impl ProgressiveSearchExecutor {
         let mut results = Vec::with_capacity(top_k.min(candidates.len()));
 
         for candidate in candidates.into_iter().take(top_k) {
-            let mut result = OptimizedSearchRecord::new(
-                candidate.id,
-                candidate.score
-            )
-            .with_similarity(candidate.score)
-            .with_metadata(TypedMetadata::default());
-            
+            let mut result = OptimizedSearchRecord::new(candidate.id, candidate.score)
+                .with_similarity(candidate.score)
+                .with_metadata(TypedMetadata::default());
+
             if let Some(vec) = candidate.vector {
                 result = result.add_vector(vec);
             }
-            
+
             results.push(result);
         }
 

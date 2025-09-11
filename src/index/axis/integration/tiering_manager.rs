@@ -53,7 +53,7 @@ use crate::index::axis::storage::format_strategy::{IndexFormatStrategy, IndexSer
 use crate::index::axis::storage::serialization::IndexSerializer;
 use crate::infrastructure::adaptive_structures::{AdaptiveStore, IndexBackend};
 use crate::infrastructure::tier_policy_engine::{
-    AccessPatternMetrics, GlobalTier, SmartTierPolicy, InfrastructureTier, WorkloadMetrics,
+    AccessPatternMetrics, GlobalTier, InfrastructureTier, SmartTierPolicy, WorkloadMetrics,
     WorkloadPattern,
 };
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
@@ -809,9 +809,13 @@ impl AxisTieringManager {
     }
 
     /// Get promotion target (one tier faster)
-    fn get_promotion_target(&self, current_tier: &InfrastructureTier) -> anyhow::Result<InfrastructureTier> {
+    fn get_promotion_target(
+        &self,
+        current_tier: &InfrastructureTier,
+    ) -> anyhow::Result<InfrastructureTier> {
         match current_tier {
-            InfrastructureTier::CloudArchive { .. } | InfrastructureTier::CloudDeepArchive { .. } => {
+            InfrastructureTier::CloudArchive { .. }
+            | InfrastructureTier::CloudDeepArchive { .. } => {
                 Ok(InfrastructureTier::CloudStandard {
                     provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                         bucket: "proximadb-promoted".to_string(),
@@ -822,7 +826,8 @@ impl AxisTieringManager {
                     region: "us-east-1".to_string(),
                 })
             }
-            InfrastructureTier::CloudStandard { .. } | InfrastructureTier::CloudInfrequentAccess { .. } => {
+            InfrastructureTier::CloudStandard { .. }
+            | InfrastructureTier::CloudInfrequentAccess { .. } => {
                 Ok(InfrastructureTier::HardDisk {
                     mount_path: "/data".to_string(),
                 })
@@ -839,7 +844,10 @@ impl AxisTieringManager {
     }
 
     /// Get demotion target (one tier slower)
-    fn get_demotion_target(&self, current_tier: &InfrastructureTier) -> anyhow::Result<InfrastructureTier> {
+    fn get_demotion_target(
+        &self,
+        current_tier: &InfrastructureTier,
+    ) -> anyhow::Result<InfrastructureTier> {
         match current_tier {
             InfrastructureTier::Memory => Ok(InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
@@ -856,15 +864,17 @@ impl AxisTieringManager {
                 },
                 region: "us-east-1".to_string(),
             }),
-            InfrastructureTier::CloudStandard { .. } => Ok(InfrastructureTier::CloudInfrequentAccess {
-                provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
-                    bucket: "proximadb-cold".to_string(),
-                    storage_class:
-                        crate::infrastructure::tier_policy_engine::AwsStorageClass::StandardIA,
-                    lifecycle_enabled: true,
-                },
-                region: "us-east-1".to_string(),
-            }),
+            InfrastructureTier::CloudStandard { .. } => {
+                Ok(InfrastructureTier::CloudInfrequentAccess {
+                    provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
+                        bucket: "proximadb-cold".to_string(),
+                        storage_class:
+                            crate::infrastructure::tier_policy_engine::AwsStorageClass::StandardIA,
+                        lifecycle_enabled: true,
+                    },
+                    region: "us-east-1".to_string(),
+                })
+            }
             _ => Err(anyhow::anyhow!("Already at slowest tier")),
         }
     }
@@ -1040,7 +1050,8 @@ impl AxisTieringManager {
                     .transition_to_memory(collection_id)
                     .await?;
             }
-            InfrastructureTier::NvmeSsd { mount_path } | InfrastructureTier::HardDisk { mount_path } => {
+            InfrastructureTier::NvmeSsd { mount_path }
+            | InfrastructureTier::HardDisk { mount_path } => {
                 self.collection_state_manager
                     .transition_to_disk(collection_id, mount_path.clone())
                     .await?;
@@ -1087,7 +1098,10 @@ impl AxisTieringManager {
     }
 
     /// Extract tier from collection state
-    fn extract_tier_from_state(&self, state: &CollectionTierState) -> anyhow::Result<InfrastructureTier> {
+    fn extract_tier_from_state(
+        &self,
+        state: &CollectionTierState,
+    ) -> anyhow::Result<InfrastructureTier> {
         match state {
             CollectionTierState::Memory { .. } => Ok(InfrastructureTier::Memory),
             CollectionTierState::Disk { disk_location, .. } => {
@@ -1106,7 +1120,7 @@ impl AxisTieringManager {
                 // Map cloud storage type to tier
                 use crate::index::axis::integration::collection_state::CloudStorageType;
                 match storage_type {
-                    CloudStorageType::S3Standard | CloudStorageType::S3Express => Ok(InfrastructureTier::CloudStandard { 
+                    CloudStorageType::S3Standard | CloudStorageType::S3Express => Ok(InfrastructureTier::CloudStandard {
                         provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                             bucket: "proximadb-indexes".to_string(),
                             storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
@@ -1114,7 +1128,7 @@ impl AxisTieringManager {
                         },
                         region: "us-west-2".to_string()
                     }),
-                    CloudStorageType::S3Glacier => Ok(InfrastructureTier::CloudArchive { 
+                    CloudStorageType::S3Glacier => Ok(InfrastructureTier::CloudArchive {
                         provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                             bucket: "proximadb-indexes".to_string(),
                             storage_class: crate::infrastructure::tier_policy_engine::AwsStorageClass::Standard,
@@ -1123,7 +1137,7 @@ impl AxisTieringManager {
                         region: "us-west-2".to_string()
                     }),
                     CloudStorageType::GCSStandard | CloudStorageType::GCSNearline | CloudStorageType::GCSArchive => {
-                        Ok(InfrastructureTier::CloudStandard { 
+                        Ok(InfrastructureTier::CloudStandard {
                             provider: crate::infrastructure::tier_policy_engine::CloudProvider::GoogleCloud {
                                 bucket: "proximadb-indexes".to_string(),
                                 storage_class: crate::infrastructure::tier_policy_engine::GcsStorageClass::Standard,
@@ -1133,7 +1147,7 @@ impl AxisTieringManager {
                         })
                     },
                     CloudStorageType::AzureHot | CloudStorageType::AzureCool | CloudStorageType::AzureArchive => {
-                        Ok(InfrastructureTier::CloudStandard { 
+                        Ok(InfrastructureTier::CloudStandard {
                             provider: crate::infrastructure::tier_policy_engine::CloudProvider::AzureBlob {
                                 account: "proximadb".to_string(),
                                 container: "indexes".to_string(),

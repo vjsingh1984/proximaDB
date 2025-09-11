@@ -1,0 +1,2116 @@
+= Phase 2: Enterprise Fundamentals - Detailed Implementation Specifications
+:toc:
+:toclevels: 4
+:icons: font
+
+== Overview
+
+This document provides detailed implementation specifications for Phase 2 of the ProximaDB roadmap. Phase 2 focuses on enterprise-grade fundamentals including security, multi-tenancy, observability, and initial distributed capabilities.
+
+**Duration**: 8-10 weeks +
+**Prerequisites**: Phase 1 completion (all engines operational, service decomposition complete) +
+**Success Criteria**: Enterprise security implemented, multi-tenancy operational, comprehensive observability
+
+== Task 1: Enterprise Security Implementation (Week 1-3)
+
+=== Background
+Current security implementation is minimal with basic authentication. Enterprise deployment requires comprehensive security including mTLS, RBAC, audit logging, and encryption at rest.
+
+=== Implementation Requirements
+
+==== 1.1 mTLS Implementation for gRPC
+**File**: `src/network/grpc/tls.rs`
+
+**Current State**: No TLS implementation
+**Target**: Full mTLS with certificate management
+
+```rust
+// Comprehensive mTLS implementation
+pub struct MutualTlsManager {
+    // Certificate authority management
+    ca_manager: Arc<CertificateAuthorityManager>,
+    // Certificate storage and rotation
+    cert_store: Arc<CertificateStore>,
+    // TLS configuration
+    tls_config: Arc<TlsConfiguration>,
+    // Certificate validation
+    cert_validator: Arc<CertificateValidator>,
+}
+
+impl MutualTlsManager {
+    pub async fn new_with_context(
+        context: &SharedContext,
+        tls_config: TlsConfiguration,
+    ) -> Result<Self, ProximaDBError> {
+        // Initialize CA manager
+        let ca_manager = CertificateAuthorityManager::new(&tls_config.ca_config).await?;
+        
+        // Initialize certificate store with encryption
+        let cert_store = CertificateStore::new_encrypted(
+            &tls_config.cert_store_config,
+            &tls_config.encryption_key,
+        ).await?;
+        
+        // Initialize certificate validator
+        let cert_validator = CertificateValidator::new(
+            ca_manager.clone(),
+            &tls_config.validation_config,
+        )?;
+        
+        Ok(Self {
+            ca_manager,
+            cert_store,
+            tls_config: Arc::new(tls_config),
+            cert_validator,
+        })
+    }
+    
+    pub async fn create_server_tls_config(&self) -> Result<ServerTlsConfig, ProximaDBError> {
+        // Load server certificate and private key
+        let server_cert = self.cert_store.get_server_certificate().await?;
+        let private_key = self.cert_store.get_server_private_key().await?;
+        
+        // Load CA certificate for client validation
+        let ca_cert = self.ca_manager.get_ca_certificate().await?;
+        
+        // Create TLS acceptor configuration
+        let tls_config = ServerTlsConfig::builder()
+            .identity(Identity::from_pem(&server_cert, &private_key)?)
+            .client_ca_root(Certificate::from_pem(&ca_cert)?)
+            .client_auth_required(true)
+            .build()?;
+        
+        Ok(tls_config)
+    }
+    
+    pub async fn create_client_tls_config(
+        &self,
+        client_id: &str,
+    ) -> Result<ClientTlsConfig, ProximaDBError> {
+        // Generate or retrieve client certificate
+        let client_cert = self.get_or_generate_client_certificate(client_id).await?;
+        let client_key = self.cert_store.get_client_private_key(client_id).await?;
+        
+        // Load CA certificate for server validation
+        let ca_cert = self.ca_manager.get_ca_certificate().await?;
+        
+        // Create TLS connector configuration
+        let tls_config = ClientTlsConfig::builder()
+            .identity(Identity::from_pem(&client_cert, &client_key)?)
+            .ca_certificate(Certificate::from_pem(&ca_cert)?)
+            .domain_name(&self.tls_config.server_domain)
+            .build()?;
+        
+        Ok(tls_config)
+    }
+    
+    async fn get_or_generate_client_certificate(
+        &self,
+        client_id: &str,
+    ) -> Result<Vec<u8>, ProximaDBError> {
+        // Check if certificate exists and is valid
+        if let Some(existing_cert) = self.cert_store.get_client_certificate(client_id).await? {
+            if self.cert_validator.is_certificate_valid(&existing_cert).await? {
+                return Ok(existing_cert);
+            }
+        }
+        
+        // Generate new certificate
+        let cert_request = CertificateRequest {
+            client_id: client_id.to_string(),
+            validity_period: self.tls_config.client_cert_validity,
+            key_usage: vec![KeyUsage::DigitalSignature, KeyUsage::KeyEncipherment],
+            extended_key_usage: vec![ExtendedKeyUsage::ClientAuth],
+        };
+        
+        let new_cert = self.ca_manager.issue_client_certificate(cert_request).await?;
+        
+        // Store new certificate
+        self.cert_store.store_client_certificate(client_id, &new_cert).await?;
+        
+        Ok(new_cert)
+    }
+}
+
+// gRPC server integration
+pub async fn create_secure_grpc_server(
+    tls_manager: Arc<MutualTlsManager>,
+    service_registry: ServiceRegistry,
+) -> Result<Server, ProximaDBError> {
+    // Create TLS configuration
+    let tls_config = tls_manager.create_server_tls_config().await?;
+    
+    // Build gRPC server with mTLS
+    let server = Server::builder()
+        .tls_config(tls_config)?
+        .add_service(service_registry.vector_service)
+        .add_service(service_registry.entity_service)
+        .add_service(service_registry.graph_service)
+        .add_service(service_registry.admin_service)
+        .serve("[::1]:5679".parse()?);
+    
+    Ok(server)
+}
+```
+
+**Dependencies**:
+- Certificate management system
+- Encrypted certificate storage
+- Certificate rotation automation
+
+==== 1.2 JWT/OIDC Authentication for REST
+**File**: `src/network/rest/auth.rs`
+
+**Current State**: No authentication
+**Target**: Complete JWT/OIDC authentication with token validation
+
+```rust
+// JWT/OIDC authentication manager
+pub struct RestAuthenticationManager {
+    // JWT validation configuration
+    jwt_validator: Arc<JwtValidator>,
+    // OIDC provider integration
+    oidc_client: Arc<OidcClient>,
+    // Token cache for performance
+    token_cache: Arc<TokenCache>,
+    // User session management
+    session_manager: Arc<SessionManager>,
+}
+
+impl RestAuthenticationManager {
+    pub async fn new_with_context(
+        context: &SharedContext,
+        auth_config: AuthenticationConfig,
+    ) -> Result<Self, ProximaDBError> {
+        // Initialize JWT validator
+        let jwt_validator = JwtValidator::new(&auth_config.jwt_config).await?;
+        
+        // Initialize OIDC client
+        let oidc_client = OidcClient::new(&auth_config.oidc_config).await?;
+        
+        // Initialize token cache with TTL
+        let token_cache = TokenCache::new_with_orchestrator(
+            context.orchestrator.clone(),
+            auth_config.token_cache_ttl,
+        )?;
+        
+        // Initialize session manager
+        let session_manager = SessionManager::new(&auth_config.session_config)?;
+        
+        Ok(Self {
+            jwt_validator,
+            oidc_client,
+            token_cache,
+            session_manager,
+        })
+    }
+    
+    pub async fn authenticate_request(
+        &self,
+        request: &HttpRequest,
+    ) -> Result<AuthenticatedUser, ProximaDBError> {
+        // Extract token from request
+        let token = self.extract_token_from_request(request)?;
+        
+        // Check token cache first
+        if let Some(cached_user) = self.token_cache.get(&token).await? {
+            return Ok(cached_user);
+        }
+        
+        // Validate JWT token
+        let jwt_claims = self.jwt_validator.validate_token(&token).await?;
+        
+        // Verify with OIDC provider if configured
+        if self.oidc_client.is_configured() {
+            self.oidc_client.verify_token(&token, &jwt_claims).await?;
+        }
+        
+        // Create authenticated user
+        let authenticated_user = AuthenticatedUser {
+            user_id: jwt_claims.sub,
+            username: jwt_claims.preferred_username,
+            email: jwt_claims.email,
+            roles: jwt_claims.roles.unwrap_or_default(),
+            permissions: self.resolve_permissions(&jwt_claims.roles).await?,
+            tenant_id: jwt_claims.tenant_id,
+            session_id: self.session_manager.create_session(&jwt_claims).await?,
+        };
+        
+        // Cache authenticated user
+        self.token_cache.put(&token, &authenticated_user).await?;
+        
+        Ok(authenticated_user)
+    }
+    
+    async fn resolve_permissions(
+        &self,
+        roles: &Option<Vec<String>>,
+    ) -> Result<Vec<Permission>, ProximaDBError> {
+        let mut permissions = Vec::new();
+        
+        if let Some(user_roles) = roles {
+            for role in user_roles {
+                let role_permissions = self.get_role_permissions(role).await?;
+                permissions.extend(role_permissions);
+            }
+        }
+        
+        // Deduplicate permissions
+        permissions.sort();
+        permissions.dedup();
+        
+        Ok(permissions)
+    }
+}
+
+// REST middleware integration
+pub struct AuthenticationMiddleware {
+    auth_manager: Arc<RestAuthenticationManager>,
+    excluded_paths: Vec<String>,
+}
+
+impl AuthenticationMiddleware {
+    pub async fn authenticate(
+        &self,
+        req: ServiceRequest,
+        next: Next<impl MessageBody>,
+    ) -> Result<ServiceResponse<impl MessageBody>, Error> {
+        // Check if path is excluded from authentication
+        if self.is_path_excluded(req.path()) {
+            return next.call(req).await;
+        }
+        
+        // Authenticate request
+        match self.auth_manager.authenticate_request(req.request()).await {
+            Ok(authenticated_user) => {
+                // Add user to request extensions
+                req.extensions_mut().insert(authenticated_user);
+                next.call(req).await
+            }
+            Err(auth_error) => {
+                // Return authentication error
+                let response = HttpResponse::Unauthorized()
+                    .json(ErrorResponse {
+                        error: "Authentication failed".to_string(),
+                        details: auth_error.to_string(),
+                    });
+                Ok(req.into_response(response))
+            }
+        }
+    }
+}
+```
+
+==== 1.3 RBAC (Role-Based Access Control) Implementation
+**File**: `src/security/rbac.rs`
+
+**Current State**: No authorization
+**Target**: Comprehensive RBAC with fine-grained permissions
+
+```rust
+// RBAC permission system
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Permission {
+    // Collection permissions
+    CollectionCreate,
+    CollectionRead,
+    CollectionUpdate,
+    CollectionDelete,
+    CollectionList,
+    
+    // Vector permissions
+    VectorInsert,
+    VectorUpdate,
+    VectorDelete,
+    VectorSearch,
+    VectorBulkOperations,
+    
+    // Index permissions
+    IndexCreate,
+    IndexDelete,
+    IndexRebuild,
+    IndexOptimize,
+    IndexList,
+    
+    // Entity permissions (SKS)
+    EntityCreate,
+    EntityRead,
+    EntityUpdate,
+    EntityDelete,
+    EntitySearch,
+    
+    // Graph permissions
+    GraphTraverse,
+    GraphAnalyze,
+    GraphUpdate,
+    GraphDelete,
+    
+    // Admin permissions
+    AdminUserManagement,
+    AdminRoleManagement,
+    AdminSystemConfig,
+    AdminMetrics,
+    AdminBackup,
+    
+    // Tenant permissions
+    TenantCreate,
+    TenantManage,
+    TenantDelete,
+    
+    // Custom permission for extensibility
+    Custom(String),
+}
+
+// Role definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Role {
+    pub name: String,
+    pub description: String,
+    pub permissions: Vec<Permission>,
+    pub tenant_scope: Option<String>, // None for global roles
+    pub created_at: SystemTime,
+    pub updated_at: SystemTime,
+}
+
+// RBAC authorization engine
+pub struct RbacAuthorizationEngine {
+    // Role definitions storage
+    role_store: Arc<dyn RoleStore>,
+    // Permission cache for performance
+    permission_cache: Arc<PermissionCache>,
+    // Audit logger
+    audit_logger: Arc<AuditLogger>,
+    // Policy evaluation engine
+    policy_engine: Arc<PolicyEngine>,
+}
+
+impl RbacAuthorizationEngine {
+    pub async fn authorize_action(
+        &self,
+        user: &AuthenticatedUser,
+        resource: &Resource,
+        action: &Action,
+    ) -> Result<AuthorizationResult, ProximaDBError> {
+        // Create authorization context
+        let auth_context = AuthorizationContext {
+            user: user.clone(),
+            resource: resource.clone(),
+            action: action.clone(),
+            timestamp: SystemTime::now(),
+            request_id: uuid::Uuid::new_v4(),
+        };
+        
+        // Check cached permissions first
+        let cache_key = self.generate_permission_cache_key(&auth_context);
+        if let Some(cached_result) = self.permission_cache.get(&cache_key).await? {
+            // Log cache hit to audit
+            self.audit_logger.log_authorization_cache_hit(&auth_context).await?;
+            return Ok(cached_result);
+        }
+        
+        // Evaluate authorization policies
+        let authorization_result = self.evaluate_authorization_policies(&auth_context).await?;
+        
+        // Cache the result
+        self.permission_cache.put(&cache_key, &authorization_result).await?;
+        
+        // Log authorization decision
+        self.audit_logger.log_authorization_decision(&auth_context, &authorization_result).await?;
+        
+        Ok(authorization_result)
+    }
+    
+    async fn evaluate_authorization_policies(
+        &self,
+        context: &AuthorizationContext,
+    ) -> Result<AuthorizationResult, ProximaDBError> {
+        // Step 1: Check if user has required role
+        let required_permission = self.map_action_to_permission(&context.action, &context.resource)?;
+        
+        // Step 2: Check user's roles and permissions
+        let user_permissions = self.get_user_permissions(&context.user).await?;
+        
+        // Step 3: Check tenant-scoped permissions
+        let tenant_authorized = self.check_tenant_authorization(&context).await?;
+        
+        // Step 4: Check resource-specific permissions
+        let resource_authorized = self.check_resource_authorization(&context).await?;
+        
+        // Step 5: Evaluate custom policies
+        let policy_result = self.policy_engine.evaluate_policies(context).await?;
+        
+        // Combine all authorization checks
+        let is_authorized = user_permissions.contains(&required_permission)
+            && tenant_authorized
+            && resource_authorized
+            && policy_result.allowed;
+        
+        Ok(AuthorizationResult {
+            allowed: is_authorized,
+            reason: if is_authorized {
+                "Access granted".to_string()
+            } else {
+                format!("Access denied: {}", self.get_denial_reason(context, &policy_result))
+            },
+            required_permission,
+            evaluated_policies: policy_result.evaluated_policies,
+            decision_timestamp: SystemTime::now(),
+        })
+    }
+    
+    async fn get_user_permissions(
+        &self,
+        user: &AuthenticatedUser,
+    ) -> Result<Vec<Permission>, ProximaDBError> {
+        let mut all_permissions = Vec::new();
+        
+        // Get permissions from user's roles
+        for role_name in &user.roles {
+            if let Some(role) = self.role_store.get_role(role_name).await? {
+                // Check tenant scope
+                if let Some(role_tenant) = &role.tenant_scope {
+                    if role_tenant != &user.tenant_id {
+                        continue; // Skip role if tenant mismatch
+                    }
+                }
+                all_permissions.extend(role.permissions);
+            }
+        }
+        
+        // Add any direct permissions assigned to user
+        all_permissions.extend(user.permissions.clone());
+        
+        // Deduplicate
+        all_permissions.sort();
+        all_permissions.dedup();
+        
+        Ok(all_permissions)
+    }
+}
+
+// Authorization middleware for services
+pub struct AuthorizationMiddleware {
+    rbac_engine: Arc<RbacAuthorizationEngine>,
+}
+
+impl AuthorizationMiddleware {
+    pub async fn authorize_vector_operation(
+        &self,
+        user: &AuthenticatedUser,
+        operation: &VectorOperation,
+    ) -> Result<(), ProximaDBError> {
+        let resource = Resource::Collection {
+            collection_id: operation.collection_id.clone(),
+            tenant_id: user.tenant_id.clone(),
+        };
+        
+        let action = match operation.operation_type {
+            VectorOperationType::Insert => Action::VectorInsert,
+            VectorOperationType::Update => Action::VectorUpdate,
+            VectorOperationType::Delete => Action::VectorDelete,
+            VectorOperationType::Search => Action::VectorSearch,
+        };
+        
+        let auth_result = self.rbac_engine.authorize_action(user, &resource, &action).await?;
+        
+        if !auth_result.allowed {
+            return Err(ProximaDBError::Unauthorized(auth_result.reason));
+        }
+        
+        Ok(())
+    }
+}
+```
+
+==== 1.4 Audit Logging Implementation
+**File**: `src/security/audit.rs`
+
+**Current State**: No audit logging
+**Target**: Comprehensive audit trail with structured logging
+
+```rust
+// Comprehensive audit logging system
+pub struct AuditLogger {
+    // Audit log storage
+    audit_store: Arc<dyn AuditStore>,
+    // Log formatting and filtering
+    log_formatter: Arc<AuditLogFormatter>,
+    // Performance optimization
+    batch_processor: Arc<BatchProcessor<AuditEvent>>,
+    // Encryption for sensitive data
+    encryption_manager: Arc<EncryptionManager>,
+}
+
+// Audit event types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEvent {
+    pub event_id: String,
+    pub event_type: AuditEventType,
+    pub timestamp: SystemTime,
+    pub user_id: Option<String>,
+    pub tenant_id: Option<String>,
+    pub resource: Resource,
+    pub action: Action,
+    pub result: AuditResult,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub session_id: Option<String>,
+    pub request_id: Option<String>,
+    pub metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuditEventType {
+    Authentication,
+    Authorization,
+    DataAccess,
+    DataModification,
+    SystemConfiguration,
+    SecurityEvent,
+    PerformanceEvent,
+}
+
+impl AuditLogger {
+    pub async fn log_authentication_event(
+        &self,
+        user_id: &str,
+        auth_result: &AuthenticationResult,
+        request_context: &RequestContext,
+    ) -> Result<(), ProximaDBError> {
+        let audit_event = AuditEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            event_type: AuditEventType::Authentication,
+            timestamp: SystemTime::now(),
+            user_id: Some(user_id.to_string()),
+            tenant_id: auth_result.tenant_id.clone(),
+            resource: Resource::System,
+            action: Action::Authenticate,
+            result: if auth_result.success {
+                AuditResult::Success
+            } else {
+                AuditResult::Failure(auth_result.error_message.clone())
+            },
+            ip_address: request_context.client_ip.clone(),
+            user_agent: request_context.user_agent.clone(),
+            session_id: auth_result.session_id.clone(),
+            request_id: request_context.request_id.clone(),
+            metadata: auth_result.metadata.clone(),
+        };
+        
+        // Encrypt sensitive data
+        let encrypted_event = self.encryption_manager.encrypt_audit_event(audit_event).await?;
+        
+        // Add to batch processor for efficient storage
+        self.batch_processor.add_event(encrypted_event).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn log_data_access_event(
+        &self,
+        user: &AuthenticatedUser,
+        resource: &Resource,
+        access_details: &DataAccessDetails,
+        request_context: &RequestContext,
+    ) -> Result<(), ProximaDBError> {
+        let audit_event = AuditEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            event_type: AuditEventType::DataAccess,
+            timestamp: SystemTime::now(),
+            user_id: Some(user.user_id.clone()),
+            tenant_id: Some(user.tenant_id.clone()),
+            resource: resource.clone(),
+            action: Action::DataRead,
+            result: AuditResult::Success,
+            ip_address: request_context.client_ip.clone(),
+            user_agent: request_context.user_agent.clone(),
+            session_id: Some(user.session_id.clone()),
+            request_id: request_context.request_id.clone(),
+            metadata: access_details.to_metadata(),
+        };
+        
+        // Add data classification metadata
+        let classified_event = self.add_data_classification(audit_event, access_details).await?;
+        
+        // Encrypt and store
+        let encrypted_event = self.encryption_manager.encrypt_audit_event(classified_event).await?;
+        self.batch_processor.add_event(encrypted_event).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn log_security_event(
+        &self,
+        security_event: SecurityEvent,
+        severity: SecuritySeverity,
+    ) -> Result<(), ProximaDBError> {
+        let audit_event = AuditEvent {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            event_type: AuditEventType::SecurityEvent,
+            timestamp: SystemTime::now(),
+            user_id: security_event.user_id,
+            tenant_id: security_event.tenant_id,
+            resource: security_event.affected_resource,
+            action: security_event.security_action,
+            result: AuditResult::SecurityAlert(severity),
+            ip_address: security_event.source_ip,
+            user_agent: security_event.user_agent,
+            session_id: security_event.session_id,
+            request_id: security_event.request_id,
+            metadata: security_event.security_metadata,
+        };
+        
+        // High-priority processing for security events
+        if severity >= SecuritySeverity::High {
+            // Immediate storage for critical security events
+            let encrypted_event = self.encryption_manager.encrypt_audit_event(audit_event).await?;
+            self.audit_store.store_immediate(encrypted_event).await?;
+        } else {
+            // Regular batch processing for lower severity
+            let encrypted_event = self.encryption_manager.encrypt_audit_event(audit_event).await?;
+            self.batch_processor.add_event(encrypted_event).await?;
+        }
+        
+        Ok(())
+    }
+}
+
+// Audit log query interface
+pub struct AuditLogQueryInterface {
+    audit_store: Arc<dyn AuditStore>,
+    query_authorizer: Arc<AuditQueryAuthorizer>,
+    decryption_manager: Arc<EncryptionManager>,
+}
+
+impl AuditLogQueryInterface {
+    pub async fn query_audit_logs(
+        &self,
+        user: &AuthenticatedUser,
+        query: AuditLogQuery,
+    ) -> Result<AuditLogQueryResult, ProximaDBError> {
+        // Authorize audit log access
+        self.query_authorizer.authorize_audit_query(user, &query).await?;
+        
+        // Execute query
+        let encrypted_results = self.audit_store.query(query).await?;
+        
+        // Decrypt results (only what user is authorized to see)
+        let decrypted_results = self.decryption_manager
+            .decrypt_audit_events_for_user(encrypted_results, user)
+            .await?;
+        
+        Ok(AuditLogQueryResult {
+            events: decrypted_results,
+            total_count: self.audit_store.count_matching_events(&query).await?,
+            query_executed_at: SystemTime::now(),
+        })
+    }
+}
+```
+
+=== Acceptance Criteria
+
+1. **Security Requirements**:
+   - [ ] mTLS operational for all gRPC services
+   - [ ] JWT/OIDC authentication for REST endpoints
+   - [ ] RBAC system with fine-grained permissions
+   - [ ] Comprehensive audit logging implemented
+
+2. **Performance Requirements**:
+   - [ ] Authentication overhead < 10ms
+   - [ ] Authorization overhead < 5ms
+   - [ ] Audit logging overhead < 1ms
+   - [ ] Certificate validation < 100ms
+
+3. **Compliance Requirements**:
+   - [ ] Audit logs meet SOC 2 requirements
+   - [ ] Data encryption at rest and in transit
+   - [ ] Role-based access controls operational
+   - [ ] Security event alerting functional
+
+== Task 2: Multi-Tenancy Implementation (Week 2-4)
+
+=== Background
+Current system is single-tenant. Enterprise deployment requires complete multi-tenancy with tenant isolation, resource quotas, and billing integration.
+
+=== Implementation Requirements
+
+==== 2.1 Tenant Management System
+**File**: `src/tenancy/tenant_manager.rs`
+
+```rust
+// Comprehensive tenant management
+pub struct TenantManager {
+    // Tenant metadata storage
+    tenant_store: Arc<dyn TenantStore>,
+    // Resource quota management
+    quota_manager: Arc<QuotaManager>,
+    // Tenant isolation enforcement
+    isolation_enforcer: Arc<TenantIsolationEnforcer>,
+    // Billing integration
+    billing_integrator: Arc<BillingIntegrator>,
+    // Orchestrator integration
+    orchestrator: Arc<CrossCacheOrchestrator>,
+}
+
+// Tenant definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tenant {
+    pub tenant_id: String,
+    pub tenant_name: String,
+    pub status: TenantStatus,
+    pub subscription_tier: SubscriptionTier,
+    pub created_at: SystemTime,
+    pub updated_at: SystemTime,
+    pub metadata: HashMap<String, String>,
+    pub configuration: TenantConfiguration,
+    pub resource_quotas: ResourceQuotas,
+    pub billing_info: BillingInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenantConfiguration {
+    // Storage configuration
+    pub default_storage_engine: String,
+    pub compression_enabled: bool,
+    pub encryption_enabled: bool,
+    
+    // Performance configuration  
+    pub max_concurrent_queries: u32,
+    pub query_timeout_seconds: u64,
+    pub cache_size_mb: u64,
+    
+    // Feature flags
+    pub features_enabled: Vec<String>,
+    pub experimental_features: Vec<String>,
+    
+    // Data retention
+    pub data_retention_days: Option<u32>,
+    pub auto_archive_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceQuotas {
+    // Storage quotas
+    pub max_storage_gb: Option<u64>,
+    pub max_collections: Option<u32>,
+    pub max_vectors_per_collection: Option<u64>,
+    
+    // Compute quotas
+    pub max_qps: Option<u32>,
+    pub max_concurrent_operations: Option<u32>,
+    pub compute_units_per_month: Option<u64>,
+    
+    // API quotas
+    pub max_api_calls_per_day: Option<u64>,
+    pub max_bulk_operation_size: Option<u32>,
+    
+    // Custom quotas
+    pub custom_quotas: HashMap<String, QuotaValue>,
+}
+
+impl TenantManager {
+    pub async fn create_tenant(
+        &self,
+        tenant_request: CreateTenantRequest,
+    ) -> Result<Tenant, ProximaDBError> {
+        // Validate tenant request
+        self.validate_tenant_request(&tenant_request)?;
+        
+        // Generate unique tenant ID
+        let tenant_id = self.generate_tenant_id().await?;
+        
+        // Create tenant configuration
+        let tenant_config = self.create_default_tenant_configuration(
+            &tenant_request.subscription_tier,
+        )?;
+        
+        // Set up resource quotas based on subscription
+        let resource_quotas = self.create_quota_configuration(
+            &tenant_request.subscription_tier,
+        )?;
+        
+        // Create tenant
+        let tenant = Tenant {
+            tenant_id: tenant_id.clone(),
+            tenant_name: tenant_request.tenant_name,
+            status: TenantStatus::Active,
+            subscription_tier: tenant_request.subscription_tier,
+            created_at: SystemTime::now(),
+            updated_at: SystemTime::now(),
+            metadata: tenant_request.metadata,
+            configuration: tenant_config,
+            resource_quotas,
+            billing_info: self.initialize_billing_info(&tenant_request).await?,
+        };
+        
+        // Store tenant
+        self.tenant_store.create_tenant(tenant.clone()).await?;
+        
+        // Initialize tenant-specific resources
+        self.initialize_tenant_resources(&tenant).await?;
+        
+        // Set up billing
+        self.billing_integrator.setup_tenant_billing(&tenant).await?;
+        
+        // Configure orchestrator for tenant
+        self.orchestrator.register_tenant(&tenant_id, &tenant.configuration).await?;
+        
+        Ok(tenant)
+    }
+    
+    pub async fn get_tenant(&self, tenant_id: &str) -> Result<Option<Tenant>, ProximaDBError> {
+        self.tenant_store.get_tenant(tenant_id).await
+    }
+    
+    pub async fn update_tenant_configuration(
+        &self,
+        tenant_id: &str,
+        config_update: TenantConfigurationUpdate,
+    ) -> Result<Tenant, ProximaDBError> {
+        // Get current tenant
+        let mut tenant = self.get_tenant(tenant_id).await?
+            .ok_or_else(|| ProximaDBError::TenantNotFound(tenant_id.to_string()))?;
+        
+        // Validate configuration update
+        self.validate_configuration_update(&tenant, &config_update)?;
+        
+        // Apply configuration changes
+        tenant.configuration = self.apply_configuration_update(
+            tenant.configuration,
+            config_update,
+        )?;
+        tenant.updated_at = SystemTime::now();
+        
+        // Update tenant in store
+        self.tenant_store.update_tenant(tenant.clone()).await?;
+        
+        // Update orchestrator configuration
+        self.orchestrator.update_tenant_configuration(
+            tenant_id,
+            &tenant.configuration,
+        ).await?;
+        
+        Ok(tenant)
+    }
+    
+    async fn initialize_tenant_resources(
+        &self,
+        tenant: &Tenant,
+    ) -> Result<(), ProximaDBError> {
+        // Create tenant-specific namespaces
+        self.create_tenant_namespaces(&tenant.tenant_id).await?;
+        
+        // Initialize tenant-specific storage
+        self.initialize_tenant_storage(tenant).await?;
+        
+        // Set up tenant monitoring
+        self.setup_tenant_monitoring(tenant).await?;
+        
+        // Configure tenant-specific caching
+        self.configure_tenant_caching(tenant).await?;
+        
+        Ok(())
+    }
+}
+```
+
+==== 2.2 Tenant Isolation Enforcement
+**File**: `src/tenancy/isolation.rs`
+
+```rust
+// Tenant isolation enforcement
+pub struct TenantIsolationEnforcer {
+    // Namespace isolation
+    namespace_isolator: Arc<NamespaceIsolator>,
+    // Query isolation
+    query_isolator: Arc<QueryIsolator>,
+    // Resource isolation
+    resource_isolator: Arc<ResourceIsolator>,
+    // Audit integration
+    audit_logger: Arc<AuditLogger>,
+}
+
+impl TenantIsolationEnforcer {
+    pub async fn enforce_collection_isolation(
+        &self,
+        user: &AuthenticatedUser,
+        collection_id: &str,
+        operation: &Operation,
+    ) -> Result<(), ProximaDBError> {
+        // Verify collection belongs to user's tenant
+        if !self.verify_collection_ownership(user.tenant_id.as_str(), collection_id).await? {
+            self.audit_logger.log_isolation_violation(
+                user,
+                &IsolationViolation::CollectionAccess {
+                    collection_id: collection_id.to_string(),
+                    attempted_tenant: user.tenant_id.clone(),
+                },
+            ).await?;
+            
+            return Err(ProximaDBError::TenantIsolationViolation(
+                format!("Collection {} not accessible to tenant {}", collection_id, user.tenant_id)
+            ));
+        }
+        
+        // Enforce resource limits for operation
+        self.resource_isolator.enforce_operation_limits(user, operation).await?;
+        
+        Ok(())
+    }
+    
+    pub async fn enforce_query_isolation(
+        &self,
+        user: &AuthenticatedUser,
+        query: &VectorQuery,
+    ) -> Result<TenantIsolatedQuery, ProximaDBError> {
+        // Add tenant isolation filters to query
+        let isolated_query = self.query_isolator.add_tenant_filters(user, query).await?;
+        
+        // Verify query doesn't access unauthorized data
+        self.validate_query_data_access(user, &isolated_query).await?;
+        
+        // Enforce query resource limits
+        self.resource_isolator.enforce_query_limits(user, &isolated_query).await?;
+        
+        Ok(isolated_query)
+    }
+    
+    async fn verify_collection_ownership(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+    ) -> Result<bool, ProximaDBError> {
+        // Check collection namespace
+        let collection_namespace = self.namespace_isolator
+            .get_collection_namespace(collection_id)
+            .await?;
+        
+        let expected_namespace = format!("tenant::{}", tenant_id);
+        Ok(collection_namespace == expected_namespace)
+    }
+}
+
+// Namespace isolation
+pub struct NamespaceIsolator {
+    // Namespace mapping storage
+    namespace_store: Arc<dyn NamespaceStore>,
+    // Tenant prefix management
+    prefix_manager: Arc<TenantPrefixManager>,
+}
+
+impl NamespaceIsolator {
+    pub async fn create_tenant_namespace(
+        &self,
+        tenant_id: &str,
+    ) -> Result<String, ProximaDBError> {
+        let namespace = format!("tenant::{}", tenant_id);
+        
+        // Create namespace in all storage backends
+        self.namespace_store.create_namespace(&namespace).await?;
+        
+        // Register tenant prefix
+        self.prefix_manager.register_tenant_prefix(tenant_id, &namespace).await?;
+        
+        Ok(namespace)
+    }
+    
+    pub fn isolate_key(&self, tenant_id: &str, key: &str) -> String {
+        format!("tenant::{}::{}", tenant_id, key)
+    }
+    
+    pub fn isolate_collection_id(&self, tenant_id: &str, collection_id: &str) -> String {
+        format!("tenant::{}::collection::{}", tenant_id, collection_id)
+    }
+}
+```
+
+==== 2.3 Resource Quota Management
+**File**: `src/tenancy/quota_manager.rs`
+
+```rust
+// Resource quota management and enforcement
+pub struct QuotaManager {
+    // Quota definitions storage
+    quota_store: Arc<dyn QuotaStore>,
+    // Usage tracking
+    usage_tracker: Arc<UsageTracker>,
+    // Quota enforcement engine
+    enforcement_engine: Arc<QuotaEnforcementEngine>,
+    // Billing integration
+    billing_integrator: Arc<BillingIntegrator>,
+    // Metrics collection
+    quota_metrics: Arc<QuotaMetrics>,
+}
+
+// Usage tracking for quota enforcement
+pub struct UsageTracker {
+    // Real-time usage counters
+    usage_counters: Arc<DashMap<String, AtomicU64>>,
+    // Historical usage storage
+    usage_history: Arc<dyn UsageHistoryStore>,
+    // Usage aggregation
+    usage_aggregator: Arc<UsageAggregator>,
+}
+
+impl QuotaManager {
+    pub async fn check_quota_before_operation(
+        &self,
+        tenant_id: &str,
+        operation: &Operation,
+    ) -> Result<QuotaCheckResult, ProximaDBError> {
+        // Get tenant quotas
+        let quotas = self.quota_store.get_tenant_quotas(tenant_id).await?;
+        
+        // Get current usage
+        let current_usage = self.usage_tracker.get_current_usage(tenant_id).await?;
+        
+        // Check each relevant quota
+        let quota_checks = self.enforcement_engine.check_operation_quotas(
+            &quotas,
+            &current_usage,
+            operation,
+        ).await?;
+        
+        // Determine if operation is allowed
+        let allowed = quota_checks.iter().all(|check| check.allowed);
+        
+        let result = QuotaCheckResult {
+            allowed,
+            quota_checks,
+            estimated_resource_usage: operation.estimate_resource_usage(),
+            enforcement_action: if !allowed {
+                Some(self.determine_enforcement_action(&quota_checks))
+            } else {
+                None
+            },
+        };
+        
+        // Log quota check
+        self.quota_metrics.record_quota_check(tenant_id, &result);
+        
+        Ok(result)
+    }
+    
+    pub async fn record_operation_usage(
+        &self,
+        tenant_id: &str,
+        operation: &Operation,
+        usage: &OperationUsage,
+    ) -> Result<(), ProximaDBError> {
+        // Update real-time counters
+        self.usage_tracker.update_usage_counters(tenant_id, usage).await?;
+        
+        // Store historical usage
+        self.usage_tracker.record_historical_usage(tenant_id, operation, usage).await?;
+        
+        // Update billing information
+        self.billing_integrator.record_billable_usage(tenant_id, usage).await?;
+        
+        // Check for quota approaching limits
+        self.check_quota_thresholds(tenant_id, usage).await?;
+        
+        Ok(())
+    }
+    
+    async fn check_quota_thresholds(
+        &self,
+        tenant_id: &str,
+        usage: &OperationUsage,
+    ) -> Result<(), ProximaDBError> {
+        let quotas = self.quota_store.get_tenant_quotas(tenant_id).await?;
+        let current_usage = self.usage_tracker.get_current_usage(tenant_id).await?;
+        
+        // Check if any quota is approaching limits (e.g., 80% threshold)
+        for (quota_type, quota_value) in &quotas.quotas {
+            if let Some(current_value) = current_usage.get(quota_type) {
+                let usage_percentage = (*current_value as f64) / (quota_value.value as f64);
+                
+                if usage_percentage >= 0.8 {
+                    // Send quota warning
+                    self.send_quota_warning(tenant_id, quota_type, usage_percentage).await?;
+                }
+                
+                if usage_percentage >= 0.95 {
+                    // Send critical quota warning
+                    self.send_critical_quota_warning(tenant_id, quota_type, usage_percentage).await?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+// Quota enforcement engine
+pub struct QuotaEnforcementEngine {
+    // Enforcement policies
+    enforcement_policies: Arc<EnforcementPolicyStore>,
+    // Throttling manager
+    throttling_manager: Arc<ThrottlingManager>,
+}
+
+impl QuotaEnforcementEngine {
+    pub async fn check_operation_quotas(
+        &self,
+        quotas: &TenantQuotas,
+        current_usage: &CurrentUsage,
+        operation: &Operation,
+    ) -> Result<Vec<QuotaCheck>, ProximaDBError> {
+        let mut quota_checks = Vec::new();
+        
+        // Check storage quota
+        if let Some(storage_quota) = &quotas.max_storage_gb {
+            let estimated_storage_increase = operation.estimate_storage_usage();
+            let new_storage_usage = current_usage.storage_gb + estimated_storage_increase;
+            
+            quota_checks.push(QuotaCheck {
+                quota_type: QuotaType::Storage,
+                current_value: current_usage.storage_gb,
+                quota_limit: storage_quota.value,
+                estimated_new_value: new_storage_usage,
+                allowed: new_storage_usage <= storage_quota.value,
+                enforcement_policy: storage_quota.enforcement_policy.clone(),
+            });
+        }
+        
+        // Check QPS quota
+        if let Some(qps_quota) = &quotas.max_qps {
+            let current_qps = self.calculate_current_qps(current_usage).await?;
+            
+            quota_checks.push(QuotaCheck {
+                quota_type: QuotaType::QPS,
+                current_value: current_qps as u64,
+                quota_limit: qps_quota.value,
+                estimated_new_value: (current_qps + 1.0) as u64,
+                allowed: current_qps < qps_quota.value as f64,
+                enforcement_policy: qps_quota.enforcement_policy.clone(),
+            });
+        }
+        
+        // Check API calls quota
+        if let Some(api_quota) = &quotas.max_api_calls_per_day {
+            let daily_api_calls = self.get_daily_api_calls(current_usage).await?;
+            
+            quota_checks.push(QuotaCheck {
+                quota_type: QuotaType::APICalls,
+                current_value: daily_api_calls,
+                quota_limit: api_quota.value,
+                estimated_new_value: daily_api_calls + 1,
+                allowed: daily_api_calls < api_quota.value,
+                enforcement_policy: api_quota.enforcement_policy.clone(),
+            });
+        }
+        
+        Ok(quota_checks)
+    }
+}
+```
+
+=== Acceptance Criteria
+
+1. **Isolation Requirements**:
+   - [ ] Complete tenant data isolation
+   - [ ] Namespace-based resource separation
+   - [ ] Query result isolation verification
+   - [ ] Cross-tenant access prevention
+
+2. **Quota Requirements**:
+   - [ ] Real-time quota enforcement
+   - [ ] Resource usage tracking operational
+   - [ ] Quota threshold alerts functional
+   - [ ] Billing integration working
+
+3. **Management Requirements**:
+   - [ ] Tenant creation/deletion workflows
+   - [ ] Configuration management interface
+   - [ ] Usage reporting and analytics
+   - [ ] Subscription tier management
+
+== Task 3: Comprehensive Observability (Week 3-5)
+
+=== Background
+Current observability is limited to basic metrics. Enterprise deployment requires comprehensive monitoring, tracing, alerting, and performance analysis.
+
+=== Implementation Requirements
+
+==== 3.1 OpenTelemetry Integration
+**File**: `src/observability/telemetry.rs`
+
+```rust
+// Comprehensive OpenTelemetry integration
+pub struct TelemetryManager {
+    // Tracing provider
+    tracer_provider: Arc<TracerProvider>,
+    // Metrics provider
+    metrics_provider: Arc<MeterProvider>,
+    // Log provider
+    log_provider: Arc<LoggerProvider>,
+    // Exporters configuration
+    exporters: TelemetryExporters,
+    // Sampling configuration
+    sampling_config: SamplingConfig,
+}
+
+// Centralized telemetry configuration
+#[derive(Debug, Clone)]
+pub struct TelemetryConfig {
+    // Service identification
+    pub service_name: String,
+    pub service_version: String,
+    pub deployment_environment: String,
+    
+    // Tracing configuration
+    pub tracing_config: TracingConfig,
+    
+    // Metrics configuration
+    pub metrics_config: MetricsConfig,
+    
+    // Logging configuration
+    pub logging_config: LoggingConfig,
+    
+    // Export configuration
+    pub export_config: ExportConfig,
+}
+
+impl TelemetryManager {
+    pub async fn initialize_telemetry(
+        config: TelemetryConfig,
+    ) -> Result<Arc<Self>, ProximaDBError> {
+        // Initialize resource with service information
+        let resource = Resource::new(vec![
+            KeyValue::new("service.name", config.service_name.clone()),
+            KeyValue::new("service.version", config.service_version.clone()),
+            KeyValue::new("deployment.environment", config.deployment_environment.clone()),
+            KeyValue::new("service.instance.id", uuid::Uuid::new_v4().to_string()),
+        ]);
+        
+        // Initialize tracing provider
+        let tracer_provider = Self::create_tracer_provider(&config, resource.clone()).await?;
+        
+        // Initialize metrics provider
+        let metrics_provider = Self::create_metrics_provider(&config, resource.clone()).await?;
+        
+        // Initialize logging provider
+        let log_provider = Self::create_log_provider(&config, resource.clone()).await?;
+        
+        // Configure exporters
+        let exporters = Self::configure_exporters(&config).await?;
+        
+        // Set global providers
+        global::set_tracer_provider(tracer_provider.clone());
+        global::set_meter_provider(metrics_provider.clone());
+        
+        Ok(Arc::new(Self {
+            tracer_provider,
+            metrics_provider,
+            log_provider,
+            exporters,
+            sampling_config: config.tracing_config.sampling_config,
+        }))
+    }
+    
+    async fn create_tracer_provider(
+        config: &TelemetryConfig,
+        resource: Resource,
+    ) -> Result<TracerProvider, ProximaDBError> {
+        // Create span processor based on configuration
+        let span_processor = match &config.tracing_config.processor_type {
+            ProcessorType::Batch => {
+                let exporter = Self::create_trace_exporter(&config.export_config).await?;
+                BatchSpanProcessor::builder(exporter, runtime::Tokio)
+                    .with_max_queue_size(config.tracing_config.max_queue_size)
+                    .with_batch_timeout(config.tracing_config.batch_timeout)
+                    .with_max_export_batch_size(config.tracing_config.max_export_batch_size)
+                    .build()
+            }
+            ProcessorType::Simple => {
+                let exporter = Self::create_trace_exporter(&config.export_config).await?;
+                SimpleSpanProcessor::new(Box::new(exporter))
+            }
+        };
+        
+        // Create sampling strategy
+        let sampler = match &config.tracing_config.sampling_config.strategy {
+            SamplingStrategy::AlwaysOn => Sampler::AlwaysOn,
+            SamplingStrategy::AlwaysOff => Sampler::AlwaysOff,
+            SamplingStrategy::TraceIdRatio(ratio) => Sampler::TraceIdRatioBased(*ratio),
+            SamplingStrategy::ParentBased(parent_sampler) => {
+                Sampler::ParentBased(Box::new(Self::create_parent_sampler(parent_sampler)?))
+            }
+        };
+        
+        // Build tracer provider
+        let tracer_provider = TracerProvider::builder()
+            .with_span_processor(span_processor)
+            .with_resource(resource)
+            .with_sampler(sampler)
+            .build();
+        
+        Ok(tracer_provider)
+    }
+    
+    pub fn get_tracer(&self, name: &str) -> Tracer {
+        self.tracer_provider.tracer(name)
+    }
+    
+    pub fn get_meter(&self, name: &str) -> Meter {
+        self.metrics_provider.meter(name)
+    }
+}
+
+// Tracing instrumentation for vector operations
+pub struct VectorOperationInstrumentation {
+    tracer: Tracer,
+    operation_duration: Histogram<f64>,
+    operation_counter: Counter<u64>,
+    operation_errors: Counter<u64>,
+}
+
+impl VectorOperationInstrumentation {
+    pub fn new(telemetry_manager: &TelemetryManager) -> Self {
+        let tracer = telemetry_manager.get_tracer("proximadb.vector_operations");
+        let meter = telemetry_manager.get_meter("proximadb.vector_operations");
+        
+        let operation_duration = meter
+            .f64_histogram("vector_operation_duration")
+            .with_description("Duration of vector operations in seconds")
+            .with_unit("s")
+            .build();
+        
+        let operation_counter = meter
+            .u64_counter("vector_operations_total")
+            .with_description("Total number of vector operations")
+            .build();
+        
+        let operation_errors = meter
+            .u64_counter("vector_operation_errors_total")
+            .with_description("Total number of vector operation errors")
+            .build();
+        
+        Self {
+            tracer,
+            operation_duration,
+            operation_counter,
+            operation_errors,
+        }
+    }
+    
+    pub async fn instrument_vector_search<F, R>(
+        &self,
+        operation_name: &str,
+        collection_id: &str,
+        tenant_id: &str,
+        operation: F,
+    ) -> Result<R, ProximaDBError>
+    where
+        F: Future<Output = Result<R, ProximaDBError>>,
+    {
+        let start_time = Instant::now();
+        
+        // Create span for the operation
+        let span = self.tracer
+            .span_builder(format!("vector.{}", operation_name))
+            .with_kind(SpanKind::Internal)
+            .with_attributes(vec![
+                KeyValue::new("operation.name", operation_name.to_string()),
+                KeyValue::new("collection.id", collection_id.to_string()),
+                KeyValue::new("tenant.id", tenant_id.to_string()),
+                KeyValue::new("operation.type", "vector_search"),
+            ])
+            .start(&self.tracer);
+        
+        // Execute operation with span context
+        let result = async {
+            let _guard = span.clone();
+            operation.await
+        }.await;
+        
+        let duration = start_time.elapsed().as_secs_f64();
+        
+        // Record metrics and span attributes based on result
+        match &result {
+            Ok(_) => {
+                // Record success metrics
+                self.operation_counter.add(1, &[
+                    KeyValue::new("operation", operation_name.to_string()),
+                    KeyValue::new("status", "success"),
+                    KeyValue::new("tenant_id", tenant_id.to_string()),
+                ]);
+                
+                self.operation_duration.record(duration, &[
+                    KeyValue::new("operation", operation_name.to_string()),
+                    KeyValue::new("status", "success"),
+                    KeyValue::new("tenant_id", tenant_id.to_string()),
+                ]);
+                
+                // Update span with success attributes
+                span.set_attribute(KeyValue::new("operation.status", "success"));
+                span.set_attribute(KeyValue::new("operation.duration_ms", duration * 1000.0));
+                span.set_status(Status::Ok);
+            }
+            Err(error) => {
+                // Record error metrics
+                self.operation_errors.add(1, &[
+                    KeyValue::new("operation", operation_name.to_string()),
+                    KeyValue::new("error_type", error.error_type()),
+                    KeyValue::new("tenant_id", tenant_id.to_string()),
+                ]);
+                
+                self.operation_duration.record(duration, &[
+                    KeyValue::new("operation", operation_name.to_string()),
+                    KeyValue::new("status", "error"),
+                    KeyValue::new("tenant_id", tenant_id.to_string()),
+                ]);
+                
+                // Update span with error attributes
+                span.set_attribute(KeyValue::new("operation.status", "error"));
+                span.set_attribute(KeyValue::new("error.type", error.error_type()));
+                span.set_attribute(KeyValue::new("error.message", error.to_string()));
+                span.set_status(Status::error(error.to_string()));
+            }
+        }
+        
+        span.end();
+        result
+    }
+}
+```
+
+==== 3.2 Performance Monitoring and Alerting
+**File**: `src/observability/performance_monitor.rs`
+
+```rust
+// Comprehensive performance monitoring
+pub struct PerformanceMonitor {
+    // System metrics collection
+    system_metrics: Arc<SystemMetricsCollector>,
+    // Application metrics
+    app_metrics: Arc<ApplicationMetricsCollector>,
+    // SLA monitoring
+    sla_monitor: Arc<SlaMonitor>,
+    // Alert manager
+    alert_manager: Arc<AlertManager>,
+    // Performance baselines
+    baseline_manager: Arc<PerformanceBaselineManager>,
+}
+
+// System-level metrics collection
+pub struct SystemMetricsCollector {
+    // Hardware metrics
+    cpu_usage: Gauge<f64>,
+    memory_usage: Gauge<f64>,
+    disk_usage: Gauge<f64>,
+    network_io: Counter<u64>,
+    
+    // Process metrics
+    process_cpu: Gauge<f64>,
+    process_memory: Gauge<f64>,
+    process_threads: Gauge<u64>,
+    process_file_descriptors: Gauge<u64>,
+    
+    // Storage engine metrics
+    storage_metrics: HashMap<String, StorageEngineMetrics>,
+}
+
+impl SystemMetricsCollector {
+    pub async fn collect_system_metrics(&self) -> Result<SystemMetricsSnapshot, ProximaDBError> {
+        // Collect CPU metrics
+        let cpu_stats = self.collect_cpu_stats().await?;
+        
+        // Collect memory metrics
+        let memory_stats = self.collect_memory_stats().await?;
+        
+        // Collect disk metrics
+        let disk_stats = self.collect_disk_stats().await?;
+        
+        // Collect network metrics
+        let network_stats = self.collect_network_stats().await?;
+        
+        // Collect process-specific metrics
+        let process_stats = self.collect_process_stats().await?;
+        
+        // Update Prometheus metrics
+        self.update_prometheus_metrics(&cpu_stats, &memory_stats, &disk_stats, &network_stats, &process_stats)?;
+        
+        Ok(SystemMetricsSnapshot {
+            timestamp: SystemTime::now(),
+            cpu_stats,
+            memory_stats,
+            disk_stats,
+            network_stats,
+            process_stats,
+        })
+    }
+    
+    async fn collect_cpu_stats(&self) -> Result<CpuStats, ProximaDBError> {
+        let cpu_usage = sysinfo::System::global_cpu_info().cpu_usage();
+        let load_average = sysinfo::System::load_average();
+        
+        self.cpu_usage.set(cpu_usage as f64, &[]);
+        
+        Ok(CpuStats {
+            overall_usage: cpu_usage,
+            load_average_1m: load_average.one,
+            load_average_5m: load_average.five,
+            load_average_15m: load_average.fifteen,
+            cpu_cores: num_cpus::get(),
+        })
+    }
+}
+
+// Application-level metrics collection
+pub struct ApplicationMetricsCollector {
+    // Request metrics
+    request_duration: Histogram<f64>,
+    request_count: Counter<u64>,
+    request_errors: Counter<u64>,
+    
+    // Vector operation metrics
+    vector_search_duration: Histogram<f64>,
+    vector_search_accuracy: Histogram<f64>,
+    vector_index_build_duration: Histogram<f64>,
+    
+    // Storage engine metrics
+    storage_operation_duration: Histogram<f64>,
+    storage_throughput: Gauge<f64>,
+    storage_cache_hit_rate: Gauge<f64>,
+    
+    // Queue and batch metrics
+    queue_depth: Gauge<u64>,
+    batch_size: Histogram<f64>,
+    batch_processing_duration: Histogram<f64>,
+}
+
+impl ApplicationMetricsCollector {
+    pub async fn collect_vector_search_metrics(
+        &self,
+        search_result: &VectorSearchResult,
+        search_duration: Duration,
+        tenant_id: &str,
+        collection_id: &str,
+    ) -> Result<(), ProximaDBError> {
+        let duration_seconds = search_duration.as_secs_f64();
+        
+        // Record search duration
+        self.vector_search_duration.record(duration_seconds, &[
+            KeyValue::new("tenant_id", tenant_id.to_string()),
+            KeyValue::new("collection_id", collection_id.to_string()),
+            KeyValue::new("engine_type", search_result.engine_type.clone()),
+        ]);
+        
+        // Record search accuracy if available
+        if let Some(accuracy) = search_result.accuracy {
+            self.vector_search_accuracy.record(accuracy, &[
+                KeyValue::new("tenant_id", tenant_id.to_string()),
+                KeyValue::new("collection_id", collection_id.to_string()),
+                KeyValue::new("engine_type", search_result.engine_type.clone()),
+            ]);
+        }
+        
+        // Record result count and other metrics
+        self.record_search_result_metrics(search_result, tenant_id, collection_id)?;
+        
+        Ok(())
+    }
+}
+
+// SLA monitoring and alerting
+pub struct SlaMonitor {
+    // SLA definitions
+    sla_definitions: Arc<SlaDefinitionStore>,
+    // SLA tracking
+    sla_tracker: Arc<SlaTracker>,
+    // Alert thresholds
+    alert_thresholds: Arc<AlertThresholdStore>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SlaDefinition {
+    pub sla_id: String,
+    pub tenant_id: Option<String>, // None for global SLAs
+    pub sla_type: SlaType,
+    pub target_value: f64,
+    pub measurement_window: Duration,
+    pub breach_threshold: f64, // Percentage of target (e.g., 0.95 for 95%)
+}
+
+#[derive(Debug, Clone)]
+pub enum SlaType {
+    ResponseTime { percentile: f64 }, // e.g., P99 < 100ms
+    Availability { uptime_percentage: f64 }, // e.g., 99.9% uptime
+    Throughput { min_qps: f64 }, // e.g., >= 1000 QPS
+    ErrorRate { max_error_percentage: f64 }, // e.g., < 0.1% errors
+}
+
+impl SlaMonitor {
+    pub async fn check_sla_compliance(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<SlaComplianceReport>, ProximaDBError> {
+        let mut compliance_reports = Vec::new();
+        
+        // Get applicable SLAs
+        let slas = self.sla_definitions.get_applicable_slas(tenant_id).await?;
+        
+        for sla in slas {
+            let compliance_report = self.evaluate_sla_compliance(&sla).await?;
+            
+            // Check for SLA breaches
+            if compliance_report.is_breach {
+                self.handle_sla_breach(&sla, &compliance_report).await?;
+            }
+            
+            compliance_reports.push(compliance_report);
+        }
+        
+        Ok(compliance_reports)
+    }
+    
+    async fn evaluate_sla_compliance(
+        &self,
+        sla: &SlaDefinition,
+    ) -> Result<SlaComplianceReport, ProximaDBError> {
+        let measurement_start = SystemTime::now() - sla.measurement_window;
+        
+        let actual_value = match &sla.sla_type {
+            SlaType::ResponseTime { percentile } => {
+                self.sla_tracker.calculate_response_time_percentile(
+                    sla.tenant_id.as_deref(),
+                    *percentile,
+                    measurement_start,
+                ).await?
+            }
+            SlaType::Availability { .. } => {
+                self.sla_tracker.calculate_availability_percentage(
+                    sla.tenant_id.as_deref(),
+                    measurement_start,
+                ).await?
+            }
+            SlaType::Throughput { .. } => {
+                self.sla_tracker.calculate_average_throughput(
+                    sla.tenant_id.as_deref(),
+                    measurement_start,
+                ).await?
+            }
+            SlaType::ErrorRate { .. } => {
+                self.sla_tracker.calculate_error_rate_percentage(
+                    sla.tenant_id.as_deref(),
+                    measurement_start,
+                ).await?
+            }
+        };
+        
+        let compliance_percentage = self.calculate_compliance_percentage(&sla.sla_type, actual_value, sla.target_value);
+        let is_breach = compliance_percentage < sla.breach_threshold;
+        
+        Ok(SlaComplianceReport {
+            sla_id: sla.sla_id.clone(),
+            tenant_id: sla.tenant_id.clone(),
+            sla_type: sla.sla_type.clone(),
+            target_value: sla.target_value,
+            actual_value,
+            compliance_percentage,
+            is_breach,
+            measurement_window: sla.measurement_window,
+            evaluation_timestamp: SystemTime::now(),
+        })
+    }
+}
+```
+
+==== 3.3 Distributed Tracing
+**File**: `src/observability/distributed_tracing.rs`
+
+```rust
+// Distributed tracing across storage engines and services
+pub struct DistributedTracingManager {
+    // Trace context propagation
+    context_propagator: Arc<TraceContextPropagator>,
+    // Cross-service correlation
+    correlation_manager: Arc<CorrelationManager>,
+    // Trace sampling decisions
+    sampling_manager: Arc<SamplingManager>,
+    // Trace analysis engine
+    analysis_engine: Arc<TraceAnalysisEngine>,
+}
+
+// Request correlation across distributed components
+pub struct CorrelationManager {
+    // Correlation ID management
+    correlation_id_generator: Arc<CorrelationIdGenerator>,
+    // Request context storage
+    request_context_store: Arc<RequestContextStore>,
+    // Cross-service trace linking
+    trace_linker: Arc<TraceLinker>,
+}
+
+impl DistributedTracingManager {
+    pub async fn start_distributed_operation(
+        &self,
+        operation_name: &str,
+        parent_context: Option<Context>,
+    ) -> Result<DistributedOperationContext, ProximaDBError> {
+        // Generate correlation ID for the operation
+        let correlation_id = self.correlation_manager
+            .correlation_id_generator
+            .generate_correlation_id();
+        
+        // Create or extend trace context
+        let trace_context = match parent_context {
+            Some(parent) => self.context_propagator.create_child_context(parent)?,
+            None => self.context_propagator.create_root_context(&correlation_id)?,
+        };
+        
+        // Start root span
+        let root_span = self.create_root_span(operation_name, &correlation_id, &trace_context)?;
+        
+        // Create distributed operation context
+        let operation_context = DistributedOperationContext {
+            correlation_id: correlation_id.clone(),
+            trace_context,
+            root_span,
+            operation_start_time: SystemTime::now(),
+            operation_name: operation_name.to_string(),
+        };
+        
+        // Store context for cross-service access
+        self.correlation_manager
+            .request_context_store
+            .store_context(&correlation_id, &operation_context)
+            .await?;
+        
+        Ok(operation_context)
+    }
+    
+    pub async fn trace_storage_engine_operation<F, R>(
+        &self,
+        engine_name: &str,
+        operation_name: &str,
+        parent_context: &DistributedOperationContext,
+        operation: F,
+    ) -> Result<R, ProximaDBError>
+    where
+        F: Future<Output = Result<R, ProximaDBError>>,
+    {
+        // Create child span for storage engine operation
+        let span = self.create_storage_engine_span(
+            engine_name,
+            operation_name,
+            &parent_context.correlation_id,
+            &parent_context.trace_context,
+        )?;
+        
+        let start_time = Instant::now();
+        
+        // Execute operation with tracing
+        let result = async {
+            let _guard = span.clone();
+            
+            // Add storage engine specific attributes
+            span.set_attribute(KeyValue::new("storage.engine", engine_name.to_string()));
+            span.set_attribute(KeyValue::new("storage.operation", operation_name.to_string()));
+            span.set_attribute(KeyValue::new("correlation.id", parent_context.correlation_id.clone()));
+            
+            operation.await
+        }.await;
+        
+        let duration = start_time.elapsed();
+        
+        // Update span with operation results
+        match &result {
+            Ok(_) => {
+                span.set_attribute(KeyValue::new("operation.status", "success"));
+                span.set_attribute(KeyValue::new("operation.duration_ms", duration.as_millis() as i64));
+                span.set_status(Status::Ok);
+            }
+            Err(error) => {
+                span.set_attribute(KeyValue::new("operation.status", "error"));
+                span.set_attribute(KeyValue::new("error.type", error.error_type()));
+                span.set_attribute(KeyValue::new("error.message", error.to_string()));
+                span.set_status(Status::error(error.to_string()));
+            }
+        }
+        
+        span.end();
+        
+        // Record cross-engine correlation if needed
+        self.correlation_manager
+            .trace_linker
+            .record_engine_operation(&parent_context.correlation_id, engine_name, operation_name, duration)
+            .await?;
+        
+        result
+    }
+    
+    pub async fn trace_cross_service_call<F, R>(
+        &self,
+        service_name: &str,
+        method_name: &str,
+        parent_context: &DistributedOperationContext,
+        service_call: F,
+    ) -> Result<R, ProximaDBError>
+    where
+        F: Future<Output = Result<R, ProximaDBError>>,
+    {
+        // Create span for cross-service call
+        let span = self.create_cross_service_span(
+            service_name,
+            method_name,
+            &parent_context.correlation_id,
+            &parent_context.trace_context,
+        )?;
+        
+        // Inject trace context for downstream service
+        let mut headers = HashMap::new();
+        self.context_propagator.inject_context(&parent_context.trace_context, &mut headers)?;
+        
+        let start_time = Instant::now();
+        
+        // Execute service call with trace context
+        let result = async {
+            let _guard = span.clone();
+            
+            span.set_attribute(KeyValue::new("service.name", service_name.to_string()));
+            span.set_attribute(KeyValue::new("service.method", method_name.to_string()));
+            span.set_attribute(KeyValue::new("correlation.id", parent_context.correlation_id.clone()));
+            
+            // Add trace headers to the service call context
+            service_call.await
+        }.await;
+        
+        let duration = start_time.elapsed();
+        
+        // Update span with call results
+        self.update_cross_service_span(&span, &result, duration)?;
+        span.end();
+        
+        result
+    }
+}
+
+// Trace analysis for performance optimization
+pub struct TraceAnalysisEngine {
+    // Performance bottleneck detection
+    bottleneck_detector: Arc<BottleneckDetector>,
+    // Trace aggregation and analysis
+    trace_aggregator: Arc<TraceAggregator>,
+    // Performance insights generator
+    insights_generator: Arc<PerformanceInsightsGenerator>,
+}
+
+impl TraceAnalysisEngine {
+    pub async fn analyze_operation_performance(
+        &self,
+        correlation_id: &str,
+    ) -> Result<OperationPerformanceAnalysis, ProximaDBError> {
+        // Collect all traces for the operation
+        let operation_traces = self.trace_aggregator
+            .collect_operation_traces(correlation_id)
+            .await?;
+        
+        // Analyze for bottlenecks
+        let bottlenecks = self.bottleneck_detector
+            .detect_bottlenecks(&operation_traces)
+            .await?;
+        
+        // Generate performance insights
+        let insights = self.insights_generator
+            .generate_insights(&operation_traces, &bottlenecks)
+            .await?;
+        
+        // Calculate performance metrics
+        let total_duration = operation_traces.total_duration();
+        let critical_path = operation_traces.calculate_critical_path();
+        let parallelization_opportunities = operation_traces.identify_parallelization_opportunities();
+        
+        Ok(OperationPerformanceAnalysis {
+            correlation_id: correlation_id.to_string(),
+            total_duration,
+            critical_path,
+            bottlenecks,
+            insights,
+            parallelization_opportunities,
+            analysis_timestamp: SystemTime::now(),
+        })
+    }
+}
+```
+
+=== Acceptance Criteria
+
+1. **Telemetry Requirements**:
+   - [ ] OpenTelemetry integration complete
+   - [ ] Distributed tracing operational
+   - [ ] Metrics collection comprehensive
+   - [ ] Log aggregation functional
+
+2. **Monitoring Requirements**:
+   - [ ] Real-time performance monitoring
+   - [ ] SLA compliance tracking
+   - [ ] Alert system operational
+   - [ ] Dashboard visualization ready
+
+3. **Analysis Requirements**:
+   - [ ] Performance bottleneck detection
+   - [ ] Trace analysis and insights
+   - [ ] Historical trend analysis
+   - [ ] Capacity planning support
+
+== Phase 2 Integration Testing
+
+=== Integration Test Suite
+**File**: `tests/integration/phase2_integration_tests.rs`
+
+```rust
+// Comprehensive Phase 2 integration tests
+#[tokio::test]
+async fn test_end_to_end_security() {
+    // Test complete security flow
+    let security_context = create_security_test_context().await?;
+    
+    // Test mTLS authentication
+    let mtls_client = create_mtls_client(&security_context).await?;
+    let auth_result = mtls_client.authenticate().await?;
+    assert!(auth_result.success);
+    
+    // Test JWT authentication
+    let jwt_token = generate_test_jwt_token(&security_context).await?;
+    let rest_client = create_authenticated_rest_client(&jwt_token)?;
+    
+    // Test RBAC authorization
+    let vector_operation = VectorOperation {
+        operation_type: VectorOperationType::Search,
+        collection_id: "test_collection".to_string(),
+        tenant_id: "test_tenant".to_string(),
+    };
+    
+    let auth_result = security_context.rbac_engine
+        .authorize_vector_operation(&auth_result.user, &vector_operation)
+        .await?;
+    
+    assert!(auth_result.allowed);
+    
+    // Verify audit logging
+    let audit_events = security_context.audit_logger
+        .query_events_for_user(&auth_result.user.user_id)
+        .await?;
+    
+    assert!(!audit_events.is_empty());
+}
+
+#[tokio::test]
+async fn test_multi_tenant_isolation() {
+    let context = create_multi_tenant_test_context().await?;
+    
+    // Create two tenants
+    let tenant1 = context.tenant_manager.create_tenant(CreateTenantRequest {
+        tenant_name: "tenant1".to_string(),
+        subscription_tier: SubscriptionTier::Professional,
+        ..Default::default()
+    }).await?;
+    
+    let tenant2 = context.tenant_manager.create_tenant(CreateTenantRequest {
+        tenant_name: "tenant2".to_string(),
+        subscription_tier: SubscriptionTier::Professional,
+        ..Default::default()
+    }).await?;
+    
+    // Create collections for each tenant
+    let collection1 = create_tenant_collection(&context, &tenant1.tenant_id, "collection1").await?;
+    let collection2 = create_tenant_collection(&context, &tenant2.tenant_id, "collection2").await?;
+    
+    // Insert data for each tenant
+    let vectors1 = generate_test_vectors(100, 128);
+    let vectors2 = generate_test_vectors(100, 128);
+    
+    insert_vectors_for_tenant(&context, &tenant1.tenant_id, &collection1.id, vectors1).await?;
+    insert_vectors_for_tenant(&context, &tenant2.tenant_id, &collection2.id, vectors2).await?;
+    
+    // Test isolation: tenant1 should not see tenant2's data
+    let tenant1_user = create_tenant_user(&tenant1.tenant_id);
+    let search_result = context.vector_service
+        .search_vectors(&tenant1_user, &collection2.id, &test_query)
+        .await;
+    
+    // Should fail due to tenant isolation
+    assert!(search_result.is_err());
+    assert!(matches!(search_result.unwrap_err(), ProximaDBError::TenantIsolationViolation(_)));
+}
+
+#[tokio::test]
+async fn test_observability_end_to_end() {
+    let context = create_observability_test_context().await?;
+    
+    // Execute monitored operation
+    let operation_result = context.telemetry_manager
+        .instrument_vector_search(
+            "test_search",
+            "test_collection",
+            "test_tenant",
+            async {
+                // Simulate vector search operation
+                context.vector_service.search_vectors(test_search_request).await
+            }
+        ).await?;
+    
+    // Verify traces were created
+    let traces = context.trace_collector.collect_traces_for_operation("test_search").await?;
+    assert!(!traces.is_empty());
+    
+    // Verify metrics were recorded
+    let metrics = context.metrics_collector.get_operation_metrics("vector_search").await?;
+    assert!(metrics.operation_count > 0);
+    
+    // Verify SLA monitoring
+    let sla_reports = context.sla_monitor.check_sla_compliance(Some("test_tenant")).await?;
+    assert!(!sla_reports.is_empty());
+    
+    // Test alerting (simulate SLA breach)
+    let breach_simulation = simulate_sla_breach(&context, "response_time").await?;
+    let alerts = context.alert_manager.get_active_alerts().await?;
+    
+    assert!(alerts.iter().any(|alert| alert.alert_type == AlertType::SLABreach));
+}
+```
+
+== Phase 2 Completion Checklist
+
+### Week 1-3: Enterprise Security
+- [ ] mTLS implementation for gRPC complete
+- [ ] JWT/OIDC authentication for REST operational
+- [ ] RBAC system with fine-grained permissions
+- [ ] Comprehensive audit logging functional
+- [ ] Security performance targets met
+
+### Week 2-4: Multi-Tenancy
+- [ ] Tenant management system operational
+- [ ] Complete tenant data isolation verified
+- [ ] Resource quota enforcement working
+- [ ] Billing integration functional
+- [ ] Tenant configuration management ready
+
+### Week 3-5: Observability
+- [ ] OpenTelemetry integration complete
+- [ ] Distributed tracing across all services
+- [ ] Performance monitoring and alerting
+- [ ] SLA monitoring operational
+- [ ] Trace analysis and insights functional
+
+### Week 6: Integration & Production Readiness
+- [ ] All integration tests passing
+- [ ] Security penetration testing complete
+- [ ] Performance benchmarks meet enterprise requirements
+- [ ] Documentation complete
+- [ ] Production deployment guides ready
+- [ ] Phase 3 prerequisites satisfied
+
+---
+
+**Phase 2 Success Metrics**:
+- Enterprise security operational
+- Multi-tenancy with complete isolation
+- Comprehensive observability pipeline
+- Performance targets achieved
+- Production readiness validated
+- Zero security vulnerabilities

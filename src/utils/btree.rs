@@ -150,17 +150,17 @@ impl InternalNode {
     /// Split the internal node into two nodes
     fn split(&mut self, max_keys: usize) -> (Vec<u8>, InternalNode) {
         let mid = max_keys / 2;
-        
+
         let split_key = self.keys.remove(mid);
-        
+
         let new_keys = self.keys.split_off(mid);
         let new_children = self.children.split_off(mid + 1);
-        
+
         let new_node = InternalNode {
             keys: new_keys,
             children: new_children,
         };
-        
+
         (split_key, new_node)
     }
 
@@ -191,7 +191,8 @@ impl LeafNode {
 
     /// Find the position where a key should be inserted
     fn find_key_position(&self, key: &[u8]) -> Result<usize, usize> {
-        self.entries.binary_search_by(|(k, _)| k.as_slice().cmp(key))
+        self.entries
+            .binary_search_by(|(k, _)| k.as_slice().cmp(key))
     }
 
     /// Insert a key-value pair
@@ -233,17 +234,17 @@ impl LeafNode {
     fn split(&mut self, max_keys: usize) -> (Vec<u8>, LeafNode) {
         let mid = max_keys / 2;
         let new_entries = self.entries.split_off(mid);
-        
+
         let split_key = new_entries.first().unwrap().0.clone();
-        
+
         let new_node = LeafNode {
             entries: new_entries,
             next: self.next.clone(),
         };
-        
+
         // Update next pointers
         self.next = Some(NodeRef::new_leaf(new_node.clone()));
-        
+
         (split_key, new_node)
     }
 
@@ -256,25 +257,25 @@ impl LeafNode {
     /// Get all entries in a key range
     fn range(&self, start: Option<&[u8]>, end: Option<&[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut result = Vec::new();
-        
+
         for (key, value) in &self.entries {
             let key_slice = key.as_slice();
-            
+
             if let Some(start_key) = start {
                 if key_slice < start_key {
                     continue;
                 }
             }
-            
+
             if let Some(end_key) = end {
                 if key_slice >= end_key {
                     break;
                 }
             }
-            
+
             result.push((key.clone(), key.clone()));
         }
-        
+
         result
     }
 }
@@ -300,12 +301,12 @@ impl NodeRef {
     /// Read the node (acquire read lock)
     fn read(&self) -> Result<std::sync::RwLockReadGuard<Node>, BTreeError> {
         match self {
-            NodeRef::InMemory(node) => {
-                node.read().map_err(|_| BTreeError::LockError)
-            }
+            NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(_) => {
                 // TODO: Implement disk-based node loading
-                Err(BTreeError::TreeCorrupted("Disk nodes not implemented".to_string()))
+                Err(BTreeError::TreeCorrupted(
+                    "Disk nodes not implemented".to_string(),
+                ))
             }
         }
     }
@@ -313,12 +314,12 @@ impl NodeRef {
     /// Write to the node (acquire write lock)
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<Node>, BTreeError> {
         match self {
-            NodeRef::InMemory(node) => {
-                node.write().map_err(|_| BTreeError::LockError)
-            }
+            NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
             NodeRef::OnDisk(_) => {
                 // TODO: Implement disk-based node loading
-                Err(BTreeError::TreeCorrupted("Disk nodes not implemented".to_string()))
+                Err(BTreeError::TreeCorrupted(
+                    "Disk nodes not implemented".to_string(),
+                ))
             }
         }
     }
@@ -370,18 +371,18 @@ impl Iterator for BTreeIterator {
     fn next(&mut self) -> Option<Self::Item> {
         let leaf_ref = self.current_leaf.as_ref()?;
         let leaf_guard = leaf_ref.read().ok()?;
-        
+
         if let Node::Leaf(leaf) = &*leaf_guard {
             if self.current_index < leaf.entries.len() {
                 let entry = leaf.entries[self.current_index].clone();
-                
+
                 // Check if we've reached the end key
                 if let Some(ref end) = self.end_key {
                     if entry.0.as_slice() >= end.as_slice() {
                         return None;
                     }
                 }
-                
+
                 self.current_index += 1;
                 return Some(entry);
             } else {
@@ -394,7 +395,7 @@ impl Iterator for BTreeIterator {
                 }
             }
         }
-        
+
         None
     }
 }
@@ -453,12 +454,12 @@ impl BPlusTree {
                 new_root.children.push(self.root.take().unwrap());
                 new_root.keys.push(split_key);
                 new_root.children.push(new_node);
-                
+
                 self.root = Some(NodeRef::new_internal(new_root));
                 self.stats.height += 1;
                 self.stats.internal_nodes += 1;
             }
-            
+
             if old_value.is_none() {
                 self.stats.entries += 1;
             }
@@ -474,45 +475,45 @@ impl BPlusTree {
         &mut self,
         node_ref: &NodeRef,
         key: Vec<u8>,
-        value: Vec<u8>
+        value: Vec<u8>,
     ) -> Option<(Option<Vec<u8>>, Option<(Vec<u8>, NodeRef)>)> {
         let mut node_guard = node_ref.write().ok()?;
-        
+
         match &mut *node_guard {
             Node::Internal(internal) => {
                 let child_index = internal.find_child_index(&key);
                 let child_ref = internal.children[child_index].clone();
                 drop(node_guard);
-                
+
                 let (old_value, split_result) = self.insert_recursive(&child_ref, key, value)?;
-                
+
                 if let Some((split_key, new_child)) = split_result {
                     let mut node_guard = node_ref.write().ok()?;
                     if let Node::Internal(internal) = &mut *node_guard {
                         internal.insert_at(child_index, split_key, new_child);
-                        
+
                         // Check if this internal node needs to split
                         if internal.keys.len() > self.max_keys {
                             let (new_split_key, new_internal) = internal.split(self.max_keys);
                             let new_node_ref = NodeRef::new_internal(new_internal);
                             self.stats.internal_nodes += 1;
-                            
+
                             return Some((old_value, Some((new_split_key, new_node_ref))));
                         }
                     }
                 }
-                
+
                 Some((old_value, None))
             }
             Node::Leaf(leaf) => {
                 let old_value = leaf.insert(key, value);
-                
+
                 // Check if leaf needs to split
                 if leaf.entries.len() > self.max_keys {
                     let (split_key, new_leaf) = leaf.split(self.max_keys);
                     let new_node_ref = NodeRef::new_leaf(new_leaf);
                     self.stats.leaf_nodes += 1;
-                    
+
                     Some((old_value, Some((split_key, new_node_ref))))
                 } else {
                     Some((old_value, None))
@@ -530,7 +531,7 @@ impl BPlusTree {
     /// Recursive get helper
     fn get_recursive(&self, node_ref: &NodeRef, key: &[u8]) -> Option<Vec<u8>> {
         let node_guard = node_ref.read().ok()?;
-        
+
         match &*node_guard {
             Node::Internal(internal) => {
                 let child_index = internal.find_child_index(key);
@@ -538,9 +539,7 @@ impl BPlusTree {
                 drop(node_guard);
                 self.get_recursive(&child_ref, key)
             }
-            Node::Leaf(leaf) => {
-                leaf.get(key).cloned()
-            }
+            Node::Leaf(leaf) => leaf.get(key).cloned(),
         }
     }
 
@@ -562,7 +561,7 @@ impl BPlusTree {
                     }
                 }
             }
-            
+
             if value.is_some() {
                 self.stats.entries = self.stats.entries.saturating_sub(1);
             }
@@ -574,17 +573,21 @@ impl BPlusTree {
     }
 
     /// Recursive removal helper
-    fn remove_recursive(&mut self, node_ref: &NodeRef, key: &[u8]) -> Option<(Option<Vec<u8>>, bool)> {
+    fn remove_recursive(
+        &mut self,
+        node_ref: &NodeRef,
+        key: &[u8],
+    ) -> Option<(Option<Vec<u8>>, bool)> {
         let mut node_guard = node_ref.write().ok()?;
-        
+
         match &mut *node_guard {
             Node::Internal(internal) => {
                 let child_index = internal.find_child_index(key);
                 let child_ref = internal.children[child_index].clone();
                 drop(node_guard);
-                
+
                 let (value, child_underflow) = self.remove_recursive(&child_ref, key)?;
-                
+
                 if child_underflow {
                     // Handle child underflow (simplified - would need rebalancing in production)
                     // For now, just check if this node underflows
@@ -646,14 +649,14 @@ impl BPlusTree {
         } else {
             self.find_first_leaf()
         };
-        
+
         BTreeIterator::new(start_leaf, end.map(|k| k.to_vec()), true)
     }
 
     /// Get all keys with a common prefix
     pub fn prefix_scan(&self, prefix: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
         let mut result = Vec::new();
-        
+
         for (key, value) in self.iter() {
             if key.starts_with(prefix) {
                 result.push((key, value));
@@ -662,7 +665,7 @@ impl BPlusTree {
                 break;
             }
         }
-        
+
         result
     }
 
@@ -681,7 +684,7 @@ impl BPlusTree {
         // Build leaf level
         let mut leaf_nodes = Vec::new();
         let mut current_leaf = LeafNode::new();
-        
+
         for (key, value) in entries.iter() {
             if current_leaf.entries.len() >= self.max_keys {
                 leaf_nodes.push(NodeRef::new_leaf(current_leaf));
@@ -691,7 +694,7 @@ impl BPlusTree {
             current_leaf.entries.push((key.clone(), key.clone()));
             self.stats.entries += 1;
         }
-        
+
         if !current_leaf.entries.is_empty() {
             leaf_nodes.push(NodeRef::new_leaf(current_leaf));
             self.stats.leaf_nodes += 1;
@@ -713,7 +716,7 @@ impl BPlusTree {
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
             let mut current_internal = InternalNode::new();
-            
+
             for (i, node_ref) in current_level.into_iter().enumerate() {
                 if i == 0 {
                     current_internal.children.push(node_ref);
@@ -725,7 +728,7 @@ impl BPlusTree {
                         }
                     }
                     current_internal.children.push(node_ref);
-                    
+
                     if current_internal.children.len() > self.max_keys {
                         next_level.push(NodeRef::new_internal(current_internal));
                         current_internal = InternalNode::new();
@@ -733,12 +736,12 @@ impl BPlusTree {
                     }
                 }
             }
-            
+
             if !current_internal.children.is_empty() {
                 next_level.push(NodeRef::new_internal(current_internal));
                 self.stats.internal_nodes += 1;
             }
-            
+
             current_level = next_level;
             self.stats.height += 1;
         }
@@ -763,34 +766,45 @@ impl BPlusTree {
         node_ref: &NodeRef,
         depth: u32,
         min_key: Option<&[u8]>,
-        max_key: Option<&[u8]>
+        max_key: Option<&[u8]>,
     ) -> Result<(), BTreeError> {
-        let node_guard = node_ref.read()
-            .map_err(|_| BTreeError::LockError)?;
-        
+        let node_guard = node_ref.read().map_err(|_| BTreeError::LockError)?;
+
         match &*node_guard {
             Node::Internal(internal) => {
                 // Validate key count
                 if depth > 0 && internal.keys.len() < self.min_keys {
-                    return Err(BTreeError::TreeCorrupted("Internal node underflow".to_string()));
+                    return Err(BTreeError::TreeCorrupted(
+                        "Internal node underflow".to_string(),
+                    ));
                 }
-                
+
                 if internal.keys.len() > self.max_keys {
-                    return Err(BTreeError::TreeCorrupted("Internal node overflow".to_string()));
+                    return Err(BTreeError::TreeCorrupted(
+                        "Internal node overflow".to_string(),
+                    ));
                 }
-                
+
                 // Validate key ordering
                 for i in 1..internal.keys.len() {
                     if internal.keys[i - 1] >= internal.keys[i] {
                         return Err(BTreeError::TreeCorrupted("Keys not sorted".to_string()));
                     }
                 }
-                
+
                 // Validate children recursively
                 for (i, child) in internal.children.iter().enumerate() {
-                    let child_min = if i == 0 { min_key } else { Some(internal.keys[i - 1].as_slice()) };
-                    let child_max = if i < internal.keys.len() { Some(internal.keys[i].as_slice()) } else { max_key };
-                    
+                    let child_min = if i == 0 {
+                        min_key
+                    } else {
+                        Some(internal.keys[i - 1].as_slice())
+                    };
+                    let child_max = if i < internal.keys.len() {
+                        Some(internal.keys[i].as_slice())
+                    } else {
+                        max_key
+                    };
+
                     self.validate_node(child, depth + 1, child_min, child_max)?;
                 }
             }
@@ -799,34 +813,36 @@ impl BPlusTree {
                 if depth > 0 && leaf.entries.len() < self.min_keys {
                     return Err(BTreeError::TreeCorrupted("Leaf node underflow".to_string()));
                 }
-                
+
                 if leaf.entries.len() > self.max_keys {
                     return Err(BTreeError::TreeCorrupted("Leaf node overflow".to_string()));
                 }
-                
+
                 // Validate key ordering and bounds
                 for i in 0..leaf.entries.len() {
                     let key = &leaf.entries[i].0;
-                    
+
                     if let Some(min) = min_key {
                         if key.as_slice() < min {
                             return Err(BTreeError::TreeCorrupted("Key below minimum".to_string()));
                         }
                     }
-                    
+
                     if let Some(max) = max_key {
                         if key.as_slice() >= max {
                             return Err(BTreeError::TreeCorrupted("Key above maximum".to_string()));
                         }
                     }
-                    
+
                     if i > 0 && leaf.entries[i - 1].0 >= leaf.entries[i].0 {
-                        return Err(BTreeError::TreeCorrupted("Leaf keys not sorted".to_string()));
+                        return Err(BTreeError::TreeCorrupted(
+                            "Leaf keys not sorted".to_string(),
+                        ));
                     }
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -835,7 +851,7 @@ impl BPlusTree {
     /// Find the first (leftmost) leaf node
     fn find_first_leaf(&self) -> Option<NodeRef> {
         let mut current = self.root.as_ref()?.clone();
-        
+
         loop {
             let node_guard = current.read().ok()?;
             match &*node_guard {
@@ -855,7 +871,7 @@ impl BPlusTree {
     /// Find the leaf node that should contain a specific key
     fn find_leaf_for_key(&self, key: &[u8]) -> Option<NodeRef> {
         let mut current = self.root.as_ref()?.clone();
-        
+
         loop {
             let node_guard = current.read().ok()?;
             match &*node_guard {
@@ -891,18 +907,18 @@ mod tests {
     #[test]
     fn test_basic_operations() {
         let mut tree = BPlusTree::new(4);
-        
+
         // Test insertion
         assert_eq!(tree.insert(b"key1".to_vec(), b"value1".to_vec()), None);
         assert_eq!(tree.insert(b"key2".to_vec(), b"value2".to_vec()), None);
         assert_eq!(tree.insert(b"key3".to_vec(), b"value3".to_vec()), None);
-        
+
         // Test retrieval
         assert_eq!(tree.get(b"key1"), Some(b"value1".to_vec()));
         assert_eq!(tree.get(b"key2"), Some(b"value2".to_vec()));
         assert_eq!(tree.get(b"key3"), Some(b"value3".to_vec()));
         assert_eq!(tree.get(b"key4"), None);
-        
+
         assert_eq!(tree.len(), 3);
         assert!(tree.contains_key(b"key1"));
         assert!(!tree.contains_key(b"key4"));
@@ -911,11 +927,13 @@ mod tests {
     #[test]
     fn test_update_existing_key() {
         let mut tree = BPlusTree::new(4);
-        
+
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
-        assert_eq!(tree.insert(b"key1".to_vec(), b"new_value".to_vec()), 
-                  Some(b"value1".to_vec()));
-        
+        assert_eq!(
+            tree.insert(b"key1".to_vec(), b"new_value".to_vec()),
+            Some(b"value1".to_vec())
+        );
+
         assert_eq!(tree.get(b"key1"), Some(b"new_value".to_vec()));
         assert_eq!(tree.len(), 1);
     }
@@ -923,14 +941,14 @@ mod tests {
     #[test]
     fn test_remove() {
         let mut tree = BPlusTree::new(4);
-        
+
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
         tree.insert(b"key2".to_vec(), b"value2".to_vec());
         tree.insert(b"key3".to_vec(), b"value3".to_vec());
-        
+
         assert_eq!(tree.remove(b"key2"), Some(b"value2".to_vec()));
         assert_eq!(tree.remove(b"key2"), None);
-        
+
         assert_eq!(tree.len(), 2);
         assert!(!tree.contains_key(b"key2"));
         assert!(tree.contains_key(b"key1"));
@@ -940,14 +958,14 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut tree = BPlusTree::new(4);
-        
+
         tree.insert(b"key1".to_vec(), b"value1".to_vec());
         tree.insert(b"key2".to_vec(), b"value2".to_vec());
-        
+
         assert_eq!(tree.len(), 2);
-        
+
         tree.clear();
-        
+
         assert_eq!(tree.len(), 0);
         assert!(tree.is_empty());
         assert_eq!(tree.get(b"key1"), None);
@@ -956,23 +974,23 @@ mod tests {
     #[test]
     fn test_large_tree() {
         let mut tree = BPlusTree::new(8);
-        
+
         // Insert many keys to force tree splits
         for i in 0..1000 {
             let key = format!("key{:04}", i);
             let value = format!("value{:04}", i);
             tree.insert(key.into_bytes(), value.into_bytes());
         }
-        
+
         assert_eq!(tree.len(), 1000);
-        
+
         // Test retrieval
         for i in 0..1000 {
             let key = format!("key{:04}", i);
             let expected_value = format!("value{:04}", i);
             assert_eq!(tree.get(key.as_bytes()), Some(expected_value.into_bytes()));
         }
-        
+
         // Test stats
         let stats = tree.stats();
         assert_eq!(stats.entries, 1000);
@@ -984,16 +1002,19 @@ mod tests {
     #[test]
     fn test_iteration() {
         let mut tree = BPlusTree::new(4);
-        
+
         // Insert in random order
         let keys = vec!["key3", "key1", "key4", "key2"];
         for key in &keys {
-            tree.insert(key.as_bytes().to_vec(), format!("value_{}", key).into_bytes());
+            tree.insert(
+                key.as_bytes().to_vec(),
+                format!("value_{}", key).into_bytes(),
+            );
         }
-        
+
         // Collect sorted results
         let results: Vec<(Vec<u8>, Vec<u8>)> = tree.iter().collect();
-        
+
         // Should be sorted by key
         assert_eq!(results.len(), 4);
         assert_eq!(results[0].0, b"key1".to_vec());
@@ -1005,19 +1026,16 @@ mod tests {
     #[test]
     fn test_range_query() {
         let mut tree = BPlusTree::new(4);
-        
+
         for i in 0..10 {
             let key = format!("key{:02}", i);
             let value = format!("value{:02}", i);
             tree.insert(key.into_bytes(), value.into_bytes());
         }
-        
+
         // Range query [key03, key07)
-        let results: Vec<(Vec<u8>, Vec<u8>)> = tree.range(
-            Some(b"key03"),
-            Some(b"key07")
-        ).collect();
-        
+        let results: Vec<(Vec<u8>, Vec<u8>)> = tree.range(Some(b"key03"), Some(b"key07")).collect();
+
         assert_eq!(results.len(), 4);
         assert_eq!(results[0].0, b"key03".to_vec());
         assert_eq!(results[1].0, b"key04".to_vec());
@@ -1028,19 +1046,23 @@ mod tests {
     #[test]
     fn test_prefix_scan() {
         let mut tree = BPlusTree::new(4);
-        
+
         let keys = vec!["apple", "app", "application", "banana", "band"];
         for key in &keys {
-            tree.insert(key.as_bytes().to_vec(), format!("value_{}", key).into_bytes());
+            tree.insert(
+                key.as_bytes().to_vec(),
+                format!("value_{}", key).into_bytes(),
+            );
         }
-        
+
         let results = tree.prefix_scan(b"app");
         assert_eq!(results.len(), 3);
-        
-        let result_keys: Vec<String> = results.into_iter()
+
+        let result_keys: Vec<String> = results
+            .into_iter()
             .map(|(k, _)| String::from_utf8(k).unwrap())
             .collect();
-        
+
         assert!(result_keys.contains(&"app".to_string()));
         assert!(result_keys.contains(&"apple".to_string()));
         assert!(result_keys.contains(&"application".to_string()));
@@ -1054,12 +1076,12 @@ mod tests {
             let value = format!("value{:03}", i);
             entries.push((key.into_bytes(), value.into_bytes()));
         }
-        
+
         let mut tree = BPlusTree::new(8);
         tree.bulk_load(&mut entries);
-        
+
         assert_eq!(tree.len(), 100);
-        
+
         // Verify all entries are present
         for i in 0..100 {
             let key = format!("key{:03}", i);
@@ -1071,11 +1093,11 @@ mod tests {
     #[test]
     fn test_validation() {
         let mut tree = BPlusTree::new(4);
-        
+
         for i in 0..50 {
             tree.insert(format!("key{:02}", i).into_bytes(), b"value".to_vec());
         }
-        
+
         // Tree should be valid
         assert!(tree.validate().is_ok());
     }
@@ -1083,16 +1105,16 @@ mod tests {
     #[test]
     fn test_vector_id_optimization() {
         let mut tree = BPlusTree::new_for_vector_ids();
-        
+
         // Insert vector IDs as 8-byte keys
         for i in 0u64..1000 {
             let key = i.to_be_bytes().to_vec();
             let value = format!("vector_data_{}", i).into_bytes();
             tree.insert(key, value);
         }
-        
+
         assert_eq!(tree.len(), 1000);
-        
+
         // Test retrieval
         for i in 0u64..1000 {
             let key = i.to_be_bytes().to_vec();
@@ -1104,12 +1126,12 @@ mod tests {
     #[test]
     fn test_empty_tree() {
         let tree = BPlusTree::new(4);
-        
+
         assert!(tree.is_empty());
         assert_eq!(tree.len(), 0);
         assert_eq!(tree.get(b"any_key"), None);
         assert!(!tree.contains_key(b"any_key"));
-        
+
         let results: Vec<_> = tree.iter().collect();
         assert!(results.is_empty());
     }

@@ -484,19 +484,19 @@ impl ZeroCopyIOSystem {
     pub fn execute_optimized_read<'a>(
         &'a self,
         optimization: &'a OptimizedIOResult,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
-        Box::pin(async move {
-            self.execute_optimized_read_impl(optimization).await
-        })
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.execute_optimized_read_impl(optimization).await })
     }
 
     fn execute_optimized_read_impl<'a>(
         &'a self,
         optimization: &'a OptimizedIOResult,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>> {
-        Box::pin(async move {
-            self.execute_optimized_read_impl_inner(optimization).await
-        })
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<u8>, ProximaDBError>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.execute_optimized_read_impl_inner(optimization).await })
     }
 
     async fn execute_optimized_read_impl_inner(
@@ -612,157 +612,164 @@ impl ZeroCopyIOSystem {
         file_path: &'a str,
         collection_id: &'a str,
         file_size: u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(IOStrategy, ExecutionPlan, IOSavings), ProximaDBError>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<(IOStrategy, ExecutionPlan, IOSavings), ProximaDBError>,
+                > + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async move {
-        match strategy {
-            DownloadStrategy::SkipFile { reason } => {
-                let io_strategy = IOStrategy::SkipFile { reason };
-                let plan = ExecutionPlan {
-                    operations: vec![],
-                    estimated_duration: Duration::from_millis(1),
-                    resource_requirements: ResourceRequirements::default(),
-                    fallback_plans: vec![],
-                };
-                let savings = IOSavings {
-                    bandwidth_saved_bytes: file_size,
-                    requests_saved: 1,
-                    latency_saved_ms: 50.0,
-                    cost_saved_dollars: 0.001,
-                    memory_saved_bytes: file_size,
-                    io_operations_saved: 1,
-                };
-                Ok((io_strategy, plan, savings))
-            }
-
-            DownloadStrategy::FullDownload {
-                cache_locally,
-                reason,
-            } => {
-                let io_strategy = IOStrategy::FullDownload {
-                    cache_locally,
-                    prefetch_related: false,
-                };
-
-                let mut operations = vec![ExecutionOperation {
-                    operation_type: OperationType::DownloadFile,
-                    target: file_path.to_string(),
-                    parameters: HashMap::new(),
-                    estimated_duration: Duration::from_millis(100), // Placeholder
-                    dependencies: vec![],
-                }];
-
-                if cache_locally {
-                    operations.push(ExecutionOperation {
-                        operation_type: OperationType::CacheFile,
-                        target: file_path.to_string(),
-                        parameters: HashMap::new(),
-                        estimated_duration: Duration::from_millis(50),
-                        dependencies: vec![0],
-                    });
+            match strategy {
+                DownloadStrategy::SkipFile { reason } => {
+                    let io_strategy = IOStrategy::SkipFile { reason };
+                    let plan = ExecutionPlan {
+                        operations: vec![],
+                        estimated_duration: Duration::from_millis(1),
+                        resource_requirements: ResourceRequirements::default(),
+                        fallback_plans: vec![],
+                    };
+                    let savings = IOSavings {
+                        bandwidth_saved_bytes: file_size,
+                        requests_saved: 1,
+                        latency_saved_ms: 50.0,
+                        cost_saved_dollars: 0.001,
+                        memory_saved_bytes: file_size,
+                        io_operations_saved: 1,
+                    };
+                    Ok((io_strategy, plan, savings))
                 }
 
-                let plan = ExecutionPlan {
-                    operations,
-                    estimated_duration: Duration::from_millis(150),
-                    resource_requirements: ResourceRequirements {
-                        memory_bytes: file_size,
-                        disk_bytes: if cache_locally { file_size } else { 0 },
-                        bandwidth_bps: file_size,
-                        cpu_cores: 1,
-                        max_concurrency: 1,
-                    },
-                    fallback_plans: vec![],
-                };
+                DownloadStrategy::FullDownload {
+                    cache_locally,
+                    reason,
+                } => {
+                    let io_strategy = IOStrategy::FullDownload {
+                        cache_locally,
+                        prefetch_related: false,
+                    };
 
-                let savings = IOSavings::default(); // No savings for full download
+                    let mut operations = vec![ExecutionOperation {
+                        operation_type: OperationType::DownloadFile,
+                        target: file_path.to_string(),
+                        parameters: HashMap::new(),
+                        estimated_duration: Duration::from_millis(100), // Placeholder
+                        dependencies: vec![],
+                    }];
 
-                Ok((io_strategy, plan, savings))
-            }
+                    if cache_locally {
+                        operations.push(ExecutionOperation {
+                            operation_type: OperationType::CacheFile,
+                            target: file_path.to_string(),
+                            parameters: HashMap::new(),
+                            estimated_duration: Duration::from_millis(50),
+                            dependencies: vec![0],
+                        });
+                    }
 
-            DownloadStrategy::SelectiveRanges {
-                ranges,
-                total_bytes,
-                reason,
-            } => {
-                let io_strategy = IOStrategy::SelectiveRanges {
-                    ranges: ranges.clone(),
-                    parallel_downloads: self
-                        .config
-                        .download_optimizer
-                        .range_optimization
-                        .enable_parallel_downloads,
-                    merge_threshold: self
-                        .config
-                        .download_optimizer
-                        .range_optimization
-                        .max_merge_gap,
-                };
+                    let plan = ExecutionPlan {
+                        operations,
+                        estimated_duration: Duration::from_millis(150),
+                        resource_requirements: ResourceRequirements {
+                            memory_bytes: file_size,
+                            disk_bytes: if cache_locally { file_size } else { 0 },
+                            bandwidth_bps: file_size,
+                            cpu_cores: 1,
+                            max_concurrency: 1,
+                        },
+                        fallback_plans: vec![],
+                    };
 
-                let operations = vec![ExecutionOperation {
-                    operation_type: OperationType::DownloadRanges,
-                    target: file_path.to_string(),
-                    parameters: {
-                        let mut params = HashMap::new();
-                        params.insert("range_count".to_string(), ranges.len().to_string());
-                        params.insert("total_bytes".to_string(), total_bytes.to_string());
-                        params
-                    },
-                    estimated_duration: Duration::from_millis(ranges.len() as u64 * 20),
-                    dependencies: vec![],
-                }];
+                    let savings = IOSavings::default(); // No savings for full download
 
-                let plan = ExecutionPlan {
-                    operations,
-                    estimated_duration: Duration::from_millis(ranges.len() as u64 * 25),
-                    resource_requirements: ResourceRequirements {
-                        memory_bytes: total_bytes,
-                        disk_bytes: 0,
-                        bandwidth_bps: total_bytes,
-                        cpu_cores: 1,
-                        max_concurrency: ranges.len() as u32,
-                    },
-                    fallback_plans: vec![],
-                };
+                    Ok((io_strategy, plan, savings))
+                }
 
-                let savings = IOSavings {
-                    bandwidth_saved_bytes: file_size.saturating_sub(total_bytes),
-                    requests_saved: 0, // Actually increases requests
-                    latency_saved_ms: 0.0,
-                    cost_saved_dollars: 0.01,
-                    memory_saved_bytes: file_size.saturating_sub(total_bytes),
-                    io_operations_saved: 0,
-                };
+                DownloadStrategy::SelectiveRanges {
+                    ranges,
+                    total_bytes,
+                    reason,
+                } => {
+                    let io_strategy = IOStrategy::SelectiveRanges {
+                        ranges: ranges.clone(),
+                        parallel_downloads: self
+                            .config
+                            .download_optimizer
+                            .range_optimization
+                            .enable_parallel_downloads,
+                        merge_threshold: self
+                            .config
+                            .download_optimizer
+                            .range_optimization
+                            .max_merge_gap,
+                    };
 
-                Ok((io_strategy, plan, savings))
-            }
+                    let operations = vec![ExecutionOperation {
+                        operation_type: OperationType::DownloadRanges,
+                        target: file_path.to_string(),
+                        parameters: {
+                            let mut params = HashMap::new();
+                            params.insert("range_count".to_string(), ranges.len().to_string());
+                            params.insert("total_bytes".to_string(), total_bytes.to_string());
+                            params
+                        },
+                        estimated_duration: Duration::from_millis(ranges.len() as u64 * 20),
+                        dependencies: vec![],
+                    }];
 
-            DownloadStrategy::HybridStrategy {
-                primary,
-                fallback,
-                condition,
-            } => {
-                // Recursively create plans for primary and fallback
-                let (primary_strategy, primary_plan, primary_savings) = self
-                    .create_execution_plan(*primary, file_path, collection_id, file_size)
-                    .await?;
+                    let plan = ExecutionPlan {
+                        operations,
+                        estimated_duration: Duration::from_millis(ranges.len() as u64 * 25),
+                        resource_requirements: ResourceRequirements {
+                            memory_bytes: total_bytes,
+                            disk_bytes: 0,
+                            bandwidth_bps: total_bytes,
+                            cpu_cores: 1,
+                            max_concurrency: ranges.len() as u32,
+                        },
+                        fallback_plans: vec![],
+                    };
 
-                let (fallback_strategy, fallback_plan, _) = self
-                    .create_execution_plan(*fallback, file_path, collection_id, file_size)
-                    .await?;
+                    let savings = IOSavings {
+                        bandwidth_saved_bytes: file_size.saturating_sub(total_bytes),
+                        requests_saved: 0, // Actually increases requests
+                        latency_saved_ms: 0.0,
+                        cost_saved_dollars: 0.01,
+                        memory_saved_bytes: file_size.saturating_sub(total_bytes),
+                        io_operations_saved: 0,
+                    };
 
-                let io_strategy = IOStrategy::HybridStrategy {
-                    primary: Box::new(primary_strategy),
-                    fallback: Box::new(fallback_strategy),
+                    Ok((io_strategy, plan, savings))
+                }
+
+                DownloadStrategy::HybridStrategy {
+                    primary,
+                    fallback,
                     condition,
-                };
+                } => {
+                    // Recursively create plans for primary and fallback
+                    let (primary_strategy, primary_plan, primary_savings) = self
+                        .create_execution_plan(*primary, file_path, collection_id, file_size)
+                        .await?;
 
-                // Use primary plan as the main plan, with fallback in fallback_plans
-                let mut plan = primary_plan;
-                plan.fallback_plans.push(fallback_plan);
+                    let (fallback_strategy, fallback_plan, _) = self
+                        .create_execution_plan(*fallback, file_path, collection_id, file_size)
+                        .await?;
 
-                Ok((io_strategy, plan, primary_savings))
+                    let io_strategy = IOStrategy::HybridStrategy {
+                        primary: Box::new(primary_strategy),
+                        fallback: Box::new(fallback_strategy),
+                        condition,
+                    };
+
+                    // Use primary plan as the main plan, with fallback in fallback_plans
+                    let mut plan = primary_plan;
+                    plan.fallback_plans.push(fallback_plan);
+
+                    Ok((io_strategy, plan, primary_savings))
+                }
             }
-        }
         })
     }
 

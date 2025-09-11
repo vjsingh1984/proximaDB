@@ -1,6 +1,6 @@
 //! Orchestration-level EXPLAIN plan structures for SQL queries.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -15,8 +15,10 @@ pub struct ExplainPlan {
 }
 
 impl ExplainPlan {
-    pub fn new() -> Self { Self::default() }
-    
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Create an EXPLAIN plan with orchestration steps
     pub fn with_steps(steps: Vec<String>) -> Self {
         Self {
@@ -24,37 +26,37 @@ impl ExplainPlan {
             ..Default::default()
         }
     }
-    
+
     /// Add vector hints to the plan
     pub fn with_vector_hints(mut self, hints: VectorHints) -> Self {
         self.vector_hints = Some(hints);
         self
     }
-    
+
     /// Add graph hints to the plan
     pub fn with_graph_hints(mut self, hints: GraphHints) -> Self {
         self.graph_hints = Some(hints);
         self
     }
-    
+
     /// Add join cost estimates
     pub fn with_join_costs(mut self, costs: JoinCostEstimate) -> Self {
         self.join_costs = Some(costs);
         self
     }
-    
+
     /// Add ANALYZE metrics
     pub fn with_analyze_metrics(mut self, metrics: AnalyzeMetrics) -> Self {
         self.query_stats = Some(metrics);
         self
     }
-    
+
     /// Set the overall execution strategy
     pub fn with_execution_strategy(mut self, strategy: String) -> Self {
         self.execution_strategy = Some(strategy);
         self
     }
-    
+
     /// Set estimated total cost
     pub fn with_total_cost(mut self, cost: f64) -> Self {
         self.estimated_total_cost = Some(cost);
@@ -238,7 +240,7 @@ impl GraphHints {
         stats: Option<&crate::graph::query::planner::GraphStatistics>,
     ) -> Self {
         let mut hints = GraphHints::default();
-        
+
         // Extract information from plan steps
         for step in &plan.steps {
             match &step.step_type {
@@ -251,19 +253,23 @@ impl GraphHints {
                         skip_reason: None,
                     });
                 }
-                crate::graph::query::planner::PlanStepType::Traverse { algorithm, max_depth, .. } => {
+                crate::graph::query::planner::PlanStepType::Traverse {
+                    algorithm,
+                    max_depth,
+                    ..
+                } => {
                     hints.traversal_algorithm = Some(format!("{:?}", algorithm));
                     hints.max_depth = *max_depth;
                 }
                 _ => {}
             }
         }
-        
+
         // Estimate costs and cardinalities
         hints.estimated_nodes_visited = Some(plan.estimated_result_size);
         hints.estimated_memory_mb = Some(plan.estimated_cost.memory_cost);
         hints.estimated_io_cost = Some(plan.estimated_cost.io_cost);
-        
+
         // Add graph statistics if available
         if let Some(stats) = stats {
             hints.graph_stats = Some(GraphPlannerStats {
@@ -274,7 +280,7 @@ impl GraphHints {
                 property_cardinality: HashMap::new(), // TODO: Add property stats
             });
         }
-        
+
         hints
     }
 }
@@ -287,9 +293,10 @@ impl JoinCostEstimate {
         join_selectivity: f64,
     ) -> Self {
         let estimated_cost = (vector_cardinality as f64) * (graph_cardinality as f64) * 0.001; // Simple cost model
-        let output_cardinality = ((vector_cardinality as f64) * (graph_cardinality as f64) * join_selectivity) as usize;
+        let output_cardinality =
+            ((vector_cardinality as f64) * (graph_cardinality as f64) * join_selectivity) as usize;
         let memory_mb = ((vector_cardinality + graph_cardinality) as f64 * 0.001).max(1.0); // Rough estimate
-        
+
         JoinCostEstimate {
             join_algorithm: "hybrid_hash_join".to_string(),
             estimated_cost,
@@ -317,4 +324,3 @@ impl AnalyzeMetrics {
         }
     }
 }
-

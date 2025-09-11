@@ -23,8 +23,8 @@
 //! | Nova | NOVA | Advanced analytics | Enhanced columnar |
 //! | Helix | HELIX | PCA+Hilbert | Dimension-reduced |
 
-use crate::storage::engines::impls::{prism, raptor};
 use crate::storage::engines::impls::sst::error::SstError;
+use crate::storage::engines::impls::{prism, raptor};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -161,7 +161,9 @@ impl StorageEngineFactory {
             let filesystem = Arc::new(
                 crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
                     .await
-                    .map_err(|e| SstError::Internal(format!("Failed to create filesystem: {}", e)))?,
+                    .map_err(|e| {
+                        SstError::Internal(format!("Failed to create filesystem: {}", e))
+                    })?,
             );
             let viper_config = crate::core::config::ViperConfig::default();
             let distance_compute = Arc::new(
@@ -200,7 +202,9 @@ impl StorageEngineFactory {
             let filesystem = Arc::new(
                 crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
                     .await
-                    .map_err(|e| SstError::Internal(format!("Failed to create filesystem: {}", e)))?,
+                    .map_err(|e| {
+                        SstError::Internal(format!("Failed to create filesystem: {}", e))
+                    })?,
             );
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -249,16 +253,18 @@ impl StorageEngineFactory {
         // HELIX needs async initialization
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            use crate::storage::engines::impls::helix::{HelixEngine, HelixConfig};
-            
+            use crate::storage::engines::impls::helix::{HelixConfig, HelixEngine};
+
             let config = HelixConfig::default();
             let data_dir = std::path::PathBuf::from("/tmp/helix_data");
-            
-            HelixEngine::new(
+
+            let orch = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global();
+            HelixEngine::new_with_orchestrator(
                 "default".to_string(),
                 config,
                 data_dir,
                 None, // No EventLog for now
+                orch,
             )
             .await
         })?;

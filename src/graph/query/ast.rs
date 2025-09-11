@@ -20,10 +20,10 @@
 //! for Cypher-like graph query patterns. These structures are used by the parser
 //! to represent a parsed query and by the planner and executor for processing.
 
-use crate::graph::{Node, Edge, NodeId, EdgeId};
+use crate::graph::{Edge, EdgeId, Node, NodeId};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use serde::{Serialize, Deserialize};
 
 /// A compiled pattern ready for execution
 #[derive(Debug, Clone)]
@@ -215,7 +215,7 @@ pub enum PathElement {
 }
 
 /// Pattern matching result
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MatchResult {
     /// Variable bindings for this match
     pub bindings: HashMap<String, VariableBinding>,

@@ -3,8 +3,8 @@
 
 use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use super::streaming_processor::{
-    ProcessingStage, RowGroupProcessingResult, StreamingConfig,
-    StreamingContext, StreamingRowGroupProcessor,
+    ProcessingStage, RowGroupProcessingResult, StreamingConfig, StreamingContext,
+    StreamingRowGroupProcessor,
 };
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;

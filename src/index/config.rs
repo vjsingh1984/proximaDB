@@ -204,7 +204,7 @@ impl IndexConfig {
             use_simd: h.use_simd,
             memory_limit_mb: h.memory_limit_mb as usize,
             lazy_loading: h.lazy_loading,
-            prune_connections: 0, // Default value - field not in proto
+            prune_connections: 0,  // Default value - field not in proto
             level_multiplier: 1.0, // Default value - field not in proto
         });
 
@@ -253,20 +253,20 @@ impl IndexConfig {
             IndexUpdateMode::Hybrid => 3,
         };
 
-        let hnsw_config = self
-            .hnsw_config
-            .as_ref()
-            .map(|h| crate::proto::proximadb_v1::HnswConfig {
-                m: h.m as u32,
-                ef_construction: h.ef_construction as u32,
-                ef_search: h.ef_search as u32,
-                max_partition_size: h.max_partition_size as u32,
-                adaptive_parameters: h.adaptive_parameters,
-                use_simd: h.use_simd,
-                memory_limit_mb: h.memory_limit_mb as u32,
-                lazy_loading: h.lazy_loading,
-                // prune_connections and level_multiplier not in proto definition
-            });
+        let hnsw_config =
+            self.hnsw_config
+                .as_ref()
+                .map(|h| crate::proto::proximadb_v1::HnswConfig {
+                    m: h.m as u32,
+                    ef_construction: h.ef_construction as u32,
+                    ef_search: h.ef_search as u32,
+                    max_partition_size: h.max_partition_size as u32,
+                    adaptive_parameters: h.adaptive_parameters,
+                    use_simd: h.use_simd,
+                    memory_limit_mb: h.memory_limit_mb as u32,
+                    lazy_loading: h.lazy_loading,
+                    // prune_connections and level_multiplier not in proto definition
+                });
 
         let ivf_config = self
             .ivf_config
@@ -310,7 +310,7 @@ impl IndexConfig {
                 },
             },
             parameters: std::collections::HashMap::new(), // Empty parameters map
-            enabled: true, // Index enabled by default
+            enabled: true,                                // Index enabled by default
             update_mode,
             async_update_timeout_ms: self.async_update_timeout_ms.map(|t| t as u32),
             async_update_batch_size: self.async_update_batch_size.map(|b| b as u32),
@@ -323,12 +323,15 @@ impl IndexConfig {
             lsh_config,
             build_concurrency: self.build_concurrency.map(|x| x as u32).unwrap_or(1),
             memory_limit_mb: self.memory_limit_mb.map(|x| x as u32).unwrap_or(512),
-            checkpoint_interval_ms: self.checkpoint_interval_ms.map(|x| x as u32).unwrap_or(30000),
-            is_primary: true,            // Default to primary index
-            use_cases: vec![],           // Default empty use cases
-            selectivity_threshold: 0.0, // Default no selectivity threshold
-            use_quantization: false,     // Default: no quantization
-            quantization_override: None, // Default: no override
+            checkpoint_interval_ms: self
+                .checkpoint_interval_ms
+                .map(|x| x as u32)
+                .unwrap_or(30000),
+            is_primary: true,                         // Default to primary index
+            use_cases: vec![],                        // Default empty use cases
+            selectivity_threshold: 0.0,               // Default no selectivity threshold
+            use_quantization: false,                  // Default: no quantization
+            quantization_override: None,              // Default: no override
             queue_representation: "auto".to_string(), // Default: auto-detect from queue
         }
     }

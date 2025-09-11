@@ -3,6 +3,7 @@
 //! This module provides a robust, trait-based compaction orchestration system
 //! with strong concurrency guarantees, deadlock prevention, and engine abstraction.
 
+use crate::utils::uuid::Uuid;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -13,7 +14,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
-use crate::utils::uuid::Uuid;
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

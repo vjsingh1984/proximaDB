@@ -105,7 +105,9 @@ impl RestServer {
         tracing::info!("   POST   /api/v1/search                    - Vector search");
         tracing::info!("   POST   /api/v1/vectors/batch             - Vector batch operations");
         tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
-        tracing::info!("   POST   /api/v1/collections               - Unified collection operations");
+        tracing::info!(
+            "   POST   /api/v1/collections               - Unified collection operations"
+        );
         tracing::info!("   GET    /api/v1/collections               - List collections");
         tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");
         tracing::info!("   DELETE /api/v1/collections/:id           - Delete collection");

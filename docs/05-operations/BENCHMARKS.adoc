@@ -74,6 +74,18 @@ ProximaDB intelligently leverages available hardware capabilities to maximize pe
 | Ensures minimal overhead when GPU resources are not actively used
 |===
 
+=== Visual Summary
+
+[source,mermaid]
+----
+xychart-beta
+    title "Throughput vs. Traditional Stack"
+    x-axis ["Vector", "Graph", "Combined"]
+    y-axis "Ops/sec (K)" 0 --> 25
+    bar [20.8, 15.3, 18.5]
+    line [8.2, 6.1, 3.2]
+----
+
 == Optimization Timeline
 
 === Recent Improvements (September 2025)

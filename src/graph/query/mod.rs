@@ -57,12 +57,12 @@ pub mod pattern;
 pub mod planner;
 
 // Re-export public types
-pub use ast::{MatchResult, FoundPath, CompiledPattern};
-pub use planner::{QueryPlanner, QueryPlan, PlanStep, CostEstimate};
+pub use ast::{CompiledPattern, FoundPath, MatchResult};
 pub use pattern::PatternMatcher;
+pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
 
 use crate::core::error::ProximaDBError;
-use crate::graph::{NodeId, EdgeId};
+use crate::graph::{EdgeId, NodeId};
 use std::collections::HashMap;
 
 /// Result type for query operations
@@ -123,17 +123,17 @@ impl QueryContext {
             collect_stats: false,
         }
     }
-    
+
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = Some(timeout_ms);
         self
     }
-    
+
     pub fn with_memory_limit(mut self, limit: usize) -> Self {
         self.memory_limit = Some(limit);
         self
     }
-    
+
     pub fn with_stats(mut self) -> Self {
         self.collect_stats = true;
         self

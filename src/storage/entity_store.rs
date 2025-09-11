@@ -6,34 +6,36 @@
  */
 
 //! Entity storage implementation for Semantic Knowledge Store (SKS)
-//! 
+//!
 //! This module provides the core storage layer for entities, which are
 //! semantic units with embeddings, metadata, and relationships.
 
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use crate::utils::uuid::Uuid;
 
 use crate::proto::proximadb_v1::{
-    Entity, EmbeddingVersion, Provenance, Relation,
-    TypedMetadata, MetadataFilter, TemporalInfo
+    EmbeddingVersion, Entity, MetadataFilter, Provenance, Relation, TemporalInfo, TypedMetadata,
 };
-use prost_types::Struct as FlexibleMetadata;
 use crate::storage::engines::UnifiedStorageEngine;
-use serde::{Serialize, Deserialize};
+use crate::services::operations::vectors::VectorOperationsService;
+use prost_types::Struct as FlexibleMetadata;
+use serde::{Deserialize, Serialize};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
+use std::path::PathBuf;
+use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
+use crate::storage::kv::{StorageKV, FsKV};
 
 /// Core trait for entity storage operations
 #[async_trait]
 pub trait EntityStore: Send + Sync {
     /// Upsert an entity (insert or update)
-    async fn upsert_entity(
-        &self,
-        collection_id: &str,
-        entity: Entity,
-    ) -> Result<String>;
-    
+    async fn upsert_entity(&self, collection_id: &str, entity: Entity) -> Result<String>;
+
     /// Retrieve an entity by ID
     async fn get_entity(
         &self,
@@ -42,7 +44,7 @@ pub trait EntityStore: Send + Sync {
         include_embeddings: bool,
         include_relations: bool,
     ) -> Result<Option<Entity>>;
-    
+
     /// Delete an entity
     async fn delete_entity(
         &self,
@@ -50,7 +52,7 @@ pub trait EntityStore: Send + Sync {
         entity_id: &str,
         hard_delete: bool,
     ) -> Result<bool>;
-    
+
     /// Search entities with filters
     async fn search_entities(
         &self,
@@ -60,7 +62,7 @@ pub trait EntityStore: Send + Sync {
         // temporal_filter: Option<TemporalFilter>, // TODO: Add when proto is available
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>>;
-    
+
     /// List all entities in a collection
     async fn list_entities(
         &self,
@@ -83,12 +85,28 @@ pub struct EntityHeader {
 pub struct ProximaEntityStore {
     /// Storage engine for vectors
     vector_engine: Arc<dyn UnifiedStorageEngine>,
-    
+
     /// Relations store (to be implemented)
     relations_store: Arc<dyn RelationsStore>,
-    
+
     /// Provenance registry (to be implemented)
     provenance_registry: Arc<dyn ProvenanceRegistry>,
+
+    /// In-memory header storage (v1) until unified engine API is wired
+    headers: RwLock<HashMap<String, Vec<u8>>>,
+
+    /// In-memory embeddings storage keyed by embedding_key
+    embeddings: RwLock<HashMap<String, Vec<f32>>>,
+
+    /// Optional vector service for engine-backed persistence
+    vector_service: Option<Arc<VectorOperationsService>>,
+
+    /// Entity ↔ Vector index (in-memory; rebuilt or persisted in future)
+    entity_to_vectors: RwLock<HashMap<String, Vec<String>>>,
+    vector_to_entity: RwLock<HashMap<String, String>>,
+
+    /// KV store for headers (engine-backed in future)
+    kv: Arc<dyn StorageKV>,
 }
 
 impl ProximaEntityStore {
@@ -102,14 +120,41 @@ impl ProximaEntityStore {
             vector_engine,
             relations_store,
             provenance_registry,
+            headers: RwLock::new(HashMap::new()),
+            embeddings: RwLock::new(HashMap::new()),
+            vector_service: None,
+            entity_to_vectors: RwLock::new(HashMap::new()),
+            vector_to_entity: RwLock::new(HashMap::new()),
+            kv: Arc::new(FsKV::new("data/entities")),
         }
     }
-    
+
+    /// Create a new entity store with engine-backed vector service for persistence
+    pub fn with_vector_service(
+        vector_engine: Arc<dyn UnifiedStorageEngine>,
+        relations_store: Arc<dyn RelationsStore>,
+        provenance_registry: Arc<dyn ProvenanceRegistry>,
+        vector_service: Arc<VectorOperationsService>,
+    ) -> Self {
+        let mut s = Self::new(vector_engine, relations_store, provenance_registry);
+        s.vector_service = Some(vector_service);
+        s
+    }
+
+    /// Global registration for access from query executor (MVP)
+    pub fn register_global(store: Arc<ProximaEntityStore>) {
+        GLOBAL_ENTITY_STORE.set(store).ok();
+    }
+
+    pub fn global() -> Option<Arc<ProximaEntityStore>> {
+        GLOBAL_ENTITY_STORE.get().cloned()
+    }
+
     /// Generate entity storage key
     fn entity_key(collection_id: &str, entity_id: &str) -> String {
         format!("{}/entity/{}", collection_id, entity_id)
     }
-    
+
     /// Generate embedding storage key
     fn embedding_key(
         collection_id: &str,
@@ -119,32 +164,102 @@ impl ProximaEntityStore {
     ) -> String {
         format!("{}/{}/{}/{}", collection_id, entity_id, model_id, modality)
     }
-    
+
     /// Fetch all embeddings for an entity
     async fn fetch_embeddings(
         &self,
         collection_id: &str,
         entity_id: &str,
     ) -> Result<Vec<EmbeddingVersion>> {
-        // TODO: Implement embedding fetching logic
-        // This would query the vector engine for all embeddings
-        // associated with this entity
-        Ok(vec![])
+        let prefix = format!("{}/{}", collection_id, entity_id);
+        let store = self.embeddings.read().unwrap();
+        let mut out = Vec::new();
+        for (k, v) in store.iter() {
+            if k.starts_with(&prefix) {
+                // Parse key to extract model_id and modality
+                let parts: Vec<&str> = k.split('/').collect();
+                if parts.len() >= 4 {
+                    let model_id = parts[2].to_string();
+                    let modality = parts[3].to_string();
+                    out.push(EmbeddingVersion {
+                        model_id,
+                        model_version: "v1".to_string(),
+                        vector: v.clone(),
+                        dimension: v.len() as u32,
+                        created_at: None,
+                        model_params: HashMap::new(),
+                        modality: crate::proto::proximadb_v1::Modality::Text as i32,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Insert embeddings into storage engine via vector service (if available)
+    async fn persist_embeddings_engine(
+        &self,
+        collection_id: &str,
+        entity_id: &str,
+        embeddings: &[EmbeddingVersion],
+    ) -> Result<()> {
+        if let Some(vs) = &self.vector_service {
+            // Convert to native VectorRecord and write to WAL via vector service
+            let vectors: Vec<crate::core::VectorRecord> = embeddings
+                .iter()
+                .map(|e| {
+                    let id = Self::embedding_key(collection_id, entity_id, &e.model_id, &format!("{:?}", e.modality));
+                    let mut metadata = serde_json::Map::new();
+                    metadata.insert("entity_id".to_string(), serde_json::Value::String(entity_id.to_string()));
+                    metadata.insert("model_id".to_string(), serde_json::Value::String(e.model_id.clone()));
+                    metadata.insert("modality".to_string(), serde_json::Value::String(format!("{:?}", e.modality)));
+                    crate::core::VectorRecord {
+                        id,
+                        vector: e.vector.clone(),
+                        metadata: {
+                            let mut sql_metadata = std::collections::HashMap::new();
+                            for (key, value) in metadata {
+                                let sql_value = match value {
+                                    serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                                    },
+                                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
+                                    },
+                                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                                    },
+                                    _ => crate::proto::proximadb_v1::SqlValue { value: None },
+                                };
+                                sql_metadata.insert(key, sql_value);
+                            }
+                            sql_metadata
+                        },
+                        timestamp: 0i64,
+                        updated_at: Some(0i64),
+                        expires_at: Some(0i64),
+                        version: Some(1i64),
+                        quantized_vector: vec![],
+                        source: None,
+                    }
+                })
+                .collect();
+            let _ = vs
+                .handle_vector_batch_proto_vec(collection_id, vectors)
+                .await?;
+        }
+        Ok(())
     }
 }
 
 #[async_trait]
 impl EntityStore for ProximaEntityStore {
-    async fn upsert_entity(
-        &self,
-        collection_id: &str,
-        mut entity: Entity,
-    ) -> Result<String> {
+    async fn upsert_entity(&self, collection_id: &str, mut entity: Entity) -> Result<String> {
         // Validate entity and generate ID if needed
         if entity.id.is_empty() {
             entity.id = Uuid::new_v4().to_string();
         }
-        
+
         // Store embeddings in vector engine
         for embedding in &entity.embeddings {
             let key = Self::embedding_key(
@@ -153,12 +268,40 @@ impl EntityStore for ProximaEntityStore {
                 &embedding.model_id,
                 &format!("{:?}", embedding.modality),
             );
-            
-            // Store vector using existing engine
-            // Note: This would use the actual vector storage API
-            // self.vector_engine.store_vector(&key, &embedding.vector).await?;
+            // In-memory embedding store (temporary v1)
+            self.embeddings
+                .write()
+                .unwrap()
+                .insert(key, embedding.vector.clone());
+            if let Some(orch) = CrossCacheOrchestrator::global() {
+                orch.pattern_tracker().track_access_async(format!("{}::{}", collection_id, &entity.id), CacheType::EmbeddingCatalog);
+            }
         }
-        
+
+        // Persist embeddings to engine via vector service if available
+        self
+            .persist_embeddings_engine(collection_id, &entity.id, &entity.embeddings)
+            .await?;
+
+        // Update entity↔vector index
+        {
+            let mut e2v = self.entity_to_vectors.write().unwrap();
+            let mut v2e = self.vector_to_entity.write().unwrap();
+            let entry = e2v.entry(entity.id.clone()).or_default();
+            for embedding in &entity.embeddings {
+                let key = Self::embedding_key(
+                    collection_id,
+                    &entity.id,
+                    &embedding.model_id,
+                    &format!("{:?}", embedding.modality),
+                );
+                if !entry.iter().any(|k| k == &key) {
+                    entry.push(key.clone());
+                }
+                v2e.insert(key, entity.id.clone());
+            }
+        }
+
         // Store entity header
         let header_key = Self::entity_key(collection_id, &entity.id);
         let header = EntityHeader {
@@ -167,32 +310,39 @@ impl EntityStore for ProximaEntityStore {
             provenance: entity.provenance.clone(),
             temporal: entity.temporal.clone(),
         };
-        
-        // Store header using the storage engine
-        // In a real implementation, this would serialize and store the header
-        let header_bytes = bincode::serialize(&header)
+
+        // Serialize header and store (in-memory v1)
+        let header_json = serde_json::to_string(&format!("{:?}", header))
             .map_err(|e| anyhow::anyhow!("Failed to serialize header: {}", e))?;
-        
-        // TODO: Implement actual storage when storage engine API is ready
-        // self.vector_engine.put(&header_key, &header_bytes).await?;
-        
+        let header_bytes = header_json.as_bytes().to_vec();
+        // In-memory cache
+        self.headers
+            .write()
+            .unwrap()
+            .insert(header_key.clone(), header_bytes.clone());
+        // Persist header via StorageKV (engine-backed in future)
+        self.kv.put(&header_key, &header_bytes).await?;
+        if let Some(orch) = CrossCacheOrchestrator::global() {
+            orch.pattern_tracker().track_access_async(header_key.clone(), CacheType::EntityHeader);
+        }
+
         // Store relations
         for relation in &entity.relations {
             self.relations_store
                 .add_relation(collection_id, relation.clone())
                 .await?;
         }
-        
+
         // Track provenance
         if let Some(ref provenance) = entity.provenance {
             self.provenance_registry
                 .register_provenance(&entity.id, provenance.clone())
                 .await?;
         }
-        
+
         Ok(entity.id)
     }
-    
+
     async fn get_entity(
         &self,
         collection_id: &str,
@@ -201,21 +351,37 @@ impl EntityStore for ProximaEntityStore {
         include_relations: bool,
     ) -> Result<Option<Entity>> {
         let header_key = Self::entity_key(collection_id, entity_id);
-        
-        // Fetch entity header from storage
-        // TODO: Implement actual retrieval when storage engine API is ready
-        // let header_bytes = self.vector_engine.get(&header_key).await?;
-        // let header: EntityHeader = bincode::deserialize(&header_bytes)
-        //     .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
-        
-        // For now, create a placeholder entity
-        let header = EntityHeader {
-            typed_metadata: None,
-            flexible_metadata: None,
-            provenance: None,
-            temporal: None,
+
+        // Fetch entity header from in-memory store (v1)
+        // Try KV first, then in-memory cache
+        let opt = match self.kv.get(&header_key).await? {
+            Some(bytes) => Some(bytes),
+            None => self.headers.read().unwrap().get(&header_key).cloned(),
         };
-        
+        if opt.is_some() {
+            if let Some(orch) = CrossCacheOrchestrator::global() {
+                orch.pattern_tracker().track_access_async(header_key.clone(), CacheType::EntityHeader);
+            }
+        }
+        let header: EntityHeader = match opt {
+            Some(bytes) => {
+                // Simple fallback - return empty header for now
+                // TODO: Implement proper proto-based serialization
+                EntityHeader {
+                    typed_metadata: None,
+                    flexible_metadata: None,
+                    provenance: None,
+                    temporal: None,
+                }
+            },
+            None => EntityHeader {
+                typed_metadata: None,
+                flexible_metadata: None,
+                provenance: None,
+                temporal: None,
+            },
+        };
+
         // Build entity from header
         let mut entity = Entity {
             id: entity_id.to_string(),
@@ -227,24 +393,23 @@ impl EntityStore for ProximaEntityStore {
             embeddings: vec![],
             relations: vec![],
         };
-        
+
         // Optionally fetch embeddings
         if include_embeddings {
-            entity.embeddings = self
-                .fetch_embeddings(collection_id, entity_id)
-                .await?;
+            entity.embeddings = self.fetch_embeddings(collection_id, entity_id).await?;
         }
-        
+
         // Optionally fetch relations
         if include_relations {
-            entity.relations = self.relations_store
+            entity.relations = self
+                .relations_store
                 .get_relations(collection_id, entity_id)
                 .await?;
         }
-        
+
         Ok(Some(entity))
     }
-    
+
     async fn delete_entity(
         &self,
         collection_id: &str,
@@ -252,7 +417,7 @@ impl EntityStore for ProximaEntityStore {
         hard_delete: bool,
     ) -> Result<bool> {
         let header_key = Self::entity_key(collection_id, entity_id);
-        
+
         if hard_delete {
             // Remove all data
             // self.metadata_store.delete(&header_key).await?;
@@ -267,10 +432,10 @@ impl EntityStore for ProximaEntityStore {
             // Soft delete: mark as deleted
             // self.metadata_store.mark_deleted(&header_key).await?;
         }
-        
+
         Ok(true)
     }
-    
+
     async fn search_entities(
         &self,
         collection_id: &str,
@@ -281,41 +446,59 @@ impl EntityStore for ProximaEntityStore {
     ) -> Result<Vec<(Entity, f32)>> {
         // Use existing progressive search infrastructure
         let mut results = Vec::new();
-        
+
         // If we have a query vector, perform similarity search
         if let Some(vector) = query_vector {
             // Perform vector search using existing infrastructure
             // let vector_results = self.vector_engine.search(...).await?;
             // Convert results to entities
         }
-        
+
         // Apply metadata filters
         if let Some(filter) = metadata_filter {
             // Apply metadata filtering
         }
-        
+
         // TODO: Apply temporal filters when available
         // if let Some(temporal) = temporal_filter {
         //     // Apply temporal filtering
         // }
-        
+
         // Return top-k results
         results.truncate(top_k);
         Ok(results)
     }
-    
+
     async fn list_entities(
         &self,
         collection_id: &str,
         offset: usize,
         limit: usize,
     ) -> Result<Vec<Entity>> {
-        // List entities with pagination
-        // This would query the metadata store for entity headers
-        // and build Entity objects
-        Ok(vec![])
+        let prefix = format!("{}/entity/", collection_id);
+        let mut ids: Vec<String> = {
+            let headers = self.headers.read().unwrap();
+            headers
+                .keys()
+                .filter_map(|k| k.strip_prefix(&prefix).map(|rest| rest.to_string()))
+                .collect()
+        }; // Lock is released here
+        ids.sort();
+        let slice = ids.into_iter().skip(offset).take(limit);
+        let mut out = Vec::new();
+        for id in slice {
+            if let Some(entity) = self
+                .get_entity(collection_id, &id, false, false)
+                .await?
+            {
+                out.push(entity);
+            }
+        }
+        Ok(out)
     }
 }
+
+impl ProximaEntityStore {}
 
 // Placeholder traits - these will be implemented in separate files
 #[async_trait]
@@ -331,16 +514,90 @@ pub trait ProvenanceRegistry: Send + Sync {
     async fn remove_provenance(&self, entity_id: &str) -> Result<()>;
 }
 
+/// In-memory CSR-like relations store for SKS v1
+pub struct CsrRelationsStore {
+    // collection_id -> (source_entity_id -> Vec<Relation>)
+    adj: RwLock<HashMap<String, HashMap<String, Vec<Relation>>>>,
+}
+
+impl CsrRelationsStore {
+    pub fn new() -> Self {
+        Self {
+            adj: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl RelationsStore for CsrRelationsStore {
+    async fn add_relation(&self, collection_id: &str, relation: Relation) -> Result<()> {
+        let mut guard = self.adj.write().unwrap();
+        let col = guard.entry(collection_id.to_string()).or_default();
+        col.entry(relation.source_entity_id.clone())
+            .or_default()
+            .push(relation);
+        Ok(())
+    }
+
+    async fn get_relations(&self, collection_id: &str, entity_id: &str) -> Result<Vec<Relation>> {
+        let guard = self.adj.read().unwrap();
+        Ok(guard
+            .get(collection_id)
+            .and_then(|m| m.get(entity_id))
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn delete_all_relations(&self, collection_id: &str, entity_id: &str) -> Result<()> {
+        let mut guard = self.adj.write().unwrap();
+        if let Some(m) = guard.get_mut(collection_id) {
+            m.remove(entity_id);
+        }
+        Ok(())
+    }
+}
+
+/// In-memory provenance registry for SKS v1
+pub struct InMemoryProvenanceRegistry {
+    map: RwLock<HashMap<String, Provenance>>, // entity_id -> provenance
+}
+
+impl InMemoryProvenanceRegistry {
+    pub fn new() -> Self {
+        Self {
+            map: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl ProvenanceRegistry for InMemoryProvenanceRegistry {
+    async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> Result<()> {
+        self.map
+            .write()
+            .unwrap()
+            .insert(entity_id.to_string(), provenance);
+        Ok(())
+    }
+
+    async fn remove_provenance(&self, entity_id: &str) -> Result<()> {
+        self.map.write().unwrap().remove(entity_id);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use tokio::runtime::Runtime;
+    use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Modality, Relation};
+
     #[tokio::test]
     async fn test_entity_key_generation() {
         let key = ProximaEntityStore::entity_key("test_collection", "entity_123");
         assert_eq!(key, "test_collection/entity/entity_123");
     }
-    
+
     #[tokio::test]
     async fn test_embedding_key_generation() {
         let key = ProximaEntityStore::embedding_key(
@@ -351,4 +608,81 @@ mod tests {
         );
         assert_eq!(key, "test_collection/entity_123/openai-ada/TEXT");
     }
+
+    #[tokio::test]
+    async fn test_upsert_and_persist_header_and_embeddings() {
+        // Minimal engine: use a dummy unified engine from tests (SST mocked by trait objects would be heavy)
+        // For persistence we use filesystem KV; embeddings stored in-memory index
+        struct NoopEngine;
+        #[async_trait]
+        impl UnifiedStorageEngine for NoopEngine {
+            fn engine_name(&self) -> &'static str { "noop" }
+            fn engine_version(&self) -> &'static str { "0" }
+            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Sst }
+            async fn do_flush(&self, _p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult> { Ok(Default::default()) }
+            async fn do_compact(&self, _p: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> { Ok(Default::default()) }
+            async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> { Ok(Default::default()) }
+            async fn vector_by_id(&self, _c:&str, _v:&str) -> Result<Option<crate::core::VectorRecord>> { Ok(None) }
+            async fn search_vectors_unified(&self, _ctx:&crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> { Ok(vec![]) }
+        }
+
+        let engine = Arc::new(NoopEngine) as Arc<dyn UnifiedStorageEngine>;
+        let store = ProximaEntityStore::new(
+            engine,
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
+        );
+
+        let mut entity = Entity{
+            id: "".to_string(),
+            embeddings: vec![EmbeddingVersion{
+                model_id: "model-a".to_string(),
+                model_version: "v1".to_string(),
+                vector: vec![0.1,0.2,0.3],
+                dimension: 3,
+                created_at: None,
+                model_params: Default::default(),
+                modality: Modality::Text as i32,
+            }],
+            typed_metadata: None,
+            flexible_metadata: None,
+            provenance: None,
+            relations: vec![],
+            temporal: None,
+            collection_id: "test_collection".to_string(),
+        };
+
+        let entity_id = store.upsert_entity("test_collection", entity.clone()).await.unwrap();
+        // Verify header file exists
+        let path = store.header_fs_path(&ProximaEntityStore::entity_key("test_collection", &entity_id));
+        assert!(std::path::Path::new(&path).exists(), "header file must exist");
+
+        // Verify get_entity works and embeddings can be fetched
+        let got = store.get_entity("test_collection", &entity_id, true, false).await.unwrap();
+        assert!(got.is_some());
+        assert_eq!(got.as_ref().unwrap().id, entity_id);
+        assert_eq!(got.as_ref().unwrap().embeddings.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_csr_relations_add_get_delete() {
+        let csr = CsrRelationsStore::new();
+        let rel = Relation{
+            source_entity_id: "e1".into(),
+            target_entity_id: "e2".into(),
+            relation_type: "related".into(),
+            weight: 1.0,
+            created_at: None,
+            properties: Default::default(),
+        };
+        csr.add_relation("c1", rel.clone()).await.unwrap();
+        let got = csr.get_relations("c1", "e1").await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].target_entity_id, "e2");
+        csr.delete_all_relations("c1", "e1").await.unwrap();
+        let got2 = csr.get_relations("c1", "e1").await.unwrap();
+        assert!(got2.is_empty());
+    }
 }
+
+static GLOBAL_ENTITY_STORE: std::sync::OnceLock<Arc<ProximaEntityStore>> = std::sync::OnceLock::new();

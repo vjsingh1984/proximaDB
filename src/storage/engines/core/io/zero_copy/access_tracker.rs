@@ -245,7 +245,8 @@ impl AccessPatternTracker {
     /// Clear access patterns for a collection
     pub fn clear_collection_patterns(&mut self, collection_id: &str) {
         // Remove file stats for this collection
-        let keys_to_remove: Vec<String> = self.file_stats
+        let keys_to_remove: Vec<String> = self
+            .file_stats
             .keys()
             .filter(|key| {
                 let (_, file_collection_id) = self.parse_file_key(key);
@@ -253,7 +254,7 @@ impl AccessPatternTracker {
             })
             .cloned()
             .collect();
-        
+
         for key in keys_to_remove {
             self.file_stats.remove(&key);
         }

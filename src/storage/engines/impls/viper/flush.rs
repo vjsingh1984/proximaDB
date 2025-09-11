@@ -932,8 +932,10 @@ impl Flush {
 
         // Create a temporary file for StreamingParquetWriter
         let temp_dir = std::env::temp_dir();
-        let temp_file_path =
-            temp_dir.join(format!("viper_flush_{}.parquet.tmp", crate::utils::uuid::Uuid::new_v4()));
+        let temp_file_path = temp_dir.join(format!(
+            "viper_flush_{}.parquet.tmp",
+            crate::utils::uuid::Uuid::new_v4()
+        ));
         debug!("Creating temporary Parquet file: {:?}", temp_file_path);
 
         debug!("🔍 VIPER FLUSH: Using core compression directly");
@@ -1041,7 +1043,7 @@ impl Flush {
         props_builder = props_builder
             .set_column_dictionary_enabled(parquet::schema::types::ColumnPath::from("id"), true);
 
-        // Apply column-specific encodings from filterable metadata  
+        // Apply column-specific encodings from filterable metadata
         // TODO: Re-enable when encoding_hint is available in proto v1
         /*for filterable_column in &filterable_metadata {
             if let Some(encoding_hint) = filterable_column.encoding_hint {
@@ -1489,8 +1491,7 @@ impl Flush {
         batch: &arrow_array::RecordBatch,
     ) -> Result<parquet::file::properties::WriterPropertiesBuilder> {
         use crate::core::compression::{
-            CompressionContext, detect_column_type,
-            optimal_compression_for_column,
+            CompressionContext, detect_column_type, optimal_compression_for_column,
         };
 
         info!(
@@ -1513,7 +1514,7 @@ impl Flush {
                 optimal_algorithm,
                 None, // No specific compression level for column-specific compression
             )?;
-            
+
             let column_path = parquet::schema::types::ColumnPath::from(name.as_str());
 
             debug!(
@@ -1527,39 +1528,39 @@ impl Flush {
 
             // Apply optimal encoding based on column type
             let encoding = match data_type {
-                    crate::core::compression::ColumnData::BinaryQuantized => {
-                        // Binary data - use bit packing for maximum density
-                        parquet::basic::Encoding::RLE
-                    }
-                    crate::core::compression::ColumnData::Int8Quantized => {
-                        // Integer quantized - use delta encoding
-                        parquet::basic::Encoding::DELTA_BINARY_PACKED
-                    }
-                    crate::core::compression::ColumnData::ProductQuantized => {
-                        // PQ vectors - use byte stream split for floating point efficiency
-                        parquet::basic::Encoding::BYTE_STREAM_SPLIT
-                    }
-                    crate::core::compression::ColumnData::FullPrecision => {
-                        // FP32 vectors - use byte stream split for best compression
-                        parquet::basic::Encoding::BYTE_STREAM_SPLIT
-                    }
-                    crate::core::compression::ColumnData::Identifier => {
-                        // ID columns - use dictionary encoding for deduplication
-                        parquet::basic::Encoding::RLE_DICTIONARY
-                    }
-                    crate::core::compression::ColumnData::Metadata => {
-                        // Metadata - use dictionary encoding for repeated values
-                        parquet::basic::Encoding::RLE_DICTIONARY
-                    }
-                    crate::core::compression::ColumnData::Timestamp => {
-                        // Timestamps - use delta encoding for monotonic values
-                        parquet::basic::Encoding::DELTA_BINARY_PACKED
-                    }
-                    crate::core::compression::ColumnData::Generic => {
-                        // Generic data - use plain encoding
-                        parquet::basic::Encoding::PLAIN
-                    }
-                };
+                crate::core::compression::ColumnData::BinaryQuantized => {
+                    // Binary data - use bit packing for maximum density
+                    parquet::basic::Encoding::RLE
+                }
+                crate::core::compression::ColumnData::Int8Quantized => {
+                    // Integer quantized - use delta encoding
+                    parquet::basic::Encoding::DELTA_BINARY_PACKED
+                }
+                crate::core::compression::ColumnData::ProductQuantized => {
+                    // PQ vectors - use byte stream split for floating point efficiency
+                    parquet::basic::Encoding::BYTE_STREAM_SPLIT
+                }
+                crate::core::compression::ColumnData::FullPrecision => {
+                    // FP32 vectors - use byte stream split for best compression
+                    parquet::basic::Encoding::BYTE_STREAM_SPLIT
+                }
+                crate::core::compression::ColumnData::Identifier => {
+                    // ID columns - use dictionary encoding for deduplication
+                    parquet::basic::Encoding::RLE_DICTIONARY
+                }
+                crate::core::compression::ColumnData::Metadata => {
+                    // Metadata - use dictionary encoding for repeated values
+                    parquet::basic::Encoding::RLE_DICTIONARY
+                }
+                crate::core::compression::ColumnData::Timestamp => {
+                    // Timestamps - use delta encoding for monotonic values
+                    parquet::basic::Encoding::DELTA_BINARY_PACKED
+                }
+                crate::core::compression::ColumnData::Generic => {
+                    // Generic data - use plain encoding
+                    parquet::basic::Encoding::PLAIN
+                }
+            };
 
             props_builder = props_builder.set_column_encoding(column_path, encoding);
 

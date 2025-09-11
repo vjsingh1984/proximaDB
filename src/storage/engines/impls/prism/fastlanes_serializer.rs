@@ -48,8 +48,6 @@ impl Clone for PrismFastLanesSerializer {
     }
 }
 
-
-
 /// Metadata for PRISM's multi-resolution storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrismResolutionMetadata {
@@ -390,7 +388,7 @@ impl PrismFastLanesSerializer {
                         ResolutionLevel::PQ8 => UnifiedQuantizationLevel::pq8(16),
                         _ => UnifiedQuantizationLevel { level_type: None },
                     },
-                    metadata: QuantizationMetadata::default(),  // Add the missing metadata field
+                    metadata: QuantizationMetadata::default(), // Add the missing metadata field
                 };
 
                 result.push(StorageQuantizedData {

@@ -107,7 +107,7 @@ impl Container {
     /// Convert to optimal container type based on cardinality
     fn optimize(self) -> Container {
         let cardinality = self.cardinality();
-        
+
         match self {
             Container::Array(array) => {
                 if cardinality >= 4096 {
@@ -142,14 +142,10 @@ impl Container {
     /// Union with another container
     fn union(&self, other: &Container) -> Container {
         match (self, other) {
-            (Container::Array(a1), Container::Array(a2)) => {
-                Container::Array(a1.union(a2))
-            }
-            (Container::Bitmap(b1), Container::Bitmap(b2)) => {
-                Container::Bitmap(b1.union(b2))
-            }
-            (Container::Array(array), Container::Bitmap(bitmap)) |
-            (Container::Bitmap(bitmap), Container::Array(array)) => {
+            (Container::Array(a1), Container::Array(a2)) => Container::Array(a1.union(a2)),
+            (Container::Bitmap(b1), Container::Bitmap(b2)) => Container::Bitmap(b1.union(b2)),
+            (Container::Array(array), Container::Bitmap(bitmap))
+            | (Container::Bitmap(bitmap), Container::Array(array)) => {
                 let mut result = bitmap.clone();
                 for &value in &array.values {
                     result.insert(value);
@@ -172,14 +168,10 @@ impl Container {
     /// Intersection with another container
     fn intersect(&self, other: &Container) -> Container {
         match (self, other) {
-            (Container::Array(a1), Container::Array(a2)) => {
-                Container::Array(a1.intersect(a2))
-            }
-            (Container::Bitmap(b1), Container::Bitmap(b2)) => {
-                Container::Bitmap(b1.intersect(b2))
-            }
-            (Container::Array(array), Container::Bitmap(bitmap)) |
-            (Container::Bitmap(bitmap), Container::Array(array)) => {
+            (Container::Array(a1), Container::Array(a2)) => Container::Array(a1.intersect(a2)),
+            (Container::Bitmap(b1), Container::Bitmap(b2)) => Container::Bitmap(b1.intersect(b2)),
+            (Container::Array(array), Container::Bitmap(bitmap))
+            | (Container::Bitmap(bitmap), Container::Array(array)) => {
                 let mut result = ArrayContainer::new();
                 for &value in &array.values {
                     if bitmap.contains(value) {
@@ -219,9 +211,7 @@ struct ArrayContainer {
 
 impl ArrayContainer {
     fn new() -> Self {
-        ArrayContainer {
-            values: Vec::new(),
-        }
+        ArrayContainer { values: Vec::new() }
     }
 
     fn insert(&mut self, value: u16) -> bool {
@@ -251,7 +241,7 @@ impl ArrayContainer {
     fn cardinality(&self) -> u32 {
         self.values.len() as u32
     }
-    
+
     fn len(&self) -> usize {
         self.values.len()
     }
@@ -311,16 +301,14 @@ struct BitmapContainer {
 
 impl BitmapContainer {
     fn new() -> Self {
-        BitmapContainer {
-            bits: [0; 1024],
-        }
+        BitmapContainer { bits: [0; 1024] }
     }
 
     fn insert(&mut self, value: u16) -> bool {
         let word_index = (value as usize) / 64;
         let bit_index = (value as usize) % 64;
         let mask = 1u64 << bit_index;
-        
+
         let old = self.bits[word_index] & mask;
         self.bits[word_index] |= mask;
         old == 0
@@ -330,7 +318,7 @@ impl BitmapContainer {
         let word_index = (value as usize) / 64;
         let bit_index = (value as usize) % 64;
         let mask = 1u64 << bit_index;
-        
+
         let old = self.bits[word_index] & mask;
         self.bits[word_index] &= !mask;
         old != 0
@@ -340,7 +328,7 @@ impl BitmapContainer {
         let word_index = (value as usize) / 64;
         let bit_index = (value as usize) % 64;
         let mask = 1u64 << bit_index;
-        
+
         (self.bits[word_index] & mask) != 0
     }
 
@@ -373,9 +361,7 @@ struct RunContainer {
 
 impl RunContainer {
     fn new() -> Self {
-        RunContainer {
-            runs: Vec::new(),
-        }
+        RunContainer { runs: Vec::new() }
     }
 
     fn insert(&mut self, value: u16) -> bool {
@@ -385,7 +371,7 @@ impl RunContainer {
                 return false; // Already exists
             }
         }
-        
+
         // Add as single element run
         self.runs.push((value, 1));
         self.runs.sort_by_key(|(start, _)| *start);
@@ -397,7 +383,7 @@ impl RunContainer {
         // Simplified implementation
         let mut found = false;
         let mut new_runs = Vec::new();
-        
+
         for (start, length) in &self.runs {
             if value >= *start && value < start + length {
                 found = true;
@@ -412,7 +398,7 @@ impl RunContainer {
                 new_runs.push((*start, *length));
             }
         }
-        
+
         self.runs = new_runs;
         found
     }
@@ -480,7 +466,7 @@ impl<'a> Iterator for RunIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         while self.run_index < self.runs.len() {
             let (start, length) = self.runs[self.run_index];
-            
+
             if self.value_offset < length {
                 let value = start + self.value_offset;
                 self.value_offset += 1;
@@ -490,7 +476,7 @@ impl<'a> Iterator for RunIterator<'a> {
                 self.value_offset = 0;
             }
         }
-        
+
         None
     }
 }
@@ -511,7 +497,7 @@ impl<'a> BitmapIterator<'a> {
             current_word: bits[0],
             bit_offset: 0,
         };
-        
+
         // Skip to first set bit
         iter.advance_to_next_bit();
         iter
@@ -528,11 +514,11 @@ impl<'a> BitmapIterator<'a> {
                     self.bit_offset += 1;
                 }
             }
-            
+
             // Move to next word
             self.word_index += 1;
             self.bit_offset = 0;
-            
+
             if self.word_index < 1024 {
                 self.current_word = self.bits[self.word_index];
             }
@@ -551,7 +537,7 @@ impl<'a> Iterator for BitmapIterator<'a> {
         let value = (self.word_index * 64 + self.bit_offset as usize) as u16;
         self.bit_offset += 1;
         self.advance_to_next_bit();
-        
+
         Some(value)
     }
 }
@@ -576,12 +562,13 @@ impl RoaringBitmap {
         let high = (value >> 16) as u16;
         let low = value as u16;
 
-        let container = self.containers.entry(high).or_insert_with(|| {
-            Container::Array(ArrayContainer::new())
-        });
+        let container = self
+            .containers
+            .entry(high)
+            .or_insert_with(|| Container::Array(ArrayContainer::new()));
 
         let inserted = container.insert(low);
-        
+
         // Optimize container type if necessary
         if inserted {
             let optimized = std::mem::replace(container, Container::Array(ArrayContainer::new()));
@@ -598,16 +585,17 @@ impl RoaringBitmap {
 
         if let Some(container) = self.containers.get_mut(&high) {
             let removed = container.remove(low);
-            
+
             // Remove container if empty
             if removed && container.cardinality() == 0 {
                 self.containers.remove(&high);
             } else if removed {
                 // Optimize container type
-                let optimized = std::mem::replace(container, Container::Array(ArrayContainer::new()));
+                let optimized =
+                    std::mem::replace(container, Container::Array(ArrayContainer::new()));
                 *container = optimized.optimize();
             }
-            
+
             removed
         } else {
             false
@@ -619,13 +607,15 @@ impl RoaringBitmap {
         let high = (value >> 16) as u16;
         let low = value as u16;
 
-        self.containers.get(&high)
+        self.containers
+            .get(&high)
             .map_or(false, |container| container.contains(low))
     }
 
     /// Get the number of elements in the bitmap
     pub fn cardinality(&self) -> u64 {
-        self.containers.values()
+        self.containers
+            .values()
             .map(|container| container.cardinality() as u64)
             .sum()
     }
@@ -643,7 +633,7 @@ impl RoaringBitmap {
     /// Union with another bitmap
     pub fn union(&self, other: &RoaringBitmap) -> RoaringBitmap {
         let mut result = RoaringBitmap::new();
-        
+
         // Get all unique high values
         let mut high_values: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
         high_values.extend(self.containers.keys());
@@ -693,13 +683,14 @@ impl RoaringBitmap {
                 for value in other_container.iter() {
                     self_container.remove(value);
                 }
-                
+
                 // Remove container if empty
                 if self_container.cardinality() == 0 {
                     result.containers.remove(high);
                 } else {
                     // Optimize container
-                    let optimized = std::mem::replace(self_container, Container::Array(ArrayContainer::new()));
+                    let optimized =
+                        std::mem::replace(self_container, Container::Array(ArrayContainer::new()));
                     *self_container = optimized.optimize();
                 }
             }
@@ -745,7 +736,7 @@ impl RoaringBitmap {
     /// Get range of values [start, end)
     pub fn range(&self, start: u32, end: u32) -> RoaringBitmap {
         let mut result = RoaringBitmap::new();
-        
+
         for value in self.iter() {
             if value >= start && value < end {
                 result.insert(value);
@@ -753,22 +744,22 @@ impl RoaringBitmap {
                 break;
             }
         }
-        
+
         result
     }
 
     /// Serialize to bytes
     pub fn serialize(&self) -> Result<Vec<u8>, BitmapError> {
         let mut bytes = Vec::new();
-        
+
         // Write number of containers
         let container_count = self.containers.len() as u32;
         bytes.extend_from_slice(&container_count.to_le_bytes());
-        
+
         for (high, container) in &self.containers {
             // Write high value
             bytes.extend_from_slice(&high.to_le_bytes());
-            
+
             // Write container type and data
             match container {
                 Container::Array(array) => {
@@ -791,99 +782,121 @@ impl RoaringBitmap {
                 }
             }
         }
-        
+
         Ok(bytes)
     }
 
     /// Deserialize from bytes
     pub fn deserialize(bytes: &[u8]) -> Result<Self, BitmapError> {
         if bytes.len() < 4 {
-            return Err(BitmapError::SerializationError("Invalid data length".to_string()));
+            return Err(BitmapError::SerializationError(
+                "Invalid data length".to_string(),
+            ));
         }
-        
+
         let mut bitmap = RoaringBitmap::new();
         let mut offset = 0;
-        
+
         // Read container count
         let container_count = u32::from_le_bytes([
-            bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
         ]);
         offset += 4;
-        
+
         for _ in 0..container_count {
             if offset + 3 >= bytes.len() {
-                return Err(BitmapError::SerializationError("Unexpected end of data".to_string()));
+                return Err(BitmapError::SerializationError(
+                    "Unexpected end of data".to_string(),
+                ));
             }
-            
+
             // Read high value
             let high = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
             offset += 2;
-            
+
             // Read container type
             let container_type = bytes[offset];
             offset += 1;
-            
+
             let container = match container_type {
                 0 => {
                     // Array container
                     if offset + 2 >= bytes.len() {
-                        return Err(BitmapError::SerializationError("Invalid array container".to_string()));
+                        return Err(BitmapError::SerializationError(
+                            "Invalid array container".to_string(),
+                        ));
                     }
-                    
+
                     let count = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
                     offset += 2;
-                    
+
                     let mut array = ArrayContainer::new();
                     for _ in 0..count {
                         if offset + 2 > bytes.len() {
-                            return Err(BitmapError::SerializationError("Invalid array data".to_string()));
+                            return Err(BitmapError::SerializationError(
+                                "Invalid array data".to_string(),
+                            ));
                         }
-                        
+
                         let value = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
                         array.insert(value);
                         offset += 2;
                     }
-                    
+
                     Container::Array(array)
                 }
                 1 => {
                     // Bitmap container
-                    if offset + 8192 > bytes.len() { // 1024 * 8 bytes
-                        return Err(BitmapError::SerializationError("Invalid bitmap container".to_string()));
+                    if offset + 8192 > bytes.len() {
+                        // 1024 * 8 bytes
+                        return Err(BitmapError::SerializationError(
+                            "Invalid bitmap container".to_string(),
+                        ));
                     }
-                    
+
                     let mut bitmap = BitmapContainer::new();
                     for i in 0..1024 {
                         let word_bytes = &bytes[offset..offset + 8];
                         bitmap.bits[i] = u64::from_le_bytes([
-                            word_bytes[0], word_bytes[1], word_bytes[2], word_bytes[3],
-                            word_bytes[4], word_bytes[5], word_bytes[6], word_bytes[7],
+                            word_bytes[0],
+                            word_bytes[1],
+                            word_bytes[2],
+                            word_bytes[3],
+                            word_bytes[4],
+                            word_bytes[5],
+                            word_bytes[6],
+                            word_bytes[7],
                         ]);
                         offset += 8;
                     }
-                    
+
                     Container::Bitmap(bitmap)
                 }
                 _ => {
-                    return Err(BitmapError::SerializationError("Unknown container type".to_string()));
+                    return Err(BitmapError::SerializationError(
+                        "Unknown container type".to_string(),
+                    ));
                 }
             };
-            
+
             bitmap.containers.insert(high, container);
         }
-        
+
         Ok(bitmap)
     }
-    
+
     /// Get the serialized size of the bitmap in bytes
     pub fn serialized_size(&self) -> usize {
         // Header: 4 bytes for cookie, 4 bytes for container count
         let mut size = 8;
-        
+
         // For each container: 2 bytes for key, 2 bytes for cardinality minus 1, container data
         for (_, container) in &self.containers {
             size += 4; // key + cardinality
-            
+
             match container {
                 Container::Array(array) => {
                     // Array container: 2 bytes per value
@@ -899,15 +912,15 @@ impl RoaringBitmap {
                 }
             }
         }
-        
+
         size
     }
-    
+
     /// Compute the intersection with another bitmap (alias for intersect)
     pub fn and(&self, other: &RoaringBitmap) -> RoaringBitmap {
         self.intersect(other)
     }
-    
+
     /// Compute the union with another bitmap (alias for union)
     pub fn or(&self, other: &RoaringBitmap) -> RoaringBitmap {
         self.union(other)
@@ -974,16 +987,16 @@ mod tests {
     #[test]
     fn test_basic_operations() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         assert!(bitmap.is_empty());
         assert_eq!(bitmap.cardinality(), 0);
-        
+
         // Insert values
         assert!(bitmap.insert(1));
         assert!(bitmap.insert(100));
         assert!(bitmap.insert(1000));
         assert!(!bitmap.insert(1)); // Already exists
-        
+
         assert_eq!(bitmap.cardinality(), 3);
         assert!(bitmap.contains(1));
         assert!(bitmap.contains(100));
@@ -994,11 +1007,11 @@ mod tests {
     #[test]
     fn test_remove() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         bitmap.insert(1);
         bitmap.insert(2);
         bitmap.insert(3);
-        
+
         assert!(bitmap.remove(2));
         assert!(!bitmap.remove(2)); // Already removed
         assert!(!bitmap.contains(2));
@@ -1011,12 +1024,12 @@ mod tests {
         bitmap1.insert(1);
         bitmap1.insert(2);
         bitmap1.insert(3);
-        
+
         let mut bitmap2 = RoaringBitmap::new();
         bitmap2.insert(2);
         bitmap2.insert(3);
         bitmap2.insert(4);
-        
+
         let union = bitmap1.union(&bitmap2);
         assert_eq!(union.cardinality(), 4);
         assert!(union.contains(1));
@@ -1031,12 +1044,12 @@ mod tests {
         bitmap1.insert(1);
         bitmap1.insert(2);
         bitmap1.insert(3);
-        
+
         let mut bitmap2 = RoaringBitmap::new();
         bitmap2.insert(2);
         bitmap2.insert(3);
         bitmap2.insert(4);
-        
+
         let intersection = bitmap1.intersect(&bitmap2);
         assert_eq!(intersection.cardinality(), 2);
         assert!(!intersection.contains(1));
@@ -1051,11 +1064,11 @@ mod tests {
         bitmap1.insert(1);
         bitmap1.insert(2);
         bitmap1.insert(3);
-        
+
         let mut bitmap2 = RoaringBitmap::new();
         bitmap2.insert(2);
         bitmap2.insert(4);
-        
+
         let difference = bitmap1.difference(&bitmap2);
         assert_eq!(difference.cardinality(), 2);
         assert!(difference.contains(1));
@@ -1070,12 +1083,12 @@ mod tests {
         bitmap1.insert(1);
         bitmap1.insert(2);
         bitmap1.insert(3);
-        
+
         let mut bitmap2 = RoaringBitmap::new();
         bitmap2.insert(2);
         bitmap2.insert(3);
         bitmap2.insert(4);
-        
+
         let xor = bitmap1.xor(&bitmap2);
         assert_eq!(xor.cardinality(), 2);
         assert!(xor.contains(1));
@@ -1087,13 +1100,13 @@ mod tests {
     #[test]
     fn test_large_values() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         // Test values that span multiple containers
         bitmap.insert(0);
         bitmap.insert(65536); // Different high 16 bits
         bitmap.insert(131072); // Different high 16 bits
         bitmap.insert(4294967295); // Max u32
-        
+
         assert_eq!(bitmap.cardinality(), 4);
         assert!(bitmap.contains(0));
         assert!(bitmap.contains(65536));
@@ -1104,30 +1117,30 @@ mod tests {
     #[test]
     fn test_dense_data() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         // Insert many consecutive values to trigger bitmap container
         for i in 0..5000 {
             bitmap.insert(i);
         }
-        
+
         assert_eq!(bitmap.cardinality(), 5000);
-        
+
         for i in 0..5000 {
             assert!(bitmap.contains(i));
         }
-        
+
         assert!(!bitmap.contains(5000));
     }
 
     #[test]
     fn test_iterator() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         let values = vec![1, 5, 10, 100, 1000];
         for &value in &values {
             bitmap.insert(value);
         }
-        
+
         let collected: Vec<u32> = bitmap.iter().collect();
         assert_eq!(collected, values);
     }
@@ -1136,31 +1149,31 @@ mod tests {
     fn test_from_iter() {
         let values = vec![3, 1, 4, 1, 5, 9, 2, 6];
         let bitmap = RoaringBitmap::from_iter(values);
-        
+
         let mut expected = vec![1, 2, 3, 4, 5, 6, 9];
         expected.sort();
-        
+
         let mut collected: Vec<u32> = bitmap.iter().collect();
         collected.sort();
-        
+
         assert_eq!(collected, expected);
     }
 
     #[test]
     fn test_range() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         for i in 0..100 {
             bitmap.insert(i);
         }
-        
+
         let range = bitmap.range(10, 20);
         assert_eq!(range.cardinality(), 10);
-        
+
         for i in 10..20 {
             assert!(range.contains(i));
         }
-        
+
         assert!(!range.contains(9));
         assert!(!range.contains(20));
     }
@@ -1171,10 +1184,10 @@ mod tests {
         original.insert(1);
         original.insert(100);
         original.insert(10000);
-        
+
         let bytes = original.serialize().unwrap();
         let deserialized = RoaringBitmap::deserialize(&bytes).unwrap();
-        
+
         assert_eq!(original.cardinality(), deserialized.cardinality());
         assert!(deserialized.contains(1));
         assert!(deserialized.contains(100));
@@ -1187,11 +1200,11 @@ mod tests {
         bitmap.insert(1);
         bitmap.insert(2);
         bitmap.insert(3);
-        
+
         assert_eq!(bitmap.cardinality(), 3);
-        
+
         bitmap.clear();
-        
+
         assert!(bitmap.is_empty());
         assert_eq!(bitmap.cardinality(), 0);
     }
@@ -1199,24 +1212,24 @@ mod tests {
     #[test]
     fn test_container_optimization() {
         let mut bitmap = RoaringBitmap::new();
-        
+
         // Start with sparse data (should use array container)
         for i in 0..10 {
             bitmap.insert(i * 100);
         }
-        
+
         // Add dense data to trigger bitmap container
         for i in 0..5000 {
             bitmap.insert(i);
         }
-        
+
         assert!(bitmap.cardinality() > 4096);
-        
+
         // Remove most elements to trigger conversion back to array
         for i in 100..5000 {
             bitmap.remove(i);
         }
-        
+
         assert!(bitmap.cardinality() < 4096);
     }
 }

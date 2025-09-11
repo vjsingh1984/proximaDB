@@ -250,7 +250,7 @@ fn extract_records_from_batch(
             id: expected_id.clone(),
             vector,
             metadata: Vec::new(), // Would extract if needed
-            timestamp: 0,   // Would extract from timestamp column
+            timestamp: 0,         // Would extract from timestamp column
             updated_at: None,
             quantized_vector: None,
             expires_at: None,

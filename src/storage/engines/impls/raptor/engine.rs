@@ -1,3 +1,4 @@
+use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
@@ -5,7 +6,6 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::utils::uuid::Uuid;
 // Migrated to filesystem API - no longer using std::fs::File directly
 
 use super::consolidated_compactor::RaptorCompactor;
@@ -13,11 +13,11 @@ use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::RaptorRe
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::TypedMetadata;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-    StorageQueryContext, UnifiedStorageEngine,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
+    UnifiedStorageEngine,
 };
 // IvfManager removed - Matrix Trinity handles clustering
 use super::smart_rowgroup_sizing::SmartRowGroupSizer;
@@ -30,13 +30,12 @@ use crate::index::axis::types::ClusterAssignment;
 
 // Deep integration with filesystem API for cloud-aware I/O
 use crate::storage::persistence::filesystem::TierConfig;
-use crate::storage::persistence::filesystem::{FileOptions, FileSystem, FileStorageTier};
+use crate::storage::persistence::filesystem::{FileOptions, FileStorageTier, FileSystem};
 
 // Universal performance optimization imports
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::performance_optimization::{
-    UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
-    UniversallyOptimized,
+    UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
 // VectorMemoryPool now managed by universal optimizer
 
@@ -311,7 +310,6 @@ impl RaptorEngine {
         );
 
         // Cache is now passed in as a shared resource across all engines
-        
 
         // ============================================================================
         // RAPTOR READER SETUP
@@ -465,7 +463,7 @@ impl RaptorEngine {
             .universal_optimizer
             .parallel_operations(read_operations, |operation| operation)
             .await?;
-        
+
         // Unwrap the nested Results
         let mut data = Vec::with_capacity(results.len());
         for result in results {
@@ -748,10 +746,8 @@ impl RaptorEngine {
                         } else {
                             1.0 - (distance / 2.0).min(1.0).max(0.0)
                         }
-                    },
-                    DistanceMetric::Euclidean => {
-                        1.0 / (1.0 + distance)
-                    },
+                    }
+                    DistanceMetric::Euclidean => 1.0 / (1.0 + distance),
                     _ => 1.0 / (1.0 + distance), // Default conversion
                 };
                 let search_result = OptimizedSearchRecord::new(id, similarity_score)
@@ -981,7 +977,7 @@ impl RaptorEngine {
     fn deserialize_sparse_tensor_batch(&self, data: &[u8]) -> Result<RecordBatch> {
         // SPARSE TENSOR DESERIALIZATION (COO/CSR format)
         // Marker 0xA2 indicates sparse tensor encoding
-        
+
         use std::io::Read;
 
         let mut cursor = std::io::Cursor::new(data);
@@ -1109,7 +1105,7 @@ impl RaptorEngine {
     fn deserialize_quantized_tensor_batch(&self, data: &[u8]) -> Result<RecordBatch> {
         // QUANTIZED TENSOR DESERIALIZATION (INT8/PQ formats)
         // Marker 0xA3 indicates quantized tensor encoding
-        
+
         use std::io::Read;
 
         let mut cursor = std::io::Cursor::new(data);
@@ -1333,10 +1329,8 @@ impl RaptorEngine {
                         } else {
                             1.0 - (distance / 2.0).min(1.0).max(0.0)
                         }
-                    },
-                    DistanceMetric::Euclidean => {
-                        1.0 / (1.0 + distance)
-                    },
+                    }
+                    DistanceMetric::Euclidean => 1.0 / (1.0 + distance),
                     _ => 1.0 / (1.0 + distance), // Default conversion
                 };
                 let search_result = OptimizedSearchRecord::new(id, similarity_score)
@@ -1494,12 +1488,12 @@ impl RaptorEngine {
             .as_any()
             .downcast_ref::<arrow_array::Float32Array>()
             .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
-        
+
         // Assuming fixed dimension for all vectors
         let dimension = float_array.len() / batch.num_rows();
         let start = index * dimension;
         let end = start + dimension;
-        
+
         let vector = float_array.values()[start..end].to_vec();
 
         let metadata_str = batch
@@ -1513,7 +1507,7 @@ impl RaptorEngine {
         } else {
             serde_json::from_str(metadata_str)?
         };
-        
+
         // Convert JSON metadata to Vec<MetadataItem> using centralized utility
         let metadata = if let Some(obj) = metadata_json.as_object() {
             crate::core::utils::metadata_conversions::json_to_proto_metadata(obj.clone())

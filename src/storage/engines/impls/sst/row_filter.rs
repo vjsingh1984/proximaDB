@@ -506,31 +506,33 @@ mod tests {
             // Add test metadata
             metadata.push(crate::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    if i % 3 == 0 {
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(if i % 3 == 0 {
                         "electronics".to_string()
                     } else {
                         "books".to_string()
-                    },
-                )),
+                    }),
+                ),
             });
 
             metadata.push(crate::proto::proximadb_v1::MetadataItem {
                 key: "price".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                    (50 + (i * 10) % 200) as f64,
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                        (50 + (i * 10) % 200) as f64,
+                    ),
+                ),
             });
 
             metadata.push(crate::proto::proximadb_v1::MetadataItem {
                 key: "brand".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    if i % 7 == 0 {
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(if i % 7 == 0 {
                         "Apple".to_string()
                     } else {
                         "Samsung".to_string()
-                    },
-                )),
+                    }),
+                ),
             });
 
             records.push(VectorRecord {

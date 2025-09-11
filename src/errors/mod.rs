@@ -1,12 +1,12 @@
 //! Unified error handling for ProximaDB APIs
-//! 
+//!
 //! This module provides a single ApiError type that can be converted
 //! to both gRPC Status and HTTP responses, ensuring consistent error
 //! handling across all API protocols.
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
 
 /// Unified API error type for consistent error handling across REST and gRPC
@@ -15,39 +15,39 @@ pub enum ApiError {
     /// Collection not found
     #[error("Collection not found: {0}")]
     CollectionNotFound(String),
-    
+
     /// Invalid argument provided
     #[error("Invalid argument: {0}")]
     InvalidArgument(String),
-    
+
     /// Internal server error
     #[error("Internal error: {0}")]
     Internal(String),
-    
+
     /// Resource exhausted (rate limiting, memory, etc.)
     #[error("Resource exhausted: {0}")]
     ResourceExhausted(String),
-    
+
     /// Unauthorized access
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
-    
+
     /// Operation not implemented
     #[error("Not implemented: {0}")]
     NotImplemented(String),
-    
+
     /// Deadline exceeded
     #[error("Deadline exceeded: {0}")]
     DeadlineExceeded(String),
-    
+
     /// Already exists
     #[error("Already exists: {0}")]
     AlreadyExists(String),
-    
+
     /// Vector dimension mismatch
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
-    
+
     /// Invalid vector data
     #[error("Invalid vector: {0}")]
     InvalidVector(String),
@@ -78,7 +78,9 @@ impl From<ApiError> for tonic::Status {
                     expected, actual
                 ))
             }
-            ApiError::InvalidVector(msg) => tonic::Status::invalid_argument(format!("Invalid vector: {}", msg)),
+            ApiError::InvalidVector(msg) => {
+                tonic::Status::invalid_argument(format!("Invalid vector: {}", msg))
+            }
         }
     }
 }
@@ -98,7 +100,7 @@ impl IntoResponse for ApiError {
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
         };
-        
+
         let body = Json(json!({
             "error": {
                 "type": error_type,
@@ -106,7 +108,7 @@ impl IntoResponse for ApiError {
                 "code": status.as_u16()
             }
         }));
-        
+
         (status, body).into_response()
     }
 }
@@ -140,14 +142,14 @@ impl IntoApiError for serde_json::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_api_error_to_status() {
         let err = ApiError::CollectionNotFound("test_collection".to_string());
         let status: tonic::Status = err.into();
         assert_eq!(status.code(), tonic::Code::NotFound);
     }
-    
+
     #[test]
     fn test_api_error_to_response() {
         let err = ApiError::InvalidArgument("bad input".to_string());

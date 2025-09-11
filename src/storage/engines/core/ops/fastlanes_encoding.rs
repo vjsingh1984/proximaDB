@@ -696,7 +696,11 @@ impl FastLanesDecoder {
 
                 // Step 1: Decompress columnar data
                 let simd_encoded = if algorithm != CompressionAlgorithm::None {
-                    decompress(&compressed_data, algorithm, CompressionContext::VectorSerialization)?
+                    decompress(
+                        &compressed_data,
+                        algorithm,
+                        CompressionContext::VectorSerialization,
+                    )?
                 } else {
                     compressed_data
                 };

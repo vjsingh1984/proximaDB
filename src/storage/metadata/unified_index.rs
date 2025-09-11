@@ -248,7 +248,7 @@ impl UnifiedCollectionIndex {
         let collections_size = self.collections.len()
             * (
                 32 +  // UUID string
-            std::mem::size_of::<Collection>() + 
+            std::mem::size_of::<Collection>() +
             64
                 // Arc overhead
             );

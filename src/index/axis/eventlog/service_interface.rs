@@ -350,7 +350,9 @@ impl EventLogClient {
     /// Create gRPC client
     pub fn grpc(endpoint: String) -> Self {
         Self {
-            mode: ClientMode::Grpc { _endpoint: endpoint },
+            mode: ClientMode::Grpc {
+                _endpoint: endpoint,
+            },
         }
     }
 }

@@ -19,11 +19,11 @@
 //! This module implements the query executor, responsible for taking a generated
 //! `QueryPlan` and executing it against the graph data, returning the results.
 
-use crate::core::error::ProximaDBError;
+use super::planner::{PlanStep, PlanStepType, QueryPlan, TraversalAlgorithm};
+use super::{QueryContext, QueryResult, QueryStats};
 use crate::core::QueryError;
-use crate::graph::{Node, Edge, NodeId, GraphMemoryPool, GraphService};
-use super::planner::{QueryPlan, PlanStep, PlanStepType, TraversalAlgorithm};
-use super::{QueryResult, QueryContext, QueryStats};
+use crate::core::error::{ProximaDBError, VectorDBError};
+use crate::graph::{Edge, GraphMemoryPool, GraphService, Node, NodeId};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -49,12 +49,24 @@ impl QueryExecutor {
         // For simplicity, we'll assume a single-step plan for now and expand later
         if let Some(step) = plan.steps.first() {
             match &step.step_type {
-                PlanStepType::NodeScan { labels, property_filters } => {
+                PlanStepType::NodeScan {
+                    labels,
+                    property_filters,
+                } => {
                     // Execute NodeScan
                     let nodes = if let Some(labels) = labels {
                         // Simplified: only use the first label for now
                         if let Some(label) = labels.first() {
-                            self.graph_service.find_nodes_by_label(label.clone()).await?
+                            use crate::proto::proximadb_v1::NodeQuery;
+                            let query = NodeQuery {
+                                labels: vec![label.clone()],
+                                filters: vec![],
+                                limit: None,
+                                offset: None,
+                                continuation_token: None,
+                            };
+                            self.graph_service
+                                .query_nodes(query)?
                         } else {
                             Vec::new()
                         }
@@ -65,19 +77,36 @@ impl QueryExecutor {
 
                     for node in nodes {
                         let mut result_map = HashMap::new();
-                        result_map.insert("node".to_string(), serde_json::to_value(node.as_ref())?);
+                        result_map.insert("node".to_string(), serde_json::to_value(node.as_ref())
+                            .map_err(|e| VectorDBError::Internal(format!("JSON serialization error: {}", e)))?);
                         current_results.push(result_map);
                     }
-                },
-                PlanStepType::IndexSeek { index_name, key_value } => {
+                }
+                PlanStepType::IndexSeek {
+                    index_name,
+                    key_value,
+                } => {
                     // TODO: Implement IndexSeek execution
-                    return Err(ProximaDBError::Query(QueryError::InvalidQuery("IndexSeek execution not yet implemented".to_string())));
-                },
-                PlanStepType::Traverse { algorithm, max_depth, edge_filters } => {
+                    return Err(ProximaDBError::Query(QueryError::InvalidQuery(
+                        "IndexSeek execution not yet implemented".to_string(),
+                    )));
+                }
+                PlanStepType::Traverse {
+                    algorithm,
+                    max_depth,
+                    edge_filters,
+                } => {
                     // TODO: Implement Traversal execution
-                    return Err(ProximaDBError::Query(QueryError::InvalidQuery("Traversal execution not yet implemented".to_string())));
-                },
-                _ => return Err(ProximaDBError::Query(QueryError::InvalidQuery(format!("Plan step type {:?} not yet implemented", step.step_type)))),
+                    return Err(ProximaDBError::Query(QueryError::InvalidQuery(
+                        "Traversal execution not yet implemented".to_string(),
+                    )));
+                }
+                _ => {
+                    return Err(ProximaDBError::Query(QueryError::InvalidQuery(format!(
+                        "Plan step type {:?} not yet implemented",
+                        step.step_type
+                    ))));
+                }
             }
         }
 
@@ -91,7 +120,9 @@ impl QueryExecutor {
 mod tests {
     use super::*;
     use crate::graph::GraphService;
-    use crate::graph::query::planner::{QueryPlan, PlanStep, PlanStepType, TraversalAlgorithm, CostEstimate};
+    use crate::graph::query::planner::{
+        CostEstimate, PlanStep, PlanStepType, QueryPlan, TraversalAlgorithm,
+    };
     use crate::utils::Uuid;
     use std::time::SystemTime;
 
@@ -114,17 +145,15 @@ mod tests {
         // Create a simple NodeScan plan
         let plan = QueryPlan {
             id: Uuid::new_v4().to_string(),
-            steps: vec![
-                PlanStep {
-                    step_type: PlanStepType::NodeScan {
-                        labels: Some(vec!["TestLabel".to_string()]),
-                        property_filters: Vec::new(),
-                    },
-                    parameters: HashMap::new(),
-                    cost: CostEstimate::zero(),
-                    output_cardinality: 1,
+            steps: vec![PlanStep {
+                step_type: PlanStepType::NodeScan {
+                    labels: Some(vec!["TestLabel".to_string()]),
+                    property_filters: Vec::new(),
                 },
-            ],
+                parameters: HashMap::new(),
+                cost: CostEstimate::zero(),
+                output_cardinality: 1,
+            }],
             estimated_cost: CostEstimate::zero(),
             estimated_result_size: 1,
             created_at: SystemTime::now(),
@@ -147,17 +176,15 @@ mod tests {
         // Create a plan with an unimplemented step type
         let plan = QueryPlan {
             id: Uuid::new_v4().to_string(),
-            steps: vec![
-                PlanStep {
-                    step_type: PlanStepType::IndexSeek {
-                        index_name: "test_index".to_string(),
-                        key_value: serde_json::Value::String("test_value".to_string()),
-                    },
-                    parameters: HashMap::new(),
-                    cost: CostEstimate::zero(),
-                    output_cardinality: 0,
+            steps: vec![PlanStep {
+                step_type: PlanStepType::IndexSeek {
+                    index_name: "test_index".to_string(),
+                    key_value: serde_json::Value::String("test_value".to_string()),
                 },
-            ],
+                parameters: HashMap::new(),
+                cost: CostEstimate::zero(),
+                output_cardinality: 0,
+            }],
             estimated_cost: CostEstimate::zero(),
             estimated_result_size: 0,
             created_at: SystemTime::now(),
@@ -166,6 +193,11 @@ mod tests {
         let context = QueryContext {}; // Dummy context
         let result = executor.execute(&plan, &context).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 }

@@ -22,6 +22,13 @@ try:
     from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
     from proximadb.v1 import collection_pb2_grpc as v1_collection_pb2_grpc  # type: ignore
     from proximadb.v1 import collection_types_pb2 as v1_collection_types_pb2  # type: ignore
+    # Optional graph service (generated via Makefile: gen-proto)
+    try:
+        from proximadb.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
+        from proximadb.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+    except Exception:  # pragma: no cover - optional
+        v1_graph_pb2_grpc = None
+        v1_graph_pb2 = None
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -150,6 +157,56 @@ class ProximaDBSyncGrpcClient:
             return {"status": response.status, "message": "Server is healthy"}
         
         return self._execute_with_pool("health_check", _health_operation)
+
+    # Graph (v1) — optional
+    def shortest_path(
+        self,
+        start_node_id: str,
+        target_node_id: str,
+        max_depth: Optional[int] = None,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "DIJKSTRA",
+        k: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Compute shortest path via GraphService.ShortestPath with per-call prefetch overrides.
+
+        Per-call overrides are passed as gRPC metadata headers:
+        - x-graph-prefetch-enabled: true|false|1|0
+        - x-graph-prefetch-budget: <int>
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            algo_enum = {
+                "DIJKSTRA": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+                "ASTAR": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_ASTAR,
+            }.get(algorithm.upper(), v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA)
+
+            req = v1_graph_pb2.ShortestPathRequest(
+                start_node_id=start_node_id,
+                target_node_id=target_node_id,
+                max_depth=max_depth or 0,
+                edge_types=edge_types or [],
+                algorithm=algo_enum,
+                k=k or 0,
+            )
+
+            metadata = []
+            if enable_prefetch is not None:
+                metadata.append(("x-graph-prefetch-enabled", "true" if enable_prefetch else "false"))
+            if prefetch_budget is not None:
+                metadata.append(("x-graph-prefetch-budget", str(prefetch_budget)))
+
+            # Use unary_unary with metadata support
+            return stub.ShortestPath(req, timeout=self.timeout, metadata=metadata)
+
+        return self._execute_with_pool("shortest_path", _op)
 
     # SQL (v1)
     def execute_sql(self, query: str, parameters: Optional[list] = None, collection: Optional[str] = None):

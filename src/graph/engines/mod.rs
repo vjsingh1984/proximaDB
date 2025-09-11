@@ -23,55 +23,63 @@
 //! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
 
 pub mod orion;
-pub mod pulsar;  // Distributed graph engine
-pub mod quasar;  // Hybrid hot/cold tiering
+pub mod pulsar; // Distributed graph engine
+pub mod quasar; // Hybrid hot/cold tiering
 
-use crate::core::error::{ProximaDBError};
+use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::{Node, Edge, NodeId, EdgeId};
+use crate::graph::{Edge, EdgeId, Node, NodeId};
 use std::sync::Arc;
 
 /// Graph engine trait for common operations across all engines
 pub trait GraphEngine: Send + Sync {
     /// Insert a node
     fn insert_node(&self, node: Node) -> Result<Arc<Node>>;
-    
+
     /// Get a node by ID
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>>;
-    
+
     /// Update a node
     fn update_node(&self, node: Node) -> Result<Arc<Node>>;
-    
+
     /// Delete a node
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>>;
-    
+
     /// Insert an edge
     fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>>;
-    
+
     /// Get an edge by ID
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>>;
-    
+
     /// Update an edge
     fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>>;
-    
+
     /// Delete an edge
     fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>>;
-    
+
     /// Get outgoing edges from a node
-    fn get_outgoing_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>>;
-    
+    fn get_outgoing_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>>;
+
     /// Get incoming edges to a node
-    fn get_incoming_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>>;
-    
+    fn get_incoming_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>>;
+
     /// Get neighbors of a node
     fn get_neighbors(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Node>>>;
-    
+
     /// Get nodes by label
     fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>>;
-    
+
     /// Get total node count
     fn node_count(&self) -> Result<usize>;
-    
+
     /// Get total edge count
     fn edge_count(&self) -> Result<usize>;
 
@@ -103,22 +111,22 @@ impl GraphEngineFactory {
             GraphEngineType::Orion => {
                 let engine = orion::OrionGraphEngine::new();
                 Ok(Box::new(engine))
-            },
+            }
             GraphEngineType::Pulsar => {
                 let pulsar_config = config.pulsar_config.unwrap_or_default();
                 let engine = pulsar::PulsarGraphEngine::new(pulsar_config)?;
                 Ok(Box::new(engine))
-            },
+            }
             GraphEngineType::Quasar => {
                 let quasar_config = config.quasar_config.unwrap_or_default();
                 // Note: This needs async, so we'll provide a different factory method
                 Err(ProximaDBError::InvalidInput(
-                    "Use create_quasar_engine_async for QUASAR engine".to_string()
+                    "Use create_quasar_engine_async for QUASAR engine".to_string(),
                 ))
-            },
+            }
         }
     }
-    
+
     /// Create QUASAR engine asynchronously (required for initialization)
     pub async fn create_quasar_engine_async(
         config: quasar::QuasarConfig,
@@ -126,7 +134,7 @@ impl GraphEngineFactory {
         let engine = quasar::QuasarGraphEngine::new(config).await?;
         Ok(Box::new(engine))
     }
-    
+
     /// Get available engine types
     pub fn available_engines() -> Vec<GraphEngineType> {
         vec![
@@ -135,7 +143,7 @@ impl GraphEngineFactory {
             GraphEngineType::Quasar,
         ]
     }
-    
+
     /// Get engine type from string
     pub fn engine_type_from_string(name: &str) -> Option<GraphEngineType> {
         match name.to_lowercase().as_str() {

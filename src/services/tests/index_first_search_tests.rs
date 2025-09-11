@@ -16,7 +16,9 @@ mod tests {
     use tracing::{debug, info};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams, results::InternalSearchResult};
+    use crate::core::search::{
+        ComparisonOperator, FilterExpression, SearchParams, results::InternalSearchResult,
+    };
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, IndexingAlgorithm, StorageEngine, VectorRecord,
     };

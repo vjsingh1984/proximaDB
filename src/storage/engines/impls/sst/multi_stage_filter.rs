@@ -19,11 +19,11 @@ use crate::core::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::engines::impls::sst::IndexEntry;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::ReadStrategy;
 use crate::storage::engines::impls::sst::row_filter::{
     SSTBatchFilterEvaluator, SSTRowFilterEvaluator,
 };
-use crate::storage::engines::impls::sst::IndexEntry;
 
 /// Complete SST filtering pipeline with all three stages
 /// Uses immutable Arc types for optimal read performance

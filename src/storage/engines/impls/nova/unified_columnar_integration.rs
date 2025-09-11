@@ -11,16 +11,15 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::{
-    Int8VectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig,
-    QuantizedVectorData, SelectedFormat,
+    Int8VectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
+    SelectedFormat,
 };
 use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::columnar::common::{
     NovaOptimizations, StreamingProcessingConfig, ZoneMapOptimization,
 };
 use crate::storage::engines::core::formats::columnar::{
-    CommonColumnarConfig, CommonColumnarOperations,
-    FilterableColumnSpec, QuantizationConfig,
+    CommonColumnarConfig, CommonColumnarOperations, FilterableColumnSpec, QuantizationConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -696,8 +695,6 @@ impl NovaUnifiedEngine {
 
     /// Create NOVA-optimized configuration
     fn create_nova_optimized_config(nova_config: &NovaSpecificConfig) -> CommonColumnarConfig {
-        
-
         let mut config = CommonColumnarConfig::default();
 
         // NOVA-specific optimizations
@@ -715,12 +712,16 @@ impl NovaUnifiedEngine {
                 max_concurrent_streams: nova_config.streaming_config.max_concurrent_streams,
                 stream_timeout_seconds: nova_config.streaming_config.stream_timeout_seconds,
             },
-            advanced_caching: crate::storage::engines::core::formats::columnar::common::AdvancedCachingConfig {
-                enable_adaptive_caching: nova_config.caching_config.enable_adaptive_caching,
-                cache_size_mb: nova_config.caching_config.cache_size_mb,
-                cache_levels: nova_config.caching_config.cache_levels,
-                prefetch_strategy: format!("{:?}", nova_config.caching_config.prefetch_strategy)
-            },
+            advanced_caching:
+                crate::storage::engines::core::formats::columnar::common::AdvancedCachingConfig {
+                    enable_adaptive_caching: nova_config.caching_config.enable_adaptive_caching,
+                    cache_size_mb: nova_config.caching_config.cache_size_mb,
+                    cache_levels: nova_config.caching_config.cache_levels,
+                    prefetch_strategy: format!(
+                        "{:?}",
+                        nova_config.caching_config.prefetch_strategy
+                    ),
+                },
         };
 
         // Progressive search optimization is now handled by the engine directly

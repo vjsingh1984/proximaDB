@@ -163,9 +163,9 @@ pub use readers::UnifiedSstableReader;
 pub use writer::SstableWriter;
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
-use crate::core::{SstConfig, VectorRecord};
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::TypedMetadata;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::{SstConfig, VectorRecord};
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
 // use crate::core::serialization::VectorSerializationConfig;  // Not needed
@@ -207,8 +207,8 @@ use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
 // Import FastLanes common structures (shared with SWIFT)
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-    BlockCompressionConfig, BlockStatistics, ColumnStatistics,
-    FastLanesBlockMetadata, FastLanesDataBlock,
+    BlockCompressionConfig, BlockStatistics, ColumnStatistics, FastLanesBlockMetadata,
+    FastLanesDataBlock,
 };
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
@@ -359,11 +359,11 @@ pub struct SstMetadata {
     /// True if this is a deletion marker - tombstones cascade through LSM levels
     /// until they reach the bottom where they're garbage collected
     pub is_tombstone: bool,
-    
+
     /// SST sequence for ordering - higher numbers are newer versions,
     /// used for MVCC resolution during reads
     pub sequence_number: u64,
-    
+
     /// SSTable level this record belongs to - L0 is memtable flush,
     /// L1+ are compaction outputs with exponentially larger sizes
     pub level: u8,
@@ -413,41 +413,19 @@ impl SstEntry {
 
     /// Convert to OptimizedSearchRecord directly for search results
     pub fn to_optimized_search_result(&self, score: f32) -> OptimizedSearchRecord {
-        let metadata_map: HashMap<String, serde_json::Value> = self
-            .record
-            .metadata
-            .iter()
-            .map(|(key, value)| {
-                let value = match &value {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
-                        serde_json::Value::String(s.clone())
-                    }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
-                        serde_json::Value::Number(
-                            serde_json::Number::from_f64(*n)
-                                .unwrap_or_else(|| serde_json::Number::from(0)),
-                        )
-                    }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
-                        serde_json::Value::Bool(*b)
-                    }
-                    None => serde_json::Value::Null,
-                };
-                (key.clone(), value)
-            })
-            .collect();
-
         let mut search_record = OptimizedSearchRecord::new(self.record.id.clone(), score)
             .with_similarity(score)
             .add_vector(self.record.vector.clone())
-            .with_metadata(TypedMetadata::from_json_map(metadata_map));
+            .with_metadata(self.record.metadata.clone());
 
         if let Some(version) = self.record.version {
             search_record = search_record.with_version_info(version, self.record.timestamp);
         }
 
         if let Some(source) = &self.record.source {
-            search_record = search_record.with_source(source.clone());
+            search_record = search_record.with_source(crate::proto::proximadb_v1::SourceContent {
+                data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(source.clone()))
+            });
         }
 
         search_record
@@ -465,19 +443,24 @@ impl SstEntry {
                 .record
                 .metadata
                 .iter()
-                .map(|(key, value)| {
-                    let value = match &value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                .map(|(key, sql_value)| {
+                    let value = match &sql_value.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             serde_json::Value::Number(
                                 serde_json::Number::from_f64(*n)
                                     .unwrap_or_else(|| serde_json::Number::from(0)),
                             )
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                            serde_json::Value::Number(
+                                serde_json::Number::from(*i)
+                            )
                         }
                         None => serde_json::Value::Null,
                     };
@@ -485,11 +468,13 @@ impl SstEntry {
                 })
                 .collect(),
             debug_info: None,
-            version: self.record.version,
-            timestamp: Some(self.record.timestamp),
-            updated_at: self.record.updated_at,
-            expires_at: self.record.expires_at,
-            source: self.record.source.clone(),
+            version: self.record.version.map(|v| v as u32),
+            timestamp: Some(self.record.timestamp as u32),
+            updated_at: self.record.updated_at.map(|v| v as u32),
+            expires_at: self.record.expires_at.map(|v| v as u32),
+            source: self.record.source.clone().map(|s| crate::proto::proximadb_v1::SourceContent {
+                data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(s))
+            }),
             expanded_context: vec![],
             semantic_similarity: None,
             quantization_info: None,
@@ -962,12 +947,18 @@ mod compression_helpers {
         {
             Some(crate::proto::proximadb_v1::CompressionConfig {
                 algorithm: match config.compression.to_lowercase().as_str() {
-                    "zstd" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd as i32,
-                    "lz4" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4 as i32,
+                    "zstd" => {
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd as i32
+                    }
+                    "lz4" => {
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4 as i32
+                    }
                     "snappy" => {
                         crate::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy as i32
                     }
-                    "gzip" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip as i32,
+                    "gzip" => {
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip as i32
+                    }
                     "brotli" => {
                         crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli as i32
                     }
@@ -978,12 +969,18 @@ mod compression_helpers {
                         crate::proto::proximadb_v1::CompressionAlgorithm::CompressionDeflate as i32
                     }
                     "xz" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionXz as i32,
-                    "zlib" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZlib as i32,
+                    "zlib" => {
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZlib as i32
+                    }
                     "lz4hc" => {
                         crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4hc as i32
                     }
-                    "lzma" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzma as i32,
-                    "lzo" => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzo as i32,
+                    "lzma" => {
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzma as i32
+                    }
+                    "lzo" => {
+                        crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzo as i32
+                    }
                     _ => crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32,
                 },
                 level: Some(config.compression_level as u32),
@@ -992,8 +989,8 @@ mod compression_helpers {
                 enable_quantization: false, // Not used for SST compression
                 quantization_type: None,
                 normalization_method: None, // Optional field: No normalization by default
-                block_size_kb: Some(config.block_size_kb),
-                dynamic_block_sizing: Some(false),
+                block_size_kb: config.block_size_kb,
+                dynamic_block_sizing: false,
             })
         } else {
             None
@@ -1015,61 +1012,82 @@ mod compression_helpers {
         vector_dim: usize,
     ) -> BlockCompressionConfig {
         if let Some(config) = config {
-            let block_size = if config.dynamic_block_sizing.unwrap_or(false) {
+            let block_size = if config.dynamic_block_sizing {
                 optimal_block_size(vector_dim)
             } else {
-                config.block_size_kb.unwrap_or(1024) as usize * 1024
+                config.block_size_kb as usize * 1024
             };
 
             // Map proto compression algorithm to unified compression module algorithm
             let compression_algorithm = match config.algorithm {
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32 =>
+                {
                     CompressionAlgorithm::None
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd as i32 =>
+                {
                     CompressionAlgorithm::Zstd
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4 as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4 as i32 =>
+                {
                     CompressionAlgorithm::Lz4
                 }
                 x if x
-                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy
+                        as i32 =>
                 {
                     CompressionAlgorithm::Snappy
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip as i32 =>
+                {
                     CompressionAlgorithm::Gzip
                 }
                 x if x
-                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli
+                        as i32 =>
                 {
                     CompressionAlgorithm::Brotli
                 }
                 x if x
-                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBzip2 as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionBzip2
+                        as i32 =>
                 {
                     CompressionAlgorithm::Bzip2
                 }
                 x if x
-                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionDeflate as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionDeflate
+                        as i32 =>
                 {
                     CompressionAlgorithm::Deflate
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionXz as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionXz as i32 =>
+                {
                     CompressionAlgorithm::Xz
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZlib as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionZlib as i32 =>
+                {
                     CompressionAlgorithm::Zlib
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzo as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzo as i32 =>
+                {
                     CompressionAlgorithm::Lzo
                 }
                 x if x
-                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4hc as i32 =>
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4hc
+                        as i32 =>
                 {
                     CompressionAlgorithm::Lz4hc
                 }
-                x if x == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzma as i32 => {
+                x if x
+                    == crate::proto::proximadb_v1::CompressionAlgorithm::CompressionLzma as i32 =>
+                {
                     CompressionAlgorithm::Lzma
                 }
                 _ => {
@@ -1266,7 +1284,7 @@ mod block_utils {
             records.push(VectorRecord {
                 id,
                 vector,
-                timestamp,
+                timestamp: timestamp as i64,
                 metadata: std::collections::HashMap::new(),
                 updated_at: None,
                 expires_at: None,
@@ -1337,17 +1355,20 @@ mod block_utils {
                     });
 
                 // Convert to JSON value for min/max tracking
-                let value = match &item.1 {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                let value = match &item.1.value {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
                     }
                     None => {
                         col_stats.null_count += 1;
@@ -1466,7 +1487,7 @@ mod block_operations {
         codebook: Option<&crate::compute::quantization::Codebook>,
         enable_int8: bool,
     ) -> Result<()> {
-        // Extract vectors from records 
+        // Extract vectors from records
         // Note: quantization currently requires owned vectors
         let vectors: Vec<Vec<f32>> = block.records.iter().map(|r| r.vector.clone()).collect();
 
@@ -1578,7 +1599,7 @@ impl BatchExtractionStats {
     }
 }
 
-#[derive(Debug)]
+// Debug derive removed - CrossCacheOrchestrator doesn't implement Debug
 // SST-specific optimization structures removed - now using universal module
 
 pub struct SstStorage {
@@ -1606,6 +1627,8 @@ pub struct SstStorage {
     // Universal performance optimization (replaces SST-specific optimization)
     /// Universal performance optimizer eliminating code duplication
     universal_optimizer: UniversalPerformanceOptimizer,
+    /// Optional Cross-Cache Orchestrator for metadata/filter tracking
+    orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
 
 impl SstStorage {
@@ -1623,7 +1646,9 @@ impl SstStorage {
         let atomic_coordinator = Arc::new(
             TransactionCoordinator::new(filesystem.clone(), None)
                 .await
-                .map_err(|e| SstError::Internal(format!("Failed to create atomic coordinator: {}", e)))?,
+                .map_err(|e| {
+                    SstError::Internal(format!("Failed to create atomic coordinator: {}", e))
+                })?,
         );
 
         // Create Zero-copy IO system for the reader
@@ -1636,7 +1661,9 @@ impl SstStorage {
                 vec![], // No custom serializers
             )
             .await
-            .map_err(|e| SstError::Internal(format!("Failed to create zero-copy IO system: {}", e)))?,
+            .map_err(|e| {
+                SstError::Internal(format!("Failed to create zero-copy IO system: {}", e))
+            })?,
         );
 
         // SST will create IntelligentFilesystem instances per collection for optimal caching
@@ -1662,15 +1689,32 @@ impl SstStorage {
             64 * 1024 * 1024, // Default to 64MB cache
         ));
 
+        // Register decompression cache provider with orchestrator (VectorData)
+        if let Some(ref orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
+        {
+            use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType};
+            let provider: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(decompression_cache::DecompressionCacheStatsProvider::new(
+                    decompression_cache.clone(),
+                ));
+            orch.register_cache_provider(CacheType::VectorData, provider);
+        }
+
         // Initialize compaction manager (always enabled)
-        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await
-            .map_err(|e| SstError::Internal(format!("Failed to create compaction manager: {}", e)))?));
+        let compaction_manager = Some(Arc::new(Compaction::new(config.clone()).await.map_err(
+            |e| SstError::Internal(format!("Failed to create compaction manager: {}", e)),
+        )?));
 
         // Initialize universal performance optimization
         let universal_optimizer =
             UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
                 .await
-                .map_err(|e| SstError::Internal(format!("Failed to create universal performance optimizer: {}", e)))?;
+                .map_err(|e| {
+                    SstError::Internal(format!(
+                        "Failed to create universal performance optimizer: {}",
+                        e
+                    ))
+                })?;
 
         Ok(Self {
             config,
@@ -1680,9 +1724,10 @@ impl SstStorage {
             atomic_coordinator,
             sstable_reader,
             distance_compute,
-            decompression_cache,
+            decompression_cache: decompression_cache.clone(),
             quantization_engine,
             universal_optimizer,
+            orchestrator: crate::storage::cache::orchestrator::CrossCacheOrchestrator::global(),
         })
     }
 
@@ -1720,10 +1765,9 @@ impl SstStorage {
         }
 
         // Fallback to default if not provided
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST operations".into()))?;
+        let collection_id = params.collection_id.as_ref().ok_or_else(|| {
+            SstError::InvalidArgument("Collection ID required for SST operations".into())
+        })?;
 
         // For tests, use temp directory; for production, use /var/lib/proximadb
         let base_path = if cfg!(test) {
@@ -1745,11 +1789,17 @@ impl SstStorage {
                 Some(self.atomic_coordinator.clone()),
             )
             .await
-            .map_err(|e| SstError::Internal(format!("Failed to create compaction manager: {}", e)))?;
+            .map_err(|e| {
+                SstError::Internal(format!("Failed to create compaction manager: {}", e))
+            })?;
 
             // Start background workers
-            compaction_manager.start_workers(worker_count).await
-                .map_err(|e| SstError::Internal(format!("Failed to start compaction workers: {}", e)))?;
+            compaction_manager
+                .start_workers(worker_count)
+                .await
+                .map_err(|e| {
+                    SstError::Internal(format!("Failed to start compaction workers: {}", e))
+                })?;
 
             self.compaction_manager = Some(Arc::new(compaction_manager));
 
@@ -1814,7 +1864,9 @@ impl SstStorage {
                     // data is Result<Vec<u8>, Error>, so we need to unwrap it
                     match data {
                         Ok(bytes) => final_results.push(bytes),
-                        Err(e) => return Err(SstError::Internal(format!("Block read failed: {}", e))),
+                        Err(e) => {
+                            return Err(SstError::Internal(format!("Block read failed: {}", e)));
+                        }
                     }
                 }
                 Err(e) => return Err(SstError::Internal(format!("Task failed: {}", e))),
@@ -1857,7 +1909,9 @@ impl SstStorage {
 
     /// Memory pool optimization using universal optimizer
     async fn sstable_buffer(&self, size: usize) -> Result<Vec<f32>> {
-        self.universal_optimizer.get_memory_buffer(size).await
+        self.universal_optimizer
+            .get_memory_buffer(size)
+            .await
             .map_err(|e| SstError::Internal(format!("Failed to get memory buffer: {}", e)))
     }
 }
@@ -1884,14 +1938,18 @@ impl UniversallyOptimized for SstStorage {
             .context("Failed to prefetch SSTable data")?;
 
         // Setup SSTable-specific cache eviction if needed
-        self.universal_optimizer.evict_cache_if_needed().await
+        self.universal_optimizer
+            .evict_cache_if_needed()
+            .await
             .context("Failed to evict cache")?;
 
         info!("✅ SST: Engine-specific optimizations setup complete");
         Ok(())
     }
 
-    async fn collect_performance_metrics(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
+    async fn collect_performance_metrics(
+        &self,
+    ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
 
         // SST-specific metrics
@@ -2306,10 +2364,9 @@ impl UnifiedStorageEngine for SstStorage {
         }
         info!("🔄 SST: Starting do_flush with WAL vector record batch extraction");
 
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST flush".into()))?;
+        let collection_id = params.collection_id.as_ref().ok_or_else(|| {
+            SstError::InvalidArgument("Collection ID required for SST flush".into())
+        })?;
 
         let operation_id = crate::utils::uuid::Uuid::new_v4().to_string();
         let vector_records = &params.vector_records;
@@ -2499,10 +2556,9 @@ impl UnifiedStorageEngine for SstStorage {
     /// SST-specific compaction using level-based merge strategy with vector tracking
     async fn do_compact(&self, params: &CompactionParameters) -> anyhow::Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| SstError::InvalidArgument("Collection ID required for SST compaction".into()))?;
+        let collection_id = params.collection_id.as_ref().ok_or_else(|| {
+            SstError::InvalidArgument("Collection ID required for SST compaction".into())
+        })?;
 
         info!(
             "🗜️ SST COMPACTION START: Collection {} (force: {}, priority: {:?})",
@@ -2911,6 +2967,12 @@ impl UnifiedStorageEngine for SstStorage {
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let search_start = std::time::Instant::now();
+        if let Some(orch) = &self.orchestrator {
+            orch.track_access_async(
+                format!("{}::sst::metadata", ctx.collection_id()),
+                crate::storage::cache::orchestrator::CacheType::Metadata,
+            );
+        }
 
         // Extract parameters from context
         let collection_id = ctx.collection_id();
@@ -2969,12 +3031,14 @@ impl UnifiedStorageEngine for SstStorage {
                         )
                         .await
                         .map_err(|e| anyhow::anyhow!("Fallback search failed: {}", e))?;
-                    
+
                     // Return the fallback results directly (assuming they already return OptimizedSearchRecord)
                     // If the fallback method still returns InternalSearchResult, we need to update it too
                     return Ok(fallback_results
                         .into_iter()
-                        .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
+                        .map(|r| {
+                            crate::core::search::results::OptimizedSearchRecord::from_internal(r)
+                        })
                         .collect());
                 }
             };
@@ -3194,10 +3258,8 @@ impl UnifiedStorageEngine for SstStorage {
         // Note: This still needs to convert from InternalSearchResult because the search engine returns that type
         // Results are already OptimizedSearchRecord
         let mut optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
-            result_set.results.iter()
-                .cloned()
-                .collect();
-        
+            result_set.results.iter().cloned().collect();
+
         // Filter results based on include_vectors and include_metadata
         if !include_vectors {
             for result in &mut optimized_results {
@@ -3394,7 +3456,7 @@ impl SstStorage {
                 let mut vector_record = vector_record.clone();
 
                 // Store sequence number in version field for SST ordering
-                vector_record.version = Some(sequence_start + global_index as u64);
+                vector_record.version = Some((sequence_start + global_index as u64) as i64);
 
                 filtered_records.push(vector_record);
                 chunk_matches += 1;
@@ -3555,9 +3617,9 @@ impl SstStorage {
 
             // Ensure directory exists
             if let Some(parent) = sst_path.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| SstError::Internal(format!("Failed to create directory: {}", e)))?;
+                tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    SstError::Internal(format!("Failed to create directory: {}", e))
+                })?;
             }
 
             // Convert VectorRecords to BTreeMap for SstableWriter (OPTIMIZED: Direct conversion)
@@ -3850,9 +3912,9 @@ impl SstStorage {
         // Step 7: Serialize enhanced index using custom serialization
         let mut index_data = Vec::new();
         for entry in &index_entries {
-            let entry_data = entry
-                .serialize()
-                .map_err(|e| SstError::Internal(format!("Failed to serialize index entry: {}", e)))?;
+            let entry_data = entry.serialize().map_err(|e| {
+                SstError::Internal(format!("Failed to serialize index entry: {}", e))
+            })?;
             index_data.extend_from_slice(&(entry_data.len()).to_le_bytes());
             index_data.extend_from_slice(&entry_data);
         }
@@ -3975,9 +4037,12 @@ impl SstStorage {
         }
 
         let mut count = 0;
-        let mut dir_entries = tokio::fs::read_dir(&level_dir)
-            .await
-            .map_err(|e| SstError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to read level directory: {}", e))))?;
+        let mut dir_entries = tokio::fs::read_dir(&level_dir).await.map_err(|e| {
+            SstError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read level directory: {}", e),
+            ))
+        })?;
 
         while let Ok(Some(entry)) = dir_entries.next_entry().await {
             if let Some(filename) = entry.file_name().to_str() {
@@ -4013,7 +4078,7 @@ impl SstStorage {
                 index, record.id
             );
             let mut vector_record = record.clone();
-            vector_record.version = Some(sequence_start + index as u64);
+            vector_record.version = Some((sequence_start + index as u64) as i64);
             sorted_records.push(vector_record);
         }
 
@@ -4055,15 +4120,29 @@ impl SstStorage {
                 key_filter.insert(record.id.as_bytes());
             }
 
-            // Add metadata values - already have MetadataItem
-            for metadata_item in &record.metadata {
-                // Convert HashMap entry to MetadataItem
-                let proto_metadata_item = crate::proto::proximadb_v1::MetadataItem {
-                    key: metadata_item.0.clone(),
-                    value: Some(metadata_item.1.clone()),
+            // Add metadata values - convert SqlValue to MetadataItem
+            for (key, sql_value) in &record.metadata {
+                // Convert SqlValue to MetadataItem::Value
+                let metadata_value = if let Some(value) = &sql_value.value {
+                    use crate::proto::proximadb_v1::sql_value::Value as SqlValueType;
+                    use crate::proto::proximadb_v1::metadata_item::Value as MetadataValueType;
+                    match value {
+                        SqlValueType::StringValue(s) => Some(MetadataValueType::StringValue(s.clone())),
+                        SqlValueType::NumberValue(n) => Some(MetadataValueType::NumberValue(*n)),
+                        SqlValueType::BoolValue(b) => Some(MetadataValueType::BoolValue(*b)),
+                        SqlValueType::Int64Value(i) => Some(MetadataValueType::NumberValue(*i as f64)),
+                        // For types that don't have MetadataItem equivalents, skip them
+                        _ => None,
+                    }
+                } else {
+                    None
                 };
-                metadata_builder
-                    .add_metadata_item(metadata_item.0.clone(), proto_metadata_item);
+                
+                let proto_metadata_item = crate::proto::proximadb_v1::MetadataItem {
+                    key: key.clone(),
+                    value: metadata_value,
+                };
+                metadata_builder.add_metadata_item(key.clone(), proto_metadata_item);
             }
         }
 
@@ -4088,10 +4167,12 @@ impl SstStorage {
 
         let sstable_filter = SstableBloomFilter::new(
             key_filter_config,
-            key_filter.serialize()
-                .map_err(|e| SstError::Internal(format!("Failed to serialize key filter: {}", e)))?,
-            BloomFilterStrategy::serialize(&metadata_filter)
-                .map_err(|e| SstError::Internal(format!("Failed to serialize metadata filter: {}", e)))?,
+            key_filter.serialize().map_err(|e| {
+                SstError::Internal(format!("Failed to serialize key filter: {}", e))
+            })?,
+            BloomFilterStrategy::serialize(&metadata_filter).map_err(|e| {
+                SstError::Internal(format!("Failed to serialize metadata filter: {}", e))
+            })?,
             stats,
         );
 
@@ -4136,23 +4217,24 @@ impl SstStorage {
             // Primary sort: most common metadata key
             if let Some(ref sort_key) = primary_sort_key {
                 // Convert metadata to comparable format
-                let a_metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = a.metadata.iter()
-                    .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
-                        key: k.clone(),
-                        value: Some(v.clone()),
-                    })
-                    .collect();
-                let a_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&a_metadata_items);
-                let b_metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = b.metadata.iter()
-                    .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
-                        key: k.clone(),
-                        value: Some(v.clone()),
-                    })
-                    .collect();
-                let b_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&b_metadata_items);
-
-                let a_value = a_map.get(sort_key).and_then(|v| v.as_str());
-                let b_value = b_map.get(sort_key).and_then(|v| v.as_str());
+                let a_value = a.metadata.get(sort_key).map(|sql_val| {
+                    match &sql_val.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                        _ => String::new(),
+                    }
+                });
+                let b_value = b.metadata.get(sort_key).map(|sql_val| {
+                    match &sql_val.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                        _ => String::new(),
+                    }
+                });
 
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
@@ -4174,17 +4256,15 @@ impl SstStorage {
             let distinct_values: std::collections::HashSet<String> = sorted_vectors
                 .iter()
                 .filter_map(|v| {
-                    let v_metadata_items: Vec<crate::proto::proximadb_v1::MetadataItem> = v.metadata.iter()
-                        .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
-                            key: k.clone(),
-                            value: Some(v.clone()),
-                        })
-                        .collect();
-                    let metadata_map = crate::core::proto_metadata_helper::proto_metadata_to_json(&v_metadata_items);
-                    metadata_map
-                        .get(sort_key)
-                        .and_then(|val| val.as_str())
-                        .map(|s| s.to_string())
+                    v.metadata.get(sort_key).map(|sql_val| {
+                        match &sql_val.value {
+                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                            _ => String::new(),
+                        }
+                    })
                 })
                 .collect();
 
@@ -4236,8 +4316,8 @@ impl SstStorage {
         let mut block_id = 0;
 
         for record in records {
-            let record_size = std::mem::size_of::<VectorRecord>() + 
-                record.id.len() + 
+            let record_size = std::mem::size_of::<VectorRecord>() +
+                record.id.len() +
                 record.vector.len() * 4 + // f32 size
                 record.metadata.iter().map(|(key, value)| key.len() + 50).sum::<usize>(); // Estimate metadata size (50 bytes per item)
 
@@ -4327,9 +4407,12 @@ impl SstStorage {
 
         for block in data_blocks {
             // Use the new DataBlock serialization with compression
-            let serialized_block = block
-                .serialize_with_config(&compression_config)
-                .map_err(|e| SstError::Internal(format!("Failed to serialize data block: {}", e)))?;
+            let serialized_block =
+                block
+                    .serialize_with_config(&compression_config)
+                    .map_err(|e| {
+                        SstError::Internal(format!("Failed to serialize data block: {}", e))
+                    })?;
 
             let final_data = serialized_block;
 
@@ -4462,7 +4545,9 @@ impl SstStorage {
         };
 
         // Use the consolidated do_compact implementation
-        let mut result = self.do_compact(&params).await
+        let mut result = self
+            .do_compact(&params)
+            .await
             .map_err(|e| SstError::Compaction(format!("Compaction failed: {}", e)))?;
 
         // Extract vector tracking data from engine_metrics
@@ -4552,7 +4637,7 @@ impl SstStorage {
         // Create a mock AXIS manager
         // In real implementation, this would come from the service container
         Err(SstError::Internal(
-            "AXIS manager not available in mock implementation".to_string()
+            "AXIS manager not available in mock implementation".to_string(),
         ))
     }
 
@@ -4599,14 +4684,16 @@ impl SstStorage {
         warn!("🔄 SST: Falling back to direct search implementation");
 
         // Use the unified search implementation with context and convert back to InternalSearchResult
-        let optimized_results = self.search_vectors_unified(ctx).await
+        let optimized_results = self
+            .search_vectors_unified(ctx)
+            .await
             .map_err(|e| SstError::Search(format!("Search failed: {}", e)))?;
-        
+
         let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
             .into_iter()
             .map(|r| r.to_internal())
             .collect();
-            
+
         Ok(results)
     }
 }

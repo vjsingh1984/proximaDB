@@ -61,11 +61,11 @@ pub struct EngineMetricsCollector {
     /// Weak references to engines to avoid circular dependencies
     /// Key: engine name (e.g., "sst_collection1", "viper_analytics")
     engines: Arc<RwLock<HashMap<String, Weak<dyn UnifiedStorageEngine>>>>,
-    
+
     /// Last collection time for rate calculations
     /// Used to compute rates (ops/sec, bytes/sec) from counters
     last_collection: Arc<RwLock<Instant>>,
-    
+
     /// Accumulated metrics for rate calculations
     /// Contains counters that are reset periodically after export
     accumulated_metrics: Arc<RwLock<EngineMetricsAccumulator>>,

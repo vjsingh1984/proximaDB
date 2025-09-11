@@ -1,0 +1,41 @@
+= Hybrid Query Orchestrator — Implementation Plan (P0)
+:toc:
+:status: in-progress
+
+== Goals
+- Solidify federated hybrid path for SIMILAR and FOLLOW with fusion, seed handoff, and pagination/streaming.
+- Provide stable ExecutionOperation contracts consumable by agents.
+
+Status: Contracts stable; parallel vector+graph execution implemented; vector→graph seeding implemented. Fusion path maintained. Pagination/streaming deferred (top‑K typical).
+
+== Deliverables
+- Parallel execution (vector + graph)
+- Seed handoff both directions
+- Fusion (RRF default) with weights
+- Paginated and optional streaming responses
+- EXPLAIN output with clear operations and estimated cost
+- Seeding strategy controls: AVERAGE | PER_SEED | NONE via SQL hints or REST `seeding`
+
+== Files & Interfaces
+ - `src/query/execution/{planner.rs,executor.rs,mod.rs}` — execution plan and executor changes
+ - `src/query/sql_frontend/{parser.rs,lowering.rs}` — ensure SIMILAR/FOLLOW lowering
+ - `src/api_handlers/unified_handlers.rs` — expose pagination/streaming for hybrid
+
+== Milestones
+ 1) Contracts — Freeze ExecutionOperation shapes for VectorSearch, GraphTraversal, Fusion  [✅ DONE]
+ 2) Parallelism — Run vector and graph in parallel; deterministic merge  [✅ DONE]
+ 3) Seeds — Implement vector→graph seed handoff; plan graph→vector handoff  [🟡 In Progress]
+ 4) Fusion — RRF with k parameter; additive fallback  [✅ DONE]
+ 5) Pagination/Streaming — Page fused results; streaming variants (optional)  [🔲 DEFERRED]
+ 6) Explain — Human‑readable operations and cost summary  [🟡 In Progress]
+
+== Tests
+- Unit: fusion scoring, pagination stability, seed handoff
+- Integration: SIMILAR→FOLLOW on synthetic dataset; FOLLOW→SIMILAR; large k paging
+- Bench: End‑to‑end latency vs vector‑only and graph‑only baselines
+ - Deep traversal (feature `deep_traversal_tests`): BFS up to max_depth for richer coverage
+== Engine Notes (MVP)
+
+- Default engine: ORION (in‑memory CSR) via GraphService.
+- Supported in MVP single‑process: PULSAR (single shard), QUASAR (hot/cold in one process).
+- The orchestrator remains engine‑agnostic; selection is done when constructing GraphService via a factory/config toggle.

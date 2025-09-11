@@ -4,14 +4,15 @@
 //! repeated decompression of frequently accessed data. It uses an LRU eviction
 //! policy with configurable size limits.
 
-use anyhow::Result;
 use crate::utils::cache::LruCache;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
 
 /// Cache key for decompressed blocks
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -509,6 +510,39 @@ impl DecompressionCache {
     ) -> Vec<BlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
         comp_caches.get(&algorithm).cloned().unwrap_or_default()
+    }
+}
+
+/// Orchestrator stats provider for the SST DecompressionCache
+pub struct DecompressionCacheStatsProvider {
+    cache: Arc<DecompressionCache>,
+}
+
+impl DecompressionCacheStatsProvider {
+    pub fn new(cache: Arc<DecompressionCache>) -> Self { Self { cache } }
+}
+
+impl CacheStatsProvider for DecompressionCacheStatsProvider {
+    fn snapshot(&self) -> UsageStats {
+        // Attempt to get an instantaneous snapshot using the Tokio runtime
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let stats = handle.block_on(self.cache.get_stats());
+            let total = stats.hits + stats.misses;
+            let hit_rate = if total == 0 { 0.0 } else { stats.hits as f64 / total as f64 };
+            // Approximate avg entry size using bytes_saved per hit when available
+            let avg_entry_size = if stats.hits > 0 {
+                (stats.bytes_saved / stats.hits) as usize
+            } else {
+                64 * 1024
+            };
+            return UsageStats {
+                hit_rate,
+                avg_entry_size,
+                access_frequency: total as f64,
+                last_rebalance: std::time::SystemTime::now(),
+            };
+        }
+        UsageStats { hit_rate: 0.0, avg_entry_size: 64 * 1024, access_frequency: 0.0, last_rebalance: std::time::SystemTime::now() }
     }
 }
 

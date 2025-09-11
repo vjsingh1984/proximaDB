@@ -563,7 +563,7 @@ mod tests {
                         2 => format!("SELECT vector FROM embeddings_{} ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2], 'cosine') LIMIT 5", thread_id),
                         _ => format!("SELECT metadata FROM docs_{} WHERE metadata.score > {}", thread_id, i % 10),
                     };
-                    
+
                     if pool_clone.parse_sql(query).is_ok() {
                         success_count += 1;
                     }

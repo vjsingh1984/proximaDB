@@ -42,6 +42,7 @@ use super::footer_cache::{FooterCacheConfig, ParquetFooterCache};
 use super::optimization::{ColumnarOptimizer, FileBloomFilters, StreamingRowGroupIterator};
 use super::{ColumnarConfig, FilterCondition, MetadataFilter, RowGroupStats, SearchCandidate};
 use crate::compute::distance_computation::DistanceMetric;
+use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats};
 
 // ============================================================================
 // VIPER-specific types consolidated into columnar module
@@ -261,6 +262,39 @@ pub struct UnifiedParquetReader {
     /// Collection context for metadata management
     collection_context: Arc<RwLock<Option<CollectionContext>>>,
 }
+
+/// Provider to expose Parquet footer cache stats to the Cross-Cache Orchestrator
+struct FooterCacheStatsProvider {
+    footer_cache: Arc<ParquetFooterCache>,
+}
+
+impl FooterCacheStatsProvider {
+    fn new(footer_cache: Arc<ParquetFooterCache>) -> Self {
+        Self { footer_cache }
+    }
+}
+
+impl CacheStatsProvider for FooterCacheStatsProvider {
+    fn snapshot(&self) -> UsageStats {
+        // Attempt to read async stats in a blocking manner if within a Tokio runtime
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let stats = handle.block_on(self.footer_cache.get_stats());
+            let avg_entry_size = if stats.cache_size > 0 {
+                (stats.total_cache_size_bytes.max(1) / stats.cache_size.max(1)) as usize
+            } else {
+                4096
+            };
+            return UsageStats {
+                hit_rate: stats.hit_rate,
+                avg_entry_size,
+                access_frequency: stats.total_requests as f64,
+                last_rebalance: std::time::SystemTime::now(),
+            };
+        }
+        // Fallback conservative defaults
+        UsageStats { hit_rate: 0.0, avg_entry_size: 4096, access_frequency: 0.0, last_rebalance: std::time::SystemTime::now() }
+    }
+}
 impl UnifiedParquetReader {
     /// Create new unified Parquet reader with intelligent filesystem
     pub async fn new(filesystem: Arc<FilesystemFactory>) -> Result<Self> {
@@ -306,7 +340,7 @@ impl UnifiedParquetReader {
                 .expect("Failed to initialize footer cache_info"),
         );
 
-        Ok(Self {
+        let reader = Self {
             filesystem,
             hardware,
             config,
@@ -323,7 +357,16 @@ impl UnifiedParquetReader {
             strategy_selector: Arc::new(ReadingStrategySelector::default()),
             schema_cache: Arc::new(RwLock::new(HashMap::new())),
             collection_context: Arc::new(RwLock::new(None)),
-        })
+        };
+
+        // Register footer cache provider with orchestrator (if available)
+        if let Some(orch) = CrossCacheOrchestrator::global() {
+            let provider: Arc<dyn CacheStatsProvider + Send + Sync> =
+                Arc::new(FooterCacheStatsProvider::new(reader.footer_cache.clone()));
+            orch.register_cache_provider(CacheType::Metadata, provider);
+        }
+
+        Ok(reader)
     }
     /// Create with custom configuration
     pub async fn with_config(
@@ -882,10 +925,11 @@ impl UnifiedParquetReader {
                 .sqrt();
 
             // Create a proper SimilarityResult using the constructor
-            let similarity_result = crate::compute::distance_computation::engine::SimilarityResult::new(
-                distance,
-                crate::compute::distance_computation::DistanceMetric::Euclidean,
-            );
+            let similarity_result =
+                crate::compute::distance_computation::engine::SimilarityResult::new(
+                    distance,
+                    crate::compute::distance_computation::DistanceMetric::Euclidean,
+                );
 
             let vector_id = id_col.map(|arr| arr.value(row_idx).to_string());
             candidates.push(SearchCandidate {

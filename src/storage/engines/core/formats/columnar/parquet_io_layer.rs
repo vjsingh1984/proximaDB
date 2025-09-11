@@ -73,7 +73,7 @@ const COLUMN_INDEX_CACHE_SIZE: usize = 1024 * 1024 * 1024; // 1GB for column ind
 /// for large vector datasets while maintaining specialized caches for metadata.
 ///
 /// ## Design Philosophy
-/// 
+///
 /// 1. **Cache-First**: Check caches before any I/O operation
 /// 2. **Zero-Copy**: Use memory mapping and direct buffers when possible
 /// 3. **Cloud-Aware**: Optimize for high-latency cloud storage
@@ -105,6 +105,8 @@ pub struct SharedParquetFormatReader {
     /// Statistics for monitoring and optimization
     /// Track cache hits, misses, bytes saved, etc.
     stats: Arc<ReaderStats>,
+    /// Optional Cross-Cache Orchestrator for Parquet metadata/cache tracking
+    orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
 
 #[derive(Clone)]
@@ -130,11 +132,11 @@ pub enum ColumnMmapStrategy {
     /// Always memory map this column
     /// Used for frequently accessed columns like IDs and timestamps
     AlwaysMmap,
-    
+
     /// Never memory map this column
     /// Used for large blob columns that would waste address space
     NeverMmap,
-    
+
     /// Adaptively decide based on access patterns
     /// The column is memory mapped after min_access_count accesses
     /// with recency_weight determining how recent accesses are valued
@@ -212,7 +214,20 @@ impl SharedParquetFormatReader {
             zero_copy_system,
             collection_id,
             stats: Arc::new(ReaderStats::default()),
+            orchestrator: crate::storage::cache::orchestrator::CrossCacheOrchestrator::global(),
         }
+    }
+
+    pub fn new_with_context(
+        filesystem: Arc<FilesystemFactory>,
+        mmap_strategy: ParquetMmapStrategy,
+        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        collection_id: String,
+        ctx: &crate::core::context::SharedContext,
+    ) -> Self {
+        let mut r = Self::new(filesystem, mmap_strategy, zero_copy_system, collection_id);
+        r.orchestrator = ctx.orchestrator.clone();
+        r
     }
 
     /// Read columns using cached metadata (avoids footer download)
@@ -224,6 +239,10 @@ impl SharedParquetFormatReader {
         columns: &[String],
         row_filter: Option<&FilterExpression>,
     ) -> Result<Vec<RecordBatch>, ProximaDBError> {
+        if let Some(orch) = &self.orchestrator {
+            let key = format!("{}::parquet::metadata_cached", self.collection_id);
+            orch.track_access_async(key, crate::storage::cache::orchestrator::CacheType::Metadata);
+        }
         // This would extract row group statistics from cached metadata
         // and use them for filtering without downloading the footer
 

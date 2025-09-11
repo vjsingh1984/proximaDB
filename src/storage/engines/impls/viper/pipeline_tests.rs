@@ -1,9 +1,9 @@
 #[cfg(test)]
 pub mod viper_pipeline_tests {
     use super::*;
+    use crate::compute::QuantizationLevel;
     use crate::core::VectorRecord;
     use crate::proto::proximadb_v1::MetadataItem;
-    use crate::compute::QuantizationLevel;
     use crate::storage::engines::impls::viper::pipeline::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use chrono::Utc;
@@ -24,9 +24,7 @@ pub mod viper_pipeline_tests {
                 .into_iter()
                 .map(|(k, v)| MetadataItem {
                     key: k,
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        v,
-                    )),
+                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(v)),
                 })
                 .collect(),
             timestamp: now as u32,

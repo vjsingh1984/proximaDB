@@ -1,0 +1,143 @@
+\= ProximaDB: The Unified Intelligence Platform
+:toc: left
+:toclevels: 2
+:icons: font
+
+[.text-center]
+image::docs/assets/logos/proximadb-logo.svg[ProximaDB Logo, 360, align="center"]
+
+[.lead.text-center]
+**The World's First Unified Vector + Graph + Knowledge Platform** +
+_Creating a New Category of AI Solutions_
+
+[cols="1,1,1",frame=none,grid=none,options="header"]
+|===
+| Status | License | Version
+| 🟢 Build Passing | Apache‑2.0 | 0.1.4
+|===
+
+link:#quick-start[Quick Start] • link:docs/[Documentation] • link:examples/[Examples]
+
+== Diagrams (Quick Links)
+
+- Architecture Request Flow: link:docs/06-architecture/ARCHITECTURE.adoc#request-flow-end-to-end[Mermaid sequence]
+- Architecture Snapshot: link:docs/06-architecture/ARCHITECTURE.adoc#architecture-snapshot[Component overview]
+- Overview Visual: link:docs/01-overview/README.adoc#visual-overview[Client → API → Services → Engines]
+- Benchmarks Visual: link:docs/05-operations/BENCHMARKS.adoc#visual-summary[Throughput vs. Traditional]
+
+== Why ProximaDB? The Problem We Solve
+
+[source,mermaid]
+----
+graph TD
+    A[Your AI Application] --> B[Vector Database]
+    A --> C[Graph Database]
+    A --> D[Knowledge Store]
+    A --> E[Search Engine]
+
+    B --> F[Complex Integration Layer]
+    C --> F
+    D --> F
+    E --> F
+
+    F --> G[Fragmented Data]
+    F --> H[Integration Complexity]
+    F --> I[Limited AI Capabilities]
+----
+
+== Unified Intelligence: One Platform
+
+[source,mermaid]
+----
+graph LR
+    A[Your AI Application] --> B[ProximaDB Unified Platform]
+    B --> C[Vector Search]
+    B --> D[Graph Relationships]
+    B --> E[Semantic Knowledge]
+    C --> F[Unified Intelligence]
+    D --> F
+    E --> F
+----
+
+[cols="1,1",options="header"]
+|===
+| Traditional Approach | ProximaDB Unified Platform
+| 🔴 3+ systems to manage | 🟢 Single platform
+| 🔴 Manual orchestration | 🟢 Native API coordination
+| 🔴 Scattered data | 🟢 Unified data model
+| 🔴 Limited insights | 🟢 Multi‑modal intelligence
+|===
+
+== Quick Start
+
+[source,bash]
+----
+# 1) Build
+make build
+
+# 2) Start server
+make server-start
+
+# 3) Health check
+curl http://localhost:5678/health
+----
+
+== Architecture Snapshot
+
+[source,mermaid]
+----
+flowchart TB
+    subgraph API
+      REST --> Handlers
+      gRPC --> Handlers
+    end
+    subgraph Services
+      Handlers --> VOS[VectorOperationsService]
+      Handlers --> GraphService
+    end
+    subgraph Engines
+      VOS --> VIPER
+      VOS --> SST
+      VOS --> HELIX
+      VOS --> RAPTOR
+      VOS --> NOVA
+      VOS --> SWIFT
+      VOS --> PRISM
+    end
+----
+
+== Real‑World Use Cases
+
+- Enterprise RAG: similarity + relationships + context in one query
+- Fraud Detection: graph rings + vector anomalies
+- Knowledge Discovery: semantic + relational navigation
+
+== Performance Highlights
+
+[cols="2,3",options="header"]
+|===
+| Metric | Value
+| Vector compute | 20M+ ops/sec
+| Cache hit rate | 60–90%
+| Memory savings | 45–65%
+|===
+
+== Next Steps
+
+- Developers: link:docs/02-getting-started/README.adoc[Getting Started]
+- Architects: link:docs/06-architecture/ARCHITECTURE.adoc[Architecture]
+- Benchmarks: link:docs/05-operations/BENCHMARKS.adoc[Operations & Benchmarks]
+
+== Code Examples (Direct Links)
+
+=== Graph (REST: per‑call prefetch overrides)
+- JavaScript: link:docs/03-user-guide/examples/javascript/graphTraversePrefetch.js[Traverse] • link:docs/03-user-guide/examples/javascript/graphShortestPathPrefetch.js[Shortest Path]
+- Python: link:docs/03-user-guide/examples/python/graph_traverse_prefetch.py[Traverse] • link:docs/03-user-guide/examples/python/graph_shortest_path_prefetch.py[Shortest Path]
+- Rust: link:docs/03-user-guide/examples/rust/graph_traverse_prefetch.rs[Traverse] • link:docs/03-user-guide/examples/rust/graph_shortest_path_prefetch.rs[Shortest Path]
+
+=== Graph (Async Unified Facade)
+- Python (async): link:docs/03-user-guide/examples/python/graph_async_unified.py[Unified async shortest path + traversal]
+
+=== SQL over gRPC (v1)
+- Python: link:docs/03-user-guide/examples/python/grpc_execute_sql.py[ExecuteSql]
+- Rust: link:docs/03-user-guide/examples/rust/grpc_execute_sql.rs[ExecuteSql]

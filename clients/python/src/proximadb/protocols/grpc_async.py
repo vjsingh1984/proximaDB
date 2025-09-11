@@ -81,6 +81,13 @@ class ProximaDBClient:
             from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
             from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
             from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
+            # Optional graph imports
+            try:
+                from proximadb.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
+                from proximadb.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+            except Exception:
+                v1_graph_pb2_grpc = None
+                v1_graph_pb2 = None
         except ImportError as e:
             logger.error(f"Failed to import v1 proto modules: {e}")
             raise ProximaDBError(f"Failed to import v1 proto modules: {e}")
@@ -118,7 +125,7 @@ class ProximaDBClient:
                 self.channel = grpc.secure_channel(self.endpoint, credentials, options=options)
             else:
                 self.channel = grpc.insecure_channel(self.endpoint, options=options)
-            # Use v1 VectorService exclusively
+            # Use v1 VectorService by default
             self.stub = v1_vector_pb2_grpc.VectorServiceStub(self.channel)
             logger.info(f"Connected to proximadb.v1.VectorService at {self.endpoint} (64MB limit)")
             
@@ -171,6 +178,51 @@ class ProximaDBClient:
             raise ProximaDBError(f"gRPC error: {e.code()}: {e.details()}")
         except Exception as e:
             raise ProximaDBError(f"Unexpected error: {e}")
+
+    # -----------------------------
+    # Graph Operations (gRPC)
+    # -----------------------------
+    def shortest_path(
+        self,
+        start_node_id: str,
+        target_node_id: str,
+        max_depth: Optional[int] = None,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "DIJKSTRA",
+        k: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ):
+        """Compute shortest path via proximadb.v1.GraphService with per-call prefetch overrides."""
+        try:
+            from proximadb.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
+            from proximadb.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+        except Exception as e:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        stub = v1_graph_pb2_grpc.GraphServiceStub(self.channel)
+        algo_enum = {
+            "DIJKSTRA": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+            "ASTAR": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_ASTAR,
+        }.get(algorithm.upper(), v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA)
+
+        req = v1_graph_pb2.ShortestPathRequest(
+            start_node_id=start_node_id,
+            target_node_id=target_node_id,
+            max_depth=max_depth or 0,
+            edge_types=edge_types or [],
+            algorithm=algo_enum,
+            k=k or 0,
+        )
+
+        metadata = []
+        if enable_prefetch is not None:
+            metadata.append(("x-graph-prefetch-enabled", "true" if enable_prefetch else "false"))
+        if prefetch_budget is not None:
+            metadata.append(("x-graph-prefetch-budget", str(prefetch_budget)))
+
+        return stub.ShortestPath(req, timeout=timeout or self.timeout, metadata=metadata)
     
     # Collection Operations
     

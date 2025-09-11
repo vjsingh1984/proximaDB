@@ -1731,7 +1731,6 @@ impl WriteAheadLogManager {
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-        
 
         tracing::debug!(
             "🔍 WAL: Enhanced search for collection {} with top_k={}, metric={:?}, filters={}",
@@ -1974,12 +1973,12 @@ impl WriteAheadLogManager {
                             .value
                             .as_ref()
                             .map(|v| match v {
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
-                                    s.clone()
-                                }
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
-                                    n.to_string()
-                                }
+                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                    s,
+                                ) => s.clone(),
+                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                                    n,
+                                ) => n.to_string(),
                                 crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                                     b.to_string()
                                 }

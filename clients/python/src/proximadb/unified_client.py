@@ -208,6 +208,77 @@ class ProximaDBClient:
         
         else:
             raise ValueError(f"Unknown protocol: {self.protocol}")
+
+    # -----------------------------
+    # Graph Operations (Unified)
+    # -----------------------------
+    def graph_shortest_path(
+        self,
+        start_node_id: str,
+        target_node_id: str,
+        max_depth: Optional[int] = None,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "DIJKSTRA",
+        k: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ):
+        """Unified shortest path across gRPC/REST with prefetch overrides."""
+        if self._active_protocol == Protocol.GRPC and hasattr(self._client, 'shortest_path'):
+            return self._client.shortest_path(
+                start_node_id,
+                target_node_id,
+                max_depth,
+                edge_types,
+                algorithm,
+                k,
+                enable_prefetch,
+                prefetch_budget,
+            )
+        # Fallback to REST
+        if hasattr(self._client, 'graph_shortest_path'):
+            return self._client.graph_shortest_path(
+                start_node_id,
+                target_node_id,
+                max_depth,
+                edge_types,
+                algorithm,
+                k,
+                enable_prefetch,
+                prefetch_budget,
+                timeout=timeout,
+            )
+        raise ProximaDBError("Active client does not support graph_shortest_path")
+
+    def graph_traverse(
+        self,
+        start_node_id: str,
+        max_depth: int = 3,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "BFS",
+        limit: Optional[int] = None,
+        timeout_ms: Optional[int] = None,
+        max_frontier: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ):
+        """Unified traversal via REST (gRPC streaming traversal not yet exposed here)."""
+        if hasattr(self._client, 'graph_traverse'):
+            return self._client.graph_traverse(
+                start_node_id,
+                max_depth,
+                edge_types,
+                algorithm,
+                limit,
+                timeout_ms,
+                max_frontier,
+                enable_prefetch,
+                prefetch_budget,
+                timeout=timeout,
+            )
+        raise ProximaDBError("Active client does not support graph_traverse")
     
     def _setup_intelligent_selection(self):
         """Setup intelligent protocol selection system"""

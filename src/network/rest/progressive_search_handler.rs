@@ -1,5 +1,5 @@
 //! REST API Handler for Progressive Search - Aligned with Protobuf-First Design
-//! 
+//!
 //! This handler now uses protobuf types directly, eliminating custom DTOs
 //! and ensuring consistency with the gRPC API.
 
@@ -14,7 +14,7 @@ use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1 as v1;
 
 /// Progressive search handler - now uses protobuf types directly
-/// 
+///
 /// This handler is a thin wrapper that:
 /// 1. Accepts protobuf VectorSearchRequest as JSON
 /// 2. Passes it directly to UnifiedHandlers
@@ -39,7 +39,10 @@ pub async fn progressive_search_handler(
         .handle_vector_search_v1(request)
         .await
         .map_err(|e| {
-            error!("Progressive search failed for collection {}: {}", collection_id, e);
+            error!(
+                "Progressive search failed for collection {}: {}",
+                collection_id, e
+            );
             ApiError::Internal(e.to_string())
         })?;
 
@@ -58,17 +61,17 @@ pub async fn explain_progressive_search_handler(
     Json(request): Json<ExplainRequest>,
 ) -> ApiResult<Json<ExplainResponse>> {
     use crate::core::search::progressive_quantization::{ProgressiveSearchConfig, SearchScenario};
-    
+
     let config = match request.scenario.as_deref() {
         Some("high_recall") => ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall),
         Some("high_speed") => ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed),
         Some("low_memory") => ProgressiveSearchConfig::for_scenario(SearchScenario::LowMemory),
         _ => ProgressiveSearchConfig::default(),
     };
-    
+
     let k = request.k.unwrap_or(10);
     let stage_sizes = config.compute_stage_sizes(k);
-    
+
     Ok(Json(ExplainResponse {
         collection_id,
         k,

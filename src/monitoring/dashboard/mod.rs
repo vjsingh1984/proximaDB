@@ -197,6 +197,7 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
     let metrics = state.metrics_collector.current_metrics().await;
     let summary = state.metrics_collector.metrics_summary().await;
 
+    let gs = crate::core::context::global_graph_settings().unwrap_or_default();
     let html = format!(
         r#"
 <!DOCTYPE html>
@@ -248,6 +249,13 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
             <div class="metric-value">{:.1} <span class="metric-unit">% CPU</span></div>
             <div>Memory: {:.1} MB used</div>
             <div>Uptime: {:.1} hours</div>
+        </div>
+        
+        <div class="metric-card">
+            <div class="metric-title">Graph Prefetch Settings</div>
+            <div>Enabled: <strong>{}</strong></div>
+            <div>Prefetch Budget: <strong>{}</strong></div>
+            <div>Tip: Override per-call via REST JSON or gRPC metadata.</div>
         </div>
         
         <div class="metric-card">
@@ -312,7 +320,9 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
         summary.active_alerts_count,
         summary.critical_alerts_count,
         metrics.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+        if gs.enable_prefetch { "true" } else { "false" },
+        gs.prefetch_budget
     );
 
     Ok(Html(html))

@@ -7,17 +7,14 @@
 
 //! gRPC service implementation for Entity operations in SKS
 
-use tonic::{Request, Response, Status};
 use std::sync::Arc;
-use tracing::{debug, info, warn, error};
+use tonic::{Request, Response, Status};
+use tracing::{debug, error, info, warn};
 
 use crate::proto::proximadb_v1::{
+    DeleteEntityRequest, DeleteEntityResponse, EntityResult, GetEntityRequest, GetEntityResponse,
+    SearchEntitiesRequest, SearchEntitiesResponse, UpsertEntityRequest, UpsertEntityResponse,
     entity_service_server::{EntityService, EntityServiceServer},
-    UpsertEntityRequest, UpsertEntityResponse,
-    GetEntityRequest, GetEntityResponse,
-    DeleteEntityRequest, DeleteEntityResponse,
-    SearchEntitiesRequest, SearchEntitiesResponse,
-    EntityResult,
 };
 use crate::storage::entity_store::{EntityStore, ProximaEntityStore};
 
@@ -31,7 +28,7 @@ impl EntityServiceImpl {
     pub fn new(store: Arc<ProximaEntityStore>) -> Self {
         Self { store }
     }
-    
+
     /// Create a tonic service from this implementation
     pub fn into_service(self) -> EntityServiceServer<Self> {
         EntityServiceServer::new(self)
@@ -46,26 +43,23 @@ impl EntityService for EntityServiceImpl {
         request: Request<UpsertEntityRequest>,
     ) -> Result<Response<UpsertEntityResponse>, Status> {
         let req = request.into_inner();
-        
-        info!(
-            "Upserting entity in collection: {}",
-            req.collection_id
-        );
-        
+
+        info!("Upserting entity in collection: {}", req.collection_id);
+
         // Validate request
         if req.collection_id.is_empty() {
             return Err(Status::invalid_argument("collection_id is required"));
         }
-        
-        let entity = req.entity.ok_or_else(|| {
-            Status::invalid_argument("entity is required")
-        })?;
-        
+
+        let entity = req
+            .entity
+            .ok_or_else(|| Status::invalid_argument("entity is required"))?;
+
         // Validate entity has at least one embedding
         if entity.embeddings.is_empty() {
             warn!("Entity has no embeddings, this may affect search capabilities");
         }
-        
+
         // Store entity
         match self.store.upsert_entity(&req.collection_id, entity).await {
             Ok(entity_id) => {
@@ -82,33 +76,37 @@ impl EntityService for EntityServiceImpl {
             }
         }
     }
-    
+
     /// Get an entity by ID
     async fn get_entity(
         &self,
         request: Request<GetEntityRequest>,
     ) -> Result<Response<GetEntityResponse>, Status> {
         let req = request.into_inner();
-        
+
         debug!(
             "Getting entity {} from collection {}",
             req.entity_id, req.collection_id
         );
-        
+
         // Validate
         if req.collection_id.is_empty() || req.entity_id.is_empty() {
             return Err(Status::invalid_argument(
-                "collection_id and entity_id are required"
+                "collection_id and entity_id are required",
             ));
         }
-        
+
         // Retrieve entity
-        match self.store.get_entity(
-            &req.collection_id,
-            &req.entity_id,
-            req.include_embeddings,
-            req.include_relations,
-        ).await {
+        match self
+            .store
+            .get_entity(
+                &req.collection_id,
+                &req.entity_id,
+                req.include_embeddings,
+                req.include_relations,
+            )
+            .await
+        {
             Ok(Some(entity)) => {
                 debug!("Found entity: {}", req.entity_id);
                 Ok(Response::new(GetEntityResponse {
@@ -128,32 +126,32 @@ impl EntityService for EntityServiceImpl {
             }
         }
     }
-    
+
     /// Delete an entity
     async fn delete_entity(
         &self,
         request: Request<DeleteEntityRequest>,
     ) -> Result<Response<DeleteEntityResponse>, Status> {
         let req = request.into_inner();
-        
+
         info!(
             "Deleting entity {} from collection {} (hard_delete: {})",
             req.entity_id, req.collection_id, req.hard_delete
         );
-        
+
         // Validate
         if req.collection_id.is_empty() || req.entity_id.is_empty() {
             return Err(Status::invalid_argument(
-                "collection_id and entity_id are required"
+                "collection_id and entity_id are required",
             ));
         }
-        
+
         // Delete entity
-        match self.store.delete_entity(
-            &req.collection_id,
-            &req.entity_id,
-            req.hard_delete,
-        ).await {
+        match self
+            .store
+            .delete_entity(&req.collection_id, &req.entity_id, req.hard_delete)
+            .await
+        {
             Ok(success) => {
                 if success {
                     info!("Successfully deleted entity: {}", req.entity_id);
@@ -175,30 +173,30 @@ impl EntityService for EntityServiceImpl {
             }
         }
     }
-    
+
     /// Search for entities
     async fn search_entities(
         &self,
         request: Request<SearchEntitiesRequest>,
     ) -> Result<Response<SearchEntitiesResponse>, Status> {
         let req = request.into_inner();
-        
+
         info!(
             "Searching entities in collection {} (top_k: {})",
             req.collection_id, req.top_k
         );
-        
+
         // Validate
         if req.collection_id.is_empty() {
             return Err(Status::invalid_argument("collection_id is required"));
         }
-        
+
         if req.top_k == 0 || req.top_k > 10000 {
             return Err(Status::invalid_argument(
-                "top_k must be between 1 and 10000"
+                "top_k must be between 1 and 10000",
             ));
         }
-        
+
         // Extract query vector if similarity search is requested
         let query_vector = if let Some(similar_query) = req.similar {
             // TODO: Handle different query types (text, vector, raw_data)
@@ -214,15 +212,19 @@ impl EntityService for EntityServiceImpl {
         } else {
             None
         };
-        
+
         // Perform search
-        match self.store.search_entities(
-            &req.collection_id,
-            query_vector,
-            req.filters,
-            // req.temporal, // TODO: Add when temporal filter is available
-            req.top_k as usize,
-        ).await {
+        match self
+            .store
+            .search_entities(
+                &req.collection_id,
+                query_vector,
+                req.filters,
+                // req.temporal, // TODO: Add when temporal filter is available
+                req.top_k as usize,
+            )
+            .await
+        {
             Ok(results) => {
                 let entity_results: Vec<EntityResult> = results
                     .into_iter()
@@ -232,11 +234,11 @@ impl EntityService for EntityServiceImpl {
                         debug_info: Default::default(),
                     })
                     .collect();
-                
+
                 let total = entity_results.len() as u32;
-                
+
                 info!("Search returned {} results", total);
-                
+
                 Ok(Response::new(SearchEntitiesResponse {
                     results: entity_results,
                     total,
@@ -246,7 +248,10 @@ impl EntityService for EntityServiceImpl {
             }
             Err(e) => {
                 error!("Failed to search entities: {}", e);
-                Err(Status::internal(format!("Failed to search entities: {}", e)))
+                Err(Status::internal(format!(
+                    "Failed to search entities: {}",
+                    e
+                )))
             }
         }
     }
@@ -255,9 +260,9 @@ impl EntityService for EntityServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     // TODO: Add unit tests for EntityServiceImpl
-    
+
     #[test]
     fn test_entity_service_creation() {
         // This test would require a mock EntityStore

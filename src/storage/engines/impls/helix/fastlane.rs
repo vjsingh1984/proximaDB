@@ -12,9 +12,8 @@ use std::sync::Arc;
 
 // Reuse existing FastLanes structures
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-        FastLanesDataBlock, FastLanesBlockMetadata, 
-        BlockCompressionConfig, QuantizationStatistics,
-    };
+    BlockCompressionConfig, FastLanesBlockMetadata, FastLanesDataBlock, QuantizationStatistics,
+};
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::persistence::filesystem::FileSystem;
@@ -61,24 +60,23 @@ pub async fn write_helix_sstable(
     hilbert_keys: Option<&[u64]>,
 ) -> Result<u64> {
     use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{
-        factory::BloomFilterFactory,
-        BloomFilterConfig,
+        BloomFilterConfig, factory::BloomFilterFactory,
     };
     // Use our own metadata structures instead of SST headers
-    
+
     let mut file_data = BytesMut::new();
-    
+
     // Write magic and version
     file_data.put_slice(&magic);
     file_data.put_u32_le(1); // Version
-    
+
     // Write number of blocks
     let num_blocks = (records.len() + block_size - 1) / block_size;
     file_data.put_u32_le(num_blocks as u32);
-    
+
     let mut block_offsets = Vec::new();
     let mut block_metadata: Vec<HelixBlockMetadata> = Vec::new();
-    
+
     // Create global bloom filter for all records
     let bloom_config = BloomFilterConfig {
         expected_items: records.len(),
@@ -86,18 +84,18 @@ pub async fn write_helix_sstable(
         ..Default::default()
     };
     let mut global_bloom = BloomFilterFactory::create(&bloom_config);
-    
+
     // Process records in chunks
     for (block_idx, chunk) in records.chunks(block_size).enumerate() {
         let block_offset = file_data.len() as u64;
         block_offsets.push(block_offset);
-        
+
         // Adaptive compression based on block characteristics
         let compression_config = BlockCompressionConfig {
             algorithm: if chunk.len() > 100 {
                 CompressionAlgorithm::Zstd
             } else {
-                CompressionAlgorithm::Lz4  // Faster for small blocks
+                CompressionAlgorithm::Lz4 // Faster for small blocks
             },
             compression_level: 3,
             enable_vector_compression: true,
@@ -105,19 +103,16 @@ pub async fn write_helix_sstable(
             compression_threshold_bytes: 512, // Lower threshold for better compression
             dictionary_compression: chunk.len() > 500, // Use dictionary for large blocks
         };
-        
+
         // Create FastLanes block with proper block ID
-        let mut block = FastLanesDataBlock::new(
-            chunk.to_vec(),
-            compression_config,
-        );
+        let mut block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
         block.block_id = block_idx as u32;
-        
+
         // Add records to global bloom filter
         for record in chunk {
             global_bloom.insert(record.id.as_bytes());
         }
-        
+
         // Determine Hilbert range for this block with better bounds tracking
         let hilbert_range = if let Some(keys) = hilbert_keys {
             let block_start = block_idx * block_size;
@@ -133,15 +128,15 @@ pub async fn write_helix_sstable(
         } else {
             None
         };
-        
+
         // Hilbert range will be stored in HelixBlockMetadata, not in FastLanes metadata
-        
+
         // Serialize block before creating metadata (to get compressed size)
         let block_bytes = block.serialize()?;
         let compressed_size = block_bytes.len();
-        
+
         // Store header info in our metadata instead
-        
+
         // Create HELIX metadata with enhanced statistics
         let helix_meta = HelixBlockMetadata {
             fastlanes_metadata: block.metadata.clone(),
@@ -153,37 +148,39 @@ pub async fn write_helix_sstable(
                 query_selectivity: 1.0 / num_blocks as f32,
             }),
         };
-        
+
         // Write block size and data
         file_data.put_u32_le(block_bytes.len() as u32);
         file_data.put_slice(&block_bytes);
-        
+
         // Store metadata
         block_metadata.push(helix_meta);
     }
-    
+
     // Write bloom filter
     let bloom_bytes = global_bloom.serialize()?;
     let bloom_offset = file_data.len() as u64;
     file_data.put_u32_le(bloom_bytes.len() as u32);
     file_data.put_slice(&bloom_bytes);
-    
+
     // Write block offset index
     let index_offset = file_data.len() as u64;
     for offset in block_offsets {
         file_data.put_u64_le(offset);
     }
-    
+
     // Write metadata in binary format
     let metadata_bytes = bincode::serialize(&block_metadata)?;
     file_data.put_u32_le(metadata_bytes.len() as u32);
     file_data.put_slice(&metadata_bytes);
-    
+
     // Write to filesystem
     let bytes_written = file_data.len() as u64;
     let data_bytes = file_data.freeze();
-    filesystem.write(path.to_str().unwrap_or(""), &data_bytes, None).await?;
-    
+    filesystem
+        .write(path.to_str().unwrap_or(""), &data_bytes, None)
+        .await?;
+
     Ok(bytes_written)
 }
 
@@ -197,16 +194,16 @@ pub async fn search_helix_sstable(
     distance_metric: &crate::compute::distance_computation::DistanceMetric,
 ) -> Result<Vec<(String, f32, HashMap<String, String>)>> {
     // We use our own metadata, not SST headers
-    
+
     // Read entire file
     let file_data = filesystem.read(path.to_str().unwrap_or("")).await?;
-    
+
     // Read footer to get metadata
     let file_len = file_data.len();
     if file_len < 12 {
         return Err(anyhow::anyhow!("Invalid HELIX file: too small"));
     }
-    
+
     // Read metadata size (last 4 bytes)
     let metadata_size_offset = file_len - 4;
     let metadata_size = u32::from_le_bytes([
@@ -215,39 +212,40 @@ pub async fn search_helix_sstable(
         file_data[metadata_size_offset + 2],
         file_data[metadata_size_offset + 3],
     ]) as usize;
-    
+
     // Read binary metadata
     let metadata_start = file_len - 4 - metadata_size;
     let metadata_data = &file_data[metadata_start..metadata_start + metadata_size];
-    let block_metadata: Vec<HelixBlockMetadata> = 
-        bincode::deserialize(metadata_data)?;
-    
+    let block_metadata: Vec<HelixBlockMetadata> = bincode::deserialize(metadata_data)?;
+
     let mut cursor = std::io::Cursor::new(&file_data[..]);
-    
+
     // Skip magic and version
     cursor.set_position(8);
-    
+
     // Read number of blocks
     let mut num_blocks_bytes = [0u8; 4];
     std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
     let num_blocks = u32::from_le_bytes(num_blocks_bytes) as usize;
-    
+
     if num_blocks != block_metadata.len() {
-        return Err(anyhow::anyhow!("Metadata mismatch: block count doesn't match"));
+        return Err(anyhow::anyhow!(
+            "Metadata mismatch: block count doesn't match"
+        ));
     }
-    
+
     let mut results = Vec::new();
     let mut blocks_pruned = 0;
-    
+
     // Read and search blocks with enhanced pruning
     for block_idx in 0..num_blocks {
         let meta = &block_metadata[block_idx];
-        
+
         // Read block size
         let mut size_bytes = [0u8; 4];
         std::io::Read::read_exact(&mut cursor, &mut size_bytes)?;
         let block_size = u32::from_le_bytes(size_bytes) as usize;
-        
+
         // Enhanced Hilbert-based pruning using metadata
         if let Some(query_key) = query_hilbert_key {
             if let Some((min_key, max_key)) = meta.hilbert_range {
@@ -262,10 +260,11 @@ pub async fn search_helix_sstable(
                     // Single point block, use small fixed tolerance
                     100
                 };
-                
+
                 // Check if query is outside range with calculated tolerance
-                if query_key < min_key.saturating_sub(tolerance) || 
-                   query_key > max_key.saturating_add(tolerance) {
+                if query_key < min_key.saturating_sub(tolerance)
+                    || query_key > max_key.saturating_add(tolerance)
+                {
                     // Skip this block's data
                     cursor.set_position(cursor.position() + block_size as u64);
                     blocks_pruned += 1;
@@ -273,37 +272,34 @@ pub async fn search_helix_sstable(
                 }
             }
         }
-        
+
         // Read block data
         let mut block_data = vec![0u8; block_size];
         std::io::Read::read_exact(&mut cursor, &mut block_data)?;
-        
+
         // Deserialize block
         let block = FastLanesDataBlock::deserialize(&block_data)?;
-        
+
         // Search within block
         for record in &block.records {
             // Convert metadata format (assuming we need HashMap<String, String>)
             let metadata = HashMap::new(); // TODO: Convert record.metadata properly
-            
+
             // Use simple euclidean distance for now (TODO: use UnifiedDistanceCompute)
-            let distance = query_vector.iter()
+            let distance = query_vector
+                .iter()
                 .zip(record.vector.iter())
                 .map(|(a, b)| (a - b).powi(2))
                 .sum::<f32>()
                 .sqrt();
-            results.push((
-                record.id.clone(),
-                distance,
-                metadata,
-            ));
+            results.push((record.id.clone(), distance, metadata));
         }
     }
-    
+
     // Sort by distance and return top-k
     results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
     results.truncate(k);
-    
+
     // Log pruning statistics
     if blocks_pruned > 0 {
         tracing::debug!(
@@ -313,7 +309,7 @@ pub async fn search_helix_sstable(
             (blocks_pruned as f64 / num_blocks as f64) * 100.0
         );
     }
-    
+
     Ok(results)
 }
 
@@ -342,7 +338,7 @@ pub fn extract_helix_metadata(
                 data_checksum: 0,
                 metadata_checksum: 0,
             };
-            
+
             // Calculate Hilbert range if keys provided
             let hilbert_range = if let Some(keys) = hilbert_keys {
                 let start = idx * block_size;
@@ -359,7 +355,7 @@ pub fn extract_helix_metadata(
             } else {
                 None
             };
-            
+
             HelixBlockMetadata {
                 fastlanes_metadata: base_metadata,
                 hilbert_range,

@@ -47,21 +47,21 @@
 //! | REST | 840 QPS | 5-10ms | Web apps, simple queries |
 //! | gRPC | 1,770 QPS | 2-5ms | High-volume, streaming |
 
+use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
-use crate::utils::uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
+use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
 use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
 use crate::storage::StorageEngine;
 use crate::storage::metadata::backends::MetadataBackendFactory;
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use crate::metrics::MetricsConfig;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///
@@ -409,6 +409,7 @@ impl SharedServices {
     pub async fn new(
         metrics_collector: Option<Arc<MetricsCollector>>,
         storage_config: &crate::core::config::StorageConfig,
+        orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
     ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
         debug!(
@@ -433,10 +434,9 @@ impl SharedServices {
             "📁 SharedServices: Creating metadata backend from URL: {}",
             storage_config.metadata_url
         );
-        
-        let metadata_backend = Arc::from(
-            MetadataBackendFactory::create_from_url(&storage_config.metadata_url).await?
-        );
+
+        let metadata_backend =
+            Arc::from(MetadataBackendFactory::create_from_url(&storage_config.metadata_url).await?);
         debug!("✅ SharedServices: Metadata backend created successfully");
 
         let collection_service =
@@ -520,17 +520,30 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - About to create VectorOperationsService with two-stage search..."
         );
-        let vector_operations_service = Arc::new(VectorOperationsService::new(
-            sst_engine,
-            wal_manager,
-            axis_manager,
-            collection_service.clone(),
-        ));
+        // Initialize global Cross-Cache Orchestrator from storage config budget
+        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+        let orchestrator = Arc::new(CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize));
+        CrossCacheOrchestrator::register_global(orchestrator.clone());
+
+        let vector_operations_service = Arc::new(
+            VectorOperationsService::new(
+                sst_engine,
+                wal_manager,
+                axis_manager,
+                collection_service.clone(),
+            )
+            .with_orchestrator(orchestrator.clone()),
+        );
 
         info!(
             "✅ SharedServices: VectorOperationsService created successfully - 40-60% performance boost enabled"
         );
         debug!("🔧 SharedServices::new - VectorOperationsService created successfully");
+
+        info!(
+            "🧠 SharedServices: Global Cross-Cache Orchestrator registered (budget={}MB)",
+            storage_config.cache_size_mb
+        );
 
         // Collection recovery will be handled by StorageEngine::start()
         // SharedServices no longer tries to recover before storage starts
@@ -651,21 +664,26 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating GraphService for graph database operations...");
         let mut graph_service_inst = crate::graph::GraphService::new();
         // Create a simple file-backed metrics updater under data_root/metrics
-        let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
         let metrics_config = MetricsConfig {
             enabled: true,
             collection_partitions: 16,
-            storage_path: format!("file://{}/metrics", &storage_config.metadata_url.replace("file://", "")),
+            storage_path: format!(
+                "file://{}/metrics",
+                &storage_config.metadata_url.replace("file://", "")
+            ),
             flush_interval_seconds: 60,
             // max_pending_updates: 10000, // Field removed from MetricsConfig
             // compression_enabled: true, // Field removed from MetricsConfig
         };
-        let metrics_store = Arc::new(crate::metrics::store::MetricsPersistenceLayer::new(
-            filesystem_factory,
-            metrics_config,
-        ).await?);
-        let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> =
-            Arc::new(crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()));
+        let metrics_store = Arc::new(
+            crate::metrics::store::MetricsPersistenceLayer::new(filesystem_factory, metrics_config)
+                .await?,
+        );
+        let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
+            crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
+        );
         graph_service_inst.set_metrics_updater(metrics_updater.clone());
         debug!("📈 GraphService metrics updater wired");
         let graph_service = Arc::new(graph_service_inst);
@@ -699,7 +717,9 @@ impl SharedServices {
 
     /// Optional metrics updater for wiring into services. Currently returns None
     /// unless a metrics updater is injected in the future.
-    pub fn metrics_updater(&self) -> Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> {
+    pub fn metrics_updater(
+        &self,
+    ) -> Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> {
         self.metrics_updater.clone()
     }
 
@@ -840,7 +860,10 @@ impl MultiServer {
             let vector_service_impl = crate::network::grpc::vector_service::VectorServiceImpl::new(
                 services.unified_handlers.clone(),
             );
-            let mut vector_service = crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(vector_service_impl);
+            let mut vector_service =
+                crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
+                    vector_service_impl,
+                );
             if self.config.grpc_config.compression {
                 use tonic::codec::CompressionEncoding;
                 vector_service = vector_service
@@ -852,7 +875,10 @@ impl MultiServer {
             let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
                 services.unified_handlers.clone(),
             );
-            let mut sql_service = crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(sql_service_impl);
+            let mut sql_service =
+                crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
+                    sql_service_impl,
+                );
             if self.config.grpc_config.compression {
                 use tonic::codec::CompressionEncoding;
                 sql_service = sql_service
@@ -861,10 +887,14 @@ impl MultiServer {
             }
 
             // Add versioned CollectionService (v1)
-            let col_service_impl = crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                services.unified_handlers.clone(),
-            );
-            let mut col_service = crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(col_service_impl);
+            let col_service_impl =
+                crate::network::grpc::collection_service::CollectionServiceImpl::new(
+                    services.unified_handlers.clone(),
+                );
+            let mut col_service =
+                crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
+                    col_service_impl,
+                );
             if self.config.grpc_config.compression {
                 use tonic::codec::CompressionEncoding;
                 col_service = col_service
@@ -873,8 +903,12 @@ impl MultiServer {
             }
 
             // Add GraphService for native graph database operations
-            let graph_service_impl = crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
-            let graph_service = crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(graph_service_impl);
+            let graph_service_impl =
+                crate::network::grpc::GraphServiceImpl::new(services.unified_handlers.clone());
+            let graph_service =
+                crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
+                    graph_service_impl,
+                );
             debug!("✅ Added GraphService to gRPC server");
 
             // Build server with all services
@@ -899,10 +933,7 @@ impl MultiServer {
             let grpc_bind_addr = self.config.grpc_bind_address();
 
             let grpc_handle = tokio::spawn(async move {
-                if let Err(e) = server_builder
-                    .serve(grpc_bind_addr)
-                    .await
-                {
+                if let Err(e) = server_builder.serve(grpc_bind_addr).await {
                     tracing::error!("gRPC server error: {}", e);
                 }
             });

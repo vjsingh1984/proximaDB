@@ -9,13 +9,14 @@ mod tests {
         StagingConfig, TransactionCoordinator, TransactionStageType,
     };
     use super::super::{
-        MetadataFilter, MetadataOperation, MetadataStorageStats,
-        MetadataStoreInterface, SystemMetadata, write_ahead_log::MetadataWALConfig,
+        MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
+        SystemMetadata, write_ahead_log::MetadataWALConfig,
     };
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use crate::utils::uuid::Uuid;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
@@ -24,7 +25,6 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::{Mutex, RwLock};
     use tokio::time::{Duration, sleep};
-    use crate::utils::uuid::Uuid;
 
     /// Helper to create test metadata write buffer config
     fn create_test_wal_config(temp_dir: &TempDir) -> MetadataWALConfig {

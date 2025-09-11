@@ -47,15 +47,20 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 metadata: vec![
                     crate::proto::proximadb_v1::MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            format!("category_{}", i % 3),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                                "category_{}",
+                                i % 3
+                            )),
+                        ),
                     },
                     crate::proto::proximadb_v1::MetadataItem {
                         key: "priority".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            i.to_string(),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                i.to_string(),
+                            ),
+                        ),
                     },
                 ],
                 timestamp: now as u32,

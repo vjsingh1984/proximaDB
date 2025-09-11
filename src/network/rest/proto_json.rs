@@ -1,25 +1,24 @@
 //! Proto-JSON serialization helper for seamless protobuf-JSON conversion in REST APIs
-//! 
+//!
 //! This module provides a ProtoJson wrapper that enables automatic conversion
 //! between protobuf messages and JSON for REST API handlers, ensuring consistency
 //! with gRPC while maintaining REST-friendly JSON formats.
 
 use axum::{
-    async_trait,
+    Json, async_trait,
     body::HttpBody,
     extract::FromRequest,
     http::Request,
     response::{IntoResponse, Response},
-    Json,
 };
-use std::error::Error;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 
 use crate::errors::ApiError;
 
 /// Wrapper for protobuf messages in REST APIs
-/// 
+///
 /// This struct provides automatic JSON serialization/deserialization for protobuf
 /// messages, allowing REST handlers to work directly with protobuf types while
 /// maintaining JSON input/output.
@@ -31,7 +30,7 @@ impl<T> ProtoJson<T> {
     pub fn new(value: T) -> Self {
         ProtoJson(value)
     }
-    
+
     /// Extract the inner value
     pub fn into_inner(self) -> T {
         self.0
@@ -55,7 +54,7 @@ where
         let Json(value) = Json::<T>::from_request(req, state)
             .await
             .map_err(|e| ApiError::InvalidArgument(format!("Invalid JSON: {}", e)))?;
-        
+
         Ok(ProtoJson(value))
     }
 }
@@ -81,7 +80,7 @@ where
 pub trait ProtoConvert: Sized {
     /// Convert from JSON value to protobuf message
     fn from_json(json: serde_json::Value) -> Result<Self, ApiError>;
-    
+
     /// Convert protobuf message to JSON value
     fn to_json(&self) -> Result<serde_json::Value, ApiError>;
 }
@@ -95,7 +94,7 @@ where
         serde_json::from_value(json)
             .map_err(|e| ApiError::InvalidArgument(format!("Invalid JSON for proto: {}", e)))
     }
-    
+
     fn to_json(&self) -> Result<serde_json::Value, ApiError> {
         serde_json::to_value(self)
             .map_err(|e| ApiError::Internal(format!("Failed to convert proto to JSON: {}", e)))
@@ -112,7 +111,7 @@ impl<T> ProtoJsonBatch<T> {
     pub fn new(items: Vec<T>) -> Self {
         ProtoJsonBatch { items }
     }
-    
+
     /// Convert all items to JSON array
     pub fn to_json_array(&self) -> Result<serde_json::Value, ApiError>
     where
@@ -121,7 +120,7 @@ impl<T> ProtoJsonBatch<T> {
         serde_json::to_value(&self.items)
             .map_err(|e| ApiError::Internal(format!("Failed to serialize batch: {}", e)))
     }
-    
+
     /// Create from JSON array
     pub fn from_json_array(json: serde_json::Value) -> Result<Self, ApiError>
     where
@@ -138,15 +137,15 @@ impl<T> ProtoJsonBatch<T> {
 pub struct ProtoApiResponse<T> {
     /// Indicates if the operation was successful
     pub success: bool,
-    
+
     /// The actual data (protobuf message serialized as JSON)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
-    
+
     /// Error information if the operation failed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorInfo>,
-    
+
     /// Additional metadata about the response
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<ResponseMetadata>,
@@ -181,7 +180,7 @@ where
             metadata: None,
         }
     }
-    
+
     /// Create an error response
     pub fn error(error: ApiError) -> Self {
         ProtoApiResponse {
@@ -195,7 +194,7 @@ where
             metadata: None,
         }
     }
-    
+
     /// Add metadata to the response
     pub fn with_metadata(mut self, metadata: ResponseMetadata) -> Self {
         self.metadata = Some(metadata);
@@ -215,7 +214,7 @@ where
 /// Utility functions for common proto-JSON conversions
 pub mod utils {
     use crate::proto::proximadb_v1 as proximadb;
-    
+
     /// Convert a VectorRecord to JSON-friendly format
     pub fn vector_record_to_json(record: &proximadb::VectorRecord) -> serde_json::Value {
         serde_json::json!({
@@ -226,9 +225,11 @@ pub mod utils {
             "version": record.version,
         })
     }
-    
+
     /// Convert metadata items to JSON object
-    pub fn metadata_to_json(items: &[proximadb::MetadataItem]) -> serde_json::Map<String, serde_json::Value> {
+    pub fn metadata_to_json(
+        items: &[proximadb::MetadataItem],
+    ) -> serde_json::Map<String, serde_json::Value> {
         let mut map = serde_json::Map::new();
         for item in items {
             let key = &item.key;
@@ -239,7 +240,7 @@ pub mod utils {
         }
         map
     }
-    
+
     /// Convert a single metadata item value to JSON
     pub fn metadata_value_to_json(value: &proximadb::metadata_item::Value) -> serde_json::Value {
         match value {
@@ -248,9 +249,11 @@ pub mod utils {
             proximadb::metadata_item::Value::BoolValue(b) => serde_json::json!(b),
         }
     }
-    
+
     /// Convert JSON to metadata items
-    pub fn json_to_metadata(obj: serde_json::Map<String, serde_json::Value>) -> Vec<proximadb::MetadataItem> {
+    pub fn json_to_metadata(
+        obj: serde_json::Map<String, serde_json::Value>,
+    ) -> Vec<proximadb::MetadataItem> {
         obj.into_iter()
             .map(|(key, value)| proximadb::MetadataItem {
                 key,
@@ -258,13 +261,11 @@ pub mod utils {
             })
             .collect()
     }
-    
+
     /// Convert JSON value to metadata item value
     pub fn json_to_metadata_value(value: serde_json::Value) -> proximadb::metadata_item::Value {
         match value {
-            serde_json::Value::String(s) => {
-                proximadb::metadata_item::Value::StringValue(s)
-            }
+            serde_json::Value::String(s) => proximadb::metadata_item::Value::StringValue(s),
             serde_json::Value::Number(n) => {
                 if let Some(f) = n.as_f64() {
                     proximadb::metadata_item::Value::NumberValue(f)
@@ -272,9 +273,7 @@ pub mod utils {
                     proximadb::metadata_item::Value::NumberValue(0.0)
                 }
             }
-            serde_json::Value::Bool(b) => {
-                proximadb::metadata_item::Value::BoolValue(b)
-            }
+            serde_json::Value::Bool(b) => proximadb::metadata_item::Value::BoolValue(b),
             // Arrays and other complex types fallback to string representation
             _ => proximadb::metadata_item::Value::StringValue(value.to_string()),
         }
@@ -284,7 +283,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_proto_json_conversion() {
         // Test that ProtoJson wrapper maintains data integrity
@@ -292,22 +291,28 @@ mod tests {
         let proto_json = ProtoJson::new(data.clone());
         assert_eq!(proto_json.into_inner(), data);
     }
-    
+
     #[test]
     fn test_metadata_conversion() {
         use utils::*;
-        
+
         let mut map = serde_json::Map::new();
         map.insert("name".to_string(), serde_json::json!("test"));
         map.insert("count".to_string(), serde_json::json!(42));
         map.insert("active".to_string(), serde_json::json!(true));
-        
+
         let metadata = json_to_metadata(map.clone());
         assert_eq!(metadata.len(), 3);
-        
+
         let converted_back = metadata_to_json(&metadata);
-        assert_eq!(converted_back.get("name").unwrap(), &serde_json::json!("test"));
+        assert_eq!(
+            converted_back.get("name").unwrap(),
+            &serde_json::json!("test")
+        );
         assert_eq!(converted_back.get("count").unwrap(), &serde_json::json!(42));
-        assert_eq!(converted_back.get("active").unwrap(), &serde_json::json!(true));
+        assert_eq!(
+            converted_back.get("active").unwrap(),
+            &serde_json::json!(true)
+        );
     }
 }

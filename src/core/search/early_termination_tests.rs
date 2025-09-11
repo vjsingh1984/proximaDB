@@ -3,7 +3,7 @@ mod tests {
     use super::super::multi_tier_deduplication::{
         DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate,
     };
-    
+
     // Define StorageTier locally as it's not exported from multi_tier_deduplication
     #[derive(Debug, Clone, PartialEq)]
     enum StorageTier {

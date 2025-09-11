@@ -19,14 +19,15 @@
 //! Provides query optimization for PULSAR engine with shard-aware planning.
 //! For MVP: Single-node optimization with interfaces ready for distributed expansion.
 
+use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use dashmap::DashMap;
+use crate::graph::engines::GraphEngine;
 
-use crate::core::error::ProximaDBError;
-use crate::graph::{NodeId, EdgeId, Node, Edge};
 use super::PulsarGraphEngine;
+use crate::core::error::ProximaDBError;
+use crate::graph::{Edge, EdgeId, Node, NodeId};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -83,9 +84,15 @@ pub enum StepType {
     /// Node filtering by property
     NodesByProperty { key: String, value: String },
     /// BFS traversal
-    BfsTraversal { start_nodes: Vec<NodeId>, max_depth: u32 },
+    BfsTraversal {
+        start_nodes: Vec<NodeId>,
+        max_depth: u32,
+    },
     /// DFS traversal
-    DfsTraversal { start_nodes: Vec<NodeId>, max_depth: u32 },
+    DfsTraversal {
+        start_nodes: Vec<NodeId>,
+        max_depth: u32,
+    },
     /// Cross-shard merge (MVP: no-op)
     CrossShardMerge,
 }
@@ -133,8 +140,8 @@ impl PulsarQueryOptimizer {
 
         // Single step for node lookup
         steps.push(QueryStep {
-            step_type: StepType::NodeLookup { 
-                node_ids: node_ids.to_vec() 
+            step_type: StepType::NodeLookup {
+                node_ids: node_ids.to_vec(),
             },
             target_shard: 0,
             estimated_time_us: self.estimate_node_lookup_time(node_ids.len()).await,
@@ -158,7 +165,7 @@ impl PulsarQueryOptimizer {
         use_bfs: bool,
     ) -> Result<PulsarQueryPlan> {
         let mut steps = Vec::new();
-        
+
         // For MVP: Single shard traversal
         let step_type = if use_bfs {
             StepType::BfsTraversal {
@@ -175,14 +182,17 @@ impl PulsarQueryOptimizer {
         steps.push(QueryStep {
             step_type,
             target_shard: 0,
-            estimated_time_us: self.estimate_traversal_time(start_nodes.len(), max_depth).await,
+            estimated_time_us: self
+                .estimate_traversal_time(start_nodes.len(), max_depth)
+                .await,
             dependencies: vec![],
         });
 
         // Estimate result size based on average degree and depth
         let stats = self.stats_cache.read().await;
         let avg_degree = stats.edges_per_node.max(2.0);
-        let expected_results = (start_nodes.len() as f64 * avg_degree.powi(max_depth as i32)) as usize;
+        let expected_results =
+            (start_nodes.len() as f64 * avg_degree.powi(max_depth as i32)) as usize;
 
         Ok(PulsarQueryPlan {
             steps,
@@ -231,7 +241,7 @@ impl PulsarQueryOptimizer {
             for &dep_index in &step.dependencies {
                 if dep_index >= step_index {
                     return Err(ProximaDBError::InvalidInput(
-                        "Invalid step dependency order".to_string()
+                        "Invalid step dependency order".to_string(),
                     ));
                 }
             }
@@ -241,15 +251,20 @@ impl PulsarQueryOptimizer {
         }
 
         results.execution_time_us = start_time.elapsed().as_micros() as u64;
-        
+
         // Update statistics
-        self.update_execution_stats(&plan.strategy, results.execution_time_us).await;
+        self.update_execution_stats(&plan.strategy, results.execution_time_us)
+            .await;
 
         Ok(results)
     }
 
     /// Execute a single query step
-    async fn execute_step(&self, step: &QueryStep, results: &mut QueryExecutionResult) -> Result<()> {
+    async fn execute_step(
+        &self,
+        step: &QueryStep,
+        results: &mut QueryExecutionResult,
+    ) -> Result<()> {
         match &step.step_type {
             StepType::NodeLookup { node_ids } => {
                 for node_id in node_ids {
@@ -265,24 +280,36 @@ impl PulsarQueryOptimizer {
                 }
             }
             StepType::NodesByLabel { label } => {
-                // Note: get_nodes_by_label not available on PulsarGraphEngine - skip for now  
+                // Note: get_nodes_by_label not available on PulsarGraphEngine - skip for now
                 let nodes = vec![]; // TODO: Implement node lookup by label
                 results.nodes.extend(nodes);
             }
-            StepType::BfsTraversal { start_nodes, max_depth } => {
+            StepType::BfsTraversal {
+                start_nodes,
+                max_depth,
+            } => {
                 // For MVP: Use the coordinator for BFS (single start node for now)
                 if let Some(start_node) = start_nodes.first() {
-                    let traversal_result = self.engine.coordinator
-                        .distributed_bfs(start_node, *max_depth).await?;
+                    let traversal_result = self
+                        .engine
+                        .coordinator
+                        .distributed_bfs(start_node, *max_depth)
+                        .await?;
                     results.nodes.extend(traversal_result);
                 }
             }
-            StepType::DfsTraversal { start_nodes, max_depth } => {
+            StepType::DfsTraversal {
+                start_nodes,
+                max_depth,
+            } => {
                 // For MVP: Use the coordinator for DFS (single start node for now)
                 if let Some(start_node) = start_nodes.first() {
-                    let traversal_result = self.engine.coordinator
-                        .distributed_dfs(start_node, *max_depth).await?;
-                    results.nodes.extend(traversal_result);
+                    let traversal_result = self
+                        .engine
+                        .coordinator
+                        .distributed_dfs(start_node, *max_depth)
+                        .await?;
+                    results.nodes.extend(traversal_result.nodes);
                 }
             }
             _ => {
@@ -318,7 +345,8 @@ impl PulsarQueryOptimizer {
     async fn update_execution_stats(&self, strategy: &OptimizationStrategy, time_us: u64) {
         let mut stats = self.stats_cache.write().await;
         let strategy_key = format!("{:?}", strategy);
-        stats.execution_times
+        stats
+            .execution_times
             .entry(strategy_key)
             .or_insert_with(Vec::new)
             .push(time_us);
@@ -346,12 +374,14 @@ impl PulsarQueryOptimizer {
         for (strategy, times) in &stats.execution_times {
             if times.len() > 10 {
                 let avg_time = times.iter().sum::<u64>() as f64 / times.len() as f64;
-                if avg_time > 10_000.0 { // > 10ms average
+                if avg_time > 10_000.0 {
+                    // > 10ms average
                     recommendations.push(OptimizationRecommendation {
                         recommendation_type: RecommendationType::SlowQuery,
                         description: format!(
                             "Strategy '{}' has high average execution time: {:.2}ms",
-                            strategy, avg_time / 1000.0
+                            strategy,
+                            avg_time / 1000.0
                         ),
                         impact: RecommendationImpact::High,
                     });
@@ -363,7 +393,8 @@ impl PulsarQueryOptimizer {
         if stats.hot_nodes.len() > 1000 {
             recommendations.push(OptimizationRecommendation {
                 recommendation_type: RecommendationType::CacheOptimization,
-                description: "Consider implementing more aggressive caching for hot nodes".to_string(),
+                description: "Consider implementing more aggressive caching for hot nodes"
+                    .to_string(),
                 impact: RecommendationImpact::Medium,
             });
         }
@@ -419,9 +450,12 @@ mod tests {
         let config = PulsarConfig::default();
         let engine = Arc::new(PulsarGraphEngine::new(config).unwrap());
         let optimizer = PulsarQueryOptimizer::new(engine);
-        
+
         // Test basic functionality
-        let plan = optimizer.optimize_node_lookup(&["node1".to_string()]).await.unwrap();
+        let plan = optimizer
+            .optimize_node_lookup(&["node1".to_string()])
+            .await
+            .unwrap();
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(plan.affected_shards, vec![0]);
     }
@@ -431,14 +465,20 @@ mod tests {
         let config = PulsarConfig::default();
         let engine = Arc::new(PulsarGraphEngine::new(config).unwrap());
         let optimizer = PulsarQueryOptimizer::new(engine);
-        
-        let plan = optimizer.optimize_traversal(
-            &["node1".to_string()],
-            3,
-            true // BFS
-        ).await.unwrap();
-        
+
+        let plan = optimizer
+            .optimize_traversal(
+                &["node1".to_string()],
+                3,
+                true, // BFS
+            )
+            .await
+            .unwrap();
+
         assert_eq!(plan.steps.len(), 1);
-        assert!(matches!(plan.steps[0].step_type, StepType::BfsTraversal { .. }));
+        assert!(matches!(
+            plan.steps[0].step_type,
+            StepType::BfsTraversal { .. }
+        ));
     }
 }

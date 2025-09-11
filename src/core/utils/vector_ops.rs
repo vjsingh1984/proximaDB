@@ -1,5 +1,5 @@
 //! # Vector Operations Utilities
-//! 
+//!
 //! This module consolidates common vector operations and transformations used throughout
 //! ProximaDB's storage engines and compute modules. It eliminates duplication of vector
 //! manipulation logic that was previously scattered across different components.
@@ -35,7 +35,7 @@ use std::f32;
 /// ## Vector Normalization
 ///
 /// ### L2 Normalization
-/// 
+///
 /// Normalizes a vector to unit length using L2 norm (Euclidean norm).
 /// This is crucial for cosine similarity calculations.
 ///
@@ -68,10 +68,7 @@ pub fn normalize_l2(vector: &[f32]) -> Vec<f32> {
 /// * The L2 norm as f32
 #[inline]
 pub fn l2_norm(vector: &[f32]) -> f32 {
-    vector.iter()
-        .map(|&x| x * x)
-        .sum::<f32>()
-        .sqrt()
+    vector.iter().map(|&x| x * x).sum::<f32>().sqrt()
 }
 
 /// ### Min-Max Normalization
@@ -87,7 +84,7 @@ pub fn normalize_min_max(vector: &[f32]) -> Vec<f32> {
     let min = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
     let max = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     let range = max - min;
-    
+
     if range > f32::EPSILON {
         vector.iter().map(|&v| (v - min) / range).collect()
     } else {
@@ -107,7 +104,7 @@ pub fn normalize_min_max(vector: &[f32]) -> Vec<f32> {
 pub fn standardize(vector: &[f32]) -> Vec<f32> {
     let mean = mean(vector);
     let std_dev = standard_deviation(vector, Some(mean));
-    
+
     if std_dev > f32::EPSILON {
         vector.iter().map(|&v| (v - mean) / std_dev).collect()
     } else {
@@ -133,26 +130,28 @@ pub fn validate_vector(vector: &[f32], expected_dimension: Option<usize>) -> Res
         if vector.len() != dim {
             return Err(anyhow!(
                 "Dimension mismatch: expected {}, got {}",
-                dim, vector.len()
+                dim,
+                vector.len()
             ));
         }
     }
-    
+
     // Check for empty vector
     if vector.is_empty() {
         return Err(anyhow!("Vector is empty"));
     }
-    
+
     // Check for NaN or Inf
     for (i, &value) in vector.iter().enumerate() {
         if !value.is_finite() {
             return Err(anyhow!(
                 "Invalid value at index {}: {} (NaN or Inf)",
-                i, value
+                i,
+                value
             ));
         }
     }
-    
+
     Ok(())
 }
 
@@ -195,14 +194,18 @@ pub fn resize_vector(vector: &[f32], target_dim: usize, pad_value: f32) -> Vec<f
 /// Applies element-wise operations between two vectors.
 pub fn elementwise_add(a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
     if a.len() != b.len() {
-        return Err(anyhow!("Vectors must have same dimension for element-wise addition"));
+        return Err(anyhow!(
+            "Vectors must have same dimension for element-wise addition"
+        ));
     }
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
 }
 
 pub fn elementwise_multiply(a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
     if a.len() != b.len() {
-        return Err(anyhow!("Vectors must have same dimension for element-wise multiplication"));
+        return Err(anyhow!(
+            "Vectors must have same dimension for element-wise multiplication"
+        ));
     }
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x * y).collect())
 }
@@ -239,12 +242,14 @@ pub fn variance(vector: &[f32], mean: Option<f32>) -> f32 {
         return 0.0;
     }
     let m = mean.unwrap_or_else(|| self::mean(vector));
-    vector.iter()
+    vector
+        .iter()
         .map(|&v| {
             let diff = v - m;
             diff * diff
         })
-        .sum::<f32>() / vector.len() as f32
+        .sum::<f32>()
+        / vector.len() as f32
 }
 
 /// ### Standard Deviation
@@ -272,10 +277,10 @@ pub fn quantile(vector: &[f32], quantile: f32) -> Result<f32> {
     if !(0.0..=1.0).contains(&quantile) {
         return Err(anyhow!("Quantile must be between 0.0 and 1.0"));
     }
-    
+
     let mut sorted = vector.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    
+
     let index = (quantile * (sorted.len() - 1) as f32) as usize;
     Ok(sorted[index])
 }
@@ -300,7 +305,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<f32> {
     let dot = dot_product(a, b)?;
     let norm_a = l2_norm(a);
     let norm_b = l2_norm(b);
-    
+
     if norm_a > f32::EPSILON && norm_b > f32::EPSILON {
         Ok(dot / (norm_a * norm_b))
     } else {
@@ -321,7 +326,10 @@ pub fn clamp_values(vector: &[f32], min: f32, max: f32) -> Vec<f32> {
 ///
 /// Sets values below threshold to zero (sparsification).
 pub fn apply_threshold(vector: &[f32], threshold: f32) -> Vec<f32> {
-    vector.iter().map(|&v| if v.abs() < threshold { 0.0 } else { v }).collect()
+    vector
+        .iter()
+        .map(|&v| if v.abs() < threshold { 0.0 } else { v })
+        .collect()
 }
 
 /// ### Count Non-Zero Elements
@@ -345,7 +353,7 @@ pub fn sparsity(vector: &[f32], epsilon: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_l2_normalization() {
         let vector = vec![3.0, 4.0];
@@ -353,7 +361,7 @@ mod tests {
         let norm = l2_norm(&normalized);
         assert!((norm - 1.0).abs() < 1e-6);
     }
-    
+
     #[test]
     fn test_min_max_normalization() {
         let vector = vec![1.0, 2.0, 3.0, 4.0, 5.0];
@@ -361,23 +369,23 @@ mod tests {
         assert_eq!(normalized[0], 0.0);
         assert_eq!(normalized[4], 1.0);
     }
-    
+
     #[test]
     fn test_vector_validation() {
         let valid = vec![1.0, 2.0, 3.0];
         assert!(validate_vector(&valid, Some(3)).is_ok());
-        
+
         let invalid = vec![1.0, f32::NAN, 3.0];
         assert!(validate_vector(&invalid, Some(3)).is_err());
     }
-    
+
     #[test]
     fn test_cosine_similarity() {
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0];
         let similarity = cosine_similarity(&a, &b).unwrap();
         assert_eq!(similarity, 0.0); // Orthogonal vectors
-        
+
         let c = vec![1.0, 1.0];
         let similarity2 = cosine_similarity(&a, &c).unwrap();
         assert!((similarity2 - 0.7071).abs() < 0.001);

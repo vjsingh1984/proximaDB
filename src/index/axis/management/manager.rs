@@ -4,13 +4,13 @@
 // you may not use this file except in compliance with the License.
 
 //! # AXIS Index Manager - Adaptive eXperimental Index System
-//! 
+//!
 //! This module implements the central coordination layer for ProximaDB's adaptive
 //! indexing system. AXIS dynamically selects and migrates between different index
 //! types based on workload patterns, data characteristics, and query requirements.
-//! 
+//!
 //! ## Architecture
-//! 
+//!
 //! ```text
 //! ┌─────────────────────────────────────────────┐
 //! │            AXIS Manager                      │
@@ -26,35 +26,35 @@
 //! │    └──────┴──────┴──────┴──────┘          │
 //! └─────────────────────────────────────────────┘
 //! ```
-//! 
+//!
 //! ## Key Features
-//! 
+//!
 //! ### 1. **Adaptive Index Selection**
 //! - Monitors query patterns and data distribution
 //! - Automatically selects optimal index type
 //! - Seamless migration between index types
-//! 
+//!
 //! ### 2. **Performance Monitoring**
 //! - Real-time tracking of index performance
 //! - Query latency and throughput metrics
 //! - Resource utilization monitoring
-//! 
+//!
 //! ### 3. **Index Migration Engine**
 //! - Zero-downtime index migrations
 //! - Incremental index building
 //! - Rollback capabilities
-//! 
+//!
 //! ### 4. **Clustering Engine**
 //! - Automatic data clustering for IVF indexes
 //! - Centroid optimization
 //! - Balanced cluster distribution
-//! 
+//!
 //! ## Usage Example
-//! 
+//!
 //! ```rust
 //! use proximadb::index::axis::AxisManager;
 //! use proximadb::index::axis::AxisConfig;
-//! 
+//!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Create AXIS manager with adaptive configuration
 //! let config = AxisConfig {
@@ -63,12 +63,12 @@
 //!     monitoring_interval_ms: 5000,
 //!     ..Default::default()
 //! };
-//! 
+//!
 //! let axis_manager = AxisManager::new(config).await?;
-//! 
+//!
 //! // AXIS automatically adapts to workload patterns
 //! axis_manager.start_monitoring().await?;
-//! 
+//!
 //! // Manual strategy override if needed
 //! axis_manager.set_collection_strategy(
 //!     "high_traffic_collection",
@@ -84,7 +84,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
-
 
 use crate::core::{String, VectorId, VectorRecord};
 use crate::index::axis::management::{
@@ -102,21 +101,21 @@ use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, S
 // use crate::storage::engines::impls::viper::QuantizationMethod;
 
 /// Central manager for AXIS with adaptive capabilities
-/// 
+///
 /// The `AxisManager` coordinates all indexing operations in ProximaDB, providing
 /// a unified interface for vector indexing with automatic adaptation based on
 /// workload characteristics.
-/// 
+///
 /// # Components
-/// 
+///
 /// - **Core Indexes**: Global ID, metadata, dense/sparse vector indexes
 /// - **Adaptive Engine**: Monitors and adapts to workload patterns
 /// - **Migration Engine**: Handles index type transitions
 /// - **Performance Monitor**: Tracks metrics and performance
 /// - **Clustering Engine**: Manages IVF clustering operations
-/// 
+///
 /// # Thread Safety
-/// 
+///
 /// All operations are thread-safe through internal synchronization using
 /// `Arc<RwLock>` for shared state and `DashMap` for concurrent collections.
 ///
@@ -154,41 +153,41 @@ use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, S
 /// ```
 pub struct AxisManager {
     /// Core index components for different data types
-    
+
     /// Global ID index for fast ID-based lookups
     /// Maps vector IDs to storage locations across all collections
     global_id_index: Arc<GlobalIdIndex>,
-    
+
     /// Metadata index for filtered search
     /// Supports range queries, equality, and complex predicates
     metadata_index: Arc<MetadataIndex>,
-    
+
     /// Dense vector index for similarity search
     /// Supports HNSW, IVF, LSH, Annoy, PQ, Flat algorithms
     dense_vector_index: Arc<DenseVectorIndex>,
-    
+
     /// Sparse vector index for keyword/document search
     /// Optimized for high-dimensional sparse vectors
     sparse_vector_index: Arc<SparseVectorIndex>,
-    
+
     /// Join engine for hybrid queries
     /// Combines results from multiple indexes
     join_engine: Arc<JoinEngine>,
 
     /// Adaptive intelligence components for workload optimization
-    
+
     /// Monitors workload patterns and triggers adaptations
     /// Analyzes query distribution, data growth, and access patterns
     adaptive_engine: Arc<AdaptiveIndexEngine>,
-    
+
     /// Handles zero-downtime index migrations
     /// Builds new index in background, validates, then switches atomically
     migration_engine: Arc<IndexMigrationEngine>,
-    
+
     /// Tracks performance metrics and anomalies
     /// Monitors latency, throughput, accuracy, and resource usage
     performance_monitor: Arc<PerformanceMonitor>,
-    
+
     /// Manages clustering for IVF indexes
     /// Performs k-means clustering and centroid optimization
     clustering_engine: Arc<AxisClusteringEngine>,
@@ -205,7 +204,7 @@ pub struct AxisManager {
     /// Configuration and metrics
     /// Global AXIS configuration (thresholds, intervals, etc.)
     config: AxisConfig,
-    
+
     /// Aggregated metrics across all managed indexes
     metrics: Arc<RwLock<AxisMetrics>>,
 
@@ -240,19 +239,19 @@ pub struct AxisManager {
 pub struct MigrationStatus {
     /// Unique identifier for tracking
     pub migration_id: crate::utils::uuid::Uuid,
-    
+
     /// Source index strategy
     pub from_strategy: IndexSelectionStrategy,
-    
+
     /// Target index strategy
     pub to_strategy: IndexSelectionStrategy,
-    
+
     /// When migration started
     pub start_time: DateTime<Utc>,
-    
+
     /// Current progress (0.0 to 100.0)
     pub progress_percentage: f64,
-    
+
     /// Estimated completion based on current rate
     pub estimated_completion: Option<DateTime<Utc>>,
 }
@@ -274,22 +273,22 @@ pub struct MigrationStatus {
 pub struct AxisMetrics {
     /// Total migration attempts
     pub total_migrations: u64,
-    
+
     /// Successfully completed migrations
     pub successful_migrations: u64,
-    
+
     /// Failed migrations (rolled back)
     pub failed_migrations: u64,
-    
+
     /// Average time to complete migration
     pub average_migration_time_ms: u64,
-    
+
     /// Number of collections under management
     pub total_collections_managed: u64,
-    
+
     /// Total vectors across all indexes
     pub total_vectors_indexed: u64,
-    
+
     /// Full index rebuilds (usually after corruption)
     pub total_rebuilds: u64,
 }

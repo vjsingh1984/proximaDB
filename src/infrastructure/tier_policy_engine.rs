@@ -1215,7 +1215,9 @@ impl GlobalTier {
     }
 
     /// Create default tier configurations based on detected hardware
-    fn create_default_tier_configs(tiers: &[InfrastructureTier]) -> HashMap<InfrastructureTier, TierConfig> {
+    fn create_default_tier_configs(
+        tiers: &[InfrastructureTier],
+    ) -> HashMap<InfrastructureTier, TierConfig> {
         let mut configs = HashMap::new();
 
         for tier in tiers {
@@ -1969,7 +1971,12 @@ impl SmartTierPolicy {
     }
 
     /// Get estimated cost for storing data in a specific tier
-    pub fn storage_cost(&self, tier: &InfrastructureTier, size_bytes: usize, duration_days: u32) -> f64 {
+    pub fn storage_cost(
+        &self,
+        tier: &InfrastructureTier,
+        size_bytes: usize,
+        duration_days: u32,
+    ) -> f64 {
         if let Some(config) = self.tier_configs.get(tier) {
             let gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
             let months = duration_days as f64 / 30.0;
@@ -2284,9 +2291,11 @@ mod tests {
         );
 
         // Test faster-than comparison
-        assert!(InfrastructureTier::Memory.is_faster_than(&InfrastructureTier::HardDisk {
-            mount_path: "/test".to_string()
-        }));
+        assert!(
+            InfrastructureTier::Memory.is_faster_than(&InfrastructureTier::HardDisk {
+                mount_path: "/test".to_string()
+            })
+        );
         assert!(
             !InfrastructureTier::HardDisk {
                 mount_path: "/test".to_string()

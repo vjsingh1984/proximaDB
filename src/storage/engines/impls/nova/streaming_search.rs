@@ -10,15 +10,12 @@ use tracing::{debug, info, instrument};
 
 use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use super::progressive_search::{
-    ProgressiveColumnarSearch, ProgressiveSearchConfig,
-    ProgressiveSearchResult,
+    ProgressiveColumnarSearch, ProgressiveSearchConfig, ProgressiveSearchResult,
 };
-use super::streaming_processor::{
-    StreamingConfig, StreamingRowGroupProcessor,
-};
+use super::streaming_processor::{StreamingConfig, StreamingRowGroupProcessor};
 use super::zone_maps::{
-    AdvancedZoneMap, CostBasedOptimizer, OptimizationStrategy,
-    PerformanceHistory, WorkloadStats, ZoneMapConfig,
+    AdvancedZoneMap, CostBasedOptimizer, OptimizationStrategy, PerformanceHistory, WorkloadStats,
+    ZoneMapConfig,
 };
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
@@ -178,10 +175,12 @@ impl StreamingSearchEngine {
         );
         let quant_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
-        let unified_quantization_engine = Arc::new(crate::compute::quantization::UnifiedQuantizationEngine::new(
-            distance_compute.clone(),
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
-        ));
+        let unified_quantization_engine = Arc::new(
+            crate::compute::quantization::UnifiedQuantizationEngine::new(
+                distance_compute.clone(),
+                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+            ),
+        );
         let quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                 unified_quantization_engine.clone(),
@@ -566,7 +565,12 @@ impl StreamingSearchEngine {
             .iter()
             .map(|m| m.duration_ms)
             .sum::<u64>() as f32;
-        let max_stage_time = result.stage_metrics.iter().map(|m| m.duration_ms).max().unwrap_or(0) as f32;
+        let max_stage_time = result
+            .stage_metrics
+            .iter()
+            .map(|m| m.duration_ms)
+            .max()
+            .unwrap_or(0) as f32;
 
         if total_time > 0.0 {
             max_stage_time / total_time

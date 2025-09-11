@@ -26,10 +26,10 @@
 //! RENAME SUGGESTION: This file should be renamed to `sst_query_engine.rs`
 //! to match the suggested parquet naming convention
 
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::search::OptimizedSearchRecord;
 use anyhow::Result;
 use std::collections::HashMap;
-use crate::core::search::OptimizedSearchRecord;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use std::io::Read;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -133,7 +133,9 @@ impl std::fmt::Debug for UnifiedSstableReader {
 /// Block cache for frequently accessed data blocks
 #[derive(Debug)]
 pub struct BlockCache {
-    cache: Arc<tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<FastLanesDataBlock>>>>,
+    cache: Arc<
+        tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<FastLanesDataBlock>>>,
+    >,
     max_size: usize,
     hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
 }
@@ -557,11 +559,11 @@ impl ModularBlockReader {
                     results.push(
                         OptimizedSearchRecord::new(
                             format!("block_{}_record_{}", block_idx, record_idx),
-                            distance.rank_value
+                            distance.rank_value,
                         )
                         .with_similarity(distance.normalized_score)
                         .add_vector(full_vector)
-                        .with_metadata(TypedMetadata::default())
+                        .with_metadata(TypedMetadata::default()),
                     );
                 }
             }
@@ -634,13 +636,10 @@ impl ModularBlockReader {
                         .calculate_distance(query_vector, &record.vector, distance_metric);
 
                 all_results.push(
-                    OptimizedSearchRecord::new(
-                        record.id.clone(),
-                        distance.rank_value,
-                    )
-                    .with_similarity(distance.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::default())
+                    OptimizedSearchRecord::new(record.id.clone(), distance.rank_value)
+                        .with_similarity(distance.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::default()),
                 );
             }
         }
@@ -2351,23 +2350,22 @@ impl UnifiedSstableReader {
                     if let Some(value) = &item.value {
                         use crate::proto::proximadb_v1::metadata_item;
                         let typed_value = match value {
-                            metadata_item::Value::StringValue(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                            metadata_item::Value::StringValue(s) => {
+                                MetadataValue::String(std::sync::Arc::from(s.as_str()))
+                            }
                             metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
                             metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
                         };
                         metadata_map.insert(key.clone(), typed_value);
                     }
                 }
-                
+
                 scored_results.push(
-                    OptimizedSearchRecord::new(
-                        record.id.clone(),
-                        similarity.rank_value,
-                    )
-                    .with_similarity(similarity.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::from_map(metadata_map))
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp)
+                    OptimizedSearchRecord::new(record.id.clone(), similarity.rank_value)
+                        .with_similarity(similarity.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::from_map(metadata_map))
+                        .with_version_info(record.version.unwrap_or(0), record.timestamp),
                 );
             }
         }
@@ -3858,17 +3856,17 @@ impl UnifiedSstableReader {
         // Convert zero_copy QueryType to block_filter QueryType
         let zero_copy_query_type = search_strategy.to_query_type();
         let block_query_type = match zero_copy_query_type {
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::IdLookup => 
+            crate::storage::engines::core::io::zero_copy::traits::QueryType::IdLookup =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::PointQuery,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::SimilaritySearch => 
+            crate::storage::engines::core::io::zero_copy::traits::QueryType::SimilaritySearch =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::MetadataFilter => 
+            crate::storage::engines::core::io::zero_copy::traits::QueryType::MetadataFilter =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::MetadataFilter,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::VectorSearch => 
+            crate::storage::engines::core::io::zero_copy::traits::QueryType::VectorSearch =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::Batch => 
+            crate::storage::engines::core::io::zero_copy::traits::QueryType::Batch =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::FullScan => 
+            crate::storage::engines::core::io::zero_copy::traits::QueryType::FullScan =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
         };
 
@@ -4409,11 +4407,10 @@ impl ReadingStrategySelector {
         };
 
         // Use compaction-optimized strategy - read all records
-        let search_strategy = SstableReadingStrategy::FullScan { use_block_cache: false };
-        debug!(
-            "📊 COMPACTION: Using strategy: {:?}",
-            search_strategy
-        );
+        let search_strategy = SstableReadingStrategy::FullScan {
+            use_block_cache: false,
+        };
+        debug!("📊 COMPACTION: Using strategy: {:?}", search_strategy);
 
         // For compaction, we need to read all blocks - create empty placeholder
         let blocks: Vec<FastLanesDataBlock> = Vec::new();
@@ -4466,7 +4463,9 @@ impl ReadingStrategySelector {
 impl BlockCache {
     pub fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(tokio::sync::RwLock::new(crate::utils::cache::LruCache::new(max_size))),
+            cache: Arc::new(tokio::sync::RwLock::new(
+                crate::utils::cache::LruCache::new(max_size),
+            )),
             max_size,
             hit_rate: Arc::new(tokio::sync::RwLock::new(CacheStats::default())),
         }

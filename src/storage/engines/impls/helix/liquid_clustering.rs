@@ -5,13 +5,13 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
+use super::clustering::{HilbertKey, LiquidClusteringConfig, QueryPatternTracker};
 use crate::core::VectorRecord;
-use super::clustering::{HilbertKey, QueryPatternTracker, LiquidClusteringConfig};
 
 /// Liquid clustering coordinator
 pub struct LiquidClusteringCoordinator {
@@ -67,23 +67,20 @@ impl LiquidClusteringCoordinator {
 
         let tracker = self.query_tracker.read().await;
         let stats = self.cluster_stats.read().await;
-        
+
         // Get access patterns for these records
         let vector_ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
-        let clustering_hints = tracker.get_clustering_hints(
-            &vector_ids,
-            &self.config,
-        );
-        
+        let clustering_hints = tracker.get_clustering_hints(&vector_ids, &self.config);
+
         // Identify hot regions in Hilbert space
         let hot_regions = tracker.identify_hot_regions(0.01); // 1% threshold
-        
+
         info!(
             "Liquid clustering: {} hot regions identified from {} queries",
             hot_regions.len(),
             tracker.total_queries
         );
-        
+
         // Create cluster assignments based on access patterns
         let assignments = self.compute_cluster_assignments(
             &records,
@@ -91,20 +88,17 @@ impl LiquidClusteringCoordinator {
             &clustering_hints,
             &hot_regions,
         );
-        
+
         // Reorganize records based on assignments
-        let (reorganized_records, new_keys) = self.reorganize_by_clusters(
-            records,
-            hilbert_keys,
-            assignments,
-        );
-        
+        let (reorganized_records, new_keys) =
+            self.reorganize_by_clusters(records, hilbert_keys, assignments);
+
         // Update statistics
         drop(stats);
         let mut stats = self.cluster_stats.write().await;
         stats.recluster_count += 1;
         stats.last_recluster = Some(chrono::Utc::now());
-        
+
         Ok((reorganized_records, new_keys))
     }
 
@@ -117,21 +111,17 @@ impl LiquidClusteringCoordinator {
         hot_regions: &[(HilbertKey, HilbertKey)],
     ) -> Vec<ClusterAssignment> {
         let mut assignments = Vec::new();
-        
+
         for (i, record) in records.iter().enumerate() {
             let hilbert_key = hilbert_keys[i];
             let access_score = access_scores.get(&record.id).copied().unwrap_or(0.0);
-            
+
             // Determine cluster based on access patterns and Hilbert location
-            let cluster_id = self.determine_cluster(
-                hilbert_key,
-                access_score,
-                hot_regions,
-            );
-            
+            let cluster_id = self.determine_cluster(hilbert_key, access_score, hot_regions);
+
             // Calculate priority within cluster
             let priority = self.calculate_priority(access_score, hilbert_key);
-            
+
             assignments.push(ClusterAssignment {
                 record_index: i,
                 cluster_id,
@@ -139,7 +129,7 @@ impl LiquidClusteringCoordinator {
                 hilbert_key,
             });
         }
-        
+
         assignments
     }
 
@@ -156,12 +146,12 @@ impl LiquidClusteringCoordinator {
                 return idx as u32; // Hot cluster
             }
         }
-        
+
         // Assign to cold cluster based on access score
         if access_score < 0.1 {
             return u32::MAX; // Cold cluster
         }
-        
+
         // Medium access cluster
         (hot_regions.len() + 1) as u32
     }
@@ -181,19 +171,20 @@ impl LiquidClusteringCoordinator {
     ) -> (Vec<VectorRecord>, Vec<HilbertKey>) {
         // Sort assignments by cluster and priority
         assignments.sort_by(|a, b| {
-            a.cluster_id.cmp(&b.cluster_id)
+            a.cluster_id
+                .cmp(&b.cluster_id)
                 .then(b.priority.partial_cmp(&a.priority).unwrap())
         });
-        
+
         // Reorder records and keys based on assignments
         let mut new_records = Vec::with_capacity(records.len());
         let mut new_keys = Vec::with_capacity(hilbert_keys.len());
-        
+
         for assignment in assignments {
             new_records.push(records[assignment.record_index].clone());
             new_keys.push(assignment.hilbert_key);
         }
-        
+
         (new_records, new_keys)
     }
 
@@ -201,12 +192,12 @@ impl LiquidClusteringCoordinator {
     pub async fn should_recluster(&self) -> bool {
         let tracker = self.query_tracker.read().await;
         let stats = self.cluster_stats.read().await;
-        
+
         // Check if enough queries have been processed
         if tracker.total_queries < self.config.recluster_threshold as usize {
             return false;
         }
-        
+
         // Check time since last re-clustering
         if let Some(last) = stats.last_recluster {
             let elapsed = chrono::Utc::now() - last;
@@ -214,13 +205,16 @@ impl LiquidClusteringCoordinator {
                 return false; // Don't re-cluster too frequently
             }
         }
-        
+
         // Check clustering quality degradation
         if stats.clustering_quality < 0.5 {
-            info!("Clustering quality degraded to {:.2}", stats.clustering_quality);
+            info!(
+                "Clustering quality degraded to {:.2}",
+                stats.clustering_quality
+            );
             return true;
         }
-        
+
         false
     }
 
@@ -233,33 +227,34 @@ impl LiquidClusteringCoordinator {
         if records.is_empty() {
             return 1.0;
         }
-        
+
         let tracker = self.query_tracker.read().await;
-        
+
         // Calculate locality score (nearby vectors should have similar access patterns)
         let mut locality_score = 0.0;
         let window_size = 10;
-        
+
         for i in 0..records.len().saturating_sub(window_size) {
             let window = &records[i..i + window_size];
             let window_keys = &hilbert_keys[i..i + window_size];
-            
+
             // Check if vectors in window have similar access counts
             let access_counts: Vec<usize> = window
                 .iter()
                 .map(|r| tracker.access_counts.get(&r.id).copied().unwrap_or(0))
                 .collect();
-            
+
             let mean_access = access_counts.iter().sum::<usize>() as f32 / window_size as f32;
             let variance: f32 = access_counts
                 .iter()
                 .map(|&c| (c as f32 - mean_access).powi(2))
-                .sum::<f32>() / window_size as f32;
-            
+                .sum::<f32>()
+                / window_size as f32;
+
             // Lower variance within windows = better clustering
             locality_score += 1.0 / (1.0 + variance);
         }
-        
+
         let num_windows = records.len().saturating_sub(window_size).max(1);
         locality_score / num_windows as f32
     }
@@ -269,38 +264,45 @@ impl LiquidClusteringCoordinator {
         let mut suggestions = Vec::new();
         let tracker = self.query_tracker.read().await;
         let stats = self.cluster_stats.read().await;
-        
+
         // Suggest PCA retraining if access patterns have shifted
         let hot_regions = tracker.identify_hot_regions(0.01);
         if hot_regions.len() > 10 {
             suggestions.push(OptimizationSuggestion {
                 suggestion_type: SuggestionType::PcaRetrain,
-                reason: format!("High fragmentation: {} hot regions detected", hot_regions.len()),
+                reason: format!(
+                    "High fragmentation: {} hot regions detected",
+                    hot_regions.len()
+                ),
                 estimated_improvement: 0.3,
             });
         }
-        
+
         // Suggest block size adjustment based on access patterns
-        let avg_access_per_vector = tracker.total_queries as f32 / 
-            tracker.access_counts.len().max(1) as f32;
-        
+        let avg_access_per_vector =
+            tracker.total_queries as f32 / tracker.access_counts.len().max(1) as f32;
+
         if avg_access_per_vector > 100.0 {
             suggestions.push(OptimizationSuggestion {
                 suggestion_type: SuggestionType::BlockSizeDecrease,
-                reason: "High access rate suggests smaller blocks for better cache utilization".to_string(),
+                reason: "High access rate suggests smaller blocks for better cache utilization"
+                    .to_string(),
                 estimated_improvement: 0.2,
             });
         }
-        
+
         // Suggest compaction if clustering quality is low
         if stats.clustering_quality < 0.6 {
             suggestions.push(OptimizationSuggestion {
                 suggestion_type: SuggestionType::ForceCompaction,
-                reason: format!("Clustering quality {:.2} below threshold", stats.clustering_quality),
+                reason: format!(
+                    "Clustering quality {:.2} below threshold",
+                    stats.clustering_quality
+                ),
                 estimated_improvement: 0.4,
             });
         }
-        
+
         suggestions
     }
 }
@@ -359,7 +361,7 @@ mod tests {
     async fn test_liquid_clustering() {
         let config = LiquidClusteringConfig::default();
         let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
-        
+
         // Record some access patterns
         {
             let mut tracker = query_tracker.write().await;
@@ -368,9 +370,9 @@ mod tests {
             tracker.record_access("vec2", 200);
             tracker.record_access("vec3", 300);
         }
-        
+
         let coordinator = LiquidClusteringCoordinator::new(config, query_tracker);
-        
+
         // Create test records
         let records = vec![
             VectorRecord {
@@ -395,15 +397,15 @@ mod tests {
                 expires_at: None,
             },
         ];
-        
+
         let hilbert_keys = vec![100, 200, 300];
-        
+
         // Apply liquid clustering
         let (reorganized, new_keys) = coordinator
             .apply_liquid_clustering(records.clone(), &hilbert_keys)
             .await
             .unwrap();
-        
+
         assert_eq!(reorganized.len(), records.len());
         assert_eq!(new_keys.len(), hilbert_keys.len());
     }
@@ -413,23 +415,21 @@ mod tests {
         let config = LiquidClusteringConfig::default();
         let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
         let coordinator = LiquidClusteringCoordinator::new(config, query_tracker);
-        
-        let records = vec![
-            VectorRecord {
-                id: "vec1".to_string(),
-                vector: vec![1.0],
-                metadata: None,
-                timestamp: 0,
-                expires_at: None,
-            },
-        ];
-        
+
+        let records = vec![VectorRecord {
+            id: "vec1".to_string(),
+            vector: vec![1.0],
+            metadata: None,
+            timestamp: 0,
+            expires_at: None,
+        }];
+
         let hilbert_keys = vec![100];
-        
+
         let quality = coordinator
             .calculate_clustering_quality(&records, &hilbert_keys)
             .await;
-        
+
         assert!(quality >= 0.0 && quality <= 1.0);
     }
 }

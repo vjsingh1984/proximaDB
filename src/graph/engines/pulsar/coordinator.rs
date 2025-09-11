@@ -21,12 +21,13 @@
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::{Node, Edge, NodeId, EdgeId};
-use crate::graph::engines::orion::OrionGraphEngine;
 use super::sharding::ConsistentHashRing;
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::graph::engines::orion::OrionGraphEngine;
+use crate::graph::engines::GraphEngine;
+use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::{Duration, Instant};
 
@@ -111,16 +112,19 @@ impl QueryCoordinator {
             stats: Arc::new(RwLock::new(CoordinatorStats::default())),
         }
     }
-    
+
     /// Perform distributed BFS traversal
     pub async fn distributed_bfs(
         &self,
         start_node: &NodeId,
         max_depth: u32,
     ) -> Result<Vec<Arc<Node>>> {
-        let _permit = self.query_semaphore.acquire().await
+        let _permit = self
+            .query_semaphore
+            .acquire()
+            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
-        
+
         let query_id = self.generate_query_id().await;
         let mut context = TraversalContext {
             visited: HashSet::new(),
@@ -130,15 +134,17 @@ impl QueryCoordinator {
             current_depth: 0,
             shards_involved: HashSet::new(),
         };
-        
-        let result = self.execute_distributed_bfs(start_node, &mut context).await?;
-        
+
+        let result = self
+            .execute_distributed_bfs(start_node, &mut context)
+            .await?;
+
         // Update statistics
         self.update_query_stats(&context).await;
-        
+
         Ok(result)
     }
-    
+
     /// Execute the actual distributed BFS
     async fn execute_distributed_bfs(
         &self,
@@ -147,34 +153,32 @@ impl QueryCoordinator {
     ) -> Result<Vec<Arc<Node>>> {
         let mut result_nodes = Vec::new();
         let mut queue = VecDeque::new();
-        
+
         // Add start node to queue
         queue.push_back((start_node.clone(), 0u32)); // (node_id, depth)
         context.visited.insert(start_node.clone());
-        
+
         while let Some((current_node_id, depth)) = queue.pop_front() {
             if depth > context.max_depth {
                 continue;
             }
-            
+
             // Get the shard for this node
             let shard_id = self.get_shard_for_node(&current_node_id).await?;
             context.shards_involved.insert(shard_id);
-            
+
             // Get the node from its shard
             if let Some(shard) = self.shards.get(&shard_id) {
                 // Get the actual node
                 if let Some(node) = shard.get_node(&current_node_id)? {
                     result_nodes.push(node);
-                    
+
                     // Get neighbors if we haven't reached max depth
                     if depth < context.max_depth {
-                        let neighbors = self.get_cross_shard_neighbors_internal(
-                            &current_node_id,
-                            None,
-                            context,
-                        ).await?;
-                        
+                        let neighbors = self
+                            .get_cross_shard_neighbors_internal(&current_node_id, None, context)
+                            .await?;
+
                         // Add unvisited neighbors to queue
                         for neighbor in neighbors {
                             if !context.visited.contains(&neighbor.id) {
@@ -186,10 +190,10 @@ impl QueryCoordinator {
                 }
             }
         }
-        
+
         Ok(result_nodes)
     }
-    
+
     /// Get neighbors across shards
     pub async fn get_cross_shard_neighbors(
         &self,
@@ -204,10 +208,11 @@ impl QueryCoordinator {
             current_depth: 0,
             shards_involved: HashSet::new(),
         };
-        
-        self.get_cross_shard_neighbors_internal(node_id, edge_type, &mut context).await
+
+        self.get_cross_shard_neighbors_internal(node_id, edge_type, &mut context)
+            .await
     }
-    
+
     /// Internal method for getting cross-shard neighbors
     async fn get_cross_shard_neighbors_internal(
         &self,
@@ -216,11 +221,11 @@ impl QueryCoordinator {
         context: &mut TraversalContext,
     ) -> Result<Vec<Arc<Node>>> {
         let mut all_neighbors = Vec::new();
-        
+
         // Get outgoing edges from the node's primary shard
         let primary_shard_id = self.get_shard_for_node(node_id).await?;
         context.shards_involved.insert(primary_shard_id);
-        
+
         if let Some(primary_shard) = self.shards.get(&primary_shard_id) {
             // Get outgoing edges
             let outgoing_edges = primary_shard.get_outgoing_edges(node_id, edge_type)?;
@@ -229,7 +234,7 @@ impl QueryCoordinator {
                     // The target node might be in a different shard
                     let target_shard_id = self.get_shard_for_node(&edge.to_node_id).await?;
                     context.shards_involved.insert(target_shard_id);
-                    
+
                     if let Some(target_shard) = self.shards.get(&target_shard_id) {
                         if let Some(target_node) = target_shard.get_node(&edge.to_node_id)? {
                             all_neighbors.push(target_node);
@@ -238,23 +243,23 @@ impl QueryCoordinator {
                 }
             }
         }
-        
+
         // Also check for incoming edges (could be from other shards)
         // This requires checking all shards, which is expensive but thorough
         for shard_entry in self.shards.iter() {
             let shard_id = *shard_entry.key();
             let shard = shard_entry.value();
-            
+
             // Skip if this is the primary shard (already checked above)
             if shard_id == primary_shard_id {
                 continue;
             }
-            
+
             // Check for incoming edges to our node
             let incoming_edges = shard.get_incoming_edges(node_id, edge_type)?;
             if !incoming_edges.is_empty() {
                 context.shards_involved.insert(shard_id);
-                
+
                 for edge in incoming_edges {
                     // The source node is in this shard
                     if let Some(source_node) = shard.get_node(&edge.from_node_id)? {
@@ -263,19 +268,22 @@ impl QueryCoordinator {
                 }
             }
         }
-        
+
         Ok(all_neighbors)
     }
-    
+
     /// Perform distributed DFS traversal
     pub async fn distributed_dfs(
         &self,
         start_node: &NodeId,
         max_depth: u32,
     ) -> Result<DistributedTraversalResult> {
-        let _permit = self.query_semaphore.acquire().await
+        let _permit = self
+            .query_semaphore
+            .acquire()
+            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
-        
+
         let query_id = self.generate_query_id().await;
         let mut context = TraversalContext {
             visited: HashSet::new(),
@@ -285,29 +293,32 @@ impl QueryCoordinator {
             current_depth: 0,
             shards_involved: HashSet::new(),
         };
-        
+
         let mut result_nodes = Vec::new();
         let mut paths = Vec::new();
         let mut current_path = Vec::new();
-        
+
         self.execute_distributed_dfs(
             start_node,
             &mut context,
             &mut result_nodes,
             &mut current_path,
             &mut paths,
-        ).await?;
-        
-        let stats = self.create_traversal_stats(&context, result_nodes.len()).await;
+        )
+        .await?;
+
+        let stats = self
+            .create_traversal_stats(&context, result_nodes.len())
+            .await;
         self.update_query_stats(&context).await;
-        
+
         Ok(DistributedTraversalResult {
             nodes: result_nodes,
             paths,
             stats,
         })
     }
-    
+
     /// Execute recursive DFS
     async fn execute_distributed_dfs(
         &self,
@@ -320,33 +331,31 @@ impl QueryCoordinator {
         if context.current_depth > context.max_depth {
             return Ok(());
         }
-        
+
         if context.visited.contains(node_id) {
             return Ok(());
         }
-        
+
         // Mark as visited
         context.visited.insert(node_id.clone());
         current_path.push(node_id.clone());
-        
+
         // Get the node
         let shard_id = self.get_shard_for_node(node_id).await?;
         context.shards_involved.insert(shard_id);
-        
+
         if let Some(shard) = self.shards.get(&shard_id) {
             if let Some(node) = shard.get_node(node_id)? {
                 result_nodes.push(node);
-                
+
                 // Get neighbors and recurse
                 if context.current_depth < context.max_depth {
                     context.current_depth += 1;
-                    
-                    let neighbors = self.get_cross_shard_neighbors_internal(
-                        node_id,
-                        None,
-                        context,
-                    ).await?;
-                    
+
+                    let neighbors = self
+                        .get_cross_shard_neighbors_internal(node_id, None, context)
+                        .await?;
+
                     for neighbor in neighbors {
                         if !context.visited.contains(&neighbor.id) {
                             self.execute_distributed_dfs(
@@ -355,24 +364,25 @@ impl QueryCoordinator {
                                 result_nodes,
                                 current_path,
                                 all_paths,
-                            ).await?;
+                            )
+                            .await?;
                         }
                     }
-                    
+
                     context.current_depth -= 1;
                 }
             }
         }
-        
+
         // Add current path to results if it's complete
         if context.current_depth == context.max_depth || current_path.len() > 1 {
             all_paths.push(current_path.clone());
         }
-        
+
         current_path.pop();
         Ok(())
     }
-    
+
     /// Find shortest path between two nodes across shards
     pub async fn find_shortest_path(
         &self,
@@ -380,9 +390,12 @@ impl QueryCoordinator {
         end_node: &NodeId,
         max_depth: u32,
     ) -> Result<Option<Vec<NodeId>>> {
-        let _permit = self.query_semaphore.acquire().await
+        let _permit = self
+            .query_semaphore
+            .acquire()
+            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
-        
+
         let mut context = TraversalContext {
             visited: HashSet::new(),
             query_id: self.generate_query_id().await,
@@ -391,83 +404,82 @@ impl QueryCoordinator {
             current_depth: 0,
             shards_involved: HashSet::new(),
         };
-        
+
         // BFS for shortest path
         let mut queue = VecDeque::new();
         let mut parent_map: HashMap<NodeId, NodeId> = HashMap::new();
-        
+
         queue.push_back((start_node.clone(), 0u32));
         context.visited.insert(start_node.clone());
-        
+
         while let Some((current_node_id, depth)) = queue.pop_front() {
             if depth > max_depth {
                 continue;
             }
-            
+
             if current_node_id == *end_node {
                 // Found the target, reconstruct path
                 let mut path = Vec::new();
                 let mut current = end_node.clone();
-                
+
                 while let Some(parent) = parent_map.get(&current) {
                     path.push(current.clone());
                     current = parent.clone();
                 }
                 path.push(start_node.clone());
                 path.reverse();
-                
+
                 self.update_query_stats(&context).await;
                 return Ok(Some(path));
             }
-            
+
             // Get neighbors
-            let neighbors = self.get_cross_shard_neighbors_internal(
-                &current_node_id,
-                None,
-                &mut context,
-            ).await?;
-            
+            let neighbors = self
+                .get_cross_shard_neighbors_internal(&current_node_id, None, &mut context)
+                .await?;
+
             for neighbor in neighbors {
                 if !context.visited.contains(&neighbor.id) {
                     context.visited.insert(neighbor.id.clone());
                     parent_map.insert(neighbor.id.clone(), current_node_id.clone());
-                    queue.push_back((neighbor.id, depth + 1));
+                    queue.push_back((neighbor.id.clone(), depth + 1));
                 }
             }
         }
-        
+
         self.update_query_stats(&context).await;
         Ok(None) // No path found
     }
-    
+
     /// Get shard ID for a node using the hash ring
     async fn get_shard_for_node(&self, node_id: &NodeId) -> Result<u32> {
         let hash_ring = self.hash_ring.read().await;
         Ok(hash_ring.get_shard(node_id))
     }
-    
+
     /// Generate unique query ID
     async fn generate_query_id(&self) -> u64 {
         let mut stats = self.stats.write().await;
         stats.cross_shard_queries += 1;
         stats.cross_shard_queries
     }
-    
+
     /// Update query statistics
     async fn update_query_stats(&self, context: &TraversalContext) {
         let duration = context.start_time.elapsed().as_millis() as u64;
         let mut stats = self.stats.write().await;
-        
+
         stats.total_query_time_ms += duration;
-        stats.average_query_time_ms = stats.total_query_time_ms as f64 / stats.cross_shard_queries as f64;
+        stats.average_query_time_ms =
+            stats.total_query_time_ms as f64 / stats.cross_shard_queries as f64;
         stats.nodes_visited_across_shards += context.visited.len() as u64;
-        
+
         // Record shards involved in this query
         stats.shard_hits_per_query.insert(
             context.query_id,
             context.shards_involved.iter().cloned().collect(),
         );
-        
+
         // Classify query complexity
         let complexity = if context.shards_involved.len() == 1 {
             "simple"
@@ -476,12 +488,19 @@ impl QueryCoordinator {
         } else {
             "complex"
         };
-        
-        *stats.query_complexity_distribution.entry(complexity.to_string()).or_insert(0) += 1;
+
+        *stats
+            .query_complexity_distribution
+            .entry(complexity.to_string())
+            .or_insert(0) += 1;
     }
-    
+
     /// Create traversal statistics
-    async fn create_traversal_stats(&self, context: &TraversalContext, nodes_found: usize) -> TraversalStats {
+    async fn create_traversal_stats(
+        &self,
+        context: &TraversalContext,
+        nodes_found: usize,
+    ) -> TraversalStats {
         TraversalStats {
             duration_ms: context.start_time.elapsed().as_millis() as u64,
             shards_involved: context.shards_involved.len() as u32,
@@ -490,7 +509,7 @@ impl QueryCoordinator {
             cross_shard_hops: context.shards_involved.len().saturating_sub(1) as u32,
         }
     }
-    
+
     /// Get coordinator statistics
     pub async fn get_stats(&self) -> CoordinatorStats {
         let stats = self.stats.read().await;
@@ -510,67 +529,70 @@ mod tests {
     use super::*;
     use crate::graph::GraphMemoryPool;
     use crate::graph::engines::pulsar::sharding::ConsistentHashRing;
-    
-    fn create_test_setup() -> (Arc<DashMap<u32, Arc<OrionGraphEngine>>>, Arc<RwLock<ConsistentHashRing>>) {
+
+    fn create_test_setup() -> (
+        Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
+        Arc<RwLock<ConsistentHashRing>>,
+    ) {
         let memory_pool = Arc::new(GraphMemoryPool::new());
         let shards = Arc::new(DashMap::new());
-        
+
         for i in 0..4 {
             let engine = Arc::new(OrionGraphEngine::with_memory_pool(Arc::clone(&memory_pool)));
             shards.insert(i, engine);
         }
-        
+
         let hash_ring = Arc::new(RwLock::new(ConsistentHashRing::new(4)));
         (shards, hash_ring)
     }
-    
+
     #[tokio::test]
     async fn test_coordinator_creation() {
         let (shards, hash_ring) = create_test_setup();
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
-        
+
         let stats = coordinator.get_stats().await;
         assert_eq!(stats.cross_shard_queries, 0);
     }
-    
+
     #[tokio::test]
     async fn test_get_shard_for_node() {
         let (shards, hash_ring) = create_test_setup();
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
-        
+
         let shard_id = coordinator.get_shard_for_node("test_node").await.unwrap();
         assert!(shard_id < 4);
-        
+
         // Same node should always map to same shard
         let shard_id2 = coordinator.get_shard_for_node("test_node").await.unwrap();
         assert_eq!(shard_id, shard_id2);
     }
-    
+
     #[tokio::test]
     async fn test_distributed_bfs() {
         let (shards, hash_ring) = create_test_setup();
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
-        
+
         // For this test, BFS on a non-existent node should return empty results
         let results = coordinator.distributed_bfs("nonexistent", 2).await.unwrap();
         assert!(results.is_empty());
-        
+
         let stats = coordinator.get_stats().await;
         assert_eq!(stats.cross_shard_queries, 1);
     }
-    
+
     #[tokio::test]
     async fn test_query_id_generation() {
         let (shards, hash_ring) = create_test_setup();
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
-        
+
         let id1 = coordinator.generate_query_id().await;
         let id2 = coordinator.generate_query_id().await;
-        
+
         assert_ne!(id1, id2);
         assert!(id2 > id1);
     }
-    
+
     #[tokio::test]
     async fn test_traversal_context() {
         let context = TraversalContext {
@@ -581,7 +603,7 @@ mod tests {
             current_depth: 0,
             shards_involved: HashSet::new(),
         };
-        
+
         assert_eq!(context.query_id, 1);
         assert_eq!(context.max_depth, 3);
         assert_eq!(context.current_depth, 0);

@@ -20,8 +20,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 // Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::TypedMetadata;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use super::optimized_operations::OptimizedNovaOperations;
@@ -394,9 +394,15 @@ impl NovaEngine {
 
         // Convert from filesystem::StorageTier to multi_tier_deduplication::StorageTier
         let tier = match infrastructure_tier {
-            crate::storage::persistence::filesystem::FileStorageTier::Memory => DataFreshnessTier::Unflushed,
-            crate::storage::persistence::filesystem::FileStorageTier::NVMe => DataFreshnessTier::Flushed,
-            crate::storage::persistence::filesystem::FileStorageTier::SSD => DataFreshnessTier::Flushed,
+            crate::storage::persistence::filesystem::FileStorageTier::Memory => {
+                DataFreshnessTier::Unflushed
+            }
+            crate::storage::persistence::filesystem::FileStorageTier::NVMe => {
+                DataFreshnessTier::Flushed
+            }
+            crate::storage::persistence::filesystem::FileStorageTier::SSD => {
+                DataFreshnessTier::Flushed
+            }
             _ => DataFreshnessTier::Compacted,
         };
 
@@ -404,12 +410,22 @@ impl NovaEngine {
     }
 
     /// Compression optimization using unified compression module (delegates to universal optimizer)
-    async fn compress_parquet_optimized(&self, data: &[u8], tier: DataFreshnessTier) -> Result<Vec<u8>> {
+    async fn compress_parquet_optimized(
+        &self,
+        data: &[u8],
+        tier: DataFreshnessTier,
+    ) -> Result<Vec<u8>> {
         // Convert from multi_tier_deduplication::StorageTier to filesystem::StorageTier
         let fs_tier = match tier {
-            DataFreshnessTier::Unflushed => crate::storage::persistence::filesystem::FileStorageTier::Memory,
-            DataFreshnessTier::Flushed => crate::storage::persistence::filesystem::FileStorageTier::NVMe,
-            DataFreshnessTier::Compacted => crate::storage::persistence::filesystem::FileStorageTier::SSD,
+            DataFreshnessTier::Unflushed => {
+                crate::storage::persistence::filesystem::FileStorageTier::Memory
+            }
+            DataFreshnessTier::Flushed => {
+                crate::storage::persistence::filesystem::FileStorageTier::NVMe
+            }
+            DataFreshnessTier::Compacted => {
+                crate::storage::persistence::filesystem::FileStorageTier::SSD
+            }
         };
 
         // Use universal optimizer's tier-aware compression
@@ -820,7 +836,7 @@ impl UnifiedStorageEngine for NovaEngine {
             .map(|(idx, (record, score))| {
                 // Create similarity result for semantic information
                 let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
-                    1.0 - score,  // Distance value
+                    1.0 - score, // Distance value
                     distance_metric,
                 );
 
@@ -850,10 +866,11 @@ impl UnifiedStorageEngine for NovaEngine {
                     })
                     .collect();
 
-                let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                    .with_similarity(similarity_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                let mut search_record =
+                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                        .with_similarity(similarity_result.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::from_json_map(metadata_map));
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);
@@ -1080,7 +1097,7 @@ impl NovaEngine {
             .enumerate()
             .map(|(idx, (record, score))| {
                 let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
-                    1.0 - score,  // Distance value
+                    1.0 - score, // Distance value
                     distance_metric,
                 );
 
@@ -1110,10 +1127,11 @@ impl NovaEngine {
                     })
                     .collect();
 
-                let mut search_record = OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                    .with_similarity(similarity_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                let mut search_record =
+                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                        .with_similarity(similarity_result.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(TypedMetadata::from_json_map(metadata_map));
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);

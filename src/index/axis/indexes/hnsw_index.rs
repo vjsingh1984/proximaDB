@@ -838,8 +838,8 @@ pub fn create_hnsw_index_for_collection(
 
 #[cfg(test)]
 mod tests {
-    use crate::index::axis::*;
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::index::axis::*;
 
     #[tokio::test]
     async fn test_hnsw_basic_operations() {
@@ -850,9 +850,18 @@ mod tests {
         let index = AxisHnswIndex::new(config, 3).unwrap();
 
         // Add test vectors
-        index.add("vec1".to_string(), vec![1.0, 0.0, 0.0]).await.unwrap();
-        index.add("vec2".to_string(), vec![0.0, 1.0, 0.0]).await.unwrap();
-        index.add("vec3".to_string(), vec![1.0, 1.0, 0.0]).await.unwrap();
+        index
+            .add("vec1".to_string(), vec![1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        index
+            .add("vec2".to_string(), vec![0.0, 1.0, 0.0])
+            .await
+            .unwrap();
+        index
+            .add("vec3".to_string(), vec![1.0, 1.0, 0.0])
+            .await
+            .unwrap();
 
         assert_eq!(index.stats().vector_count, 3);
 
@@ -916,10 +925,7 @@ mod tests {
         // Add enough vectors to create multiple layers
         for i in 0..50 {
             let vector = vec![(i as f32).sin(), (i as f32).cos(), (i as f32 * 0.5).sin()];
-            index
-                .add(format!("vec_{}", i), vector)
-                .await
-                .unwrap();
+            index.add(format!("vec_{}", i), vector).await.unwrap();
         }
 
         // Check that multiple layers were created

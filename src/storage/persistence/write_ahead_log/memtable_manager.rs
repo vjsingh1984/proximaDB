@@ -226,9 +226,11 @@ mod tests {
             vector: vec![0.1, 0.2, 0.3, 0.4],
             metadata: vec![MetadataItem {
                 key: "type".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "test".to_string(),
-                )),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "test".to_string(),
+                    ),
+                ),
             }],
             timestamp: 1234567890,
             updated_at: Some(1234567890),

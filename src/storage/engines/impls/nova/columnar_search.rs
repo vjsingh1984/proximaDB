@@ -830,12 +830,12 @@ impl NovaColumnarSearch {
             Ok(Some(VectorRecord {
                 id: id.clone(),
                 vector: vec![0.0; nova_file.metadata.dimension],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             }))
         } else {
@@ -869,12 +869,12 @@ impl NovaColumnarSearch {
         Ok(Some(VectorRecord {
             id: id.unwrap_or_else(|| format!("unknown_{}", row_idx)),
             vector: vector.unwrap_or_default(),
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None, // No source information available from Arrow batch
         }))
     }

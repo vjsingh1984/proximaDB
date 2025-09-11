@@ -50,6 +50,38 @@ graph TD
 
 == Data Flow
 
+=== Request Flow (End-to-End)
+
+[source,mermaid]
+----
+sequenceDiagram
+    autonumber
+    participant Client
+    participant REST
+    participant gRPC
+    participant Handlers
+    participant VOS as VectorOps
+    participant Graph as GraphSvc
+    participant Storage
+
+    Client->>REST: POST /api/v1/graph/shortest_path
+    REST->>Handlers: UnifiedHandlers.shortest_path()
+    Handlers->>Graph: GraphService.shortest_path()
+    Graph->>Storage: Expand frontier / read adjacency
+    Storage-->>Graph: Node/Edge data
+    Graph-->>Handlers: Path + weight
+    Handlers-->>REST: JSON response
+    REST-->>Client: 200 OK
+
+    Client->>gRPC: VectorService/VectorSearch
+    gRPC->>Handlers: UnifiedHandlers.handle_vector_search_v1
+    Handlers->>VOS: VectorOperationsService.search
+    VOS->>Storage: Read candidates, fetch vectors
+    Storage-->>VOS: Batches
+    VOS-->>Handlers: Results envelope
+    Handlers-->>gRPC: VectorOperationResponse
+----
+
 === Vector Ingestion Data Flow
 
 [source,mermaid]

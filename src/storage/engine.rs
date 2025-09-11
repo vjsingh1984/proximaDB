@@ -193,7 +193,12 @@ impl StorageEngine {
                 ),
             )
             .await
-            .map_err(|e| crate::core::error::StorageError::SstStorage(format!("Failed to create SST storage: {}", e)))?,
+            .map_err(|e| {
+                crate::core::error::StorageError::SstStorage(format!(
+                    "Failed to create SST storage: {}",
+                    e
+                ))
+            })?,
         );
 
         Ok(Self {
@@ -940,7 +945,10 @@ impl StorageEngine {
         let collections: Vec<CollectionMetadata> = Vec::new(); // Placeholder
 
         // Collect collection IDs
-        let collection_ids: Vec<String> = collections.iter().map(|c| c.collection_id.clone()).collect();
+        let collection_ids: Vec<String> = collections
+            .iter()
+            .map(|c| c.collection_id.clone())
+            .collect();
 
         if !collection_ids.is_empty() {
             // Collection-aware WAL cleanup for all collections

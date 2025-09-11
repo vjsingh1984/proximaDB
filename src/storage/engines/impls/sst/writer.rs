@@ -139,7 +139,7 @@ impl SstableWriter {
                     // Get distance metric from collection config
                     collection.config.as_ref()
                     .map(|cfg| match cfg.distance_metric() {
-                        crate::proto::proximadb_v1::DistanceMetric::Cosine => 
+                        crate::proto::proximadb_v1::DistanceMetric::Cosine =>
                             crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                         crate::proto::proximadb_v1::DistanceMetric::Euclidean =>
                             crate::compute::distance_computation::engine::DistanceMetric::Euclidean,
@@ -381,9 +381,27 @@ impl SstableWriter {
             // Update bloom filters
             key_bloom_filter.insert(key.as_bytes());
 
-            for (key, value) in &vector_record.metadata {
-                metadata_builder
-                    .add_metadata_item(key.clone(), value.clone());
+            for (key, sql_value) in &vector_record.metadata {
+                // Convert SqlValue to MetadataItem
+                let metadata_value = if let Some(value) = &sql_value.value {
+                    use crate::proto::proximadb_v1::sql_value::Value as SqlValueType;
+                    use crate::proto::proximadb_v1::metadata_item::Value as MetadataValueType;
+                    match value {
+                        SqlValueType::StringValue(s) => Some(MetadataValueType::StringValue(s.clone())),
+                        SqlValueType::NumberValue(n) => Some(MetadataValueType::NumberValue(*n)),
+                        SqlValueType::BoolValue(b) => Some(MetadataValueType::BoolValue(*b)),
+                        SqlValueType::Int64Value(i) => Some(MetadataValueType::NumberValue(*i as f64)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                
+                let metadata_item = crate::proto::proximadb_v1::MetadataItem {
+                    key: key.clone(),
+                    value: metadata_value,
+                };
+                metadata_builder.add_metadata_item(key.clone(), metadata_item);
                 metadata_value_count += 1;
             }
 
@@ -625,19 +643,26 @@ impl SstableWriter {
         let mut metadata_null_counts = HashMap::with_capacity(capacity);
 
         for record in current_block {
-            for metadata_item in &record.metadata {
-                let column = &metadata_item.key;
+            for (key, sql_value) in &record.metadata {
+                let column = key;
 
-                // Convert MetadataItem to JSON for statistics
-                let value = match &metadata_item.value {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                // Convert SqlValue to JSON for statistics
+                let value = match &sql_value.value {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
+                    }
+                    _ => serde_json::Value::Null,
                     Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
@@ -842,19 +867,26 @@ impl SstableWriter {
         let mut metadata_null_counts = HashMap::with_capacity(capacity);
 
         for record in current_block {
-            for metadata_item in &record.metadata {
-                let column = &metadata_item.key;
+            for (key, sql_value) in &record.metadata {
+                let column = key;
 
-                // Convert MetadataItem to JSON for statistics (needed for filter expressions)
-                let value = match &metadata_item.value {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                // Convert SqlValue to JSON for statistics (needed for filter expressions)
+                let value = match &sql_value.value {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        serde_json::Value::Bool(*b)
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
+                    }
+                    _ => serde_json::Value::Null,
                     Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }

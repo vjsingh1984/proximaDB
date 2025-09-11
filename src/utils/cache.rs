@@ -25,10 +25,10 @@
 //! ```
 
 use std::collections::HashMap;
+use std::fmt;
 use std::hash::Hash;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::fmt;
 
 /// Error types for cache operations
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,7 +79,8 @@ impl<K, V> Node<K, V> {
     }
 
     fn is_expired(&self) -> bool {
-        self.expires_at.map_or(false, |expires| Instant::now() > expires)
+        self.expires_at
+            .map_or(false, |expires| Instant::now() > expires)
     }
 }
 
@@ -199,7 +200,7 @@ where
         if let Some(&node_ptr) = self.map.get(key) {
             unsafe {
                 let node = &mut *node_ptr;
-                
+
                 // Check if expired
                 if node.is_expired() {
                     self.remove_node(node_ptr);
@@ -250,7 +251,7 @@ where
                 let existing_node = &mut *existing_ptr;
                 let old_value = std::mem::replace(&mut existing_node.value, value);
                 existing_node.expires_at = ttl.map(|duration| Instant::now() + duration);
-                
+
                 // Move to front
                 self.move_to_front(existing_ptr);
                 return Some(old_value);
@@ -259,15 +260,15 @@ where
 
         // Create new node
         let new_node = Box::into_raw(Box::new(Node::new(key.clone(), value, ttl)));
-        
+
         // Add to map
         self.map.insert(key, new_node);
-        
+
         // Add to front of list
         unsafe {
             self.add_to_front(new_node);
         }
-        
+
         self.size += 1;
         self.stats.size = self.size;
 
@@ -329,7 +330,7 @@ where
                 drop(node);
             }
         }
-        
+
         self.map.clear();
         self.head = None;
         self.tail = None;
@@ -401,7 +402,7 @@ where
 
         keys
     }
-    
+
     /// Pop the least recently used item from the cache
     pub fn pop_lru(&mut self) -> Option<(K, V)> {
         if let Some(tail_ptr) = self.tail {
@@ -416,7 +417,7 @@ where
             None
         }
     }
-    
+
     /// Pop a specific key-value pair from the cache
     pub fn pop(&mut self, key: &K) -> Option<V> {
         if let Some(&node_ptr) = self.map.get(key) {
@@ -430,15 +431,15 @@ where
             None
         }
     }
-    
+
     /// Get mutable reference to a value
     pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
         self.stats.gets += 1;
-        
+
         if let Some(&node_ptr) = self.map.get(key) {
             unsafe {
                 let node = &mut *node_ptr;
-                
+
                 // Check if expired
                 if node.is_expired() {
                     self.remove_node(node_ptr);
@@ -446,7 +447,7 @@ where
                     self.stats.misses += 1;
                     return None;
                 }
-                
+
                 // Move to front (mark as most recently used)
                 self.move_to_front(node_ptr);
                 self.stats.hits += 1;
@@ -457,17 +458,15 @@ where
             None
         }
     }
-    
+
     /// Create an iterator over cache entries
     pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> + '_ {
-        self.map.iter().filter_map(move |(k, &node_ptr)| {
-            unsafe {
-                let node = &*node_ptr;
-                if !node.is_expired() {
-                    Some((k, &node.value))
-                } else {
-                    None
-                }
+        self.map.iter().filter_map(move |(k, &node_ptr)| unsafe {
+            let node = &*node_ptr;
+            if !node.is_expired() {
+                Some((k, &node.value))
+            } else {
+                None
             }
         })
     }
@@ -488,7 +487,7 @@ where
     unsafe fn add_to_front(&mut self, node_ptr: *mut Node<K, V>) {
         unsafe {
             let node = &mut *node_ptr;
-            
+
             match self.head {
                 Some(head_ptr) => {
                     let head = &mut *head_ptr;
@@ -675,29 +674,29 @@ mod tests {
     #[test]
     fn test_basic_operations() {
         let mut cache = LruCache::new(3);
-        
+
         // Test insertion
         assert_eq!(cache.put("key1", "value1"), None);
         assert_eq!(cache.put("key2", "value2"), None);
         assert_eq!(cache.put("key3", "value3"), None);
-        
+
         // Test retrieval
         assert_eq!(cache.get(&"key1"), Some(&"value1"));
         assert_eq!(cache.get(&"key2"), Some(&"value2"));
         assert_eq!(cache.get(&"key3"), Some(&"value3"));
         assert_eq!(cache.get(&"key4"), None);
-        
+
         assert_eq!(cache.len(), 3);
     }
 
     #[test]
     fn test_capacity_eviction() {
         let mut cache = LruCache::new(2);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
         cache.put("key3", "value3"); // Should evict key1
-        
+
         assert_eq!(cache.get(&"key1"), None);
         assert_eq!(cache.get(&"key2"), Some(&"value2"));
         assert_eq!(cache.get(&"key3"), Some(&"value3"));
@@ -707,17 +706,17 @@ mod tests {
     #[test]
     fn test_lru_ordering() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
         cache.put("key3", "value3");
-        
+
         // Access key1 to make it most recently used
         cache.get(&"key1");
-        
+
         // Add key4, should evict key2 (least recently used)
         cache.put("key4", "value4");
-        
+
         assert_eq!(cache.get(&"key1"), Some(&"value1"));
         assert_eq!(cache.get(&"key2"), None);
         assert_eq!(cache.get(&"key3"), Some(&"value3"));
@@ -727,13 +726,13 @@ mod tests {
     #[test]
     fn test_update_existing_key() {
         let mut cache = LruCache::new(2);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
-        
+
         // Update existing key
         assert_eq!(cache.put("key1", "new_value1"), Some("value1"));
-        
+
         assert_eq!(cache.get(&"key1"), Some(&"new_value1"));
         assert_eq!(cache.len(), 2);
     }
@@ -741,10 +740,10 @@ mod tests {
     #[test]
     fn test_remove() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
-        
+
         assert_eq!(cache.remove(&"key1"), Some("value1"));
         assert_eq!(cache.remove(&"key1"), None);
         assert_eq!(cache.get(&"key1"), None);
@@ -754,30 +753,30 @@ mod tests {
     #[test]
     fn test_peek() {
         let mut cache = LruCache::new(2);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
-        
+
         // Peek shouldn't affect LRU order
         assert_eq!(cache.peek(&"key1"), Some(&"value1"));
-        
+
         // Add key3, should still evict key1 since peek didn't change order
         cache.put("key3", "value3");
-        
+
         assert_eq!(cache.get(&"key1"), None);
     }
 
     #[test]
     fn test_clear() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
-        
+
         assert_eq!(cache.len(), 2);
-        
+
         cache.clear();
-        
+
         assert_eq!(cache.len(), 0);
         assert_eq!(cache.get(&"key1"), None);
         assert_eq!(cache.get(&"key2"), None);
@@ -786,13 +785,13 @@ mod tests {
     #[test]
     fn test_ttl_expiration() {
         let mut cache = LruCache::with_ttl(3, Duration::from_millis(50));
-        
+
         cache.put("key1", "value1");
         assert_eq!(cache.get(&"key1"), Some(&"value1"));
-        
+
         // Wait for expiration
         thread::sleep(Duration::from_millis(100));
-        
+
         assert_eq!(cache.get(&"key1"), None);
         assert_eq!(cache.len(), 0);
     }
@@ -800,12 +799,12 @@ mod tests {
     #[test]
     fn test_custom_ttl() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put_with_ttl("short", "value1", Some(Duration::from_millis(50)));
         cache.put_with_ttl("long", "value2", Some(Duration::from_millis(200)));
-        
+
         thread::sleep(Duration::from_millis(100));
-        
+
         assert_eq!(cache.get(&"short"), None);
         assert_eq!(cache.get(&"long"), Some(&"value2"));
     }
@@ -813,12 +812,12 @@ mod tests {
     #[test]
     fn test_expire_entries() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put_with_ttl("key1", "value1", Some(Duration::from_millis(50)));
         cache.put_with_ttl("key2", "value2", Some(Duration::from_millis(200)));
-        
+
         thread::sleep(Duration::from_millis(100));
-        
+
         let expired_count = cache.expire_entries();
         assert_eq!(expired_count, 1);
         assert_eq!(cache.len(), 1);
@@ -827,14 +826,14 @@ mod tests {
     #[test]
     fn test_statistics() {
         let mut cache = LruCache::new(2);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
-        
+
         cache.get(&"key1"); // hit
         cache.get(&"key3"); // miss
         cache.get(&"key1"); // hit
-        
+
         let stats = cache.stats();
         assert_eq!(stats.puts, 2);
         assert_eq!(stats.gets, 3);
@@ -846,17 +845,17 @@ mod tests {
     #[test]
     fn test_resize() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
         cache.put("key3", "value3");
-        
+
         // Resize down - should evict entries
         cache.resize(2).unwrap();
-        
+
         assert_eq!(cache.capacity(), 2);
         assert_eq!(cache.len(), 2);
-        
+
         // Resize up
         cache.resize(5).unwrap();
         assert_eq!(cache.capacity(), 5);
@@ -866,34 +865,34 @@ mod tests {
     fn test_thread_safe_cache() {
         let cache = ThreadSafeLruCache::new(100);
         let cache_clone = cache.clone();
-        
+
         // Test concurrent access
         let handle = thread::spawn(move || {
             for i in 0..50 {
                 cache_clone.put(format!("key{}", i), format!("value{}", i));
             }
         });
-        
+
         for i in 50..100 {
             cache.put(format!("key{}", i), format!("value{}", i));
         }
-        
+
         handle.join().unwrap();
-        
+
         assert_eq!(cache.len(), 100);
     }
 
     #[test]
     fn test_keys_ordering() {
         let mut cache = LruCache::new(3);
-        
+
         cache.put("key1", "value1");
         cache.put("key2", "value2");
         cache.put("key3", "value3");
-        
+
         // Access key1 to make it most recent
         cache.get(&"key1");
-        
+
         let keys = cache.keys();
         assert_eq!(keys, vec!["key1", "key3", "key2"]);
     }

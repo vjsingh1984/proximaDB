@@ -213,16 +213,20 @@ impl MultiTierDeduplicator {
                             // Convert metadata value to JSON for comparison
                             let actual_json = match &item.value {
                                 Some(
-                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
+                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                        s,
+                                    ),
                                 ) => serde_json::Value::String(s.clone()),
                                 Some(
-                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
+                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                                        n,
+                                    ),
                                 ) => serde_json::Number::from_f64(*n)
                                     .map(serde_json::Value::Number)
                                     .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
-                                    b,
-                                )) => serde_json::Value::Bool(*b),
+                                Some(
+                                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b),
+                                ) => serde_json::Value::Bool(*b),
                                 None => serde_json::Value::Null,
                             };
                             // Compare values (strict equality for now)

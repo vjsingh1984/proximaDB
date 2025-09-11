@@ -1,9 +1,9 @@
 //! Test for SSTable format fix - verifies bloom filter read/write
 
-use crate::core::config::SstConfig;
-use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
-use crate::storage::engines::impls::sst::SstableWriter;
 use crate::core::VectorRecord;
+use crate::core::config::SstConfig;
+use crate::storage::engines::impls::sst::SstableWriter;
+use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::BTreeMap;
 use std::sync::Arc;

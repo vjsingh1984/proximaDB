@@ -33,8 +33,7 @@ use crate::proto::proximadb_v1::{
 use crate::storage::metadata::backends::MetadataBackend;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
 use crate::storage::traits::{
-    InternalCollectionProvider, MetadataProvider, 
-    MetricsOperationType, UnifiedMetricsCollector
+    InternalCollectionProvider, MetadataProvider, MetricsOperationType, UnifiedMetricsCollector,
 };
 use prost::Message;
 
@@ -153,9 +152,12 @@ impl LocalRocksDbBackend {
         backend.initialize().await?;
         Ok(backend)
     }
-    
+
     /// Create with metrics collector
-    pub async fn new_with_metrics(config: RocksDbMetadataConfig, metrics: UnifiedMetricsCollector) -> Result<Self> {
+    pub async fn new_with_metrics(
+        config: RocksDbMetadataConfig,
+        metrics: UnifiedMetricsCollector,
+    ) -> Result<Self> {
         let backend = Self {
             config,
             db: Arc::new(RwLock::new(None)),
@@ -165,7 +167,7 @@ impl LocalRocksDbBackend {
         backend.initialize().await?;
         Ok(backend)
     }
-    
+
     /// Set metrics collector after creation
     pub fn set_metrics_collector(&mut self, metrics: UnifiedMetricsCollector) {
         self.metrics_collector = Some(metrics);
@@ -287,18 +289,18 @@ impl LocalRocksDbBackend {
 
     /// Record an operation with timing
     fn record_operation_with_time(
-        &self, 
+        &self,
         op_type: MetricsOperationType,
         start_time: std::time::Instant,
         success: bool,
-        bytes: Option<usize>
+        bytes: Option<usize>,
     ) {
         if let Some(ref metrics) = self.metrics_collector {
             let duration_ms = start_time.elapsed().as_millis() as u64;
             metrics.record(op_type, duration_ms, success, bytes);
         }
     }
-    
+
     /// Update statistics (for backward compatibility)
     async fn update_stats(&self, op: StatOp) {
         if let Some(ref metrics) = self.metrics_collector {
@@ -325,9 +327,9 @@ impl LocalRocksDbBackend {
             }
         }
     }
-    
+
     // ==================== Public Collection Management Methods ====================
-    
+
     /// Create or update collection using protobuf format (unified API)
     pub async fn upsert_collection_proto(&self, proto_collection: &Collection) -> Result<()> {
         let db = self.get_db().await?;
@@ -429,36 +431,38 @@ impl MetadataProvider for LocalRocksDbBackend {
     async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>> {
         let db = self.get_db().await?;
         let collection_id = collection_id.to_string();
-        
+
         // Use spawn_blocking to avoid blocking the async runtime
-        let result = tokio::task::spawn_blocking(move || {
-            match db {
-                DbHandle::Transactional(db) => {
-                    let cf = db.cf_handle(CF_NAME_INDEX)
-                        .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_NAME_INDEX))?;
-                    match db.get_cf(&cf, collection_id.as_bytes()) {
-                        Ok(Some(uuid_bytes)) => {
-                            Ok(Some((String::from_utf8(uuid_bytes)?, uuid_bytes.len() as u64)))
-                        }
-                        Ok(None) => Ok(None),
-                        Err(e) => Err(anyhow::anyhow!("Failed to get UUID: {}", e)),
-                    }
-                }
-                DbHandle::Regular(db) => {
-                    let cf = db
-                        .cf_handle(CF_NAME_INDEX)
-                        .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                    match db.get_cf(&cf, collection_id.as_bytes()) {
-                        Ok(Some(uuid_bytes)) => {
-                            Ok(Some((String::from_utf8(uuid_bytes)?, uuid_bytes.len() as u64)))
-                        }
-                        Ok(None) => Ok(None),
-                        Err(e) => Err(anyhow::anyhow!("Failed to get UUID: {}", e)),
-                    }
+        let result = tokio::task::spawn_blocking(move || match db {
+            DbHandle::Transactional(db) => {
+                let cf = db
+                    .cf_handle(CF_NAME_INDEX)
+                    .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_NAME_INDEX))?;
+                match db.get_cf(&cf, collection_id.as_bytes()) {
+                    Ok(Some(uuid_bytes)) => Ok(Some((
+                        String::from_utf8(uuid_bytes)?,
+                        uuid_bytes.len() as u64,
+                    ))),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(anyhow::anyhow!("Failed to get UUID: {}", e)),
                 }
             }
-        }).await??;
-        
+            DbHandle::Regular(db) => {
+                let cf = db
+                    .cf_handle(CF_NAME_INDEX)
+                    .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
+                match db.get_cf(&cf, collection_id.as_bytes()) {
+                    Ok(Some(uuid_bytes)) => Ok(Some((
+                        String::from_utf8(uuid_bytes)?,
+                        uuid_bytes.len() as u64,
+                    ))),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(anyhow::anyhow!("Failed to get UUID: {}", e)),
+                }
+            }
+        })
+        .await??;
+
         if let Some((uuid, bytes_read)) = result {
             self.update_stats(StatOp::Read(bytes_read)).await;
             Ok(Some(uuid))
@@ -475,40 +479,40 @@ impl MetadataProvider for LocalRocksDbBackend {
         };
 
         let db = self.get_db().await?;
-        
+
         // Use spawn_blocking for the RocksDB operation
-        let result = tokio::task::spawn_blocking(move || {
-            match db {
-                DbHandle::Transactional(db) => {
-                    let cf = db.cf_handle(CF_COLLECTIONS)
-                        .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_COLLECTIONS))?;
-                    match db.get_cf(&cf, uuid.as_bytes()) {
-                        Ok(Some(data)) => {
-                            let len = data.len() as u64;
-                            let collection = Self::deserialize_record(&data)?;
-                            Ok(Some((collection, len)))
-                        }
-                        Ok(None) => Ok(None),
-                        Err(e) => Err(anyhow::anyhow!("Failed to get collection: {}", e)),
+        let result = tokio::task::spawn_blocking(move || match db {
+            DbHandle::Transactional(db) => {
+                let cf = db
+                    .cf_handle(CF_COLLECTIONS)
+                    .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_COLLECTIONS))?;
+                match db.get_cf(&cf, uuid.as_bytes()) {
+                    Ok(Some(data)) => {
+                        let len = data.len() as u64;
+                        let collection = Self::deserialize_record(&data)?;
+                        Ok(Some((collection, len)))
                     }
-                }
-                DbHandle::Regular(db) => {
-                    let cf = db
-                        .cf_handle(CF_COLLECTIONS)
-                        .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
-                    match db.get_cf(&cf, uuid.as_bytes()) {
-                        Ok(Some(data)) => {
-                            let len = data.len() as u64;
-                            let collection = Self::deserialize_record(&data)?;
-                            Ok(Some((collection, len)))
-                        }
-                        Ok(None) => Ok(None),
-                        Err(e) => Err(anyhow::anyhow!("Failed to get collection: {}", e)),
-                    }
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(anyhow::anyhow!("Failed to get collection: {}", e)),
                 }
             }
-        }).await??;
-        
+            DbHandle::Regular(db) => {
+                let cf = db
+                    .cf_handle(CF_COLLECTIONS)
+                    .ok_or_else(|| anyhow::anyhow!("Column family not found"))?;
+                match db.get_cf(&cf, uuid.as_bytes()) {
+                    Ok(Some(data)) => {
+                        let len = data.len() as u64;
+                        let collection = Self::deserialize_record(&data)?;
+                        Ok(Some((collection, len)))
+                    }
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(anyhow::anyhow!("Failed to get collection: {}", e)),
+                }
+            }
+        })
+        .await??;
+
         if let Some((collection, bytes_read)) = result {
             self.update_stats(StatOp::Read(bytes_read)).await;
             Ok(Some(collection))
@@ -579,11 +583,11 @@ impl MetadataProvider for LocalRocksDbBackend {
             }
         }
     }
-    
+
     async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()> {
         self.upsert_collection_record(collection.clone()).await
     }
-    
+
     async fn delete_collection(&self, collection_id: &str) -> Result<()> {
         // First get the UUID for this collection_id
         match self.get_uuid(collection_id).await? {
@@ -591,10 +595,10 @@ impl MetadataProvider for LocalRocksDbBackend {
                 self.delete_collection_by_uuid(&uuid).await?;
                 Ok(())
             }
-            None => Err(anyhow::anyhow!("Collection {} not found", collection_id))
+            None => Err(anyhow::anyhow!("Collection {} not found", collection_id)),
         }
     }
-    
+
     fn find_collection(&self, _collection_id: &str) -> Option<Collection> {
         // RocksDB backend doesn't have sync find, would need async
         None

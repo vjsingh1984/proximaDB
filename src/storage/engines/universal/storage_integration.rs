@@ -3,10 +3,10 @@
 //! This module provides integration adapters for all storage engines to work
 //! with the universal distance adapter system.
 
+use crate::utils::uuid::Uuid;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
-use crate::utils::uuid::Uuid;
 
 use crate::core::VectorRecord;
 
@@ -313,7 +313,7 @@ impl StorageEngineAdapter for PRISMAdapter {
             vectors.push(VectorRecord {
                 id: id.to_string(),
                 vector: vec![0.0; 128], // Placeholder vector
-                metadata: std::collections::HashMap::new(),       // Empty metadata items
+                metadata: std::collections::HashMap::new(), // Empty metadata items
                 timestamp: chrono::Utc::now().timestamp(),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
@@ -518,7 +518,7 @@ impl StorageEngineAdapter for NOVAAdapter {
             vectors.push(VectorRecord {
                 id: id.to_string(),
                 vector: vec![0.0; 256], // NOVA typically handles larger vectors
-                metadata: std::collections::HashMap::new(),       // Empty metadata items
+                metadata: std::collections::HashMap::new(), // Empty metadata items
                 timestamp: chrono::Utc::now().timestamp(),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,

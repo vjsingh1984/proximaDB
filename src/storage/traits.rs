@@ -72,7 +72,7 @@ use std::sync::Arc;
 /// ```rust
 /// // Mark frequently accessed data as hot
 /// engine.set_tier(collection_id, PerformanceTier::Hot)?;
-/// 
+///
 /// // Archive old data after 90 days
 /// engine.migrate_to_tier(old_data, PerformanceTier::Archive)?;
 /// ```
@@ -81,15 +81,15 @@ pub enum PerformanceTier {
     /// Hot data - keep in memory/SSD, optimize for latency
     /// Target: <1ms latency, highest cost
     Hot,
-    
+
     /// Warm data - balance between latency and cost
     /// Target: <10ms latency, moderate cost
     Warm,
-    
+
     /// Cold data - optimize for cost, higher latency acceptable
     /// Target: <100ms latency, low cost
     Cold,
-    
+
     /// Archive data - minimal access, maximum compression
     /// Target: <1s latency, lowest cost
     Archive,
@@ -136,31 +136,31 @@ pub enum StorageEngineStrategy {
     /// VIPER: Vector-optimized Intelligent Parquet with Efficient Retrieval (Default)
     /// Best for: Analytics, batch operations, maximum compression
     Viper,
-    
+
     /// LSM: Log-Structured Merge Tree (Alternative for comparison)
     /// Best for: OLTP, real-time updates, point queries
     Lsm,
-    
+
     /// PRISM: Progressive Retrieval through Indexed Storage Management (Memory-optimized)
     /// Best for: Ultra-low latency, small working sets
     Prism,
-    
+
     /// SWIFT: Storage With Instant Fast Traversal (Hierarchical superblock architecture)
     /// Best for: Fast sequential access, range queries
     Swift,
-    
+
     /// NOVA: Next-gen Optimized Vector Analytics (Columnar with quantization)
     /// Best for: Advanced analytics with predicate pushdown
     Nova,
-    
+
     /// RAPTOR: Rapid Access Parallel Tiered Object Retrieval (Experimental)
     /// Best for: Graph-like traversal, mixed workloads
     Raptor,
-    
+
     /// HELIX: High-Efficiency Locality-Indexed eXecution (PCA + Hilbert clustering)
     /// Best for: High-dimensional vectors (>1536D)
     Helix,
-    
+
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     /// Best for: Complex workloads with different access patterns
     Hybrid,
@@ -218,13 +218,13 @@ pub trait MetadataProvider: Send + Sync {
         // Backends can override with more efficient implementation
         self.collection_exists(collection_id).await
     }
-    
+
     /// Create or update a collection from protobuf
     async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()>;
-    
+
     /// Delete a collection by ID  
     async fn delete_collection(&self, collection_id: &str) -> Result<()>;
-    
+
     /// Find collection by name or ID (sync convenience method)
     fn find_collection(&self, _collection_id: &str) -> Option<Collection> {
         // Default sync implementation - backends can override
@@ -268,7 +268,7 @@ impl UnifiedMetricsCollector {
             metrics: Arc::new(tokio::sync::RwLock::new(MetricsData::default())),
         }
     }
-    
+
     /// Record an operation - can be called from any thread
     ///
     /// ## Non-blocking Design:
@@ -289,7 +289,13 @@ impl UnifiedMetricsCollector {
     ///     Some(result.bytes_read)
     /// );
     /// ```
-    pub fn record(&self, op_type: MetricsOperationType, duration_ms: u64, success: bool, bytes: Option<usize>) {
+    pub fn record(
+        &self,
+        op_type: MetricsOperationType,
+        duration_ms: u64,
+        success: bool,
+        bytes: Option<usize>,
+    ) {
         let metrics = self.metrics.clone();
         // Fire and forget - don't block the operation
         // This spawns a lightweight task that will update metrics asynchronously
@@ -302,12 +308,12 @@ impl UnifiedMetricsCollector {
             // Production performance > metrics accuracy
         });
     }
-    
+
     pub async fn get_snapshot(&self) -> MetricsSnapshot {
         let metrics = self.metrics.read().await;
         metrics.to_snapshot()
     }
-    
+
     pub async fn reset(&self) {
         let mut metrics = self.metrics.write().await;
         *metrics = MetricsData::default();
@@ -358,19 +364,25 @@ impl Default for MetricsData {
 }
 
 impl MetricsData {
-    fn record_operation(&mut self, op_type: MetricsOperationType, duration_ms: u64, success: bool, bytes: Option<usize>) {
+    fn record_operation(
+        &mut self,
+        op_type: MetricsOperationType,
+        duration_ms: u64,
+        success: bool,
+        bytes: Option<usize>,
+    ) {
         self.total_operations += 1;
-        
+
         if success {
             self.successful_operations += 1;
         } else {
             self.failed_operations += 1;
         }
-        
+
         // Track operation type
         let op_name = format!("{:?}", op_type);
         *self.operation_counts.entry(op_name).or_insert(0) += 1;
-        
+
         match op_type {
             MetricsOperationType::Read => {
                 if let Some(b) = bytes {
@@ -386,23 +398,23 @@ impl MetricsData {
             MetricsOperationType::CacheMiss => self.cache_misses += 1,
             _ => {}
         }
-        
+
         // Track latency (keep last 1000)
         if self.latencies_ms.len() >= 1000 {
             self.latencies_ms.pop_front();
         }
         self.latencies_ms.push_back(duration_ms);
     }
-    
+
     fn to_snapshot(&self) -> MetricsSnapshot {
         let avg_latency = if !self.latencies_ms.is_empty() {
             self.latencies_ms.iter().sum::<u64>() as f64 / self.latencies_ms.len() as f64
         } else {
             0.0
         };
-        
+
         let (p50, p95, p99) = self.calculate_percentiles();
-        
+
         MetricsSnapshot {
             total_operations: self.total_operations,
             successful_operations: self.successful_operations,
@@ -422,20 +434,20 @@ impl MetricsData {
             last_reset: self.last_reset,
         }
     }
-    
+
     fn calculate_percentiles(&self) -> (u64, u64, u64) {
         if self.latencies_ms.is_empty() {
             return (0, 0, 0);
         }
-        
+
         let mut sorted: Vec<u64> = self.latencies_ms.iter().copied().collect();
         sorted.sort_unstable();
-        
+
         let len = sorted.len();
         let p50 = sorted[len * 50 / 100];
         let p95 = sorted[len * 95 / 100];
         let p99 = sorted[len * 99 / 100];
-        
+
         (p50, p95, p99)
     }
 }
@@ -482,7 +494,7 @@ pub struct CacheStats {
 /// Marker trait for internal collection metadata providers.
 /// This trait exists solely to break circular dependencies between StorageEngine and CollectionService.
 /// It adds no new methods - all functionality comes from MetadataProvider.
-/// 
+///
 /// Implementations: LocalRocksDbBackend, UniversalMetadataBackend
 /// Consumers: CollectionService (via metadata_backend field)
 #[async_trait]
@@ -708,7 +720,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     // This avoids duplication and provides a single source of truth for capabilities
 
     /// Engine capabilities with defaults based on strategy
-    /// 
+    ///
     /// Determines whether the storage engine supports collection-level operations
     /// such as per-collection flush, compaction, and configuration.
     fn supports_collection_level_operations(&self) -> bool {
@@ -725,7 +737,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 
     /// Determines whether the storage engine supports atomic operations
-    /// 
+    ///
     /// Atomic operations guarantee that either all changes are applied
     /// or none are applied, preventing partial updates.
     fn supports_atomic_operations(&self) -> bool {
@@ -791,8 +803,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Get filesystem factory for this engine - to be implemented by each engine
     fn get_filesystem_factory(&self)
     -> &crate::storage::persistence::filesystem::FilesystemFactory;
-
-
 
     /// Ensure staging directory exists for the given operation type
     /// operation_type: "__flush" for flush operations, "__compact" for compaction operations
@@ -1139,7 +1149,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .engine_specific
                     .get("locality_score")
                     .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0) < 0.7) // Compact when locality score drops below threshold
+                    .unwrap_or(0.0)
+                    < 0.7) // Compact when locality score drops below threshold
             }
         }
     }
@@ -1520,8 +1531,6 @@ impl StorageQueryContext {
         quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
         dimension: usize,
     ) -> Option<ParsedQuantizationConfig> {
-        
-
         if !quant_config.enabled {
             return None;
         }

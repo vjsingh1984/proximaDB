@@ -52,19 +52,19 @@
 //! - **2PC Transactions**: Basic distributed transaction support
 //! - **Hot Shard Detection**: Automatic load balancing
 
-pub mod sharding;
-pub mod replication;
 pub mod coordinator;
-pub mod optimizer;
 pub mod monitoring;
+pub mod optimizer;
+pub mod replication;
+pub mod sharding;
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::{Node, Edge, NodeId, EdgeId, GraphMemoryPool};
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
-use std::sync::Arc;
-use std::collections::HashMap;
+use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
 use dashmap::DashMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// PULSAR distributed graph engine configuration
@@ -98,22 +98,22 @@ pub enum ConsistencyLevel {
 pub struct PulsarGraphEngine {
     /// Engine configuration
     config: PulsarConfig,
-    
+
     /// Shared memory pool across all shards
     memory_pool: Arc<GraphMemoryPool>,
-    
+
     /// Shard engines (each shard is an ORION engine)
     shards: Arc<DashMap<u32, Arc<OrionGraphEngine>>>,
-    
+
     /// Consistent hash ring for node distribution
     hash_ring: Arc<RwLock<sharding::ConsistentHashRing>>,
-    
+
     /// Replication manager for fault tolerance
     replication_manager: Arc<replication::ReplicationManager>,
-    
+
     /// Query coordinator for cross-shard operations
     coordinator: Arc<coordinator::QueryCoordinator>,
-    
+
     /// Engine statistics
     stats: Arc<RwLock<PulsarStats>>,
 }
@@ -146,38 +146,38 @@ impl PulsarGraphEngine {
     /// Create a new PULSAR distributed graph engine
     pub fn new(config: PulsarConfig) -> Result<Self> {
         let memory_pool = Arc::new(GraphMemoryPool::new());
-        
+
         // Initialize shards
         let shards = Arc::new(DashMap::new());
         for shard_id in 0..config.shard_count {
-            let shard_engine = Arc::new(OrionGraphEngine::with_memory_pool(Arc::clone(&memory_pool)));
+            let shard_engine =
+                Arc::new(OrionGraphEngine::with_memory_pool(Arc::clone(&memory_pool)));
             shards.insert(shard_id as u32, shard_engine);
         }
-        
+
         // Initialize hash ring
-        let hash_ring = Arc::new(RwLock::new(
-            sharding::ConsistentHashRing::new(config.shard_count as u32)
-        ));
-        
+        let hash_ring = Arc::new(RwLock::new(sharding::ConsistentHashRing::new(
+            config.shard_count as u32,
+        )));
+
         // Initialize replication manager
-        let replication_manager = Arc::new(
-            replication::ReplicationManager::new(config.replication_factor, &shards)
-        );
-        
+        let replication_manager = Arc::new(replication::ReplicationManager::new(
+            config.replication_factor,
+            &shards,
+        ));
+
         // Initialize query coordinator
-        let coordinator = Arc::new(
-            coordinator::QueryCoordinator::new(
-                Arc::clone(&shards),
-                Arc::clone(&hash_ring),
-                config.max_concurrent_queries,
-            )
-        );
-        
+        let coordinator = Arc::new(coordinator::QueryCoordinator::new(
+            Arc::clone(&shards),
+            Arc::clone(&hash_ring),
+            config.max_concurrent_queries,
+        ));
+
         let stats = Arc::new(RwLock::new(PulsarStats {
             shards_active: config.shard_count as u32,
             ..Default::default()
         }));
-        
+
         Ok(Self {
             config,
             memory_pool,
@@ -188,39 +188,41 @@ impl PulsarGraphEngine {
             stats,
         })
     }
-    
+
     /// Get shard ID for a given node
     async fn get_shard_for_node(&self, node_id: &NodeId) -> Result<u32> {
         let hash_ring = self.hash_ring.read().await;
         Ok(hash_ring.get_shard(node_id))
     }
-    
+
     /// Get primary shard engine for a node
     async fn get_primary_shard(&self, node_id: &NodeId) -> Result<Arc<OrionGraphEngine>> {
         let shard_id = self.get_shard_for_node(node_id).await?;
-        
-        self.shards.get(&shard_id)
+
+        self.shards
+            .get(&shard_id)
             .map(|entry| Arc::clone(&entry))
-            .ok_or_else(|| ProximaDBError::Internal(
-                format!("Shard {} not found", shard_id)
-            ))
+            .ok_or_else(|| ProximaDBError::Internal(format!("Shard {} not found", shard_id)))
     }
-    
+
     /// Get all replica shards for a node
     async fn get_replica_shards(&self, node_id: &NodeId) -> Result<Vec<Arc<OrionGraphEngine>>> {
         let primary_shard_id = self.get_shard_for_node(node_id).await?;
-        let replica_ids = self.replication_manager.get_replicas(primary_shard_id).await?;
-        
+        let replica_ids = self
+            .replication_manager
+            .get_replicas(primary_shard_id)
+            .await?;
+
         let mut shards = Vec::new();
         for shard_id in replica_ids {
             if let Some(shard) = self.shards.get(&shard_id) {
                 shards.push(Arc::clone(&shard));
             }
         }
-        
+
         Ok(shards)
     }
-    
+
     /// Execute operation on replicas based on consistency level
     async fn execute_with_consistency<F, T>(&self, node_id: &NodeId, operation: F) -> Result<T>
     where
@@ -228,53 +230,56 @@ impl PulsarGraphEngine {
         T: Send + Sync + 'static + Clone,
     {
         let replica_shards = self.get_replica_shards(node_id).await?;
-        
+
         match self.config.consistency_level {
             ConsistencyLevel::Any => {
                 // Execute on first available replica
                 if let Some(shard) = replica_shards.first() {
                     operation(shard.as_ref())
                 } else {
-                    Err(ProximaDBError::Internal("No replicas available".to_string()))
+                    Err(ProximaDBError::Internal(
+                        "No replicas available".to_string(),
+                    ))
                 }
-            },
+            }
             ConsistencyLevel::Quorum => {
                 // Execute on majority of replicas
                 let required_success = (replica_shards.len() / 2) + 1;
                 let mut successes = 0;
                 let mut last_result = None;
-                
+
                 for shard in &replica_shards {
                     if let Ok(result) = operation(shard.as_ref()) {
                         successes += 1;
                         last_result = Some(result);
-                        
+
                         if successes >= required_success {
                             return Ok(last_result.unwrap());
                         }
                     }
                 }
-                
-                Err(ProximaDBError::Internal(
-                    format!("Quorum not reached: {}/{} required", successes, required_success)
-                ))
-            },
+
+                Err(ProximaDBError::Internal(format!(
+                    "Quorum not reached: {}/{} required",
+                    successes, required_success
+                )))
+            }
             ConsistencyLevel::All => {
                 // Execute on all replicas
                 let mut last_result = None;
-                
+
                 for shard in &replica_shards {
                     let result = operation(shard.as_ref())?;
                     last_result = Some(result);
                 }
-                
-                last_result.ok_or_else(|| ProximaDBError::Internal(
-                    "No results from any replica".to_string()
-                ))
+
+                last_result.ok_or_else(|| {
+                    ProximaDBError::Internal("No results from any replica".to_string())
+                })
             }
         }
     }
-    
+
     /// Get engine statistics
     pub async fn get_stats(&self) -> PulsarStats {
         let stats = self.stats.read().await;
@@ -288,36 +293,45 @@ impl PulsarGraphEngine {
             load_balance_operations: stats.load_balance_operations,
         }
     }
-    
+
     /// Perform cross-shard traversal
-    pub async fn cross_shard_traversal(&self, start_node: &NodeId, max_depth: u32) -> Result<Vec<Arc<Node>>> {
+    pub async fn cross_shard_traversal(
+        &self,
+        start_node: &NodeId,
+        max_depth: u32,
+    ) -> Result<Vec<Arc<Node>>> {
         // Update stats
         {
             let mut stats = self.stats.write().await;
             stats.cross_shard_queries += 1;
         }
-        
-        self.coordinator.distributed_bfs(start_node, max_depth).await
+
+        self.coordinator
+            .distributed_bfs(start_node, max_depth)
+            .await
     }
-    
+
     /// Rebalance shards if needed
     pub async fn rebalance_if_needed(&self) -> Result<bool> {
         let stats = self.get_stats().await;
-        
+
         // Simple hot shard detection (could be more sophisticated)
         if !stats.hot_shards.is_empty() {
-            tracing::info!("Hot shards detected: {:?}, considering rebalance", stats.hot_shards);
-            
+            tracing::info!(
+                "Hot shards detected: {:?}, considering rebalance",
+                stats.hot_shards
+            );
+
             // Update load balance stats
             {
                 let mut stats_mut = self.stats.write().await;
                 stats_mut.load_balance_operations += 1;
             }
-            
+
             // For now, just return true to indicate rebalance was considered
             return Ok(true);
         }
-        
+
         Ok(false)
     }
 }
@@ -325,26 +339,29 @@ impl PulsarGraphEngine {
 impl GraphEngine for PulsarGraphEngine {
     fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
         let node_id = node.id.clone();
-        
+
         // Use async runtime to get primary shard
         let rt = tokio::runtime::Handle::current();
         let primary_shard = rt.block_on(self.get_primary_shard(&node_id))?;
-        
+
         // Insert into primary shard
         let result = primary_shard.insert_node(node.clone())?;
-        
+
         // Replicate to other shards asynchronously
         tokio::spawn({
             let replication_manager = Arc::clone(&self.replication_manager);
             let node_for_replication = node;
-            
+
             async move {
-                if let Err(e) = replication_manager.replicate_node_insert(node_for_replication).await {
+                if let Err(e) = replication_manager
+                    .replicate_node_insert(node_for_replication)
+                    .await
+                {
                     tracing::error!("Failed to replicate node insert: {:?}", e);
                 }
             }
         });
-        
+
         // Update stats
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
@@ -353,28 +370,29 @@ impl GraphEngine for PulsarGraphEngine {
                 stats.total_nodes += 1;
             }
         });
-        
+
         Ok(result)
     }
-    
+
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
         rt.block_on(self.execute_with_consistency(id, |shard| shard.get_node(id)))
     }
-    
+
     fn update_node(&self, node: Node) -> Result<Arc<Node>> {
         let node_id = node.id.clone();
         let rt = tokio::runtime::Handle::current();
-        
-        rt.block_on(self.execute_with_consistency(&node_id, |shard| {
-            shard.update_node(node.clone())
-        }))
+
+        rt.block_on(
+            self.execute_with_consistency(&node_id, |shard| shard.update_node(node.clone())),
+        )
     }
-    
+
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
-        let result = rt.block_on(self.execute_with_consistency(id, |shard| shard.delete_node(id)))?;
-        
+        let result =
+            rt.block_on(self.execute_with_consistency(id, |shard| shard.delete_node(id)))?;
+
         // Update stats
         if result.is_some() {
             tokio::spawn({
@@ -385,30 +403,33 @@ impl GraphEngine for PulsarGraphEngine {
                 }
             });
         }
-        
+
         Ok(result)
     }
-    
+
     fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         // For edges, we need to consider both source and target nodes
         // For simplicity, use source node's shard as primary
         let rt = tokio::runtime::Handle::current();
         let primary_shard = rt.block_on(self.get_primary_shard(&edge.from_node_id))?;
-        
+
         let result = primary_shard.insert_edge(edge.clone())?;
-        
+
         // Replicate edge insertion
         tokio::spawn({
             let replication_manager = Arc::clone(&self.replication_manager);
             let edge_for_replication = edge;
-            
+
             async move {
-                if let Err(e) = replication_manager.replicate_edge_insert(edge_for_replication).await {
+                if let Err(e) = replication_manager
+                    .replicate_edge_insert(edge_for_replication)
+                    .await
+                {
                     tracing::error!("Failed to replicate edge insert: {:?}", e);
                 }
             }
         });
-        
+
         // Update stats
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
@@ -417,16 +438,16 @@ impl GraphEngine for PulsarGraphEngine {
                 stats.total_edges += 1;
             }
         });
-        
+
         Ok(result)
     }
-    
+
     fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         // For edge lookup, we need to search across all shards since we don't know
         // which shard contains the edge. For better performance, we could maintain
         // an edge-to-shard mapping.
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
@@ -437,18 +458,18 @@ impl GraphEngine for PulsarGraphEngine {
             Ok(None)
         })
     }
-    
+
     fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         let rt = tokio::runtime::Handle::current();
         let primary_shard = rt.block_on(self.get_primary_shard(&edge.from_node_id))?;
-        
+
         primary_shard.update_edge(edge)
     }
-    
+
     fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         // Similar to get_edge, we need to search across shards
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
@@ -456,103 +477,114 @@ impl GraphEngine for PulsarGraphEngine {
                     // Update stats
                     let mut stats = self.stats.write().await;
                     stats.total_edges = stats.total_edges.saturating_sub(1);
-                    
+
                     return Ok(Some(edge));
                 }
             }
             Ok(None)
         })
     }
-    
-    fn get_outgoing_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
+
+    fn get_outgoing_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>> {
         let rt = tokio::runtime::Handle::current();
         let primary_shard = rt.block_on(self.get_primary_shard(node_id))?;
-        
+
         primary_shard.get_outgoing_edges(node_id, edge_type)
     }
-    
-    fn get_incoming_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
+
+    fn get_incoming_edges(
+        &self,
+        node_id: &NodeId,
+        edge_type: Option<&str>,
+    ) -> Result<Vec<Arc<Edge>>> {
         // Incoming edges might be in different shards, so we need cross-shard query
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             let mut all_edges = Vec::new();
-            
+
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
                 if let Ok(edges) = shard.get_incoming_edges(node_id, edge_type) {
                     all_edges.extend(edges);
                 }
             }
-            
+
             Ok(all_edges)
         })
     }
-    
+
     fn get_neighbors(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
-        rt.block_on(self.coordinator.get_cross_shard_neighbors(node_id, edge_type))
+        rt.block_on(
+            self.coordinator
+                .get_cross_shard_neighbors(node_id, edge_type),
+        )
     }
-    
+
     fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             let mut all_nodes = Vec::new();
-            
+
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
                 if let Ok(nodes) = shard.get_nodes_by_label(label) {
                     all_nodes.extend(nodes);
                 }
             }
-            
+
             Ok(all_nodes)
         })
     }
-    
+
     fn node_count(&self) -> Result<usize> {
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             let mut total = 0;
-            
+
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
                 total += shard.node_count()?;
             }
-            
+
             Ok(total)
         })
     }
-    
+
     fn edge_count(&self) -> Result<usize> {
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             let mut total = 0;
-            
+
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
                 total += shard.edge_count()?;
             }
-            
+
             Ok(total)
         })
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
-        
+
         rt.block_on(async {
             let mut all_nodes = Vec::new();
-            
+
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
                 let mut shard_nodes = shard.get_all_nodes()?;
                 all_nodes.append(&mut shard_nodes);
             }
-            
+
             Ok(all_nodes)
         })
     }
@@ -567,21 +599,21 @@ impl Default for PulsarGraphEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::property_value::Value;
     use crate::graph::PropertyValue;
-    
+    use crate::proto::proximadb_v1::property_value::Value;
+
     #[tokio::test]
     async fn test_pulsar_engine_creation() {
         let config = PulsarConfig::default();
         let engine = PulsarGraphEngine::new(config).unwrap();
-        
+
         assert_eq!(engine.node_count().unwrap(), 0);
         assert_eq!(engine.edge_count().unwrap(), 0);
-        
+
         let stats = engine.get_stats().await;
         assert_eq!(stats.shards_active, 16); // Default shard count
     }
-    
+
     #[tokio::test]
     async fn test_node_distribution() {
         let config = PulsarConfig {
@@ -589,20 +621,20 @@ mod tests {
             ..PulsarConfig::default()
         };
         let engine = PulsarGraphEngine::new(config).unwrap();
-        
+
         // Test nodes go to different shards
         let node1_shard = engine.get_shard_for_node("node1").await.unwrap();
         let node2_shard = engine.get_shard_for_node("node2").await.unwrap();
-        
+
         // Shards should be within expected range
         assert!(node1_shard < 4);
         assert!(node2_shard < 4);
     }
-    
+
     #[tokio::test]
     async fn test_basic_operations() {
         let engine = PulsarGraphEngine::new(PulsarConfig::default()).unwrap();
-        
+
         // Create test node
         let node = Node {
             id: "test_node".to_string(),
@@ -612,18 +644,18 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
-        
+
         // Insert node
         let inserted = engine.insert_node(node).unwrap();
         assert_eq!(inserted.id, "test_node");
-        
+
         // Give some time for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
+
         // Get node
         let retrieved = engine.get_node("test_node").unwrap().unwrap();
         assert_eq!(retrieved.id, "test_node");
-        
+
         // Verify stats updated
         let stats = engine.get_stats().await;
         assert_eq!(stats.total_nodes, 1);

@@ -22,15 +22,11 @@ use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 // Re-export for public use
 pub use crate::compute::quantization::unified::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
 use crate::core::search::{
-    FilterExpression, SearchParams,
-    metadata_filter_pushdown::MetadataFilterPushdown,
-    progressive_quantization::ProgressiveSearchConfig,
-    query_preprocessing::QueryPreprocessor,
-    results::OptimizedSearchRecord,
-    smart_execution_strategy::SmartExecutionStrategy,
+    FilterExpression, SearchParams, metadata_filter_pushdown::MetadataFilterPushdown,
+    progressive_quantization::ProgressiveSearchConfig, query_preprocessing::QueryPreprocessor,
+    results::OptimizedSearchRecord, smart_execution_strategy::SmartExecutionStrategy,
     unified_progressive_pipeline::UnifiedProgressiveSearchPipeline,
 };
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -58,8 +54,6 @@ pub struct AdvancedSearchOptimizer {
 
     /// Query result cache (Phase 7)
     query_cache: Arc<QueryCache>,
-
-    
 
     /// Metadata cache
     metadata_store: Arc<MetadataStore>,
@@ -221,10 +215,10 @@ impl AdvancedSearchOptimizer {
     ) -> Self {
         // Detect hardware capabilities
         let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-        
+
         // Detect available memory using platform-specific methods
         let available_memory_gb = Self::detect_available_memory();
-        
+
         let hardware_profile = HardwareProfile {
             has_avx2: caps.cpu.features.avx2_support,
             has_avx512: caps.cpu.features.avx512_support,
@@ -277,7 +271,7 @@ impl AdvancedSearchOptimizer {
     pub fn set_axis_manager(&mut self, axis_manager: Arc<AxisManager>) {
         self.axis_manager = Some(axis_manager);
     }
-    
+
     /// Detect available system memory in GB
     fn detect_available_memory() -> f32 {
         // Try to detect memory using platform-specific methods
@@ -297,16 +291,12 @@ impl AdvancedSearchOptimizer {
                 }
             }
         }
-        
+
         #[cfg(target_os = "macos")]
         {
             // Use sysctl on macOS
             use std::process::Command;
-            if let Ok(output) = Command::new("sysctl")
-                .arg("-n")
-                .arg("hw.memsize")
-                .output()
-            {
+            if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output() {
                 if let Ok(bytes_str) = String::from_utf8(output.stdout) {
                     if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
                         return (bytes as f64 / 1024.0 / 1024.0 / 1024.0) as f32; // Convert bytes to GB
@@ -314,14 +304,14 @@ impl AdvancedSearchOptimizer {
                 }
             }
         }
-        
+
         #[cfg(target_os = "windows")]
         {
             // Use MEMORYSTATUSEX on Windows (would need winapi crate)
             // For now, use a reasonable default
             return 16.0;
         }
-        
+
         // Default fallback
         16.0
     }
@@ -580,23 +570,11 @@ impl AdvancedSearchOptimizer {
             let mut converted_results = Vec::new();
             for search_result in cached_v1 {
                 for record in search_result.results {
-                    // Convert v1 metadata map to TypedMetadata
-                    let mut metadata_map = std::collections::HashMap::new();
-                    for (k, v) in record.metadata.into_iter() {
-                        let typed_value = match &v.value {
-                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) =>
-                                MetadataValue::String(Arc::from(s.as_str())),
-                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) =>
-                                MetadataValue::Number(n),
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) =>
-                                MetadataValue::Bool(b),
-                            None => continue,
-                        };
-                        metadata_map.insert(k, typed_value);
-                    }
-                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::from_map(metadata_map));
+                    // Use SqlValue metadata directly - no conversion needed!
+                    let mut rec =
+                        OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
+                            .add_vector(record.vector.clone())
+                            .with_metadata(record.metadata);
                     // TODO: Implement with_version method if needed
                     // if let Some(v) = record.version { rec = rec.with_version(v); }
                     converted_results.push(rec);
@@ -619,28 +597,16 @@ impl AdvancedSearchOptimizer {
             let mut converted_results = Vec::new();
             for search_result in cached_results {
                 for record in search_result.results {
-                    // Convert proto metadata to TypedMetadata
-                    let mut metadata_map = std::collections::HashMap::new();
-                    for item in &record.metadata {
-                        if let Some(value) = &item.value {
-                            use crate::proto::proximadb_v1::metadata_item;
-                            let typed_value = match value {
-                                metadata_item::Value::StringValue(s) =>
-                                    MetadataValue::String(Arc::from(s.as_str())),
-                                metadata_item::Value::NumberValue(f) => MetadataValue::Number(*f),
-                                metadata_item::Value::BoolValue(b) => MetadataValue::Bool(*b),
-                            };
-                            metadata_map.insert(item.0.clone(), typed_value);
-                        }
-                    }
-                    let mut rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::from_map(metadata_map));
+                    // Use SqlValue metadata directly - no conversion needed!
+                    let mut rec =
+                        OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
+                            .add_vector(record.vector.clone())
+                            .with_metadata(record.metadata.clone());
                     if let Some(sim) = record.similarity {
                         rec = rec.with_similarity(sim);
                     }
                     if let (Some(v), Some(ts)) = (record.version, record.timestamp) {
-                        rec = rec.with_version_info(v as u32, ts as u32);
+                        rec = rec.with_version_info(v, ts);
                     }
                     converted_results.push(rec);
                 }
@@ -679,19 +645,33 @@ impl AdvancedSearchOptimizer {
                     id: r.id.clone(),
                     score: r.score as f64,
                     similarity: r.similarity,
-                    vector: r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default(),
+                    vector: r
+                        .vector
+                        .as_ref()
+                        .map(|arc| (**arc).clone())
+                        .unwrap_or_default(),
                     metadata: std::collections::HashMap::new(), // Would convert metadata
                     version: r.version.map(|v| v as i64),
                     timestamp: r.timestamp.map(|t| t as i64),
                     source: None, // TODO: Convert SourceContent to Option<String> when needed
-                    expanded_context: r.expanded_context.iter().map(|sc| {
-                        match &sc.data {
-                            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => text.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => url.clone(),
-                            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => "[Binary Content]".to_string(),
+                    expanded_context: r
+                        .expanded_context
+                        .iter()
+                        .map(|sc| match &sc.data {
+                            Some(
+                                crate::proto::proximadb_v1::source_content::Data::TextContent(text),
+                            ) => text.clone(),
+                            Some(
+                                crate::proto::proximadb_v1::source_content::Data::ExternalReference(
+                                    url,
+                                ),
+                            ) => url.clone(),
+                            Some(
+                                crate::proto::proximadb_v1::source_content::Data::BinaryContent(_),
+                            ) => "[Binary Content]".to_string(),
                             None => "[Empty Content]".to_string(),
-                        }
-                    }).collect(),
+                        })
+                        .collect(),
                     semantic_similarity: r.similarity,
                     quantization_info: None,
                     engine_stats: std::collections::HashMap::new(),
@@ -833,12 +813,9 @@ impl AdvancedSearchOptimizer {
                 distance_compute.calculate_distance(query_vector, vector, distance_metric);
 
             results.push(
-                OptimizedSearchRecord::new(
-                    format!("vec_{}", idx),
-                    dist_result.normalized_score
-                )
-                .with_similarity(dist_result.normalized_score)
-                .with_metadata(TypedMetadata::default())
+                OptimizedSearchRecord::new(format!("vec_{}", idx), dist_result.normalized_score)
+                    .with_similarity(dist_result.normalized_score)
+                    .with_metadata(std::collections::HashMap::new()),
             );
         }
 
@@ -979,30 +956,13 @@ impl AdvancedSearchOptimizer {
             let dist_result =
                 distance_compute.calculate_distance(query_vector, &record.vector, distance_metric);
 
-            // Convert record metadata to TypedMetadata
-            let mut metadata_map = std::collections::HashMap::new();
-            for (key, item) in record.metadata {
-                if let Some(value) = item.value {
-                    use crate::proto::proximadb_v1::sql_value;
-                    let typed_value = match value {
-                        sql_value::Value::StringValue(s) => MetadataValue::String(Arc::from(s.as_str())),
-                        sql_value::Value::NumberValue(f) => MetadataValue::Number(f),
-                        sql_value::Value::BoolValue(b) => MetadataValue::Bool(b),
-                        _ => continue, // Skip other types
-                    };
-                    metadata_map.insert(key, typed_value);
-                }
-            }
-            
+            // Use SqlValue metadata directly - no conversion needed!
             results.push(
-                OptimizedSearchRecord::new(
-                    record.id.clone(),
-                    dist_result.normalized_score
-                )
-                .with_similarity(dist_result.normalized_score)
-                .add_vector(record.vector.clone())
-                .with_metadata(TypedMetadata::from_map(metadata_map))
-                .with_version_info(record.version.unwrap_or(0) as u32, record.timestamp as u32)
+                OptimizedSearchRecord::new(record.id.clone(), dist_result.normalized_score)
+                    .with_similarity(dist_result.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(record.metadata.clone())
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp),
             );
         }
 
@@ -1099,7 +1059,8 @@ impl SearchOptimizer for AdvancedSearchOptimizer {
         params: &SearchParams,
         filter: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        self.search(collection_id, query_vector, k, params, filter).await
+        self.search(collection_id, query_vector, k, params, filter)
+            .await
     }
 }
 

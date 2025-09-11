@@ -1132,9 +1132,11 @@ mod tests {
                 vector: vec![i as f32, (i + 1) as f32],
                 metadata: vec![crate::proto::proximadb_v1::MetadataItem {
                     key: "version".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        i.to_string(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                            i.to_string(),
+                        ),
+                    ),
                 }],
                 timestamp: (now + i as i64) as u32,
                 updated_at: Some((now + i as i64) as u32),

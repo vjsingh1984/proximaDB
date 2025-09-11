@@ -2,9 +2,9 @@
 // Maximizes in-memory caching and minimizes I/O for read-heavy workloads
 
 use crate::storage::persistence::filesystem::FileSystem;
+use crate::utils::cache::LruCache;
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
-use crate::utils::cache::LruCache;
 use memmap2::Mmap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -176,9 +176,11 @@ impl MemoryOptimizedStorage {
             int8_vectors: Arc::new(RwLock::new(HashMap::new())),
             pq_codes: Arc::new(RwLock::new(HashMap::new())),
             metadata_cache: Arc::new(RwLock::new(HashMap::new())),
-            fp32_cache: Arc::new(RwLock::new(LruCache::new(
-                if fp32_capacity == 0 { 100 } else { fp32_capacity },
-            ))),
+            fp32_cache: Arc::new(RwLock::new(LruCache::new(if fp32_capacity == 0 {
+                100
+            } else {
+                fp32_capacity
+            }))),
             filesystem,
             access_stats: Arc::new(AccessStatistics::new()),
             prefetch_queue: Arc::new(RwLock::new(Vec::new())),

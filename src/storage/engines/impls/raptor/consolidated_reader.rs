@@ -17,7 +17,6 @@ use tracing::debug;
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::search::results::OptimizedSearchRecord;
 
-use crate::core::metadata_types::TypedMetadata;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::io::zero_copy::{BandwidthOptimizer, ZeroCopyIOSystem};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
@@ -474,12 +473,15 @@ impl RaptorReader {
                 .calculate_distance(query, &vector, &metric);
 
             // DIRECT use of standardized similarity scoring
-            let similarity_score = OptimizedSearchRecord::standardized_distance_to_similarity(similarity_result.raw_value, &metric);
+            let similarity_score = OptimizedSearchRecord::standardized_distance_to_similarity(
+                similarity_result.raw_value,
+                &metric,
+            );
             results.push(
                 OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
                     .add_vector(vector)
-                    .with_metadata(TypedMetadata::new())
+                    .with_metadata(std::collections::HashMap::new()),
             );
         }
 
@@ -833,7 +835,6 @@ impl RaptorReader {
         batch: &RecordBatch,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         use arrow_array::cast::AsArray;
-        
 
         let mut records = Vec::new();
         let num_rows = batch.num_rows();
@@ -962,10 +963,12 @@ impl RaptorReader {
                                 ),
                             };
 
-                            record.metadata.push(crate::proto::proximadb_v1::MetadataItem {
-                                key: key.clone(),
-                                value: Some(metadata_value),
-                            });
+                            record
+                                .metadata
+                                .push(crate::proto::proximadb_v1::MetadataItem {
+                                    key: key.clone(),
+                                    value: Some(metadata_value),
+                                });
                         }
                     }
                 }
@@ -976,8 +979,9 @@ impl RaptorReader {
                 if !source_array.is_null(row_idx) {
                     let source_bytes = source_array.value(row_idx);
                     // Deserialize SourceContent from bytes
-                    if let Ok(source_content) =
-                        bincode::deserialize::<crate::proto::proximadb_v1::SourceContent>(source_bytes)
+                    if let Ok(source_content) = bincode::deserialize::<
+                        crate::proto::proximadb_v1::SourceContent,
+                    >(source_bytes)
                     {
                         record.source = Some(source_content);
                     }
@@ -3398,8 +3402,6 @@ impl RaptorReader {
         compressed: &[u8],
         algorithm: CompressionAlgorithm,
     ) -> Result<Vec<u8>> {
-        
-
         crate::core::compression::decompress(
             compressed,
             algorithm,
@@ -3467,7 +3469,7 @@ impl RaptorReader {
     pub async fn read_rowgroup(&self, _rg_id: u16) -> Result<RecordBatch> {
         // This would read from the actual file using the row group metadata
         // For now, return empty batch with correct schema
-        
+
         use arrow_schema::{DataType, Field, Schema};
         use std::sync::Arc as StdArc;
 

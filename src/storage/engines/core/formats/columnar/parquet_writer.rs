@@ -7,8 +7,10 @@
 //! - Quantization-aware schema generation
 
 use anyhow::{Context, Result, anyhow};
-use arrow_array::{ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int64Array, RecordBatch,
-    StringArray, UInt32Array,};
+use arrow_array::{
+    ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int64Array, RecordBatch,
+    StringArray, UInt32Array,
+};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -22,8 +24,8 @@ use tracing::{debug, info, trace};
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::metadata_item;
-use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
 use crate::storage::engines::core::formats::columnar::QuantizationConfig;
+use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
 
 /// Configuration for Parquet writing
 #[derive(Debug, Clone)]
@@ -346,25 +348,30 @@ impl StreamingParquetWriter {
         {
             for record in records {
                 if !record.metadata.is_empty() {
-                    // Convert Vec<MetadataItem> to HashMap for sampling
+                    // Convert HashMap<String, SqlValue> to serde_json Map for sampling
                     let metadata_map: serde_json::Map<String, serde_json::Value> = record
                         .metadata
                         .iter()
-                        .filter_map(|(key, value)| {
-                            value.as_ref().map(|v| {
+                        .filter_map(|(key, sql_value)| {
+                            sql_value.value.as_ref().map(|v| {
                                 let json_value = match v {
-                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                        s,
-                                    ) => serde_json::Value::String(s.clone()),
-                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                                        f,
-                                    ) => serde_json::Value::Number(
-                                        serde_json::Number::from_f64(*f)
-                                            .unwrap_or(serde_json::Number::from(0)),
-                                    ),
-                                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                                        serde_json::Value::String(s.clone())
+                                    }
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                        serde_json::Value::Number(
+                                            serde_json::Number::from_f64(*f)
+                                                .unwrap_or(serde_json::Number::from(0)),
+                                        )
+                                    }
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                         serde_json::Value::Bool(*b)
                                     }
+                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                        serde_json::Value::Number(serde_json::Number::from(*i))
+                                    }
+                                    // For other types, convert to string or skip
+                                    _ => serde_json::Value::String("".to_string()),
                                 };
                                 (key.clone(), json_value)
                             })
@@ -399,25 +406,29 @@ impl StreamingParquetWriter {
             && self.metadata_samples.len() < self.config.metadata_inference_samples
         {
             if !record.metadata.is_empty() {
-                // Convert Vec<MetadataItem> to serde_json::Map for sampling
+                // Convert HashMap<String, SqlValue> to serde_json::Map for sampling
                 let metadata_map: serde_json::Map<String, serde_json::Value> = record
                     .metadata
                     .iter()
-                    .filter_map(|(key, value)| {
-                        value.as_ref().map(|v| {
+                    .filter_map(|(key, sql_value)| {
+                        sql_value.value.as_ref().map(|v| {
                             let json_value = match v {
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f) => {
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
                                     serde_json::Value::Number(
                                         serde_json::Number::from_f64(*f)
                                             .unwrap_or(serde_json::Number::from(0)),
                                     )
                                 }
-                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                     serde_json::Value::Bool(*b)
                                 }
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                    serde_json::Value::Number(serde_json::Number::from(*i))
+                                }
+                                _ => serde_json::Value::String("".to_string()),
                             };
                             (key.clone(), json_value)
                         })
@@ -565,25 +576,26 @@ impl StreamingParquetWriter {
                     .iter()
                     .map(|r| {
                         let mut map = serde_json::Map::new();
-                        for item in &r.metadata {
-                            let key = &item.key;
-                            let value = &item.value;
-                            // Convert MetadataItem to JSON value
-                            let json_value = match value {
-                                Some(metadata_item::Value::StringValue(s)) => {
+                        for (key, sql_value) in &r.metadata {
+                            // Convert SqlValue to JSON value
+                            let json_value = match &sql_value.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                Some(metadata_item::Value::NumberValue(f)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                                     if let Some(n) = serde_json::Number::from_f64(*f) {
                                         serde_json::Value::Number(n)
                                     } else {
                                         serde_json::Value::Null
                                     }
                                 }
-                                Some(metadata_item::Value::BoolValue(b)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                None => serde_json::Value::Null,
+                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                    serde_json::Value::Number(serde_json::Number::from(*i))
+                                }
+                                _ => serde_json::Value::Null,
                             };
                             map.insert(key.clone(), json_value);
                         }
@@ -908,8 +920,7 @@ impl StreamingParquetWriter {
                         estimated_items,
                         bloom_fpp
                     );
-                    
-                    trace!("Created {} bloom filter with capacity {}", 
+                    trace!("Created {} bloom filter with capacity {}",
                            column, estimated_items);
                     bloom
                 });

@@ -9,17 +9,46 @@
 - 03 User Guide: `docs/03-user-guide/` (configuration, operations)
 - 04 Storage Engines: `docs/04-storage-engines/` (design and status)
 - 05 Operations: `docs/05-operations/` (deploy, monitor, troubleshoot)
-- 06 Architecture: `docs/06-architecture/` (system design)
-- 06 API Reference: `docs/06-api-reference/` (SQL, vector, graph, collections)
+- 06A Architecture: `docs/06-architecture/` (system design)
+- 06B API Reference: `docs/06-api-reference/` (SQL, vector, graph, collections)
 - 07 Development: `docs/07-development/` (building, contributing, testing)
 - 08 Reference: `docs/08-reference/API.adoc` (consolidated REST/gRPC for vectors/collections)
 - 09 Roadmap: `docs/09-roadmap/` (plans, status, reconciliation)
 
+== Config Examples
+
+- Example TOML: `docs/config/example-config.toml`
+  - Includes `[server]`, `[api]`, `[cache]`, `[storage]`, `[sks]`, `[tls]`, `[hardware]`
+  - The `[cache].total_memory_mb` sets the Cross‑Cache Orchestrator budget; if omitted, falls back to `storage.cache_size_mb`.
+
+== Running with a Config File
+
+- CLI (example): `proximadb-server --config /path/to/config.toml`
+- Env var (example): `PROXIMADB_CONFIG=/path/to/config.toml proximadb-server`
+- Programmatic (Rust): use `core::config_loader::ConfigLoader::load_with_defaults("/path/to/config.toml")` and pass into `ProximaDB::new(config).await?`.
+
+Notes
+- Relative paths in the config are resolved to file URLs where applicable (see `core/config_loader.rs`).
+- The server reads `[cache]` (if present) to configure the unified Cross‑Cache Orchestrator and registers it globally for vector, SKS, and graph.
+
 == Conventions
 
-- Prefer 06 API Reference for endpoints; 08 Reference hosts consolidated vector/collection details referenced by 06.
+- Prefer 06B API Reference for endpoints; 08 Reference hosts consolidated vector/collection details referenced by 06B.
 - Roadmap statuses are reconciled against code; see `09-roadmap/ROADMAP_STATUS_RECONCILIATION_2025-09-10.md`.
 - Some root-level reports (e.g., optimization summaries) are historical snapshots; treat as reference/appendix.
+
+== Cache Configuration
+
+Add a dedicated `[cache]` section in your TOML to control the unified Cross‑Cache Orchestrator budget (shared by vector, SKS, and graph caches).
+
+Example
+----
+[cache]
+total_memory_mb = 512  # global budget for orchestrator‑managed caches
+----
+
+Fallback
+- If `[cache]` is omitted, the system falls back to `storage.cache_size_mb`.
 
 == Diagrams & Code Blocks
 

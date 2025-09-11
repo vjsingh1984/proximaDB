@@ -31,16 +31,15 @@ use crate::compute::quantization::types::UnifiedQuantizationLevel;
 
 // Universal performance optimization imports
 use crate::storage::engines::core::ops::performance_optimization::{
-    UniversalOptimizationStrategy, UniversalPerformanceOptimizer,
-    UniversallyOptimized,
+    UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
-use crate::core::{String, VectorRecord};
-use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::metadata_types::TypedMetadata;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FileStorageTier;
+use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
 // Schema now uses shared ColumnarSchema from columnar module
 use super::compaction::Compaction;
@@ -89,45 +88,43 @@ pub struct ViperEngine {
     /// User-facing core config (for passing to flush operations)
     /// Preserves original user settings for flush/compaction operations
     core_config: crate::core::config::ViperConfig,
-    
+
     /// Collection service for metadata access
     /// Provides collection-specific settings like dimensions, distance metrics
     collection_service:
         Arc<RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>>,
-    
+
     /// Filesystem interface for storage operations
     /// Supports local, S3, Azure, GCS backends transparently
     filesystem: Arc<FilesystemFactory>,
-    
+
     /// Schema for columnar storage (shared with NOVA)
     /// Defines column types, compression, and encoding strategies
     schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
     /// Handles row group reorganization and file merging
     /// Optimizes storage layout for better compression and query performance
     compaction: Compaction,
-    
+
     /// Manages batch writes and Parquet file creation
     /// Coordinates quantization, compression, and row group formation
     flush_manager: Flush,
-    
+
     // ml_clustering_engine: MLClusteringEngine, // Moved to AXIS
     // ML clustering is now handled by AXIS service for clean separation
-    
     /// Utility functions for Parquet operations
     /// Includes footer parsing, metadata extraction, statistics computation
     utilities: ViperUtilities,
-    
+
     // search_engine: Arc<ViperUnifiedSearchEngine>, // Removed - using IntegratedSearchOptimizer
     // Search now uses the shared IntegratedSearchOptimizer from core module
-    
     /// Engine statistics for monitoring and optimization
     /// Tracks compression ratios, query latencies, cache hit rates
     stats: Arc<EngineStats>, // Lock-free atomic metrics
-    
+
     /// Collection metadata cache for fast access
     /// Stores dimensions, schemas, compression settings per collection
     collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
-    
+
     /// Unified quantization engine from compute module
     /// Provides Binary, INT8, PQ4/8/16 quantization with hardware acceleration
     quantization_engine:
@@ -142,8 +139,19 @@ pub struct ViperEngine {
     /// - Progressive search coordination
     /// - Cache management across storage tiers
     universal_optimizer: UniversalPerformanceOptimizer,
+
+    /// Optional Cross-Cache Orchestrator for metadata/footer tracking
+    orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
 impl ViperEngine {
+    /// Attach orchestrator via context (future-proof DI)
+    pub fn with_context(
+        mut self,
+        ctx: &crate::core::context::SharedContext,
+    ) -> Self {
+        self.orchestrator = ctx.orchestrator.clone();
+        self
+    }
     /// Create a new VIPER engine from user-facing core config
     pub async fn from_core_config(
         core_config: crate::core::config::ViperConfig,
@@ -221,12 +229,12 @@ impl ViperEngine {
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
         );
-        
+
         // In-memory codebook store for PQ quantization
         // Codebooks are trained on sample data and cached for fast access
         let codebook_store =
             Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
-        
+
         // Create the unified quantization engine that all storage engines share
         let unified_engine = Arc::new(
             crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
@@ -1857,47 +1865,58 @@ impl UnifiedStorageEngine for ViperEngine {
         let all_results: Vec<OptimizedSearchRecord> = search_results
             .into_iter()
             .map(|r| {
-                let metadata_map: HashMap<String, serde_json::Value> = r.metadata.into_iter().map(|(key, sql_value)| {
-                    let value = match sql_value.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s),
-                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(n).unwrap_or(serde_json::Number::from(0))),
-                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(b),
-                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(i)),
-                        Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => serde_json::Value::String(base64::encode(b)),
-                        _ => serde_json::Value::Null,
-                    };
-                    (key, value)
-                }).collect();
+                let metadata_map: HashMap<String, serde_json::Value> = r
+                    .metadata
+                    .into_iter()
+                    .map(|(key, sql_value)| {
+                        let value = match sql_value.value {
+                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                serde_json::Value::String(s)
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                                serde_json::Value::Number(
+                                    serde_json::Number::from_f64(n)
+                                        .unwrap_or(serde_json::Number::from(0)),
+                                )
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                serde_json::Value::Bool(b)
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                serde_json::Value::Number(serde_json::Number::from(i))
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
+                                serde_json::Value::String(crate::utils::encoding::base64_encode(b))
+                            }
+                            _ => serde_json::Value::Null,
+                        };
+                        (key, value)
+                    })
+                    .collect();
 
                 let mut record = OptimizedSearchRecord::new(r.id, r.score as f32)
                     .add_vector(r.vector)
                     .with_metadata(TypedMetadata::from_json_map(metadata_map));
-                
+
                 if let Some(sim) = r.similarity {
                     record = record.with_similarity(sim);
                 }
-                
+
                 if let (Some(version), Some(timestamp)) = (r.version, r.timestamp) {
                     record = record.with_version_info(version as u32, timestamp as u32);
                 }
-                
+
                 if let Some(source) = r.source {
                     record = record.with_source(source.unwrap_or_default());
                 }
-                
+
                 record
             })
             .collect();
 
-        debug!(
-            "Search engine returned {} results",
-            all_results.len()
-        );
+        debug!("Search engine returned {} results", all_results.len());
         if !all_results.is_empty() {
-            trace!(
-                "First result metadata: {:?}",
-                all_results[0].metadata
-            );
+            trace!("First result metadata: {:?}", all_results[0].metadata);
         }
         // Return the optimized search results directly
         let mut results = all_results;
@@ -1943,10 +1962,7 @@ impl UnifiedStorageEngine for ViperEngine {
             "  ⏱️  Total search time: {:.2}ms",
             total_search_time.as_secs_f32() * 1000.0
         );
-        debug!(
-            "  🗃️  Results found: {}",
-            results.len()
-        );
+        debug!("  🗃️  Results found: {}", results.len());
         debug!(
             "  📥 Vector inclusion: {}, Metadata inclusion: {}",
             include_vectors, include_metadata
@@ -1970,7 +1986,8 @@ impl UnifiedStorageEngine for ViperEngine {
                 if i == 0 && result.metadata.len() > 0 {
                     debug!(
                         "    📋 VIPER Metadata sample: {:?}",
-                        result.metadata
+                        result
+                            .metadata
                             .iter()
                             .take(3)
                             .map(|(k, v)| format!("{}={:?}", k, v))

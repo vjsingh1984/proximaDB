@@ -4,21 +4,21 @@
 //! It provides a clean separation between infrastructure (how things work) and
 //! implementations (what engines do).
 
+pub mod filter_evaluator;
 pub mod formats; // Storage formats: row-based, columnar
 pub mod io; // I/O operations: zero-copy, filesystem abstractions
 pub mod ops; // Common operations: compression, encoding, optimization
-pub mod search; // Search infrastructure: progressive search, filtering
-pub mod filter_evaluator; // Unified filter evaluation for all engines
+pub mod search; // Search infrastructure: progressive search, filtering // Unified filter evaluation for all engines
 
 // Re-export commonly used types for convenience
+pub use filter_evaluator::{
+    UnifiedFilterEvaluator, create_filter_fn, create_json_filter_fn, evaluate_filter,
+    evaluate_filter_strings,
+};
 pub use formats::{
     columnar::{ColumnarSchema, ParquetIOLayer, ParquetQueryEngine},
     fastlanes_blocks::{FastLanesBlockMetadata, FastLanesDataBlock, RowBasedUtilities},
 };
 pub use io::zero_copy::ZeroCopyIOSystem;
 pub use search::{ProgressiveSearchEngine, SearchContext};
-pub use filter_evaluator::{
-    UnifiedFilterEvaluator, create_filter_fn, create_json_filter_fn, 
-    evaluate_filter, evaluate_filter_strings
-};
 // Common operations exports available from ops module directly

@@ -25,15 +25,15 @@
 //! - **Plan Caching**: Cache query plans for repeated queries
 //! - **Statistics Integration**: Use real-time statistics for accurate cost estimates
 
-use crate::core::error::{ProximaDBError, VectorDBError};
-use crate::utils::Uuid;
-use crate::graph::{NodeId, EdgeId, GraphMemoryPool};
-use super::{QueryResult, QueryContext, QueryStats};
 use super::ast::CompiledPattern;
-use std::collections::{HashMap, HashSet, BTreeMap};
+use super::{QueryContext, QueryResult, QueryStats};
+use crate::core::error::{ProximaDBError, VectorDBError};
+use crate::graph::{EdgeId, GraphMemoryPool, NodeId};
+use crate::utils::Uuid;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use serde::{Serialize, Deserialize};
 
 /// Cost-based query planner
 pub struct QueryPlanner {
@@ -182,22 +182,13 @@ pub enum PlanStepType {
         right_key: String,
     },
     /// Filter results
-    Filter {
-        condition: FilterCondition,
-    },
+    Filter { condition: FilterCondition },
     /// Project/select specific fields
-    Project {
-        fields: Vec<String>,
-    },
+    Project { fields: Vec<String> },
     /// Sort results
-    Sort {
-        fields: Vec<SortField>,
-    },
+    Sort { fields: Vec<SortField> },
     /// Limit results
-    Limit {
-        count: usize,
-        offset: Option<usize>,
-    },
+    Limit { count: usize, offset: Option<usize> },
 }
 
 /// Property filter for node selection
@@ -332,11 +323,11 @@ impl CostEstimate {
             total_cost: cpu + io + memory,
         }
     }
-    
+
     pub fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
-    
+
     pub fn add(&self, other: &CostEstimate) -> CostEstimate {
         CostEstimate::new(
             self.cpu_cost + other.cpu_cost,
@@ -355,7 +346,7 @@ impl QueryPlanner {
             config: PlannerConfig::default(),
         }
     }
-    
+
     /// Create query planner with custom configuration
     pub fn with_config(config: PlannerConfig) -> Self {
         Self {
@@ -364,22 +355,22 @@ impl QueryPlanner {
             config,
         }
     }
-    
+
     /// Update graph statistics
     pub fn update_statistics(&self, memory_pool: &Arc<GraphMemoryPool>) -> QueryResult<()> {
         let mut stats = self.stats.write().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats write lock".to_string())
         })?;
-        
+
         // Update basic counts
         stats.node_count = memory_pool.node_count() as u64;
         stats.edge_count = memory_pool.edge_count() as u64;
-        
+
         // Calculate average node degree
         if stats.node_count > 0 {
             stats.avg_node_degree = stats.edge_count as f64 / stats.node_count as f64;
         }
-        
+
         // Update label selectivity
         stats.label_selectivity.clear();
         for entry in memory_pool.label_indexes.iter() {
@@ -387,7 +378,7 @@ impl QueryPlanner {
             let count = entry.value().len() as u64;
             stats.label_selectivity.insert(label, count);
         }
-        
+
         // Update edge type selectivity
         stats.edge_type_selectivity.clear();
         for entry in memory_pool.edge_type_indexes.iter() {
@@ -403,7 +394,9 @@ impl QueryPlanner {
         for entry in memory_pool.node_property_indexes.iter() {
             let prop_name = entry.key().clone();
             let prop_index = entry.value();
-            stats.property_selectivity.insert(prop_name.clone(), prop_index.stats.unique_values as u64);
+            stats
+                .property_selectivity
+                .insert(prop_name.clone(), prop_index.stats.unique_values as u64);
             stats.index_stats.insert(
                 format!("node_prop_{}", prop_name),
                 IndexStats {
@@ -422,7 +415,9 @@ impl QueryPlanner {
         for entry in memory_pool.edge_property_indexes.iter() {
             let prop_name = entry.key().clone();
             let prop_index = entry.value();
-            stats.property_selectivity.insert(prop_name.clone(), prop_index.stats.unique_values as u64);
+            stats
+                .property_selectivity
+                .insert(prop_name.clone(), prop_index.stats.unique_values as u64);
             stats.index_stats.insert(
                 format!("edge_prop_{}", prop_name),
                 IndexStats {
@@ -437,10 +432,10 @@ impl QueryPlanner {
                 },
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Create an optimized query plan
     pub fn create_plan(
         &self,
@@ -448,15 +443,15 @@ impl QueryPlanner {
         parameters: &HashMap<String, serde_json::Value>,
     ) -> QueryResult<QueryPlan> {
         let start_time = Instant::now();
-        
+
         // Generate cache key
         let cache_key = self.generate_cache_key(query_type, parameters);
-        
+
         // Check plan cache first
         if let Some(cached_plan) = self.get_cached_plan(&cache_key)? {
             return Ok(cached_plan);
         }
-        
+
         // Create new plan based on query type
         let plan = match query_type {
             "node_by_label" => self.plan_node_by_label_query(parameters)?,
@@ -465,30 +460,34 @@ impl QueryPlanner {
             "traverse_dfs" => self.plan_traversal_query(parameters, TraversalAlgorithm::DFS)?,
             "shortest_path" => self.plan_shortest_path_query(parameters)?,
             "pattern_match" => self.plan_pattern_match_query(parameters)?,
-            _ => return Err(VectorDBError::InvalidInput(format!(
-                "Unknown query type: {}", query_type
-            ))),
+            _ => {
+                return Err(VectorDBError::InvalidInput(format!(
+                    "Unknown query type: {}",
+                    query_type
+                )));
+            }
         };
-        
+
         // Cache the plan
         self.cache_plan(cache_key, &plan)?;
-        
+
         Ok(plan)
     }
-    
+
     /// Plan a node-by-label query
     fn plan_node_by_label_query(
         &self,
         parameters: &HashMap<String, serde_json::Value>,
     ) -> QueryResult<QueryPlan> {
-        let label = parameters.get("label")
+        let label = parameters
+            .get("label")
             .and_then(|v| v.as_str())
             .ok_or_else(|| VectorDBError::InvalidInput("Missing 'label' parameter".to_string()))?;
-        
+
         let stats = self.stats.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
-        
+
         // Estimate selectivity
         let label_cardinality = stats.label_selectivity.get(label).copied().unwrap_or(0);
         let selectivity = if stats.node_count > 0 {
@@ -496,7 +495,7 @@ impl QueryPlanner {
         } else {
             0.0
         };
-        
+
         // Choose strategy based on selectivity
         let step = if self.config.optimizations.use_indexes && selectivity < 0.5 {
             // Use index if available and selective
@@ -529,7 +528,7 @@ impl QueryPlanner {
                 output_cardinality: label_cardinality as usize,
             }
         };
-        
+
         Ok(QueryPlan {
             id: Uuid::new_v4().to_string(),
             steps: vec![step.clone()],
@@ -538,33 +537,41 @@ impl QueryPlanner {
             created_at: std::time::SystemTime::now(),
         })
     }
-    
+
     /// Plan a node-by-property query
     fn plan_node_by_property_query(
         &self,
         parameters: &HashMap<String, serde_json::Value>,
     ) -> QueryResult<QueryPlan> {
-        let property_name = parameters.get("property_name")
+        let property_name = parameters
+            .get("property_name")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'property_name' parameter".to_string()))?;
-        
-        let property_value = parameters.get("property_value")
-            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'property_value' parameter".to_string()))?;
-        
+            .ok_or_else(|| {
+                VectorDBError::InvalidInput("Missing 'property_name' parameter".to_string())
+            })?;
+
+        let property_value = parameters.get("property_value").ok_or_else(|| {
+            VectorDBError::InvalidInput("Missing 'property_value' parameter".to_string())
+        })?;
+
         let stats = self.stats.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
-        
+
         // Estimate selectivity based on property statistics
-        let distinct_values = stats.property_selectivity.get(property_name).copied().unwrap_or(1);
+        let distinct_values = stats
+            .property_selectivity
+            .get(property_name)
+            .copied()
+            .unwrap_or(1);
         let estimated_cardinality = if distinct_values > 0 {
             (stats.node_count / distinct_values).max(1)
         } else {
             1
         };
-        
+
         let selectivity = estimated_cardinality as f64 / stats.node_count as f64;
-        
+
         // Choose strategy based on selectivity
         let step = if self.config.optimizations.use_indexes && selectivity < 0.3 {
             // Use property index
@@ -601,7 +608,7 @@ impl QueryPlanner {
                 output_cardinality: estimated_cardinality as usize,
             }
         };
-        
+
         Ok(QueryPlan {
             id: Uuid::new_v4().to_string(),
             steps: vec![step.clone()],
@@ -610,50 +617,57 @@ impl QueryPlanner {
             created_at: std::time::SystemTime::now(),
         })
     }
-    
+
     /// Plan a graph traversal query
     fn plan_traversal_query(
         &self,
         parameters: &HashMap<String, serde_json::Value>,
         algorithm: TraversalAlgorithm,
     ) -> QueryResult<QueryPlan> {
-        let start_node = parameters.get("start_node")
+        let start_node = parameters
+            .get("start_node")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'start_node' parameter".to_string()))?;
-        
-        let max_depth = parameters.get("max_depth")
+            .ok_or_else(|| {
+                VectorDBError::InvalidInput("Missing 'start_node' parameter".to_string())
+            })?;
+
+        let max_depth = parameters
+            .get("max_depth")
             .and_then(|v| v.as_u64())
             .map(|d| d as u32);
-        
-        let edge_type = parameters.get("edge_type")
-            .and_then(|v| v.as_str());
-        
+
+        let edge_type = parameters.get("edge_type").and_then(|v| v.as_str());
+
         let stats = self.stats.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
-        
+
         // Estimate traversal cost based on graph statistics
         let avg_degree = stats.avg_node_degree;
         let depth = max_depth.unwrap_or(3) as f64;
-        
+
         // Exponential growth estimate with branching factor
         let estimated_nodes_visited = if avg_degree > 1.0 {
             (avg_degree.powf(depth) - 1.0) / (avg_degree - 1.0)
         } else {
             depth
         };
-        
+
         let estimated_edges_traversed = estimated_nodes_visited * avg_degree;
-        
+
         // Apply edge type selectivity if specified
         let (nodes_visited, edges_traversed) = if let Some(edge_type) = edge_type {
-            let edge_type_count = stats.edge_type_selectivity.get(edge_type).copied().unwrap_or(0);
+            let edge_type_count = stats
+                .edge_type_selectivity
+                .get(edge_type)
+                .copied()
+                .unwrap_or(0);
             let edge_type_selectivity = if stats.edge_count > 0 {
                 edge_type_count as f64 / stats.edge_count as f64
             } else {
                 0.1
             };
-            
+
             (
                 (estimated_nodes_visited * edge_type_selectivity).max(1.0) as usize,
                 (estimated_edges_traversed * edge_type_selectivity).max(1.0),
@@ -661,7 +675,7 @@ impl QueryPlanner {
         } else {
             (estimated_nodes_visited as usize, estimated_edges_traversed)
         };
-        
+
         let step = PlanStep {
             step_type: PlanStepType::Traverse {
                 algorithm,
@@ -677,14 +691,14 @@ impl QueryPlanner {
             },
             parameters: parameters.clone(),
             cost: CostEstimate::new(
-                nodes_visited as f64 * self.config.cost_model.node_access_cost +
-                edges_traversed * self.config.cost_model.edge_traversal_cost,
+                nodes_visited as f64 * self.config.cost_model.node_access_cost
+                    + edges_traversed * self.config.cost_model.edge_traversal_cost,
                 0.0,
                 nodes_visited as f64 * self.config.cost_model.memory_cost_factor,
             ),
             output_cardinality: nodes_visited,
         };
-        
+
         Ok(QueryPlan {
             id: Uuid::new_v4().to_string(),
             steps: vec![step.clone()],
@@ -693,7 +707,7 @@ impl QueryPlanner {
             created_at: std::time::SystemTime::now(),
         })
     }
-    
+
     /// Plan a shortest path query
     fn plan_shortest_path_query(
         &self,
@@ -701,16 +715,16 @@ impl QueryPlanner {
     ) -> QueryResult<QueryPlan> {
         // Similar to traversal but with Dijkstra algorithm
         let mut dijkstra_params = parameters.clone();
-        dijkstra_params.insert("algorithm".to_string(), serde_json::Value::String("dijkstra".to_string()));
-        
+        dijkstra_params.insert(
+            "algorithm".to_string(),
+            serde_json::Value::String("dijkstra".to_string()),
+        );
+
         self.plan_traversal_query(&dijkstra_params, TraversalAlgorithm::Dijkstra)
     }
 
     /// Plan a pattern query from a CompiledPattern
-    pub fn plan_pattern_query(
-        &self,
-        pattern: &CompiledPattern,
-    ) -> QueryResult<QueryPlan> {
+    pub fn plan_pattern_query(&self, pattern: &CompiledPattern) -> QueryResult<QueryPlan> {
         let stats = self.stats.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
@@ -761,8 +775,13 @@ impl QueryPlanner {
             // Simplified logic: if labels are present, assume index seek is possible
             if self.config.optimizations.use_indexes && !starting_node_pattern.labels.is_empty() {
                 step_type = PlanStepType::IndexSeek {
-                    index_name: format!("label_index_{}", starting_node_pattern.labels.first().unwrap()),
-                    key_value: serde_json::Value::String(starting_node_pattern.labels.first().unwrap().clone()),
+                    index_name: format!(
+                        "label_index_{}",
+                        starting_node_pattern.labels.first().unwrap()
+                    ),
+                    key_value: serde_json::Value::String(
+                        starting_node_pattern.labels.first().unwrap().clone(),
+                    ),
                 };
                 step_cost = CostEstimate::new(
                     self.config.cost_model.index_seek_cost,
@@ -795,101 +814,128 @@ impl QueryPlanner {
             estimated_result_size = node_scan_step.output_cardinality;
             steps.push(node_scan_step);
 
-        // Step 2: Handle Edge Patterns (simplified to a generic traversal for now)
-        if !pattern.edges.is_empty() || !pattern.paths.is_empty() {
-            let avg_degree = stats.avg_node_degree;
-            let traversal_cost = estimated_result_size as f64 * avg_degree * self.config.cost_model.edge_traversal_cost;
-            let traversal_output_cardinality = (estimated_result_size as f64 * avg_degree).max(1.0) as usize;
+            // Step 2: Handle Edge Patterns (simplified to a generic traversal for now)
+            if !pattern.edges.is_empty() || !pattern.paths.is_empty() {
+                let avg_degree = stats.avg_node_degree;
+                let traversal_cost = estimated_result_size as f64
+                    * avg_degree
+                    * self.config.cost_model.edge_traversal_cost;
+                let traversal_output_cardinality =
+                    (estimated_result_size as f64 * avg_degree).max(1.0) as usize;
 
-            let traversal_step = PlanStep {
-                step_type: PlanStepType::Traverse {
-                    algorithm: TraversalAlgorithm::BFS, // Default to BFS
-                    max_depth: None, // TODO: Infer from path patterns
-                    edge_filters: Vec::new(), // TODO: Convert EdgePattern properties to EdgeFilter
-                },
-                parameters: HashMap::new(),
-                cost: CostEstimate::new(traversal_cost, 0.0, traversal_output_cardinality as f64 * self.config.cost_model.memory_cost_factor),
-                output_cardinality: traversal_output_cardinality,
-            };
-            estimated_cost = estimated_cost.add(&traversal_step.cost);
-            steps.push(traversal_step);
-        }
+                let traversal_step = PlanStep {
+                    step_type: PlanStepType::Traverse {
+                        algorithm: TraversalAlgorithm::BFS, // Default to BFS
+                        max_depth: None,                    // TODO: Infer from path patterns
+                        edge_filters: Vec::new(), // TODO: Convert EdgePattern properties to EdgeFilter
+                    },
+                    parameters: HashMap::new(),
+                    cost: CostEstimate::new(
+                        traversal_cost,
+                        0.0,
+                        traversal_output_cardinality as f64
+                            * self.config.cost_model.memory_cost_factor,
+                    ),
+                    output_cardinality: traversal_output_cardinality,
+                };
+                estimated_cost = estimated_cost.add(&traversal_step.cost);
+                steps.push(traversal_step);
+            }
 
-        // Step 3: Handle WHERE clauses
-        if !pattern.where_clauses.is_empty() {
-            // Assume WHERE clause reduces cardinality by 50% (simplified)
-            let filter_cardinality = (estimated_result_size as f64 * 0.5).max(1.0) as usize;
-            let filter_step = PlanStep {
-                step_type: PlanStepType::Filter {
-                    condition: FilterCondition::And(Vec::new()), // TODO: Convert WhereClause to FilterCondition
-                },
-                parameters: HashMap::new(),
-                cost: CostEstimate::new(filter_cardinality as f64 * self.config.cost_model.cpu_cost, 0.0, 0.0), // CPU cost for filtering
-                output_cardinality: filter_cardinality,
-            };
-            estimated_cost = estimated_cost.add(&filter_step.cost);
-            estimated_result_size = filter_cardinality;
-            steps.push(filter_step);
-        }
+            // Step 3: Handle WHERE clauses
+            if !pattern.where_clauses.is_empty() {
+                // Assume WHERE clause reduces cardinality by 50% (simplified)
+                let filter_cardinality = (estimated_result_size as f64 * 0.5).max(1.0) as usize;
+                let filter_step = PlanStep {
+                    step_type: PlanStepType::Filter {
+                        condition: FilterCondition::And(Vec::new()), // TODO: Convert WhereClause to FilterCondition
+                    },
+                    parameters: HashMap::new(),
+                    cost: CostEstimate::new(
+                        filter_cardinality as f64 * self.config.cost_model.cpu_cost,
+                        0.0,
+                        0.0,
+                    ), // CPU cost for filtering
+                    output_cardinality: filter_cardinality,
+                };
+                estimated_cost = estimated_cost.add(&filter_step.cost);
+                estimated_result_size = filter_cardinality;
+                steps.push(filter_step);
+            }
 
-        // Step 4: Handle RETURN clause (simplified to Project and Limit)
-        if !pattern.return_spec.variables.is_empty() || !pattern.return_spec.projections.is_empty() {
-            let project_step = PlanStep {
-                step_type: PlanStepType::Project {
-                    fields: pattern.return_spec.variables.clone(), // Simplified
-                },
-                parameters: HashMap::new(),
-                cost: CostEstimate::new(estimated_result_size as f64 * self.config.cost_model.cpu_cost, 0.0, 0.0),
-                output_cardinality: estimated_result_size,
-            };
-            estimated_cost = estimated_cost.add(&project_step.cost);
-            steps.push(project_step);
-        }
+            // Step 4: Handle RETURN clause (simplified to Project and Limit)
+            if !pattern.return_spec.variables.is_empty()
+                || !pattern.return_spec.projections.is_empty()
+            {
+                let project_step = PlanStep {
+                    step_type: PlanStepType::Project {
+                        fields: pattern.return_spec.variables.clone(), // Simplified
+                    },
+                    parameters: HashMap::new(),
+                    cost: CostEstimate::new(
+                        estimated_result_size as f64 * self.config.cost_model.cpu_cost,
+                        0.0,
+                        0.0,
+                    ),
+                    output_cardinality: estimated_result_size,
+                };
+                estimated_cost = estimated_cost.add(&project_step.cost);
+                steps.push(project_step);
+            }
 
-        if let Some(limit) = pattern.return_spec.limit {
-            let limit_step = PlanStep {
-                step_type: PlanStepType::Limit {
-                    count: limit as usize,
-                    offset: pattern.return_spec.skip.map(|s| s as usize),
-                },
-                parameters: HashMap::new(),
-                cost: CostEstimate::zero(), // Minimal cost
-                output_cardinality: limit as usize,
-            };
-            estimated_cost = estimated_cost.add(&limit_step.cost);
-            steps.push(limit_step);
-        }
+            if let Some(limit) = pattern.return_spec.limit {
+                let limit_step = PlanStep {
+                    step_type: PlanStepType::Limit {
+                        count: limit as usize,
+                        offset: pattern.return_spec.skip.map(|s| s as usize),
+                    },
+                    parameters: HashMap::new(),
+                    cost: CostEstimate::zero(), // Minimal cost
+                    output_cardinality: limit as usize,
+                };
+                estimated_cost = estimated_cost.add(&limit_step.cost);
+                steps.push(limit_step);
+            }
 
-        // Set current_steps and current_estimated_cost for comparison
-        current_steps = steps;
-        current_estimated_cost = estimated_cost;
-        current_estimated_result_size = estimated_result_size;
+            // Set current_steps and current_estimated_cost for comparison
+            current_steps = steps;
+            current_estimated_cost = estimated_cost;
+            current_estimated_result_size = estimated_result_size;
 
-        // Compare with best plan found so far
-        if current_estimated_cost.total_cost < min_cost {
-            min_cost = current_estimated_cost.total_cost;
-            best_plan = Some(QueryPlan {
-                id: Uuid::new_v4().to_string(),
-                steps: current_steps,
-                estimated_cost: current_estimated_cost,
-                estimated_result_size: current_estimated_result_size,
-                created_at: std::time::SystemTime::now(),
-            });
-        }
+            // Compare with best plan found so far
+            if current_estimated_cost.total_cost < min_cost {
+                min_cost = current_estimated_cost.total_cost;
+                best_plan = Some(QueryPlan {
+                    id: Uuid::new_v4().to_string(),
+                    steps: current_steps,
+                    estimated_cost: current_estimated_cost,
+                    estimated_result_size: current_estimated_result_size,
+                    created_at: std::time::SystemTime::now(),
+                });
+            }
         } // End of the for loop
 
-        best_plan.ok_or_else(|| VectorDBError::InvalidInput("Could not generate a plan for the given pattern".to_string()))
+        best_plan.ok_or_else(|| {
+            VectorDBError::InvalidInput(
+                "Could not generate a plan for the given pattern".to_string(),
+            )
+        })
     }
-    
+
     /// Plan a pattern matching query (simplified for now)
     pub fn plan_pattern_match_query(
         &self,
         parameters: &HashMap<String, serde_json::Value>,
     ) -> QueryResult<QueryPlan> {
         // For now, assume the 'pattern' parameter contains the Cypher-like string
-        let pattern_str = parameters.get("pattern")
+        let pattern_str = parameters
+            .get("pattern")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| VectorDBError::InvalidInput("Missing 'pattern' parameter for pattern match query".to_string()))?;
+            .ok_or_else(|| {
+                VectorDBError::InvalidInput(
+                    "Missing 'pattern' parameter for pattern match query".to_string(),
+                )
+            })?;
 
         // Use the QueryParser to parse the pattern string into a CompiledPattern
         let parser = super::parser::QueryParser::new(); // Assuming parser is in super::parser
@@ -898,7 +944,7 @@ impl QueryPlanner {
         // Now plan the compiled pattern
         self.plan_pattern_query(&compiled_pattern)
     }
-    
+
     /// Generate cache key for query
     fn generate_cache_key(
         &self,
@@ -907,59 +953,60 @@ impl QueryPlanner {
     ) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         query_type.hash(&mut hasher);
-        
+
         // Sort parameters for consistent hashing
         let mut sorted_params: Vec<_> = parameters.iter().collect();
         sorted_params.sort_by_key(|&(k, _)| k);
-        
+
         for (key, value) in sorted_params {
             key.hash(&mut hasher);
             value.to_string().hash(&mut hasher);
         }
-        
+
         format!("plan_{:016x}", hasher.finish())
     }
-    
+
     /// Get cached plan if available and not expired
     fn get_cached_plan(&self, cache_key: &str) -> QueryResult<Option<QueryPlan>> {
         let cache = self.plan_cache.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire plan cache read lock".to_string())
         })?;
-        
+
         if let Some(cached) = cache.get(cache_key) {
             let age = cached.last_accessed.elapsed();
             if age.as_secs() < self.config.plan_cache_ttl_sec {
                 return Ok(Some(cached.plan.clone()));
             }
         }
-        
+
         Ok(None)
     }
-    
+
     /// Cache a query plan
     fn cache_plan(&self, cache_key: String, plan: &QueryPlan) -> QueryResult<()> {
         let mut cache = self.plan_cache.write().map_err(|_| {
             VectorDBError::Internal("Failed to acquire plan cache write lock".to_string())
         })?;
-        
+
         // Remove expired plans if cache is full
         if cache.len() >= self.config.max_cached_plans {
             let now = Instant::now();
             let expired_keys: Vec<_> = cache
                 .iter()
                 .filter(|(_, cached)| {
-                    now.duration_since(cached.last_accessed).as_secs() > self.config.plan_cache_ttl_sec
+                    now.duration_since(cached.last_accessed).as_secs()
+                        > self.config.plan_cache_ttl_sec
                 })
                 .map(|(k, _)| k.clone())
                 .collect();
-            
+
             for key in expired_keys {
                 cache.remove(&key);
             }
-            
+
             // If still full, remove least recently used
             if cache.len() >= self.config.max_cached_plans {
                 if let Some((lru_key, _)) = cache
@@ -971,31 +1018,34 @@ impl QueryPlanner {
                 }
             }
         }
-        
-        cache.insert(cache_key, CachedPlan {
-            plan: plan.clone(),
-            access_count: 1,
-            last_accessed: Instant::now(),
-        });
-        
+
+        cache.insert(
+            cache_key,
+            CachedPlan {
+                plan: plan.clone(),
+                access_count: 1,
+                last_accessed: Instant::now(),
+            },
+        );
+
         Ok(())
     }
-    
+
     /// Get query planner statistics
     pub fn get_statistics(&self) -> QueryResult<GraphStatistics> {
         let stats = self.stats.read().map_err(|_| {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
-        
+
         Ok(stats.clone())
     }
-    
+
     /// Clear plan cache
     pub fn clear_cache(&self) -> QueryResult<()> {
         let mut cache = self.plan_cache.write().map_err(|_| {
             VectorDBError::Internal("Failed to acquire plan cache write lock".to_string())
         })?;
-        
+
         cache.clear();
         Ok(())
     }
@@ -1011,7 +1061,7 @@ impl Default for QueryPlanner {
 mod tests {
     use super::*;
     use crate::graph::GraphMemoryPool;
-    
+
     #[test]
     fn test_query_planner_creation() {
         let planner = QueryPlanner::new();
@@ -1019,66 +1069,75 @@ mod tests {
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
     }
-    
+
     #[test]
     fn test_cost_estimate() {
         let cost1 = CostEstimate::new(10.0, 5.0, 2.0);
         let cost2 = CostEstimate::new(3.0, 7.0, 1.0);
-        
+
         assert_eq!(cost1.total_cost, 17.0);
-        
+
         let combined = cost1.add(&cost2);
         assert_eq!(combined.cpu_cost, 13.0);
         assert_eq!(combined.io_cost, 12.0);
         assert_eq!(combined.memory_cost, 3.0);
         assert_eq!(combined.total_cost, 28.0);
     }
-    
+
     #[test]
     fn test_cache_key_generation() {
         let planner = QueryPlanner::new();
-        
+
         let mut params1 = HashMap::new();
-        params1.insert("label".to_string(), serde_json::Value::String("Person".to_string()));
-        
+        params1.insert(
+            "label".to_string(),
+            serde_json::Value::String("Person".to_string()),
+        );
+
         let mut params2 = HashMap::new();
-        params2.insert("label".to_string(), serde_json::Value::String("Person".to_string()));
-        
+        params2.insert(
+            "label".to_string(),
+            serde_json::Value::String("Person".to_string()),
+        );
+
         let key1 = planner.generate_cache_key("node_by_label", &params1);
         let key2 = planner.generate_cache_key("node_by_label", &params2);
-        
+
         assert_eq!(key1, key2); // Same parameters should generate same key
-        
+
         let key3 = planner.generate_cache_key("node_by_property", &params1);
         assert_ne!(key1, key3); // Different query type should generate different key
     }
-    
+
     #[test]
     fn test_statistics_update() {
         let planner = QueryPlanner::new();
         let memory_pool = Arc::new(GraphMemoryPool::new());
-        
+
         // Update statistics with empty pool
         planner.update_statistics(&memory_pool).unwrap();
-        
+
         let stats = planner.get_statistics().unwrap();
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
         assert_eq!(stats.avg_node_degree, 0.0);
     }
-    
+
     #[test]
     fn test_plan_node_by_label_query() {
         let planner = QueryPlanner::new();
-        
+
         let mut params = HashMap::new();
-        params.insert("label".to_string(), serde_json::Value::String("Person".to_string()));
-        
+        params.insert(
+            "label".to_string(),
+            serde_json::Value::String("Person".to_string()),
+        );
+
         let plan = planner.plan_node_by_label_query(&params).unwrap();
-        
+
         assert!(!plan.id.is_empty());
         assert_eq!(plan.steps.len(), 1);
-        
+
         match &plan.steps[0].step_type {
             PlanStepType::NodeScan { labels, .. } => {
                 assert_eq!(labels.as_ref().unwrap()[0], "Person");

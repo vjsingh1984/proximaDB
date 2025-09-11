@@ -245,11 +245,11 @@ impl MetadataIndex {
                     } else {
                         None
                     };
-                    
+
                     if let Some(idx) = new_index {
                         self.column_indexes.insert(item.key.clone(), idx);
                     }
-                    
+
                     // Update index with this value
                     if let Some(column_index) = self.column_indexes.get_mut(&item.key) {
                         Self::update_column_index_static(column_index, &json_value, block_id)?;

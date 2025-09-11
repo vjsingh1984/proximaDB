@@ -108,8 +108,7 @@ use crate::storage::engines::core::formats::columnar::FilterCondition;
 
 // Import shared columnar infrastructure
 use crate::storage::engines::core::formats::columnar::{
-    ColumnarFileMetadata, MetadataFilter,
-    QuantizationConfig,
+    ColumnarFileMetadata, MetadataFilter, QuantizationConfig,
 };
 
 // Use columnar types directly - no aliases needed

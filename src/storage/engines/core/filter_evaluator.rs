@@ -10,7 +10,7 @@
 //! - Performance optimizations with caching
 //! - Consistent behavior across all engines
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ impl UnifiedFilterEvaluator {
                 (k.clone(), value)
             })
             .collect();
-        
+
         self.filter.evaluate(&json_metadata)
     }
 
@@ -90,43 +90,97 @@ impl UnifiedFilterEvaluator {
 enum CompiledFilter {
     /// Always returns true (no filter)
     All,
-    
+
     /// Comparison operations
-    Equals { field: String, value: Value },
-    NotEquals { field: String, value: Value },
-    GreaterThan { field: String, value: Value },
-    GreaterThanOrEqual { field: String, value: Value },
-    LessThan { field: String, value: Value },
-    LessThanOrEqual { field: String, value: Value },
-    
+    Equals {
+        field: String,
+        value: Value,
+    },
+    NotEquals {
+        field: String,
+        value: Value,
+    },
+    GreaterThan {
+        field: String,
+        value: Value,
+    },
+    GreaterThanOrEqual {
+        field: String,
+        value: Value,
+    },
+    LessThan {
+        field: String,
+        value: Value,
+    },
+    LessThanOrEqual {
+        field: String,
+        value: Value,
+    },
+
     /// String operations
-    Contains { field: String, substring: String },
-    StartsWith { field: String, prefix: String },
-    EndsWith { field: String, suffix: String },
-    Like { field: String, pattern: String },
-    
+    Contains {
+        field: String,
+        substring: String,
+    },
+    StartsWith {
+        field: String,
+        prefix: String,
+    },
+    EndsWith {
+        field: String,
+        suffix: String,
+    },
+    Like {
+        field: String,
+        pattern: String,
+    },
+
     /// Set operations
-    In { field: String, values: Vec<Value> },
-    NotIn { field: String, values: Vec<Value> },
-    
+    In {
+        field: String,
+        values: Vec<Value>,
+    },
+    NotIn {
+        field: String,
+        values: Vec<Value>,
+    },
+
     /// Range operations
-    Between { field: String, min: Value, max: Value },
-    
+    Between {
+        field: String,
+        min: Value,
+        max: Value,
+    },
+
     /// Null checks
-    IsNull { field: String },
-    IsNotNull { field: String },
-    
+    IsNull {
+        field: String,
+    },
+    IsNotNull {
+        field: String,
+    },
+
     /// Logical operations
-    And { filters: Vec<CompiledFilter> },
-    Or { filters: Vec<CompiledFilter> },
-    Not { filter: Box<CompiledFilter> },
+    And {
+        filters: Vec<CompiledFilter>,
+    },
+    Or {
+        filters: Vec<CompiledFilter>,
+    },
+    Not {
+        filter: Box<CompiledFilter>,
+    },
 }
 
 impl CompiledFilter {
     /// Compile a FilterExpression into an optimized form
     fn compile(expr: &FilterExpression) -> Result<Self> {
         match expr {
-            FilterExpression::Comparison { field, operator, value } => {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
                 match operator {
                     ComparisonOperator::Equals => Ok(CompiledFilter::Equals {
                         field: field.clone(),
@@ -140,10 +194,12 @@ impl CompiledFilter {
                         field: field.clone(),
                         value: value.clone(),
                     }),
-                    ComparisonOperator::GreaterThanOrEqual => Ok(CompiledFilter::GreaterThanOrEqual {
-                        field: field.clone(),
-                        value: value.clone(),
-                    }),
+                    ComparisonOperator::GreaterThanOrEqual => {
+                        Ok(CompiledFilter::GreaterThanOrEqual {
+                            field: field.clone(),
+                            value: value.clone(),
+                        })
+                    }
                     ComparisonOperator::LessThan => Ok(CompiledFilter::LessThan {
                         field: field.clone(),
                         value: value.clone(),
@@ -153,41 +209,45 @@ impl CompiledFilter {
                         value: value.clone(),
                     }),
                     ComparisonOperator::Contains => {
-                        let substring = value.as_str()
+                        let substring = value
+                            .as_str()
                             .ok_or_else(|| anyhow!("Contains requires string value"))?
                             .to_string();
                         Ok(CompiledFilter::Contains {
                             field: field.clone(),
                             substring,
                         })
-                    },
+                    }
                     ComparisonOperator::StartsWith => {
-                        let prefix = value.as_str()
+                        let prefix = value
+                            .as_str()
                             .ok_or_else(|| anyhow!("StartsWith requires string value"))?
                             .to_string();
                         Ok(CompiledFilter::StartsWith {
                             field: field.clone(),
                             prefix,
                         })
-                    },
+                    }
                     ComparisonOperator::EndsWith => {
-                        let suffix = value.as_str()
+                        let suffix = value
+                            .as_str()
                             .ok_or_else(|| anyhow!("EndsWith requires string value"))?
                             .to_string();
                         Ok(CompiledFilter::EndsWith {
                             field: field.clone(),
                             suffix,
                         })
-                    },
+                    }
                     ComparisonOperator::Like => {
-                        let pattern = value.as_str()
+                        let pattern = value
+                            .as_str()
                             .ok_or_else(|| anyhow!("Like requires string value"))?
                             .to_string();
                         Ok(CompiledFilter::Like {
                             field: field.clone(),
                             pattern,
                         })
-                    },
+                    }
                     ComparisonOperator::In => {
                         let values = if let Some(arr) = value.as_array() {
                             arr.clone()
@@ -203,7 +263,7 @@ impl CompiledFilter {
                             field: field.clone(),
                             values,
                         })
-                    },
+                    }
                     ComparisonOperator::NotIn => {
                         let values = if let Some(arr) = value.as_array() {
                             arr.clone()
@@ -218,10 +278,11 @@ impl CompiledFilter {
                             field: field.clone(),
                             values,
                         })
-                    },
+                    }
                     ComparisonOperator::Between => {
                         // Between expects an array of [min, max]
-                        let arr = value.as_array()
+                        let arr = value
+                            .as_array()
                             .ok_or_else(|| anyhow!("Between requires array of [min, max]"))?;
                         if arr.len() != 2 {
                             return Err(anyhow!("Between requires exactly 2 values"));
@@ -231,7 +292,7 @@ impl CompiledFilter {
                             min: arr[0].clone(),
                             max: arr[1].clone(),
                         })
-                    },
+                    }
                     ComparisonOperator::IsNull => Ok(CompiledFilter::IsNull {
                         field: field.clone(),
                     }),
@@ -239,24 +300,18 @@ impl CompiledFilter {
                         field: field.clone(),
                     }),
                 }
-            },
+            }
             FilterExpression::And(filters) => {
                 let compiled: Result<Vec<_>> = filters.iter().map(Self::compile).collect();
-                Ok(CompiledFilter::And {
-                    filters: compiled?,
-                })
-            },
+                Ok(CompiledFilter::And { filters: compiled? })
+            }
             FilterExpression::Or(filters) => {
                 let compiled: Result<Vec<_>> = filters.iter().map(Self::compile).collect();
-                Ok(CompiledFilter::Or {
-                    filters: compiled?,
-                })
-            },
-            FilterExpression::Not(filter) => {
-                Ok(CompiledFilter::Not {
-                    filter: Box::new(Self::compile(filter)?),
-                })
-            },
+                Ok(CompiledFilter::Or { filters: compiled? })
+            }
+            FilterExpression::Not(filter) => Ok(CompiledFilter::Not {
+                filter: Box::new(Self::compile(filter)?),
+            }),
         }
     }
 
@@ -264,129 +319,120 @@ impl CompiledFilter {
     fn evaluate(&self, metadata: &HashMap<String, Value>) -> bool {
         match self {
             CompiledFilter::All => true,
-            
-            CompiledFilter::Equals { field, value } => {
-                metadata.get(field)
-                    .map(|v| Self::values_equal(v, value))
-                    .unwrap_or(false)
-            },
-            
+
+            CompiledFilter::Equals { field, value } => metadata
+                .get(field)
+                .map(|v| Self::values_equal(v, value))
+                .unwrap_or(false),
+
             CompiledFilter::NotEquals { field, value } => {
-                metadata.get(field)
+                metadata
+                    .get(field)
                     .map(|v| !Self::values_equal(v, value))
                     .unwrap_or(true) // Field not present is "not equal"
-            },
-            
-            CompiledFilter::GreaterThan { field, value } => {
-                metadata.get(field)
-                    .map(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::GreaterThanOrEqual { field, value } => {
-                metadata.get(field)
-                    .map(|v| {
-                        let ord = Self::compare_values(v, value);
-                        ord == Some(std::cmp::Ordering::Greater) || ord == Some(std::cmp::Ordering::Equal)
-                    })
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::LessThan { field, value } => {
-                metadata.get(field)
-                    .map(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Less))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::LessThanOrEqual { field, value } => {
-                metadata.get(field)
-                    .map(|v| {
-                        let ord = Self::compare_values(v, value);
-                        ord == Some(std::cmp::Ordering::Less) || ord == Some(std::cmp::Ordering::Equal)
-                    })
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::Contains { field, substring } => {
-                metadata.get(field)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.contains(substring))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::StartsWith { field, prefix } => {
-                metadata.get(field)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.starts_with(prefix))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::EndsWith { field, suffix } => {
-                metadata.get(field)
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.ends_with(suffix))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::Like { field, pattern } => {
-                metadata.get(field)
-                    .and_then(|v| v.as_str())
-                    .map(|s| Self::like_match(s, pattern))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::In { field, values } => {
-                metadata.get(field)
-                    .map(|v| values.iter().any(|val| Self::values_equal(v, val)))
-                    .unwrap_or(false)
-            },
-            
-            CompiledFilter::NotIn { field, values } => {
-                metadata.get(field)
-                    .map(|v| !values.iter().any(|val| Self::values_equal(v, val)))
-                    .unwrap_or(true)
-            },
-            
-            CompiledFilter::Between { field, min, max } => {
-                metadata.get(field)
-                    .map(|v| {
-                        Self::compare_values(v, min).map(|o| o != std::cmp::Ordering::Less).unwrap_or(false) &&
-                        Self::compare_values(v, max).map(|o| o != std::cmp::Ordering::Greater).unwrap_or(false)
-                    })
-                    .unwrap_or(false)
-            },
-            
+            }
+
+            CompiledFilter::GreaterThan { field, value } => metadata
+                .get(field)
+                .map(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater))
+                .unwrap_or(false),
+
+            CompiledFilter::GreaterThanOrEqual { field, value } => metadata
+                .get(field)
+                .map(|v| {
+                    let ord = Self::compare_values(v, value);
+                    ord == Some(std::cmp::Ordering::Greater)
+                        || ord == Some(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(false),
+
+            CompiledFilter::LessThan { field, value } => metadata
+                .get(field)
+                .map(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Less))
+                .unwrap_or(false),
+
+            CompiledFilter::LessThanOrEqual { field, value } => metadata
+                .get(field)
+                .map(|v| {
+                    let ord = Self::compare_values(v, value);
+                    ord == Some(std::cmp::Ordering::Less) || ord == Some(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(false),
+
+            CompiledFilter::Contains { field, substring } => metadata
+                .get(field)
+                .and_then(|v| v.as_str())
+                .map(|s| s.contains(substring))
+                .unwrap_or(false),
+
+            CompiledFilter::StartsWith { field, prefix } => metadata
+                .get(field)
+                .and_then(|v| v.as_str())
+                .map(|s| s.starts_with(prefix))
+                .unwrap_or(false),
+
+            CompiledFilter::EndsWith { field, suffix } => metadata
+                .get(field)
+                .and_then(|v| v.as_str())
+                .map(|s| s.ends_with(suffix))
+                .unwrap_or(false),
+
+            CompiledFilter::Like { field, pattern } => metadata
+                .get(field)
+                .and_then(|v| v.as_str())
+                .map(|s| Self::like_match(s, pattern))
+                .unwrap_or(false),
+
+            CompiledFilter::In { field, values } => metadata
+                .get(field)
+                .map(|v| values.iter().any(|val| Self::values_equal(v, val)))
+                .unwrap_or(false),
+
+            CompiledFilter::NotIn { field, values } => metadata
+                .get(field)
+                .map(|v| !values.iter().any(|val| Self::values_equal(v, val)))
+                .unwrap_or(true),
+
+            CompiledFilter::Between { field, min, max } => metadata
+                .get(field)
+                .map(|v| {
+                    Self::compare_values(v, min)
+                        .map(|o| o != std::cmp::Ordering::Less)
+                        .unwrap_or(false)
+                        && Self::compare_values(v, max)
+                            .map(|o| o != std::cmp::Ordering::Greater)
+                            .unwrap_or(false)
+                })
+                .unwrap_or(false),
+
             CompiledFilter::IsNull { field } => {
                 !metadata.contains_key(field) || metadata.get(field) == Some(&Value::Null)
-            },
-            
+            }
+
             CompiledFilter::IsNotNull { field } => {
                 metadata.contains_key(field) && metadata.get(field) != Some(&Value::Null)
-            },
-            
-            CompiledFilter::And { filters } => {
-                filters.iter().all(|f| f.evaluate(metadata))
-            },
-            
-            CompiledFilter::Or { filters } => {
-                filters.iter().any(|f| f.evaluate(metadata))
-            },
-            
-            CompiledFilter::Not { filter } => {
-                !filter.evaluate(metadata)
-            },
+            }
+
+            CompiledFilter::And { filters } => filters.iter().all(|f| f.evaluate(metadata)),
+
+            CompiledFilter::Or { filters } => filters.iter().any(|f| f.evaluate(metadata)),
+
+            CompiledFilter::Not { filter } => !filter.evaluate(metadata),
         }
     }
 
     /// Check if two JSON values are equal with type coercion
     fn values_equal(v1: &Value, v2: &Value) -> bool {
         // Use the existing json_comparison module for consistency
-        crate::core::search::json_comparison::compare_json_values(v1, v2) == std::cmp::Ordering::Equal
+        crate::core::search::json_comparison::compare_json_values(v1, v2)
+            == std::cmp::Ordering::Equal
     }
 
     /// Compare two JSON values with type coercion
     fn compare_values(v1: &Value, v2: &Value) -> Option<std::cmp::Ordering> {
-        Some(crate::core::search::json_comparison::compare_json_values(v1, v2))
+        Some(crate::core::search::json_comparison::compare_json_values(
+            v1, v2,
+        ))
     }
 
     /// SQL LIKE pattern matching (% = any chars, _ = one char)
@@ -451,10 +497,7 @@ pub fn create_json_filter_fn(
 }
 
 /// Direct evaluation function for backward compatibility
-pub fn evaluate_filter(
-    expr: &FilterExpression,
-    metadata: &HashMap<String, Value>,
-) -> bool {
+pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, Value>) -> bool {
     CompiledFilter::compile(expr)
         .map(|filter| filter.evaluate(metadata))
         .unwrap_or(false)

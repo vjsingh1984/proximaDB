@@ -21,7 +21,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::{CompressionAlgorithm, StandardCompression};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::storage::persistence::filesystem::{FilesystemFactory, FileStorageTier};
+use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory};
 
 /// Global memory pool configuration
 pub struct MemoryPoolConfig {

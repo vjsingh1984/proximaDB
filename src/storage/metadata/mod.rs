@@ -188,7 +188,10 @@ impl Default for MetadataFilter {
 #[async_trait]
 pub trait MetadataStoreInterface: Send + Sync {
     /// Create a new collection
-    async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()>;
+    async fn create_collection(
+        &self,
+        metadata: crate::proto::proximadb_v1::Collection,
+    ) -> Result<()>;
 
     /// Get collection metadata by ID
     async fn get_collection(

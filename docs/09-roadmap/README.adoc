@@ -9,11 +9,17 @@ This roadmap highlights near‑term engineering work and longer‑term themes. I
 
 == In Progress
 
+* Hybrid Query Orchestrator (federated) — fusion tuning and graph→vector seeding (next)
+* SKS v1 storage coupling — engine-backed persistence and embedding catalog (next)
+* Test hygiene (feature‑gated perf/integration tests)
+
+== Completed
+
 * SQL frontend + unified execution integration (vector/graph/hybrid)
 * Proto v1 migration finalization (remove legacy build artifacts)
-* SKS (entities) service build‑out (persistence, tests)
 * REST/gRPC parity and endpoint consistency
-* Test hygiene (feature‑gated perf/integration tests)
+* Hybrid Query Orchestrator (federated) — contracts, parallelism, vector→graph seeding
+* SKS v1 storage coupling — in-memory headers/embeddings + CSR
 
 == Planned
 
@@ -32,3 +38,10 @@ Status across specs reflects current code reality. See `ROADMAP_STATUS_RECONCILI
 
 * link:in-progress/TECHNICAL_DEBT_AND_REFACTORS.adoc[Technical Debt & Refactors]
 * link:planned/FEATURE_GAPS_AND_FUTURE_ITEMS.adoc[Feature Gaps & Future Items]
+* link:planned/ARCHITECTURE_SCALING_AND_HARDENING_PLAN.adoc[Architecture, Scaling & Hardening Plan]
+* link:planned/VISIBILITY_AND_ADOPTION_ROADMAP.adoc[Visibility & Adoption Roadmap]
+* link:planned/UNIFIED_CACHE_ORCHESTRATOR_SPEC.adoc[Unified Cache Orchestrator Spec]
+* link:in-progress/hybrid_query_orchestrator.adoc[Hybrid Query Orchestrator (P0)]
+* link:in-progress/cross_cache_orchestrator_wiring.adoc[Cross‑Cache Orchestrator Wiring (P0)]
+* link:in-progress/engine_reader_cache_evaluation.adoc[Engine Reader Cache Evaluation]
+* link:in-progress/graph_engine_cache_evaluation.adoc[Graph Engine Cache Evaluation]

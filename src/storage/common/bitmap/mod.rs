@@ -4,7 +4,7 @@
 //! all storage engines, cache layers, and query optimization components.
 
 // Use internal bitmap implementation instead of duplicate
-pub use crate::utils::bitmap::{RoaringBitmap, BitmapError};
+pub use crate::utils::bitmap::{BitmapError, RoaringBitmap};
 
 // Additional bitmap types if needed
 #[derive(Debug, Clone, Default)]

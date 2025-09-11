@@ -4,13 +4,13 @@
 //! VectorRecord (service-level, not proto), search requests/responses, collection operations,
 //! and metrics. These types form the core API for the vector operations service.
 
+use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::search::OptimizedSearchRecord;
 use apache_avro::{Reader, Schema, Writer};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
-use crate::core::search::OptimizedSearchRecord;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 // SearchResult is now only used from proto layer - not re-exported in core::search
 
 // Hardcoded Avro schema for compile-time reliability and zero dependencies
@@ -278,28 +278,30 @@ impl VectorRecord {
         let mut metadata_map = std::collections::HashMap::new();
         for (key, value) in &self.metadata {
             let typed_value = match value {
-                serde_json::Value::String(s) => MetadataValue::String(std::sync::Arc::from(s.as_str())),
+                serde_json::Value::String(s) => {
+                    MetadataValue::String(std::sync::Arc::from(s.as_str()))
+                }
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
                         MetadataValue::Number(f)
                     } else {
                         MetadataValue::Null
                     }
-                },
+                }
                 serde_json::Value::Bool(b) => MetadataValue::Bool(*b),
                 _ => MetadataValue::Null,
             };
             metadata_map.insert(key.clone(), typed_value);
         }
-        
-        OptimizedSearchRecord::new(
-            self.id.clone(),
-            similarity,
-        )
-        .with_similarity(similarity)
-        .add_vector(self.vector.clone())
-        .with_metadata(TypedMetadata::from_map(metadata_map))
-        .with_version_info(self.version.map(|v| v as u32).unwrap_or(0), self.timestamp as u32)
+
+        OptimizedSearchRecord::new(self.id.clone(), similarity)
+            .with_similarity(similarity)
+            .add_vector(self.vector.clone())
+            .with_metadata(TypedMetadata::from_map(metadata_map))
+            .with_version_info(
+                self.version.map(|v| v as u32).unwrap_or(0),
+                self.timestamp as u32,
+            )
     }
 
     /// Calculate the actual memory size of this vector record including vector data

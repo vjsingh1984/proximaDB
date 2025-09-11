@@ -1,5 +1,5 @@
 //! Aligned REST API handlers using protobuf-first approach
-//! 
+//!
 //! These handlers demonstrate the proper pattern for REST APIs that:
 //! 1. Accept protobuf types directly as JSON
 //! 2. Return protobuf responses as JSON
@@ -16,18 +16,16 @@ use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::proto::proximadb_v1;
-use crate::utils::uuid::Uuid;
+use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest, CollectionResponse};
 use crate::proto::proximadb_v1::{
-    CollectionRequest, CollectionResponse, CollectionOperation,
-};
-use crate::proto::proximadb_v1::{
-    VectorSearchRequest as V1VectorSearchRequest,
     VectorBatchRequest as V1VectorBatchRequest,
     VectorOperationResponse as V1VectorOperationResponse,
+    VectorSearchRequest as V1VectorSearchRequest,
 };
-use serde::{Deserialize, Serialize};
-use crate::query::explain::ExplainPlan;
 use crate::query::QueryEngine;
+use crate::query::explain::ExplainPlan;
+use crate::utils::uuid::Uuid;
+use serde::{Deserialize, Serialize};
 
 /// Shared application state
 #[derive(Clone)]
@@ -36,7 +34,7 @@ pub struct AppState {
 }
 
 /// Aligned vector search handler
-/// 
+///
 /// This handler demonstrates the protobuf-first approach:
 /// - Accepts VectorSearchRequest directly as JSON
 /// - Returns VectorOperationResponse directly as JSON
@@ -49,16 +47,20 @@ pub async fn vector_search(
         "Vector search request for collection: {}, top_k: {}",
         request.collection_id, request.top_k
     );
-    
+
     // Validate request
     if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
-    
+
     if request.queries.is_empty() {
-        return Err(ApiError::InvalidArgument("At least one query is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "At least one query is required".to_string(),
+        ));
     }
-    
+
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
     let v1_resp = state
         .unified_handlers
@@ -82,16 +84,20 @@ pub async fn vector_batch(
         request.collection_id,
         request.vectors.len()
     );
-    
+
     // Validate request
     if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
-    
+
     if request.vectors.is_empty() {
-        return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "At least one record is required".to_string(),
+        ));
     }
-    
+
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
     let v1_resp = state
         .unified_handlers
@@ -112,13 +118,12 @@ pub async fn collection_operation(
 ) -> ApiResult<JsonResponse<CollectionResponse>> {
     let operation = CollectionOperation::try_from(request.operation)
         .map_err(|_| ApiError::InvalidArgument("Invalid collection operation".to_string()))?;
-    
+
     info!(
         "Collection operation: {:?} for collection: {:?}",
-        operation,
-        request.collection_id
+        operation, request.collection_id
     );
-    
+
     // Direct delegation to UnifiedHandlers
     let response = state
         .unified_handlers
@@ -128,7 +133,7 @@ pub async fn collection_operation(
             error!("Collection operation failed: {}", e);
             ApiError::Internal(e.to_string())
         })?;
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -138,7 +143,7 @@ pub async fn health_check(
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     // Return basic health status
     // TODO: Add actual health checks when UnifiedHandlers supports it
-    
+
     Ok(JsonResponse(serde_json::json!({
         "status": "healthy",
         "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -157,9 +162,11 @@ pub async fn get_collection(
     State(state): State<AppState>,
 ) -> ApiResult<JsonResponse<CollectionResponse>> {
     if collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
-    
+
     let request = CollectionRequest {
         operation: CollectionOperation::CollectionGet as i32,
         collection_id: Some(collection_id.clone()),
@@ -168,7 +175,7 @@ pub async fn get_collection(
         options: Default::default(),
         migration_config: Default::default(),
     };
-    
+
     let response = state
         .unified_handlers
         .handle_collection_operation(request)
@@ -180,7 +187,7 @@ pub async fn get_collection(
                 ApiError::Internal(e.to_string())
             }
         })?;
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -197,19 +204,19 @@ pub async fn list_collections(
     State(state): State<AppState>,
 ) -> ApiResult<JsonResponse<CollectionResponse>> {
     let mut query_params = std::collections::HashMap::new();
-    
+
     if let Some(limit) = params.limit {
         query_params.insert("limit".to_string(), limit.to_string());
     }
     if let Some(offset) = params.offset {
         query_params.insert("offset".to_string(), offset.to_string());
     }
-    
+
     let mut options = std::collections::HashMap::new();
     if let Some(include_stats) = params.include_stats {
         options.insert("include_stats".to_string(), include_stats);
     }
-    
+
     let request = CollectionRequest {
         operation: CollectionOperation::CollectionList as i32,
         collection_id: None,
@@ -218,13 +225,13 @@ pub async fn list_collections(
         options,
         migration_config: Default::default(),
     };
-    
+
     let response = state
         .unified_handlers
         .handle_collection_operation(request)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -234,9 +241,11 @@ pub async fn delete_collection(
     State(state): State<AppState>,
 ) -> ApiResult<JsonResponse<CollectionResponse>> {
     if collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
-    
+
     let request = CollectionRequest {
         operation: CollectionOperation::CollectionDelete as i32,
         collection_id: Some(collection_id.clone()),
@@ -245,7 +254,7 @@ pub async fn delete_collection(
         options: Default::default(),
         migration_config: Default::default(),
     };
-    
+
     let response = state
         .unified_handlers
         .handle_collection_operation(request)
@@ -257,7 +266,7 @@ pub async fn delete_collection(
                 ApiError::Internal(e.to_string())
             }
         })?;
-    
+
     Ok(JsonResponse(response))
 }
 
@@ -268,24 +277,29 @@ pub async fn vector_search_with_metadata(
 ) -> ApiResult<JsonResponse<ProtoApiResponse<V1VectorOperationResponse>>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
-    
+
     info!(
         "Vector search request {} for collection: {}",
         request_id, request.collection_id
     );
-    
+
     // Execute search
-    match state.unified_handlers.handle_vector_search_v1(request).await {
+    match state
+        .unified_handlers
+        .handle_vector_search_v1(request)
+        .await
+    {
         Ok(response) => {
             let elapsed = start_time.elapsed();
-            
-            let api_response = ProtoApiResponse::success(response)
-                .with_metadata(crate::network::rest::proto_json::ResponseMetadata {
+
+            let api_response = ProtoApiResponse::success(response).with_metadata(
+                crate::network::rest::proto_json::ResponseMetadata {
                     request_id,
                     processing_time_ms: elapsed.as_millis() as u64,
                     server_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                });
-            
+                },
+            );
+
             Ok(JsonResponse(api_response))
         }
         Err(e) => {
@@ -307,6 +321,8 @@ pub struct SqlQueryRequest {
     pub collection: Option<String>,
     /// Optional timeout in milliseconds
     pub timeout_ms: Option<u64>,
+    /// Optional seeding strategy for hybrid (average | per_seed | none)
+    pub seeding: Option<String>,
 }
 
 /// SQL query response structure
@@ -326,7 +342,7 @@ pub struct SqlColumnInfo {
 /// Supports vector similarity queries like:
 /// ```sql
 /// SELECT id, metadata, COSINE_DISTANCE(embedding, [0.1, 0.2, 0.3]) as score
-/// FROM my_collection 
+/// FROM my_collection
 /// WHERE metadata.category = 'electronics'
 /// ORDER BY score ASC
 /// LIMIT 10
@@ -337,22 +353,38 @@ pub async fn execute_sql(
 ) -> ApiResult<JsonResponse<ProtoApiResponse<proximadb_v1::ExecuteSqlResponse>>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
-    
+
     info!(
         "SQL query request {} with query: {}",
         request_id,
         request.query.chars().take(100).collect::<String>()
     );
-    
+
     // Validate request
     if request.query.trim().is_empty() {
-        return Err(ApiError::InvalidArgument("SQL query cannot be empty".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "SQL query cannot be empty".to_string(),
+        ));
     }
 
     // Execute through v1 path (typed params and rows)
+    // Optional: read seeding strategy from HTTP header (X-Seeding-Strategy) or from request.parameters via a special key
+    let seeding_strategy = crate::query::execution::SeedingStrategy::Average; // default
+
+    let query_with_hint = if let Some(seeding) = &request.seeding {
+        let seed_upper = seeding.to_ascii_uppercase();
+        format!("-- SEEDING: {}\n{}", seed_upper, request.query)
+    } else {
+        request.query.clone()
+    };
+
     match state
         .unified_handlers
-        .execute_sql_v1(request.query, request.parameters.clone(), request.collection)
+        .execute_sql_v1(
+            query_with_hint,
+            request.parameters.clone(),
+            request.collection,
+        )
         .await
     {
         Ok(mut v1_resp) => {
@@ -364,8 +396,7 @@ pub async fn execute_sql(
                 processing_time_ms: execution_time_ms,
                 server_version: None,
             };
-            let api_response = ProtoApiResponse::success(v1_resp)
-                .with_metadata(meta);
+            let api_response = ProtoApiResponse::success(v1_resp).with_metadata(meta);
 
             info!(
                 "SQL query {} completed in {}ms",
@@ -398,18 +429,28 @@ fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
     use proximadb_v1::sql_value::Value as V;
     match v.value.as_ref() {
         Some(V::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(V::NumberValue(n)) => serde_json::Value::Number(serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0))),
+        Some(V::NumberValue(n)) => serde_json::Value::Number(
+            serde_json::Number::from_f64(*n).unwrap_or(serde_json::Number::from(0)),
+        ),
         Some(V::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(V::Int64Value(i)) => serde_json::Value::Number((*i).into()),
         Some(V::BytesValue(b)) => {
             // Represent bytes as JSON array of integers
-            serde_json::Value::Array(b.iter().map(|x| serde_json::Value::Number((*x as u64).into())).collect())
+            serde_json::Value::Array(
+                b.iter()
+                    .map(|x| serde_json::Value::Number((*x as u64).into()))
+                    .collect(),
+            )
         }
         Some(V::NullValue(_)) => serde_json::Value::Null,
-        Some(V::ArrayValue(arr)) => serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect()),
+        Some(V::ArrayValue(arr)) => {
+            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
+        }
         Some(V::ObjectValue(obj)) => {
             let mut map = serde_json::Map::new();
-            for (k, sv) in &obj.fields { map.insert(k.clone(), sql_value_to_json(sv)); }
+            for (k, sv) in &obj.fields {
+                map.insert(k.clone(), sql_value_to_json(sv));
+            }
             serde_json::Value::Object(map)
         }
         None => serde_json::Value::Null,
@@ -431,18 +472,20 @@ pub async fn explain_sql(
     Json(request): Json<ExplainQueryRequest>,
 ) -> ApiResult<JsonResponse<ProtoApiResponse<ExplainQueryResponse>>> {
     let request_id = Uuid::new_v4().to_string();
-    
+
     info!(
         "EXPLAIN query request {} for query: {}",
         request_id,
         request.query.chars().take(100).collect::<String>()
     );
-    
+
     // Validate request
     if request.query.trim().is_empty() {
-        return Err(ApiError::InvalidArgument("SQL query cannot be empty".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "SQL query cannot be empty".to_string(),
+        ));
     }
-    
+
     // Build a lightweight QueryEngine with vector service and generate a real plan with hints
     let qe = QueryEngine::new_with_vector_service(
         state.unified_handlers.vector_operations_service.clone(),
@@ -451,7 +494,7 @@ pub async fn explain_sql(
         .explain_sql(&request.query)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to explain SQL: {}", e)))?;
-    
+
     let response = ExplainQueryResponse {
         plan,
         request_id: request_id.clone(),
@@ -462,9 +505,8 @@ pub async fn explain_sql(
         processing_time_ms: 0,
         server_version: None,
     };
-    let api_response = ProtoApiResponse::success(response)
-        .with_metadata(meta);
-    
+    let api_response = ProtoApiResponse::success(response).with_metadata(meta);
+
     info!("EXPLAIN query {} completed", request_id);
     Ok(JsonResponse(api_response))
 }
@@ -473,41 +515,68 @@ pub async fn explain_sql(
 
 /// Create router with all REST endpoints
 pub fn create_router(state: AppState) -> axum::Router {
-    use axum::routing::{get, post, delete};
-    
+    use axum::routing::{delete, get, post};
+
+    // Initialize SKS in-memory store (v1) using the same storage engine as vector operations
+    let entities_router = {
+        use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
+        use crate::network::rest::v1::entities::{self, EntityApiState};
+        let engine = state
+            .unified_handlers
+            .vector_operations_service
+            .unified_engine();
+        let store = Arc::new(ProximaEntityStore::with_vector_service(
+            engine,
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
+            state.unified_handlers.vector_operations_service.clone(),
+        ));
+        // Register store globally for hybrid executor access (embedding catalog)
+        crate::storage::entity_store::ProximaEntityStore::register_global(store.clone());
+        let entity_state = EntityApiState { store };
+        entities::configure_routes().with_state(entity_state)
+    };
+
     axum::Router::new()
         // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))
-        .route("/api/v1/progressive/search/:collection_id", 
-            post(crate::network::rest::progressive_search_handler::progressive_search_handler))
-        
+        .route(
+            "/api/v1/progressive/search/:collection_id",
+            post(crate::network::rest::progressive_search_handler::progressive_search_handler),
+        )
         // SQL query execution
         .route("/api/v1/sql/execute", post(execute_sql))
         .route("/api/v1/sql/explain", post(explain_sql))
-        
         // Collection operations
         .route("/api/v1/collections", post(collection_operation))
         .route("/api/v1/collections", get(list_collections))
         .route("/api/v1/collections/:collection_id", get(get_collection))
-        .route("/api/v1/collections/:collection_id", delete(delete_collection))
-        
+        .route(
+            "/api/v1/collections/:collection_id",
+            delete(delete_collection),
+        )
         // Health check
         .route("/health", get(health_check))
-        
         // With metadata endpoints
-        .route("/api/v1/search/with_metadata", post(vector_search_with_metadata))
-        
+        .route(
+            "/api/v1/search/with_metadata",
+            post(vector_search_with_metadata),
+        )
         // Graph database endpoints
-        .nest("/api/v1/graph", crate::network::rest::v1::graph::create_graph_router())
-        
+        .nest(
+            "/api/v1/graph",
+            crate::network::rest::v1::graph::create_graph_router(),
+        )
+        // SKS entity endpoints (storage-coupled path)
+        .nest("/api", entities_router)
         .with_state(state)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_error_conversion() {
         let err = ApiError::CollectionNotFound("test_collection".to_string());

@@ -147,13 +147,15 @@ impl SSTIndexBasedReader {
                 .expect("Failed to create filesystem factory"),
         );
         // Create a zero-copy IO system for the reader
-        let zero_copy_config = crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
-            metadata_cache: crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
-                max_memory_mb: 64,
+        let zero_copy_config =
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
+                metadata_cache:
+                    crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
+                        max_memory_mb: 64,
+                        ..Default::default()
+                    },
                 ..Default::default()
-            },
-            ..Default::default()
-        };
+            };
         let zero_copy_system = Arc::new(
             tokio::runtime::Handle::current()
                 .block_on(
@@ -161,9 +163,9 @@ impl SSTIndexBasedReader {
                         zero_copy_config,
                         filesystem.clone(),
                         Vec::new(),
-                    )
+                    ),
                 )
-                .expect("Failed to create zero-copy IO system")
+                .expect("Failed to create zero-copy IO system"),
         );
 
         Self {

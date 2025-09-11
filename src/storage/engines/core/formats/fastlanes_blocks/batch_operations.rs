@@ -797,8 +797,7 @@ mod tests {
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
 
         let config = BatchConfig::default();
-        let batch_ops =
-            RowBasedBatchOperations::new(hardware, memory_pool, config);
+        let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         assert_eq!(batch_ops.config.default_batch_size, 1000);
         assert!(batch_ops.config.parallel_processing);
@@ -810,8 +809,7 @@ mod tests {
         let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
 
         let config = BatchConfig::default();
-        let batch_ops =
-            RowBasedBatchOperations::new(hardware, memory_pool, config);
+        let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         let batch_size = batch_ops.calculate_optimal_batch_size(10000);
         assert!(batch_size > 0);

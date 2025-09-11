@@ -8,8 +8,7 @@ use tracing::{debug, trace, warn};
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::{
-    FileAccessRequest, IOStrategy, QueryContext, RequestPriority,
-    ZeroCopyIOSystem,
+    FileAccessRequest, IOStrategy, QueryContext, RequestPriority, ZeroCopyIOSystem,
 };
 use crate::storage::persistence::filesystem::{
     FileMetadata, FileOptions, FileSystem, FilesystemError, FsResult,

@@ -1,0 +1,80 @@
+= Visibility & Adoption Roadmap for Underused Capabilities
+:toc:
+:toclevels: 2
+
+== Status Update (2025-09-11)
+
+- Orchestrator Prefetch/Rebalance: Footer cache and metadata tracking via orchestrator are implemented in the columnar stack; prefetch queues exist. Metrics exposure and user‑visible toggles for prefetch policies remain pending and should align with Unified Metrics Review.
+
+== Purpose
+Increase discoverability and safe adoption of lesser‑used features by adding toggles, examples, and metrics.
+
+== Targets & Actions
+
+=== 1) PULSAR/QUASAR (Graph Engines)
+- Actions:
+  - Config toggle: `graph.engine = orion|pulsar|quasar` per collection.
+  - Add examples: traversal and hybrid with non‑ORION engines.
+  - Metrics: engine selection counters, traversal latency by engine.
+- Milestone: Enable single‑process PULSAR/QUASAR in demos and SDKs.
+
+=== 2) SKS Provenance/Temporal
+- Actions:
+  - Persist provenance entries and temporal indices; expose SQL functions.
+  - Examples: `WHERE temporal BETWEEN ...`, `PROVENANCE(entity_id)`.
+  - Metrics: provenance write/read counts; temporal index hit rate.
+- Milestone: Enable E2E flows and docs walkthroughs.
+
+=== 3) StorageKV for Headers
+- Actions:
+  - Implement `StorageKV` trait; migrate FS KV to it.
+  - Add durability note in docs; add example enabling engine‑backed KV.
+- Milestone: Flip default for SKS headers to engine‑backed KV.
+
+=== 4) Hybrid Seeding Strategies
+- Actions:
+  - Expose SQL hint + REST `seeding` (done); add SDK examples.
+  - Adaptive switch: auto‑PER_SEED for small seed counts; else AVERAGE.
+  - Metrics: seeding choice, cost, recall proxy.
+- Milestone: Default to adaptive seeding with guardrails.
+
+=== 5) SQL EXPLAIN Enrichments
+- Actions:
+  - Add structured EXPLAIN with shard costs, cache hints, and pushdowns.
+  - Render in CLI/SDKs for debug; promote in docs.
+- Milestone: Make EXPLAIN first‑class in troubleshooting guides.
+
+=== 6) Deep Traversal (Feature‑Flagged)
+- Actions:
+  - Enable in test/staging; document flag `deep_traversal_tests`.
+  - Add bounded BFS examples; explain frontier caps.
+- Milestone: Confidence for production release with caps.
+
+=== 7) REST Seeding Field
+- Actions:
+  - Add to SDK request builders; examples per language.
+  - Docs: hybrid recipe using REST only.
+- Milestone: Parity with SQL hint usage.
+
+=== 8) Orchestrator Prefetch/Rebalance
+- Actions:
+  - Expose metrics; add toggles for prefetch policies.
+  - Docs: how to interpret metrics; safety guardrails.
+- Milestone: Gradual opt‑in via config + dashboards.
+
+=== 9) Helix Engine Adoption
+- Actions:
+  - Config toggle: `storage.engine = "helix"` for high‑dimensional collections.
+  - Benchmarks vs SST/VIPER; guidance when to choose Helix.
+- Milestone: Feature comparison & perf docs page.
+
+=== 10) gRPC SqlService
+- Actions:
+  - Add client SDK examples (Go/Rust/TS) for ExecuteSql.
+  - Perf note vs REST; multiplexed streaming.
+- Milestone: gRPC usage in performance‑sensitive clients.
+
+== Rollout Plan
+- Phase 1: Docs + examples + metrics (low risk)
+- Phase 2: SDK updates with toggles; dashboards
+- Phase 3: Adaptive defaults and controlled flags

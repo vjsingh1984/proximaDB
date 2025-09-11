@@ -68,7 +68,7 @@ impl PCAModel {
     fn random_projection(original_dim: usize, n_components: usize) -> Vec<Vec<f32>> {
         use rand::{Rng, SeedableRng};
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
-        
+
         (0..n_components)
             .map(|_| {
                 (0..original_dim)
@@ -82,7 +82,7 @@ impl PCAModel {
     pub fn transform(&self, vector: &[f32]) -> Result<Vec<f32>> {
         self.project(vector)
     }
-    
+
     /// Project a vector to lower dimensions
     pub fn project(&self, vector: &[f32]) -> Result<Vec<f32>> {
         if vector.len() != self.original_dim {
@@ -94,22 +94,13 @@ impl PCAModel {
         }
 
         // Center the vector
-        let centered: Vec<f32> = vector
-            .iter()
-            .zip(&self.mean)
-            .map(|(v, m)| v - m)
-            .collect();
+        let centered: Vec<f32> = vector.iter().zip(&self.mean).map(|(v, m)| v - m).collect();
 
         // Project using principal components
-        let projected: Vec<f32> = self.components
+        let projected: Vec<f32> = self
+            .components
             .iter()
-            .map(|component| {
-                centered
-                    .iter()
-                    .zip(component)
-                    .map(|(c, p)| c * p)
-                    .sum()
-            })
+            .map(|component| centered.iter().zip(component).map(|(c, p)| c * p).sum())
             .collect();
 
         Ok(projected)
@@ -119,15 +110,18 @@ impl PCAModel {
     pub fn project_and_compute_hilbert(&self, vector: &[f32]) -> Result<HilbertKey> {
         self.project_and_compute_hilbert_with_config(vector, 16)
     }
-    
+
     /// Project and compute Hilbert key with configurable bits per dimension
     pub fn project_and_compute_hilbert_with_config(
-        &self, 
-        vector: &[f32], 
-        bits_per_dimension: usize
+        &self,
+        vector: &[f32],
+        bits_per_dimension: usize,
     ) -> Result<HilbertKey> {
         let projected = self.project(vector)?;
-        Ok(compute_hilbert_key_with_config(&projected, bits_per_dimension))
+        Ok(compute_hilbert_key_with_config(
+            &projected,
+            bits_per_dimension,
+        ))
     }
 
     /// Update model with new data (incremental PCA)
@@ -145,13 +139,13 @@ impl PCAModel {
 
 /// Compute Hilbert key from a low-dimensional vector using true Hilbert curve
 pub fn compute_hilbert_key(vector: &[f32]) -> HilbertKey {
-    compute_hilbert_key_with_config(vector, 16)  // Use default if not specified
+    compute_hilbert_key_with_config(vector, 16) // Use default if not specified
 }
 
 /// Compute Hilbert key with configurable bits per dimension
 pub fn compute_hilbert_key_with_config(vector: &[f32], bits_per_dimension: usize) -> HilbertKey {
     use super::hilbert_curve::HilbertUtils;
-    
+
     if vector.is_empty() {
         return 0;
     }
@@ -204,7 +198,8 @@ impl QueryPatternTracker {
     /// Record a query access
     pub fn record_access(&mut self, vector_id: &str, hilbert_key: HilbertKey) {
         *self.access_counts.entry(vector_id.to_string()).or_insert(0) += 1;
-        self.last_access.insert(vector_id.to_string(), chrono::Utc::now());
+        self.last_access
+            .insert(vector_id.to_string(), chrono::Utc::now());
         *self.hilbert_histogram.entry(hilbert_key).or_insert(0) += 1;
         self.total_queries += 1;
     }
@@ -221,11 +216,11 @@ impl QueryPatternTracker {
         for id in vector_ids {
             let access_count = self.access_counts.get(id).copied().unwrap_or(0);
             let last_access = self.last_access.get(id);
-            
+
             // Calculate access frequency score
-            let freq_score = (access_count as f32 / self.total_queries.max(1) as f32)
-                * config.access_weight;
-            
+            let freq_score =
+                (access_count as f32 / self.total_queries.max(1) as f32) * config.access_weight;
+
             // Calculate recency score
             let recency_score = if let Some(last) = last_access {
                 let age_seconds = (now - *last).num_seconds().max(1) as f32;
@@ -233,7 +228,7 @@ impl QueryPatternTracker {
             } else {
                 0.0
             };
-            
+
             scores.insert(id.clone(), freq_score + recency_score);
         }
 
@@ -243,22 +238,23 @@ impl QueryPatternTracker {
     /// Identify hot regions in Hilbert space
     pub fn identify_hot_regions(&self, threshold: f32) -> Vec<(HilbertKey, HilbertKey)> {
         let mut hot_regions = Vec::new();
-        
+
         // Simple clustering of hot keys
         let total = self.hilbert_histogram.values().sum::<usize>() as f32;
-        let mut hot_keys: Vec<u64> = self.hilbert_histogram
+        let mut hot_keys: Vec<u64> = self
+            .hilbert_histogram
             .iter()
             .filter(|(_, count)| **count as f32 / total > threshold)
             .map(|(&key, _)| key)
             .collect();
-        
+
         hot_keys.sort_unstable();
-        
+
         // Merge adjacent keys into ranges
         if !hot_keys.is_empty() {
             let mut start = hot_keys[0];
             let mut end = hot_keys[0];
-            
+
             for &key in &hot_keys[1..] {
                 if key <= end + 1000 {
                     // Extend range
@@ -272,16 +268,13 @@ impl QueryPatternTracker {
             }
             hot_regions.push((start, end));
         }
-        
+
         hot_regions
     }
 }
 
 /// Sort records by Hilbert keys
-pub fn sort_by_hilbert(
-    records: &mut [VectorRecord],
-    hilbert_keys: &[HilbertKey],
-) -> Result<()> {
+pub fn sort_by_hilbert(records: &mut [VectorRecord], hilbert_keys: &[HilbertKey]) -> Result<()> {
     if records.len() != hilbert_keys.len() {
         anyhow::bail!("Records and Hilbert keys length mismatch");
     }
@@ -292,23 +285,20 @@ pub fn sort_by_hilbert(
 
     // Reorder records in-place using the sorted indices
     // We need to use a temporary vector since we can't modify while iterating
-    let sorted_records: Vec<VectorRecord> = indices
-        .iter()
-        .map(|&i| records[i].clone())
-        .collect();
-    
+    let sorted_records: Vec<VectorRecord> = indices.iter().map(|&i| records[i].clone()).collect();
+
     // Copy sorted records back into the original slice
     for (i, record) in sorted_records.into_iter().enumerate() {
         records[i] = record;
     }
-    
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::hilbert_curve::HilbertCurve;
+    use super::*;
 
     #[test]
     fn test_hilbert_2d() {

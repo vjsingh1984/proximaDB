@@ -449,10 +449,7 @@ impl MetadataStoreInterface for MetadataStore {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
             let default_stats = CollectionStats::default();
-            let stats = metadata
-                .stats
-                .as_ref()
-                .unwrap_or(&default_stats);
+            let stats = metadata.stats.as_ref().unwrap_or(&default_stats);
 
             let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id.clone(),
@@ -532,10 +529,7 @@ impl MetadataStoreInterface for MetadataStore {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Collection config is required"))?;
             let default_stats = CollectionStats::default();
-            let stats = metadata
-                .stats
-                .as_ref()
-                .unwrap_or(&default_stats);
+            let stats = metadata.stats.as_ref().unwrap_or(&default_stats);
 
             let versioned = super::write_ahead_log::VersionedCollectionMetadata {
                 id: metadata.id.clone(),

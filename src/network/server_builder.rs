@@ -83,25 +83,25 @@ use crate::network::multi_server::{GrpcHttpServerConfig, MultiServerConfig, Rest
 pub struct RestHttpServerBuilder {
     /// Socket address to bind (default: 0.0.0.0:5678)
     bind_address: SocketAddr,
-    
+
     /// Enable REST API endpoints
     enable_rest: bool,
-    
+
     /// Enable web dashboard UI
     enable_dashboard: bool,
-    
+
     /// Enable Prometheus metrics endpoint
     enable_metrics: bool,
-    
+
     /// Enable health check endpoints
     enable_health: bool,
-    
+
     /// Enable HTTP compression (gzip/deflate)
     rest_compression: bool, // Clear, specific naming
-    
+
     /// Path to TLS certificate file (PEM format)
     tls_cert_file: Option<String>,
-    
+
     /// Path to TLS private key file (PEM format)
     tls_key_file: Option<String>,
 }
@@ -292,22 +292,22 @@ impl RestHttpServerBuilder {
 pub struct GrpcHttpServerBuilder {
     /// Socket address to bind (default: 0.0.0.0:5679)
     bind_address: SocketAddr,
-    
+
     /// Enable gRPC service
     enable_grpc: bool,
-    
+
     /// Enable gRPC compression (gzip)
     grpc_compression: bool, // Clear, specific naming
-    
+
     /// Path to TLS certificate file (PEM format)
     tls_cert_file: Option<String>,
-    
+
     /// Path to TLS private key file (PEM format)
     tls_key_file: Option<String>,
-    
+
     /// Maximum message size in bytes (default: 64MB)
     max_message_size: usize,
-    
+
     /// Enable gRPC reflection for service discovery
     enable_reflection: bool,
 }

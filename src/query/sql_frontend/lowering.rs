@@ -1,28 +1,26 @@
 //! AST Lowering - Convert sqlparser-rs AST to ProximaDB internal AST
 //!
-//! This module provides the authoritative conversion from SQL syntax to internal 
+//! This module provides the authoritative conversion from SQL syntax to internal
 //! query representation, enabling unified execution across vector, graph, and hybrid queries.
-//! 
+//!
 //! Key Performance Optimization: Generates HashMap.get() patterns for O(1) metadata filtering
 //! instead of Vec.find() linear scans, achieving 10x performance improvement.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use sqlparser::ast::{
-    Statement, Query as SqlQuery, Select as SqlSelect, SelectItem, TableFactor,
-    Expr as SqlExpr, BinaryOperator, UnaryOperator, Value, OrderByExpr as SqlOrderByExpr,
-    Function, FunctionArg, FunctionArgExpr, TableWithJoins
+    BinaryOperator, Expr as SqlExpr, Function, FunctionArg, FunctionArgExpr,
+    OrderByExpr as SqlOrderByExpr, Query as SqlQuery, Select as SqlSelect, SelectItem, Statement,
+    TableFactor, TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::query::ast::{
-    Query, Select, TableRef, Expr, Literal, UnaryOp, BinaryOp, OrderByExpr
-};
+use crate::query::ast::{BinaryOp, Expr, Literal, OrderByExpr, Query, Select, TableRef, UnaryOp};
 use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 
 /// AST Lowering service - converts sqlparser-rs AST to internal representation
-/// 
+///
 /// This is the primary entry point for SQL query processing, replacing the custom
 /// sql_engine parser with a standards-compliant sqlparser-rs foundation.
 pub struct QueryLowering {
@@ -99,23 +97,29 @@ impl QueryLowering {
     async fn lower_select(&self, select: &SqlSelect, query: &SqlQuery) -> Result<Select> {
         // 1. Process projection list with column validation
         let projection = self.lower_projection(&select.projection).await?;
-        
+
         // 2. Process FROM clause with collection resolution
         let from = self.lower_from_clause(&select.from).await?;
-        
+
         // 3. Process WHERE clause with HashMap optimization for metadata filtering
         let selection = if let Some(where_expr) = &select.selection {
             Some(self.lower_where_clause(where_expr).await?)
         } else {
             None
         };
-        
+
         // 4. Process ORDER BY with vector function recognition
         let order_by = self.lower_order_by(&query.order_by).await?;
-        
+
         // 5. Process LIMIT/OFFSET with bounds checking
-        let limit = query.limit.as_ref().and_then(|expr| self.extract_limit(expr));
-        let offset = query.offset.as_ref().and_then(|offset_expr| self.extract_offset(offset_expr));
+        let limit = query
+            .limit
+            .as_ref()
+            .and_then(|expr| self.extract_limit(expr));
+        let offset = query
+            .offset
+            .as_ref()
+            .and_then(|offset_expr| self.extract_offset(offset_expr));
 
         Ok(Select {
             projection,
@@ -133,37 +137,37 @@ impl QueryLowering {
     /// Lower projection list with column validation and vector function recognition
     async fn lower_projection(&self, projection: &[SelectItem]) -> Result<Vec<Expr>> {
         let mut exprs = Vec::new();
-        
+
         for item in projection {
             let expr = match item {
                 SelectItem::UnnamedExpr(expr) => self.lower_expr(expr).await?,
                 SelectItem::ExprWithAlias { expr, alias: _ } => {
                     // TODO: Handle aliases in future implementation
                     self.lower_expr(expr).await?
-                },
+                }
                 SelectItem::Wildcard(_) => Expr::Identifier("*".to_string()),
                 _ => return Err(anyhow!("Unsupported select item: {:?}", item)),
             };
             exprs.push(expr);
         }
-        
+
         Ok(exprs)
     }
 
     /// Lower FROM clause with collection name resolution and validation
     async fn lower_from_clause(&self, from: &[TableWithJoins]) -> Result<Vec<TableRef>> {
         let mut tables = Vec::new();
-        
+
         for table_with_joins in from {
             let table = self.lower_table_factor(&table_with_joins.relation).await?;
             tables.push(table);
-            
+
             // TODO: Handle JOINs in future implementation
             if !table_with_joins.joins.is_empty() {
                 return Err(anyhow!("JOIN operations not yet implemented"));
             }
         }
-        
+
         Ok(tables)
     }
 
@@ -172,22 +176,24 @@ impl QueryLowering {
         match table_factor {
             TableFactor::Table { name, alias, .. } => {
                 let table_name = name.to_string();
-                
+
                 // Resolve collection name to UUID with caching
                 let collection_id = self.resolve_collection(&table_name).await?;
-                
+
                 Ok(TableRef {
                     name: Some(collection_id), // Use UUID internally
                     subquery: None,
                     alias: alias.as_ref().map(|a| a.name.value.clone()),
                 })
-            },
-            _ => Err(anyhow!("Subqueries and complex table expressions not yet supported")),
+            }
+            _ => Err(anyhow!(
+                "Subqueries and complex table expressions not yet supported"
+            )),
         }
     }
 
     /// Lower WHERE clause to FilterExpression with HashMap optimization
-    /// 
+    ///
     /// CRITICAL PERFORMANCE OPTIMIZATION:
     /// Generates HashMap.get(key) patterns instead of Vec.find() linear scans
     /// This achieves O(1) metadata filtering vs O(n) for 10x improvement
@@ -197,27 +203,28 @@ impl QueryLowering {
                 let left_expr = Box::new(self.lower_expr(left).await?);
                 let right_expr = Box::new(self.lower_expr(right).await?);
                 let binary_op = self.convert_binary_op(op)?;
-                
+
                 Ok(Expr::Binary {
                     left: left_expr,
                     op: binary_op,
                     right: right_expr,
                 })
-            },
+            }
             SqlExpr::Identifier(ident) => Ok(Expr::Identifier(ident.value.clone())),
             SqlExpr::Value(value) => Ok(Expr::Literal(self.convert_value(value)?)),
             SqlExpr::Function(func) => {
                 // Recognize vector functions and SKS functions
                 self.lower_function_call(func).await
-            },
+            }
             SqlExpr::CompoundIdentifier(idents) => {
                 // Handle metadata.field access patterns for HashMap optimization
-                let combined = idents.iter()
+                let combined = idents
+                    .iter()
                     .map(|i| i.value.as_str())
                     .collect::<Vec<_>>()
                     .join(".");
                 Ok(Expr::Identifier(combined))
-            },
+            }
             _ => Err(anyhow!("Unsupported WHERE expression: {:?}", expr)),
         }
     }
@@ -225,14 +232,14 @@ impl QueryLowering {
     /// Lower ORDER BY with vector function recognition
     async fn lower_order_by(&self, order_by: &[SqlOrderByExpr]) -> Result<Vec<OrderByExpr>> {
         let mut order_exprs = Vec::new();
-        
+
         for order_expr in order_by {
             let expr = self.lower_expr(&order_expr.expr).await?;
             let asc = order_expr.asc.unwrap_or(true);
-            
+
             order_exprs.push(OrderByExpr { expr, asc });
         }
-        
+
         Ok(order_exprs)
     }
 
@@ -242,12 +249,17 @@ impl QueryLowering {
         let args = self.lower_function_args(&func.args).await?;
 
         // Recognize vector similarity functions
-        if name.to_uppercase().contains("VECTOR_SIMILARITY") || name.to_uppercase().contains("COSINE_DISTANCE") {
+        if name.to_uppercase().contains("VECTOR_SIMILARITY")
+            || name.to_uppercase().contains("COSINE_DISTANCE")
+        {
             // TODO: Validate vector function arguments and embedding field
             Ok(Expr::FuncCall { name, args })
         }
         // Recognize SKS functions (SIMILAR, FOLLOW, ASSEMBLE)
-        else if matches!(name.to_uppercase().as_str(), "SIMILAR" | "FOLLOW" | "ASSEMBLE") {
+        else if matches!(
+            name.to_uppercase().as_str(),
+            "SIMILAR" | "FOLLOW" | "ASSEMBLE"
+        ) {
             // TODO: Parse SKS function arguments with validation
             Ok(Expr::FuncCall { name, args })
         }
@@ -260,16 +272,18 @@ impl QueryLowering {
     /// Lower function arguments with type checking
     async fn lower_function_args(&self, args: &[FunctionArg]) -> Result<Vec<Expr>> {
         let mut exprs = Vec::new();
-        
+
         for arg in args {
             let expr = match arg {
                 FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => self.lower_expr(expr).await?,
-                FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => Expr::Identifier("*".to_string()),
+                FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => {
+                    Expr::Identifier("*".to_string())
+                }
                 _ => return Err(anyhow!("Named function arguments not supported")),
             };
             exprs.push(expr);
         }
-        
+
         Ok(exprs)
     }
 
@@ -282,13 +296,13 @@ impl QueryLowering {
                 let left_expr = Box::new(self.lower_expr(left).await?);
                 let right_expr = Box::new(self.lower_expr(right).await?);
                 let binary_op = self.convert_binary_op(op)?;
-                
+
                 Ok(Expr::Binary {
                     left: left_expr,
                     op: binary_op,
                     right: right_expr,
                 })
-            },
+            }
             SqlExpr::Function(func) => self.lower_function_call(func).await,
             _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
         }
@@ -325,10 +339,10 @@ impl QueryLowering {
                 } else {
                     Err(anyhow!("Invalid number: {}", n))
                 }
-            },
+            }
             Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => {
                 Ok(Literal::String(s.clone()))
-            },
+            }
             Value::Boolean(b) => Ok(Literal::Bool(*b)),
             Value::Null => Ok(Literal::Null),
             _ => Err(anyhow!("Unsupported literal value: {:?}", value)),
@@ -354,7 +368,7 @@ impl QueryLowering {
     }
 
     /// Resolve collection name to UUID with caching for performance
-    /// 
+    ///
     /// This method implements intelligent collection resolution:
     /// 1. Check cache first to avoid repeated service calls
     /// 2. Query CollectionService for name → UUID mapping
@@ -370,14 +384,18 @@ impl QueryLowering {
         }
 
         // Query collection service
-        match self.collection_service.resolve_collection_id(collection_name).await {
+        match self
+            .collection_service
+            .resolve_collection_id(collection_name)
+            .await
+        {
             Ok(Some(collection_id)) => {
                 // TODO: Cache collection metadata for future queries
                 // let metadata = self.build_collection_metadata(&collection_id).await?;
                 // self.schema_cache.write().await.insert(collection_name.to_string(), metadata);
-                
+
                 Ok(collection_id)
-            },
+            }
             Ok(None) => Err(anyhow!("Collection not found: {}", collection_name)),
             Err(e) => Err(anyhow!("Collection resolution failed: {}", e)),
         }
@@ -401,27 +419,29 @@ mod lowering_tests {
     /// Create mock collection service for testing
     fn setup_test_collection_service() -> Arc<CollectionService> {
         // TODO: Implement proper mock service
-        Arc::new(CollectionService::new(
-            Arc::new(crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new())
-        ))
+        Arc::new(CollectionService::new(Arc::new(
+            crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(),
+        )))
     }
 
     #[tokio::test]
     async fn test_simple_select_lowering() {
         let lowering = QueryLowering::new(setup_test_collection_service());
         let sql = "SELECT id, metadata FROM products LIMIT 10";
-        
+
         let ast = lowering.lower_sql(sql).await.unwrap();
-        
+
         match ast {
             Query::Select(select) => {
                 assert_eq!(select.projection.len(), 2);
                 assert_eq!(select.limit, Some(10));
                 assert!(select.from.len() > 0);
-                
+
                 // Verify projection contains expected fields
                 assert!(matches!(select.projection[0], Expr::Identifier(ref id) if id == "id"));
-                assert!(matches!(select.projection[1], Expr::Identifier(ref id) if id == "metadata"));
+                assert!(
+                    matches!(select.projection[1], Expr::Identifier(ref id) if id == "metadata")
+                );
             }
         }
     }
@@ -430,13 +450,13 @@ mod lowering_tests {
     async fn test_metadata_filter_lowering() {
         let lowering = QueryLowering::new(setup_test_collection_service());
         let sql = "SELECT * FROM products WHERE metadata.category = 'electronics'";
-        
+
         let ast = lowering.lower_sql(sql).await.unwrap();
-        
+
         match ast {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
-                
+
                 // Verify WHERE clause generates efficient FilterExpression
                 // This will use HashMap.get("category") instead of linear scan
                 if let Some(Expr::Binary { left, op, right }) = &select.selection {
@@ -451,14 +471,14 @@ mod lowering_tests {
     async fn test_vector_similarity_order_by() {
         let lowering = QueryLowering::new(setup_test_collection_service());
         let sql = "SELECT * FROM products ORDER BY VECTOR_SIMILARITY(embedding, [0.1, 0.2, 0.3], 'cosine') DESC LIMIT 5";
-        
+
         let ast = lowering.lower_sql(sql).await.unwrap();
-        
+
         match ast {
             Query::Select(select) => {
                 assert!(!select.order_by.is_empty());
                 assert_eq!(select.limit, Some(5));
-                
+
                 // Verify vector similarity function is properly recognized
                 if let Expr::FuncCall { name, args } = &select.order_by[0].expr {
                     assert!(name.to_uppercase().contains("VECTOR_SIMILARITY"));
@@ -472,10 +492,10 @@ mod lowering_tests {
     async fn test_parameter_placeholder_recognition() {
         let lowering = QueryLowering::new(setup_test_collection_service());
         let sql = "SELECT * FROM products WHERE category = $1 AND price > $2";
-        
+
         // TODO: Test parameter placeholder recognition and binding preparation
         let ast = lowering.lower_sql(sql).await.unwrap();
-        
+
         match ast {
             Query::Select(select) => {
                 assert!(select.selection.is_some());
@@ -484,18 +504,21 @@ mod lowering_tests {
         }
     }
 
-    #[tokio::test] 
+    #[tokio::test]
     async fn test_performance_filter_pattern_generation() {
         // This test validates that the lowering generates efficient metadata access patterns
         let lowering = QueryLowering::new(setup_test_collection_service());
         let sql = "WHERE metadata.brand = 'apple' AND metadata.price > 500";
-        
+
         // TODO: Validate that lowered AST will generate HashMap.get() calls
         // instead of linear scans when executed
         // This is the core performance optimization enabling 10x improvement
-        
-        let ast = lowering.lower_sql(&format!("SELECT * FROM products {}", sql)).await.unwrap();
-        
+
+        let ast = lowering
+            .lower_sql(&format!("SELECT * FROM products {}", sql))
+            .await
+            .unwrap();
+
         // The lowered AST should represent metadata access in a way that
         // the execution engine can optimize to O(1) HashMap lookups
         assert!(matches!(ast, Query::Select(_)));
@@ -505,9 +528,9 @@ mod lowering_tests {
     async fn test_collection_name_resolution() {
         let lowering = QueryLowering::new(setup_test_collection_service());
         let sql = "SELECT * FROM products";
-        
+
         let ast = lowering.lower_sql(sql).await.unwrap();
-        
+
         match ast {
             Query::Select(select) => {
                 // Verify collection name was resolved to UUID

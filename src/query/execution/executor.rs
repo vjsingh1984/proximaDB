@@ -3,36 +3,100 @@
 //! This module implements the actual query execution that delivers 10x performance
 //! improvement through O(1) HashMap metadata lookups instead of O(n) linear scans.
 
+use crate::core::search::FilterExpression;
+use crate::graph::service::GraphService;
 use crate::query::execution::{
-    ExecutionPlan, ExecutionOperation, QueryResult, QueryRow, QueryPerformanceMetrics
+    ExecutionOperation, ExecutionPlan, QueryPerformanceMetrics, QueryResult, QueryRow,
 };
 use crate::services::operations::vectors::VectorOperationsService;
-use crate::graph::service::GraphService;
-use crate::core::search::FilterExpression;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(test)]
+use std::sync::Mutex;
+#[cfg(test)]
+static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
+
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
-    vector_service: Arc<VectorOperationsService>,
+    vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
     graph_service: Arc<GraphService>,
 }
 
 impl QueryExecutor {
+    /// Derive vector-side rows from graph seeds using the SKS embedding catalog (no engine I/O)
+    pub(crate) fn derive_vector_rows_from_graph_seeds(graph_rows: &Vec<QueryRow>) -> Vec<QueryRow> {
+        if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
+            let seeds: Vec<String> = graph_rows
+                .iter()
+                .map(|r| r
+                    .fields
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string())
+                .filter(|id| !id.is_empty() && id != "unknown")
+                .take(100)
+                .collect();
+            let e2v = store.entity_to_vectors.read().unwrap();
+            let emb = store.embeddings.read().unwrap();
+            let mut derived: Vec<QueryRow> = Vec::new();
+            for entity_id in seeds {
+                if let Some(vec_ids) = e2v.get(&entity_id) {
+                    if let Some(first_vec_id) = vec_ids.first() {
+                        if let Some(vec_values) = emb.get(first_vec_id) {
+                            let mut fields = std::collections::HashMap::new();
+                            fields.insert("id".to_string(), serde_json::Value::String(entity_id.clone()));
+                            fields.insert(
+                                "embedding_dim".to_string(),
+                                serde_json::Value::Number(serde_json::Number::from(vec_values.len() as u64)),
+                            );
+                            derived.push(QueryRow {
+                                fields,
+                                similarity_score: None,
+                                graph_distance: None,
+                                provenance: None,
+                            });
+                            continue;
+                        }
+                    }
+                }
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("id".to_string(), serde_json::Value::String(entity_id));
+                derived.push(QueryRow {
+                    fields,
+                    similarity_score: None,
+                    graph_distance: None,
+                    provenance: None,
+                });
+            }
+            derived
+        } else {
+            Vec::new()
+        }
+    }
     /// Create new query executor with service integrations
     pub fn new(
         vector_service: Arc<VectorOperationsService>,
         graph_service: Arc<GraphService>,
     ) -> Self {
         Self {
-            vector_service,
+            vector_service: Some(vector_service),
+            graph_service,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_for_tests(graph_service: Arc<GraphService>) -> Self {
+        Self {
+            vector_service: None,
             graph_service,
         }
     }
 
     /// Execute vector-only queries with HashMap metadata filtering optimization
-    /// 
+    ///
     /// This method demonstrates the core performance improvement:
     /// - Uses HashMap.get() for O(1) metadata filtering
     /// - Integrates with VOS progressive search for optimal performance
@@ -45,60 +109,72 @@ impl QueryExecutor {
 
         for operation in &plan.operations {
             match operation {
-                ExecutionOperation::VectorSearch { 
-                    collection_id, 
-                    query_vector, 
-                    filters, 
-                    top_k, 
-                    distance_metric 
+                ExecutionOperation::VectorSearch {
+                    collection_id,
+                    query_vector,
+                    filters,
+                    top_k,
+                    distance_metric,
                 } => {
                     // Execute vector search with VOS integration
-                    let search_results = self.execute_vector_search_operation(
-                        collection_id,
-                        query_vector.as_ref(),
-                        filters.as_ref(),
-                        *top_k,
-                        distance_metric,
-                        &mut performance_metrics,
-                    ).await?;
+                    let search_results = self
+                        .execute_vector_search_operation(
+                            collection_id,
+                            query_vector.as_ref(),
+                            filters.as_ref(),
+                            *top_k,
+                            distance_metric,
+                            &mut performance_metrics,
+                        )
+                        .await?;
                     buffers.push(search_results);
-                },
-                ExecutionOperation::Project { columns, transformations } => {
+                }
+                ExecutionOperation::Project {
+                    columns,
+                    transformations,
+                } => {
                     if let Some(last) = buffers.last_mut() {
                         self.apply_projections(last, columns, transformations);
                     } else {
                         self.apply_projections(&mut all_rows, columns, transformations);
                     }
-                },
-                ExecutionOperation::Aggregate { group_keys, aggs, having } => {
+                }
+                ExecutionOperation::Aggregate {
+                    group_keys,
+                    aggs,
+                    having,
+                } => {
                     if let Some(last) = buffers.last_mut() {
                         self.apply_aggregate(last, group_keys, aggs, having)?;
                     } else {
                         self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
                     }
                 }
-                ExecutionOperation::Join { kind, on } => {
+                ExecutionOperation::Join { kind, left_key, right_key, left_alias: _, right_alias: _ } => {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
                     let right = buffers.pop().unwrap();
                     let left = buffers.pop().unwrap();
-                    if let Some((lk, rk)) = Self::parse_join_on(on) {
-                        let joined = self.join_rows(&left, &right, &lk, &rk, kind)?;
-                        buffers.push(joined);
-                    } else {
-                        return Err(anyhow!("JOIN: unsupported ON clause; expected equality on two identifiers"));
-                    }
+                    let joined = self.join_rows(&left, &right, &left_key, &right_key, kind)?;
+                    buffers.push(joined);
                 }
                 _ => {
-                    return Err(anyhow!("Unsupported operation in vector plan: {:?}", operation));
+                    return Err(anyhow!(
+                        "Unsupported operation in vector plan: {:?}",
+                        operation
+                    ));
                 }
             }
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
         // Resolve final rows: prefer the last buffer if present
-        let final_rows = if let Some(last) = buffers.pop() { last } else { all_rows };
+        let final_rows = if let Some(last) = buffers.pop() {
+            last
+        } else {
+            all_rows
+        };
         let total_found = final_rows.len();
 
         Ok(QueryResult {
@@ -120,57 +196,70 @@ impl QueryExecutor {
 
         for operation in &plan.operations {
             match operation {
-                ExecutionOperation::GraphTraversal { 
-                    start_nodes, 
-                    edge_types, 
-                    max_depth, 
-                    filters 
-                } => {
+            ExecutionOperation::GraphTraversal {
+                start_nodes,
+                edge_types,
+                max_depth,
+                filters,
+                ..
+            } => {
                     // Execute graph traversal with ORION engine
-                    let traversal_results = self.execute_graph_traversal_operation(
-                        start_nodes,
-                        edge_types,
-                        *max_depth,
-                        filters.as_ref(),
-                        &mut performance_metrics,
-                    ).await?;
+                    let traversal_results = self
+                        .execute_graph_traversal_operation(
+                            start_nodes,
+                            edge_types,
+                            *max_depth,
+                            filters.as_ref(),
+                            &mut performance_metrics,
+                        )
+                        .await?;
                     buffers.push(traversal_results);
-                },
-                ExecutionOperation::Project { columns, transformations } => {
+                }
+                ExecutionOperation::Project {
+                    columns,
+                    transformations,
+                } => {
                     if let Some(last) = buffers.last_mut() {
                         self.apply_projections(last, columns, transformations);
                     } else {
                         self.apply_projections(&mut all_rows, columns, transformations);
                     }
-                },
-                ExecutionOperation::Aggregate { group_keys, aggs, having } => {
+                }
+                ExecutionOperation::Aggregate {
+                    group_keys,
+                    aggs,
+                    having,
+                } => {
                     if let Some(last) = buffers.last_mut() {
                         self.apply_aggregate(last, group_keys, aggs, having)?;
                     } else {
                         self.apply_aggregate(&mut all_rows, group_keys, aggs, having)?;
                     }
                 }
-                ExecutionOperation::Join { kind, on } => {
+                ExecutionOperation::Join { kind, left_key, right_key, left_alias: _, right_alias: _ } => {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
                     let right = buffers.pop().unwrap();
                     let left = buffers.pop().unwrap();
-                    if let Some((lk, rk)) = Self::parse_join_on(on) {
-                        let joined = self.join_rows(&left, &right, &lk, &rk, kind)?;
-                        buffers.push(joined);
-                    } else {
-                        return Err(anyhow!("JOIN: unsupported ON clause; expected equality on two identifiers"));
-                    }
+                    let joined = self.join_rows(&left, &right, &left_key, &right_key, kind)?;
+                    buffers.push(joined);
                 }
                 _ => {
-                    return Err(anyhow!("Unsupported operation in graph plan: {:?}", operation));
+                    return Err(anyhow!(
+                        "Unsupported operation in graph plan: {:?}",
+                        operation
+                    ));
                 }
             }
         }
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let final_rows = if let Some(last) = buffers.pop() { last } else { all_rows };
+        let final_rows = if let Some(last) = buffers.pop() {
+            last
+        } else {
+            all_rows
+        };
         let total_found = final_rows.len();
 
         Ok(QueryResult {
@@ -187,65 +276,231 @@ impl QueryExecutor {
     pub async fn execute_hybrid_plan(&self, plan: ExecutionPlan) -> Result<QueryResult> {
         let start_time = Instant::now();
         let mut performance_metrics = QueryPerformanceMetrics::default();
-        
-        // Separate vector and graph operations
-        let mut vector_results = Vec::new();
-        let mut graph_results = Vec::new();
-        let mut fusion_strategy = None;
-        let mut join_request: Option<(crate::query::execution::JoinKind, String, String)> = None;
 
-        for operation in &plan.operations {
-            match operation {
-                ExecutionOperation::VectorSearch { .. } => {
-                    let results = self.execute_vector_operation(operation, &mut performance_metrics).await?;
-                    vector_results.extend(results);
-                },
-                ExecutionOperation::GraphTraversal { .. } => {
-                    let results = self.execute_graph_operation(operation, &mut performance_metrics).await?;
-                    graph_results.extend(results);
-                },
+        // Partition ops
+        let mut vector_ops: Vec<ExecutionOperation> = Vec::new();
+        let mut graph_ops: Vec<ExecutionOperation> = Vec::new();
+        let mut fusion_strategy: Option<(crate::query::execution::FusionStrategy, Vec<f64>)> = None;
+        let mut join_request: Option<(crate::query::execution::JoinKind, String, String)> = None;
+        for op in &plan.operations {
+            match op {
+                ExecutionOperation::VectorSearch { .. } => vector_ops.push(op.clone()),
+                ExecutionOperation::GraphTraversal { .. } => graph_ops.push(op.clone()),
                 ExecutionOperation::Fusion { strategy, weights } => {
-                    fusion_strategy = Some((strategy.clone(), weights.clone()));
-                },
-                ExecutionOperation::Aggregate { group_keys, aggs, having } => {
-                    // Apply aggregation after fusion below
-                    // Defer: store to apply post-fusion
-                    // For simplicity, aggregate only after fusion
-                    // We'll process after we compute fused_results
+                    fusion_strategy = Some((strategy.clone(), weights.clone()))
                 }
-                ExecutionOperation::Join { kind, on } => {
-                    if let Some((lk, rk)) = Self::parse_join_on(on) {
-                        join_request = Some((kind.clone(), lk, rk));
-                    } else {
-                        return Err(anyhow!("JOIN: unsupported ON clause; expected equality on two identifiers"));
-                    }
+                ExecutionOperation::Join { kind, left_key, right_key, left_alias: _, right_alias: _ } => {
+                    join_request = Some((kind.clone(), left_key.clone(), right_key.clone()));
                 }
-                _ => {} // Handle other operations
+                _ => {}
             }
         }
 
-        // Apply join or fusion if we have both vector and graph results
-        let fused_results = if let Some((kind, left_key, right_key)) = join_request {
-            // Heuristic: only perform hybrid join if keys appear id-like or present on both sides
-            let has_left = vector_results.iter().any(|r| r.fields.contains_key(&left_key));
-            let has_right = graph_results.iter().any(|r| r.fields.contains_key(&right_key));
-            let id_like = left_key.ends_with(".id") || left_key == "id" || right_key.ends_with(".id") || right_key == "id";
-            if has_left && has_right && id_like {
-                self.join_rows(&vector_results, &graph_results, &left_key, &right_key, &kind)?
-            } else {
-                // Fall back to fusion when equality join does not make sense for vector rows
-                if let Some((strategy, weights)) = &fusion_strategy {
-                    self.apply_fusion_algorithm(&vector_results, &graph_results, strategy, weights)?
-                } else {
-                    let mut combined = vector_results;
-                    combined.extend(graph_results);
-                    combined
+        // Determine if graph ops require seeds
+        let graph_needs_seeds = graph_ops.iter().any(|op| match op {
+            ExecutionOperation::GraphTraversal { start_nodes, .. } => start_nodes.is_empty(),
+            _ => false,
+        });
+
+        // Run vector and graph concurrently when possible
+        let vector_fut = {
+            let this = self;
+            let mut metrics = performance_metrics.clone();
+            let ops = vector_ops.clone();
+            async move {
+                let mut out = Vec::new();
+                for op in &ops {
+                    let rows = this.execute_vector_operation(op, &mut metrics).await?;
+                    out.extend(rows);
                 }
+                Ok::<Vec<QueryRow>, anyhow::Error>(out)
+            }
+        };
+
+        let graph_fut = if !graph_needs_seeds {
+            let this = self;
+            let mut metrics = performance_metrics.clone();
+            let ops = graph_ops.clone();
+            Some(async move {
+                let mut out = Vec::new();
+                for op in &ops {
+                    let rows = this.execute_graph_operation(op, &mut metrics).await?;
+                    out.extend(rows);
+                }
+                Ok::<Vec<QueryRow>, anyhow::Error>(out)
+            })
+        } else {
+            None
+        };
+
+        let (mut vector_results, mut graph_results) = match graph_fut {
+            Some(g) => {
+                let (vr, gr) = tokio::join!(vector_fut, g);
+                (vr?, gr?)
+            }
+            None => {
+                let vr = vector_fut.await?;
+                (vr, Vec::new())
+            }
+        };
+
+        // Seed handoff: Vector → Graph when needed
+        if graph_needs_seeds && !graph_ops.is_empty() {
+            if let Some(ExecutionOperation::GraphTraversal {
+                edge_types,
+                max_depth,
+                filters,
+                ..
+            }) = graph_ops.first()
+            {
+                let seeds: Vec<String> = vector_results
+                    .iter()
+                    .map(|r| self.extract_result_id(r))
+                    .filter(|id| !id.is_empty() && id != "unknown")
+                    .take(100)
+                    .collect();
+                if !seeds.is_empty() {
+                    let seeded = self
+                        .execute_graph_traversal_operation(
+                            &seeds,
+                            edge_types,
+                            *max_depth,
+                            filters.as_ref(),
+                            &mut performance_metrics,
+                        )
+                        .await?;
+                    graph_results.extend(seeded);
+                }
+            }
+        }
+
+        // If no vector ops but graph results exist, perform Graph → Vector seeding per plan strategy
+        if vector_ops.is_empty() && !graph_results.is_empty() {
+            // Derive vector rows directly from catalog (always)
+            let mut derived = Self::derive_vector_rows_from_graph_seeds(&graph_results);
+            vector_results.append(&mut derived);
+
+            // Use seeding strategy from plan
+            let seeding = plan.seeding_strategy.clone();
+            let target_collection = graph_ops
+                .first()
+                .and_then(|op| match op {
+                    ExecutionOperation::GraphTraversal {
+                        vector_target_collection,
+                        ..
+                    } => vector_target_collection.clone(),
+                    _ => None,
+                });
+            if let Some(collection_id) = target_collection {
+                if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
+                    let seeds: Vec<String> = graph_results
+                        .iter()
+                        .map(|r| self.extract_result_id(r))
+                        .filter(|id| !id.is_empty() && id != "unknown")
+                        .take(64)
+                        .collect();
+                    let e2v = store.entity_to_vectors.read().unwrap();
+                    let emb = store.embeddings.read().unwrap();
+                    match seeding {
+                        crate::query::execution::SeedingStrategy::Average => {
+                            // Average up to 32 seed embeddings into a single vector
+                            let mut acc: Vec<f32> = Vec::new();
+                            let mut count = 0f32;
+                            for entity_id in seeds.iter().take(32) {
+                                if let Some(vec_ids) = e2v.get(entity_id) {
+                                    if let Some(first_vec_id) = vec_ids.first() {
+                                        if let Some(v) = emb.get(first_vec_id) {
+                                            if acc.is_empty() {
+                                                acc = v.clone();
+                                            } else if acc.len() == v.len() {
+                                                for i in 0..acc.len() {
+                                                    acc[i] += v[i];
+                                                }
+                                            }
+                                            count += 1.0;
+                                        }
+                                    }
+                                }
+                            }
+                            if count > 0.0 {
+                                for i in 0..acc.len() {
+                                    acc[i] /= count;
+                                }
+                                let sim_rows = self
+                                    .execute_vector_search_operation(
+                                        &collection_id,
+                                        Some(&acc),
+                                        None,
+                                        50,
+                                        "cosine",
+                                        &mut performance_metrics,
+                                    )
+                                    .await
+                                    .unwrap_or_default();
+                                vector_results.extend(sim_rows);
+                            }
+                        }
+                        crate::query::execution::SeedingStrategy::PerSeed => {
+                            // Run per-seed vector queries and fuse
+                            for entity_id in seeds {
+                                if let Some(vec_ids) = e2v.get(&entity_id) {
+                                    if let Some(first_vec_id) = vec_ids.first() {
+                                        if let Some(v) = emb.get(first_vec_id) {
+                                            let sim_rows = self
+                                                .execute_vector_search_operation(
+                                                    &collection_id,
+                                                    Some(v),
+                                                    None,
+                                                    10,
+                                                    "cosine",
+                                                    &mut performance_metrics,
+                                                )
+                                                .await
+                                                .unwrap_or_default();
+                                            vector_results.extend(sim_rows);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::query::execution::SeedingStrategy::None => {
+                            // Do nothing (already derived id-only rows)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Join or fuse
+        let fused_results = if let Some((kind, left_key, right_key)) = join_request {
+            let has_left = vector_results
+                .iter()
+                .any(|r| r.fields.contains_key(&left_key));
+            let has_right = graph_results
+                .iter()
+                .any(|r| r.fields.contains_key(&right_key));
+            let id_like = left_key.ends_with(".id")
+                || left_key == "id"
+                || right_key.ends_with(".id")
+                || right_key == "id";
+            if has_left && has_right && id_like {
+                self.join_rows(
+                    &vector_results,
+                    &graph_results,
+                    &left_key,
+                    &right_key,
+                    &kind,
+                )?
+            } else if let Some((strategy, weights)) = &fusion_strategy {
+                self.apply_fusion_algorithm(&vector_results, &graph_results, strategy, weights)?
+            } else {
+                let mut combined = vector_results;
+                combined.extend(graph_results);
+                combined
             }
         } else if let Some((strategy, weights)) = fusion_strategy {
             self.apply_fusion_algorithm(&vector_results, &graph_results, &strategy, &weights)?
         } else {
-            // No fusion needed - combine results directly
             let mut combined = vector_results;
             combined.extend(graph_results);
             combined
@@ -253,7 +508,6 @@ impl QueryExecutor {
 
         let execution_time = start_time.elapsed().as_secs_f64() * 1000.0;
         let total_found = fused_results.len();
-
         let mut result = QueryResult {
             rows: fused_results,
             total_found,
@@ -265,7 +519,12 @@ impl QueryExecutor {
 
         // Post-fusion aggregate if requested
         for op in &plan.operations {
-            if let ExecutionOperation::Aggregate { group_keys, aggs, having } = op {
+            if let ExecutionOperation::Aggregate {
+                group_keys,
+                aggs,
+                having,
+            } = op
+            {
                 self.apply_aggregate(&mut result.rows, group_keys, aggs, having)?;
             }
         }
@@ -274,7 +533,7 @@ impl QueryExecutor {
     }
 
     /// Execute vector search with VOS integration and HashMap filtering
-    /// 
+    ///
     /// Key Performance Optimization:
     /// This method ensures that metadata filtering uses HashMap.get() for O(1) access
     /// instead of Vec.find() linear scans, delivering the 10x improvement target.
@@ -282,11 +541,19 @@ impl QueryExecutor {
         &self,
         collection_id: &str,
         query_vector: Option<&Vec<f32>>,
-        filters: Option<&FilterExpression>, 
+        filters: Option<&FilterExpression>,
         top_k: usize,
         distance_metric: &str,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
+        #[cfg(test)]
+        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
+            if let Ok(guard) = map.lock() {
+                if let Some(rows) = guard.get(collection_id) {
+                    return Ok(rows.clone());
+                }
+            }
+        }
         // Convert FilterExpression to VOS-compatible format
         // The FilterExpression already represents HashMap.get() patterns from lowering
         let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
@@ -299,13 +566,21 @@ impl QueryExecutor {
 
         // Execute with VOS - this will use HashMap metadata filtering internally
         let vos_results = if let Some(vector) = query_vector {
-            self.vector_service.unified_search_v1(
-                collection_id,
-                vector.clone(),
-                top_k,
-                filters.cloned(),
-                Some(search_config),
-            ).await?
+            self
+                .vector_service
+                .as_ref()
+                .expect("vector service required for vector search")
+                .unified_search_v1(
+                    collection_id,
+                    vector.clone(),
+                    top_k,
+                    filters.cloned(),
+                    Some(search_config),
+                )
+                .await?
+        } else if let Some(vs) = &self.vector_service {
+            // Fallback if query_vector is None (not typical for similarity) - no results
+            vec![]
         } else {
             // TODO: Handle non-similarity queries
             vec![]
@@ -317,15 +592,14 @@ impl QueryExecutor {
         metrics.cache_hit_ratio = 0.8; // TODO: Get actual cache hit ratio from VOS
 
         // Convert VOS results to QueryRow format
-        let rows = vos_results.into_iter()
+        let rows = vos_results
+            .into_iter()
             .flat_map(|search_result| {
-                search_result.results.into_iter().map(|record| {
-                    QueryRow {
-                        fields: self.convert_metadata_to_fields(&record.metadata),
-                        similarity_score: Some(record.score),
-                        graph_distance: None,
-                        provenance: None,
-                    }
+                search_result.results.into_iter().map(|record| QueryRow {
+                    fields: self.convert_metadata_to_fields(&record.metadata),
+                    similarity_score: Some(record.score),
+                    graph_distance: None,
+                    provenance: None,
                 })
             })
             .collect();
@@ -357,10 +631,19 @@ impl QueryExecutor {
                     for r in matches {
                         let mut fields = l.fields.clone();
                         for (k, v) in &r.fields {
-                            let key = if fields.contains_key(k) { format!("r_{}", k) } else { k.clone() };
+                            let key = if fields.contains_key(k) {
+                                format!("r_{}", k)
+                            } else {
+                                k.clone()
+                            };
                             fields.insert(key, v.clone());
                         }
-                        out.push(QueryRow { fields, similarity_score: l.similarity_score.or(r.similarity_score), graph_distance: l.graph_distance.or(r.graph_distance), provenance: None });
+                        out.push(QueryRow {
+                            fields,
+                            similarity_score: l.similarity_score.or(r.similarity_score),
+                            graph_distance: l.graph_distance.or(r.graph_distance),
+                            provenance: None,
+                        });
                     }
                 }
             }
@@ -369,12 +652,15 @@ impl QueryExecutor {
     }
 
     fn parse_join_on(on: &str) -> Option<(String, String)> {
-        let re = regex::Regex::new("Identifier\\(\"([^\"]+)\"\\).+Identifier\\(\"([^\"]+)\"\\)").ok()?;
+        let re =
+            regex::Regex::new("Identifier\\(\"([^\"]+)\"\\).+Identifier\\(\"([^\"]+)\"\\)").ok()?;
         if let Some(caps) = re.captures(on) {
             let l = caps.get(1)?.as_str().to_string();
             let r = caps.get(2)?.as_str().to_string();
             Some((l, r))
-        } else { None }
+        } else {
+            None
+        }
     }
 
     fn apply_aggregate(
@@ -387,13 +673,16 @@ impl QueryExecutor {
         use std::collections::HashMap;
         let mut groups: HashMap<Vec<String>, Vec<&QueryRow>> = HashMap::new();
         for row in rows.iter() {
-            let key: Vec<String> = group_keys.iter().map(|k| match row.fields.get(k) {
-                Some(serde_json::Value::String(s)) => s.clone(),
-                Some(serde_json::Value::Number(n)) => n.to_string(),
-                Some(serde_json::Value::Bool(b)) => b.to_string(),
-                Some(other) => other.to_string(),
-                None => "".to_string(),
-            }).collect();
+            let key: Vec<String> = group_keys
+                .iter()
+                .map(|k| match row.fields.get(k) {
+                    Some(serde_json::Value::String(s)) => s.clone(),
+                    Some(serde_json::Value::Number(n)) => n.to_string(),
+                    Some(serde_json::Value::Bool(b)) => b.to_string(),
+                    Some(other) => other.to_string(),
+                    None => "".to_string(),
+                })
+                .collect();
             groups.entry(key).or_default().push(row);
         }
 
@@ -406,17 +695,40 @@ impl QueryExecutor {
             }
             // Compute aggregates
             for agg in aggs {
-                let vals: Vec<f64> = grp.iter().filter_map(|r| r.fields.get(&agg.field)).filter_map(|v| v.as_f64()).collect();
+                let vals: Vec<f64> = grp
+                    .iter()
+                    .filter_map(|r| r.fields.get(&agg.field))
+                    .filter_map(|v| v.as_f64())
+                    .collect();
                 let v = match agg.func {
-                    crate::query::execution::AggregateFunc::Count => serde_json::json!(grp.len() as u64),
-                    crate::query::execution::AggregateFunc::Sum => serde_json::json!(vals.iter().copied().sum::<f64>()),
-                    crate::query::execution::AggregateFunc::Avg => serde_json::json!(if vals.is_empty() {0.0} else { vals.iter().copied().sum::<f64>() / (vals.len() as f64) }),
-                    crate::query::execution::AggregateFunc::Min => serde_json::json!(vals.iter().cloned().fold(f64::INFINITY, f64::min)),
-                    crate::query::execution::AggregateFunc::Max => serde_json::json!(vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
+                    crate::query::execution::AggregateFunc::Count => {
+                        serde_json::json!(grp.len() as u64)
+                    }
+                    crate::query::execution::AggregateFunc::Sum => {
+                        serde_json::json!(vals.iter().copied().sum::<f64>())
+                    }
+                    crate::query::execution::AggregateFunc::Avg => {
+                        serde_json::json!(if vals.is_empty() {
+                            0.0
+                        } else {
+                            vals.iter().copied().sum::<f64>() / (vals.len() as f64)
+                        })
+                    }
+                    crate::query::execution::AggregateFunc::Min => {
+                        serde_json::json!(vals.iter().cloned().fold(f64::INFINITY, f64::min))
+                    }
+                    crate::query::execution::AggregateFunc::Max => {
+                        serde_json::json!(vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max))
+                    }
                 };
                 fields.insert(agg.alias.clone(), v);
             }
-            out.push(QueryRow { fields, similarity_score: None, graph_distance: None, provenance: None });
+            out.push(QueryRow {
+                fields,
+                similarity_score: None,
+                graph_distance: None,
+                provenance: None,
+            });
         }
 
         // HAVING filter (simple numeric comparisons over aggregate row fields)
@@ -431,12 +743,23 @@ impl QueryExecutor {
     fn eval_having(&self, row: &QueryRow, filter: &FilterExpression) -> bool {
         use crate::core::search::ComparisonOperator as Op;
         match filter {
-            FilterExpression::Comparison { field, operator, value } => {
-                let lv = row.fields.get(field).cloned().unwrap_or(serde_json::Value::Null);
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                let lv = row
+                    .fields
+                    .get(field)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 match operator {
                     Op::Equals => lv == *value,
                     Op::NotEquals => lv != *value,
-                    Op::GreaterThan | Op::GreaterThanOrEqual | Op::LessThan | Op::LessThanOrEqual => {
+                    Op::GreaterThan
+                    | Op::GreaterThanOrEqual
+                    | Op::LessThan
+                    | Op::LessThanOrEqual => {
                         let ln = lv.as_f64().unwrap_or(f64::NAN);
                         let rn = value.as_f64().unwrap_or(f64::NAN);
                         match operator {
@@ -444,14 +767,23 @@ impl QueryExecutor {
                             Op::GreaterThanOrEqual => ln >= rn,
                             Op::LessThan => ln < rn,
                             Op::LessThanOrEqual => ln <= rn,
-                            _ => false
+                            _ => false,
                         }
                     }
-                    Op::In | Op::NotIn | Op::Contains | Op::StartsWith | Op::EndsWith | Op::Like => false,
+                    Op::In
+                    | Op::NotIn
+                    | Op::Contains
+                    | Op::StartsWith
+                    | Op::EndsWith
+                    | Op::Like => false,
                 }
             }
-            FilterExpression::And(lhs, rhs) => self.eval_having(row, lhs) && self.eval_having(row, rhs),
-            FilterExpression::Or(lhs, rhs) => self.eval_having(row, lhs) || self.eval_having(row, rhs),
+            FilterExpression::And(lhs, rhs) => {
+                self.eval_having(row, lhs) && self.eval_having(row, rhs)
+            }
+            FilterExpression::Or(lhs, rhs) => {
+                self.eval_having(row, lhs) || self.eval_having(row, rhs)
+            }
             _ => true,
         }
     }
@@ -460,36 +792,30 @@ impl QueryExecutor {
     async fn execute_graph_traversal_operation(
         &self,
         start_nodes: &[String],
-        edge_types: &[String], 
+        edge_types: &[String],
         max_depth: u32,
         filters: Option<&FilterExpression>,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
-        // TODO: Integrate with ORION graph engine
-        // Use BFS/DFS algorithms with CSR storage for optimal performance
-        
-        let traversal_config = crate::graph::engines::orion::traversal::TraversalConfig {
-            max_depth: Some(*max_depth as usize),
-            max_nodes: Some(1000), // Default limit
-            edge_types: if edge_types.is_empty() { None } else { Some(edge_types.to_vec()) },
-            node_filter: None, // TODO: Convert filters to node filter
-            early_stop: None,
-            track_paths: true,
-            parallel_processing: true,
-            timeout_ms: Some(5000),
-            max_frontier: Some(10000),
-        };
-
-        // Execute traversal for each start node
-        let mut all_rows = Vec::new();
-        for start_node in start_nodes {
-            // TODO: Call graph service traversal
-            // let results = self.graph_service.traverse(start_node, traversal_config).await?;
-            // Convert graph results to QueryRow format
+        // Minimal traversal: depth-1 neighbors via GraphService; track cache accesses
+        let mut rows = Vec::new();
+        for start in start_nodes {
+            if let Ok(neighbors) = self.graph_service.get_neighbors(start) {
+                for n in neighbors {
+                    let mut fields = std::collections::HashMap::new();
+                    fields.insert("id".to_string(), serde_json::Value::String(n.id.clone()));
+                    rows.push(QueryRow { fields, similarity_score: None, graph_distance: Some(1), provenance: None });
+                    if let Some(orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                        orch.track_access_async(format!("graph_node:{}", n.id), crate::storage::cache::orchestrator::CacheType::GraphNode);
+                    }
+                }
+            }
+            if let Some(orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                orch.track_access_async(format!("graph_adj:{}", start), crate::storage::cache::orchestrator::CacheType::GraphAdjacency);
+            }
         }
-
-        metrics.graph_nodes_visited = all_rows.len();
-        Ok(all_rows)
+        metrics.graph_nodes_visited = rows.len();
+        Ok(rows)
     }
 
     /// Apply advanced fusion algorithms for hybrid results
@@ -505,7 +831,7 @@ impl QueryExecutor {
                 // Implement Reciprocal Rank Fusion algorithm
                 // Formula: score = 1 / (k + rank_in_list)
                 self.apply_reciprocal_rank_fusion(vector_results, graph_results, *k)
-            },
+            }
             _ => {
                 // Simple concatenation for other strategies (TODO: implement)
                 let mut combined = vector_results.to_vec();
@@ -528,8 +854,9 @@ impl QueryExecutor {
         for (rank, result) in vector_results.iter().enumerate() {
             let rrf_score = 1.0 / (k + rank as f64 + 1.0);
             let result_id = self.extract_result_id(result);
-            
-            fused_results.entry(result_id.clone())
+
+            fused_results
+                .entry(result_id.clone())
                 .or_insert_with(|| result.clone())
                 .similarity_score = Some(rrf_score);
         }
@@ -538,7 +865,7 @@ impl QueryExecutor {
         for (rank, result) in graph_results.iter().enumerate() {
             let rrf_score = 1.0 / (k + rank as f64 + 1.0);
             let result_id = self.extract_result_id(result);
-            
+
             if let Some(existing) = fused_results.get_mut(&result_id) {
                 // Combine RRF scores
                 let combined_score = existing.similarity_score.unwrap_or(0.0) + rrf_score;
@@ -554,7 +881,8 @@ impl QueryExecutor {
         // Sort by combined RRF score
         let mut sorted_results: Vec<QueryRow> = fused_results.into_values().collect();
         sorted_results.sort_by(|a, b| {
-            b.similarity_score.unwrap_or(0.0)
+            b.similarity_score
+                .unwrap_or(0.0)
                 .partial_cmp(&a.similarity_score.unwrap_or(0.0))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
@@ -564,25 +892,47 @@ impl QueryExecutor {
 
     /// Helper methods for execution
     async fn execute_vector_operation(
-        &self, 
+        &self,
         operation: &ExecutionOperation,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
-        if let ExecutionOperation::VectorSearch { 
-            collection_id, 
-            query_vector, 
-            filters, 
-            top_k, 
-            distance_metric 
-        } = operation {
+        #[cfg(test)]
+        {
+            if let ExecutionOperation::VectorSearch { collection_id, .. } = operation {
+                if let Some(map) = TEST_VECTOR_RESULTS.get() {
+                    if let Some(guard) = map.lock().ok() {
+                        if let Some(rows) = guard.get(collection_id) {
+                            return Ok(rows.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if let ExecutionOperation::VectorSearch {
+            collection_id,
+            query_vector,
+            filters,
+            top_k,
+            distance_metric,
+        } = operation
+        {
+            #[cfg(test)]
+            if let Some(map) = TEST_VECTOR_RESULTS.get() {
+                if let Ok(guard) = map.lock() {
+                    if let Some(rows) = guard.get(collection_id) {
+                        return Ok(rows.clone());
+                    }
+                }
+            }
             self.execute_vector_search_operation(
                 collection_id,
-                query_vector.as_ref(), 
+                query_vector.as_ref(),
                 filters.as_ref(),
                 *top_k,
                 distance_metric,
                 metrics,
-            ).await
+            )
+            .await
         } else {
             Err(anyhow!("Not a vector operation"))
         }
@@ -590,22 +940,25 @@ impl QueryExecutor {
 
     async fn execute_graph_operation(
         &self,
-        operation: &ExecutionOperation, 
+        operation: &ExecutionOperation,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
-        if let ExecutionOperation::GraphTraversal { 
-            start_nodes, 
-            edge_types, 
-            max_depth, 
-            filters 
-        } = operation {
+        if let ExecutionOperation::GraphTraversal {
+            start_nodes,
+            edge_types,
+            max_depth,
+            filters,
+            ..
+        } = operation
+        {
             self.execute_graph_traversal_operation(
                 start_nodes,
                 edge_types,
                 *max_depth,
                 filters.as_ref(),
                 metrics,
-            ).await
+            )
+            .await
         } else {
             Err(anyhow!("Not a graph operation"))
         }
@@ -630,53 +983,54 @@ impl QueryExecutor {
                     crate::query::execution::ProjectionTransform::ExtractMetadata { field } => {
                         // TODO: Extract specific metadata field with HashMap.get() optimization
                         // This demonstrates the O(1) access pattern vs O(n) linear scan
-                    },
+                    }
                     crate::query::execution::ProjectionTransform::SimilarityScore => {
                         // Similarity score is already included
-                    },
+                    }
                     crate::query::execution::ProjectionTransform::FormatTimestamp => {
                         // TODO: Format timestamp fields
-                    },
+                    }
                 }
             }
         }
     }
 
     /// Convert v1 metadata HashMap to field map for result formatting
-    /// 
+    ///
     /// This method showcases the HashMap metadata structure in action
     fn convert_metadata_to_fields(
         &self,
-        metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>
+        metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
     ) -> std::collections::HashMap<String, serde_json::Value> {
-        metadata.iter()
+        metadata
+            .iter()
             .filter_map(|(key, sql_value)| {
                 // Demonstrate efficient HashMap iteration (vs Vec<MetadataItem> linear scan)
                 let json_value = match &sql_value.value {
                     Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
-                    },
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::json!(n)
-                    },
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
-                    },
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
-                    },
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                        serde_json::Value::String(base64::encode(b))
-                    },
+                        serde_json::Value::String(crate::utils::encoding::base64_encode(b))
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null
-                    },
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                         serde_json::Value::String("[Array]".to_string()) // Simplified for now
-                    },
+                    }
                     Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                         serde_json::Value::String("[Object]".to_string()) // Simplified for now
-                    },
+                    }
                     None => serde_json::Value::Null,
                 };
                 Some((key.clone(), json_value))
@@ -686,7 +1040,8 @@ impl QueryExecutor {
 
     /// Extract result ID for fusion algorithms
     fn extract_result_id(&self, row: &QueryRow) -> String {
-        row.fields.get("id")
+        row.fields
+            .get("id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string()
@@ -697,38 +1052,38 @@ impl QueryExecutor {
 mod executor_tests {
     use super::*;
     use crate::query::execution::{ExecutionPlan, ExecutionStrategy};
+    use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
 
     #[tokio::test]
     async fn test_vector_execution_with_hashmap_filtering() {
         let executor = create_test_executor();
-        
+
         // Create execution plan with metadata filtering
         let plan = ExecutionPlan {
             execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![
-                ExecutionOperation::VectorSearch {
-                    collection_id: "test_collection".to_string(),
-                    query_vector: Some(vec![0.1, 0.2, 0.3]),
-                    filters: Some(FilterExpression::Comparison {
-                        field: "category".to_string(),
-                        operator: crate::core::search::ComparisonOperator::Equals,
-                        value: serde_json::Value::String("electronics".to_string()),
-                    }),
-                    top_k: 10,
-                    distance_metric: "cosine".to_string(),
-                }
-            ],
+            operations: vec![ExecutionOperation::VectorSearch {
+                collection_id: "test_collection".to_string(),
+                query_vector: Some(vec![0.1, 0.2, 0.3]),
+                filters: Some(FilterExpression::Comparison {
+                    field: "category".to_string(),
+                    operator: crate::core::search::ComparisonOperator::Equals,
+                    value: serde_json::Value::String("electronics".to_string()),
+                }),
+                top_k: 10,
+                distance_metric: "cosine".to_string(),
+            }],
             estimated_cost: 2.5,
             optimizations: vec!["HashMap metadata filtering".to_string()],
             performance_hints: vec![],
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
         };
 
         let result = executor.execute_vector_plan(plan).await.unwrap();
-        
+
         // Verify execution completed successfully
         assert!(result.execution_time_ms > 0.0);
         assert!(!result.operations_performed.is_empty());
-        
+
         // Verify HashMap optimization is reflected in performance metrics
         assert!(result.performance_metrics.metadata_lookups > 0);
     }
@@ -736,7 +1091,7 @@ mod executor_tests {
     #[tokio::test]
     async fn test_hybrid_fusion_execution() {
         let executor = create_test_executor();
-        
+
         // Create hybrid execution plan
         let plan = ExecutionPlan {
             execution_strategy: ExecutionStrategy::Hybrid,
@@ -753,19 +1108,23 @@ mod executor_tests {
                     edge_types: vec!["related".to_string()],
                     max_depth: 2,
                     filters: None,
+                    vector_target_collection: None,
                 },
                 ExecutionOperation::Fusion {
-                    strategy: crate::query::execution::FusionStrategy::ReciprocalRankFusion { k: 60.0 },
+                    strategy: crate::query::execution::FusionStrategy::ReciprocalRankFusion {
+                        k: 60.0,
+                    },
                     weights: vec![0.6, 0.4],
-                }
+                },
             ],
             estimated_cost: 5.0,
             optimizations: vec!["RRF fusion algorithm".to_string()],
             performance_hints: vec![],
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
         };
 
         let result = executor.execute_hybrid_plan(plan).await.unwrap();
-        
+
         // Verify hybrid execution with fusion
         assert!(result.execution_time_ms > 0.0);
         assert!(result.operations_performed.len() >= 3); // Vector + Graph + Fusion
@@ -775,35 +1134,34 @@ mod executor_tests {
     async fn test_metadata_filtering_performance() {
         // This test validates that the execution engine uses HashMap.get()
         // instead of linear scans for metadata filtering
-        
+
         let executor = create_test_executor();
-        
+
         // Create query with multiple metadata filters
         let plan = ExecutionPlan {
             execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![
-                ExecutionOperation::VectorSearch {
-                    collection_id: "test_collection".to_string(),
-                    query_vector: Some(vec![0.1, 0.2, 0.3]),
-                    filters: Some(FilterExpression::And(vec![
-                        FilterExpression::Comparison {
-                            field: "category".to_string(),
-                            operator: crate::core::search::ComparisonOperator::Equals,
-                            value: serde_json::Value::String("electronics".to_string()),
-                        },
-                        FilterExpression::Comparison {
-                            field: "brand".to_string(),
-                            operator: crate::core::search::ComparisonOperator::Equals,
-                            value: serde_json::Value::String("apple".to_string()),
-                        },
-                    ])),
-                    top_k: 100,
-                    distance_metric: "cosine".to_string(),
-                }
-            ],
+            operations: vec![ExecutionOperation::VectorSearch {
+                collection_id: "test_collection".to_string(),
+                query_vector: Some(vec![0.1, 0.2, 0.3]),
+                filters: Some(FilterExpression::And(vec![
+                    FilterExpression::Comparison {
+                        field: "category".to_string(),
+                        operator: crate::core::search::ComparisonOperator::Equals,
+                        value: serde_json::Value::String("electronics".to_string()),
+                    },
+                    FilterExpression::Comparison {
+                        field: "brand".to_string(),
+                        operator: crate::core::search::ComparisonOperator::Equals,
+                        value: serde_json::Value::String("apple".to_string()),
+                    },
+                ])),
+                top_k: 100,
+                distance_metric: "cosine".to_string(),
+            }],
             estimated_cost: 3.0,
             optimizations: vec!["HashMap filtering".to_string()],
             performance_hints: vec![],
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
         };
 
         let start = std::time::Instant::now();
@@ -812,10 +1170,134 @@ mod executor_tests {
 
         // Performance validation: Should complete in sub-millisecond time
         // due to HashMap optimization
-        assert!(execution_time.as_millis() < 10, "Execution should be very fast with HashMap filtering");
-        
+        assert!(
+            execution_time.as_millis() < 10,
+            "Execution should be very fast with HashMap filtering"
+        );
+
         // Verify multiple metadata lookups were performed efficiently
         assert!(result.performance_metrics.metadata_lookups > 0);
+    }
+
+    #[tokio::test]
+    async fn test_derive_vector_rows_from_graph_seeds() {
+        // Setup global SKS store with one entity embedding
+        struct NoopEngine;
+        #[async_trait]
+        impl crate::storage::traits::UnifiedStorageEngine for NoopEngine {
+            fn engine_name(&self) -> &'static str { "noop" }
+            fn engine_version(&self) -> &'static str { "0" }
+            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Sst }
+            async fn do_flush(&self, _:&crate::storage::traits::FlushParameters)->anyhow::Result<crate::storage::traits::FlushResult>{ Ok(Default::default()) }
+            async fn do_compact(&self, _:&crate::storage::traits::CompactionParameters)->anyhow::Result<crate::storage::traits::CompactionResult>{ Ok(Default::default()) }
+            async fn collect_engine_metrics(&self)->anyhow::Result<std::collections::HashMap<String, serde_json::Value>>{ Ok(Default::default()) }
+            async fn vector_by_id(&self,_:&str,_:&str)->anyhow::Result<Option<crate::core::VectorRecord>>{ Ok(None) }
+            async fn search_vectors_unified(&self,_:&crate::storage::traits::StorageQueryContext)->anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>{ Ok(vec![]) }
+        }
+        let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageEngine>;
+        let store = Arc::new(ProximaEntityStore::new(
+            engine,
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
+        ));
+        // Populate catalog entries
+        {
+            store
+                .entity_to_vectors
+                .write()
+                .unwrap()
+                .insert("node1".to_string(), vec!["c1/node1/m/model/TEXT".to_string()]);
+            store
+                .embeddings
+                .write()
+                .unwrap()
+                .insert("c1/node1/m/model/TEXT".to_string(), vec![0.1, 0.2, 0.3]);
+        }
+        ProximaEntityStore::register_global(store);
+
+        // Build a fake graph row with id=node1
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("id".to_string(), serde_json::Value::String("node1".to_string()));
+        let graph_rows = vec![QueryRow { fields, similarity_score: None, graph_distance: None, provenance: None }];
+
+        // Derive function is independent from services
+        let derived = QueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
+        assert_eq!(derived.len(), 1);
+        assert!(derived[0].fields.get("embedding_dim").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_vector_to_graph_seeding_integration() {
+        // Prepare graph: n1 -> n2
+        let graph_service = Arc::new(crate::graph::service::GraphService::new());
+        let n1 = crate::graph::Node { id: "n1".into(), label: "L".into(), properties: Default::default(), created_at: None, updated_at: None };
+    fn set_test_vector_results(collection_id: &str, rows: Vec<QueryRow>) {
+        let map = TEST_VECTOR_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        if let Ok(mut guard) = map.lock() {
+            guard.insert(collection_id.to_string(), rows);
+        }
+    }
+        let n2 = crate::graph::Node { id: "n2".into(), label: "L".into(), properties: Default::default(), created_at: None, updated_at: None };
+        graph_service.create_node(n1).unwrap();
+        graph_service.create_node(n2).unwrap();
+        let e = crate::graph::Edge { id: "e1".into(), from_node_id: "n1".into(), to_node_id: "n2".into(), edge_type: "related".into(), properties: Default::default(), created_at: None, updated_at: None };
+        graph_service.create_edge(e).unwrap();
+
+        // Mock vector search to return id=n1
+        let mut fields = std::collections::HashMap::new();
+        fields.insert("id".to_string(), serde_json::Value::String("n1".to_string()));
+        let mock_vector_rows = vec![QueryRow { fields, similarity_score: Some(1.0), graph_distance: None, provenance: None }];
+        set_test_vector_results("c1", mock_vector_rows);
+        // Also set similar results for averaged embedding path
+        let mut sim_fields = std::collections::HashMap::new();
+        sim_fields.insert("id".to_string(), serde_json::Value::String("vecA".to_string()));
+        let mock_similar_rows = vec![QueryRow { fields: sim_fields, similarity_score: Some(0.99), graph_distance: None, provenance: None }];
+        if let Some(map) = TEST_SIMILAR_RESULTS.get() {
+            if let Ok(mut guard) = map.lock() {
+                guard.insert("c1".to_string(), mock_similar_rows);
+            }
+        } else {
+            let _ = TEST_SIMILAR_RESULTS.set(std::sync::Mutex::new({
+                let mut m = std::collections::HashMap::new();
+                m.insert("c1".to_string(), vec![QueryRow { fields: std::collections::HashMap::from([("id".to_string(), serde_json::Value::String("vecA".to_string()))]), similarity_score: Some(0.99), graph_distance: None, provenance: None }]);
+                m
+            }));
+        }
+
+        // Build plan: VectorSearch then GraphTraversal with empty seeds (to be seeded)
+        let plan = ExecutionPlan {
+            execution_strategy: ExecutionStrategy::Hybrid,
+            operations: vec![
+                ExecutionOperation::VectorSearch {
+                    collection_id: "c1".to_string(),
+                    query_vector: None,
+                    filters: None,
+                    top_k: 10,
+                    distance_metric: "cosine".to_string(),
+                },
+                ExecutionOperation::GraphTraversal {
+                    start_nodes: vec![],
+                    edge_types: vec!["related".to_string()],
+                    max_depth: 1,
+                    filters: None,
+                    vector_target_collection: Some("c1".to_string()),
+                },
+            ],
+            estimated_cost: 0.0,
+            optimizations: vec![],
+            performance_hints: vec![],
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+        };
+
+        let executor = QueryExecutor::new_for_tests(graph_service);
+
+        let result = executor.execute_hybrid_plan(plan).await.unwrap();
+        // Expect at least one graph-derived row (n2)
+        let has_n2 = result.rows.iter().any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("n2"));
+        assert!(has_n2, "graph traversal should produce neighbor node n2 seeded from vector results");
+        // Expect averaged embedding similar result present (vecA)
+        let has_veca = result.rows.iter().any(|r| r.fields.get("id").and_then(|v| v.as_str()) == Some("vecA"));
+        assert!(has_veca, "averaged embedding seeding should produce vector results via SIMILAR");
     }
 
     fn create_test_executor() -> QueryExecutor {

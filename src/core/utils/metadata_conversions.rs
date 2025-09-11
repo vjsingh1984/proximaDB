@@ -1,11 +1,11 @@
 //! # Metadata Conversion Utilities
-//! 
+//!
 //! This module provides centralized conversion functions between different metadata representations
 //! used throughout ProximaDB. It consolidates previously duplicated conversion logic from various
 //! storage engines and API handlers.
 //!
 //! ## Supported Conversions
-//! 
+//!
 //! - **Proto ↔ JSON**: Convert between Protocol Buffer MetadataItem and JSON representations
 //! - **JSON ↔ HashMap**: Convert between serde_json::Value and HashMap<String, Value>
 //! - **String ↔ Value**: Parse and serialize metadata values of different types
@@ -14,11 +14,11 @@
 //!
 //! ```rust
 //! use proximadb::core::utils::metadata_conversions::*;
-//! 
+//!
 //! // Convert protobuf metadata to JSON
 //! let proto_metadata = vec![MetadataItem { key: "age".into(), value: Some(NumberValue(25.0)) }];
 //! let json_map = proto_metadata_to_json(&proto_metadata);
-//! 
+//!
 //! // Convert JSON to protobuf metadata
 //! let mut json_obj = serde_json::Map::new();
 //! json_obj.insert("name".into(), json!("Alice"));
@@ -26,12 +26,12 @@
 //! ```
 
 use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
+use anyhow::{Result, anyhow};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
-use anyhow::{Result, anyhow};
 
 /// ## Proto to JSON Conversion
-/// 
+///
 /// Converts a slice of Protocol Buffer MetadataItems to a JSON object representation.
 /// This function handles all metadata value types including strings, numbers, booleans,
 /// arrays, and nested objects.
@@ -47,13 +47,13 @@ use anyhow::{Result, anyhow};
 /// consider caching the converted result.
 pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, JsonValue> {
     let mut map = HashMap::with_capacity(metadata.len());
-    
+
     for (key, value) in metadata {
         if let Some(ref value) = value {
             let json_value = match value {
                 metadata_item::Value::StringValue(s) => JsonValue::String(s.clone()),
                 metadata_item::Value::NumberValue(n) => JsonValue::Number(
-                    serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0))
+                    serde_json::Number::from_f64(*n).unwrap_or_else(|| serde_json::Number::from(0)),
                 ),
                 metadata_item::Value::BoolValue(b) => JsonValue::Bool(*b),
                 // Note: Arrays and objects are serialized as JSON strings for now
@@ -62,12 +62,12 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, Json
             map.insert(key.clone(), json_value);
         }
     }
-    
+
     map
 }
 
 /// ## JSON to Proto Conversion
-/// 
+///
 /// Converts a JSON object to a vector of Protocol Buffer MetadataItems.
 /// Handles nested objects and arrays appropriately.
 ///
@@ -86,7 +86,7 @@ pub fn proto_metadata_to_json(metadata: &[MetadataItem]) -> HashMap<String, Json
 /// - JSON Object → ObjectValue (recursive)
 pub fn json_to_proto_metadata(json_map: Map<String, JsonValue>) -> Vec<MetadataItem> {
     let mut items = Vec::with_capacity(json_map.len());
-    
+
     for (key, value) in json_map {
         let metadata_value = json_value_to_metadata_value(&value);
         if let Some(val) = metadata_value {
@@ -96,7 +96,7 @@ pub fn json_to_proto_metadata(json_map: Map<String, JsonValue>) -> Vec<MetadataI
             });
         }
     }
-    
+
     items
 }
 
@@ -158,17 +158,17 @@ pub fn json_to_metadata_item(field: &str, value: &JsonValue) -> MetadataItem {
 /// * Merged metadata vector with updates applied
 pub fn merge_metadata(base: &[MetadataItem], updates: &[MetadataItem]) -> Vec<MetadataItem> {
     let mut merged: HashMap<String, MetadataItem> = HashMap::new();
-    
+
     // Add base metadata
     for item in base {
         merged.insert(item.key.clone(), item.clone());
     }
-    
+
     // Apply updates (overwrites existing keys)
     for item in updates {
         merged.insert(item.key.clone(), item.clone());
     }
-    
+
     merged.into_values().collect()
 }
 
@@ -184,7 +184,8 @@ pub fn merge_metadata(base: &[MetadataItem], updates: &[MetadataItem]) -> Vec<Me
 /// ### Returns
 /// * Filtered metadata containing only allowed keys
 pub fn filter_metadata(metadata: &[MetadataItem], allowed_keys: &[&str]) -> Vec<MetadataItem> {
-    metadata.iter()
+    metadata
+        .iter()
         .filter(|(key, value)| allowed_keys.contains(&key.as_str()))
         .cloned()
         .collect()
@@ -202,15 +203,16 @@ pub fn filter_metadata(metadata: &[MetadataItem], allowed_keys: &[&str]) -> Vec<
 /// ### Returns
 /// * Ok(()) if all types match, Err with details of mismatches
 pub fn validate_metadata_types(
-    metadata: &[MetadataItem], 
-    schema: &HashMap<String, MetadataValueType>
+    metadata: &[MetadataItem],
+    schema: &HashMap<String, MetadataValueType>,
 ) -> Result<()> {
     for (key, value) in metadata {
         if let Some(expected_type) = schema.get(&key) {
             if !matches_type(&value, expected_type) {
                 return Err(anyhow!(
                     "Type mismatch for field '{}': expected {:?}",
-                    key, expected_type
+                    key,
+                    expected_type
                 ));
             }
         }
@@ -243,7 +245,7 @@ fn matches_type(value: &Option<metadata_item::Value>, expected: &MetadataValueTy
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_proto_to_json_conversion() {
         let proto_metadata = vec![
@@ -252,25 +254,31 @@ mod tests {
                 value: Some(metadata_item::Value::StringValue("Alice".to_string())),
             },
             MetadataItem {
-                key: "age".to_string(),  
+                key: "age".to_string(),
                 value: Some(metadata_item::Value::NumberValue(25.0)),
             },
         ];
-        
+
         let json_map = proto_metadata_to_json(&proto_metadata);
-        
-        assert_eq!(json_map.get("name").unwrap(), &JsonValue::String("Alice".to_string()));
+
+        assert_eq!(
+            json_map.get("name").unwrap(),
+            &JsonValue::String("Alice".to_string())
+        );
         assert_eq!(json_map.get("age").unwrap().as_f64().unwrap(), 25.0);
     }
-    
+
     #[test]
     fn test_json_to_proto_conversion() {
         let mut json_map = Map::new();
         json_map.insert("active".to_string(), JsonValue::Bool(true));
-        json_map.insert("score".to_string(), JsonValue::Number(serde_json::Number::from(99)));
-        
+        json_map.insert(
+            "score".to_string(),
+            JsonValue::Number(serde_json::Number::from(99)),
+        );
+
         let proto_metadata = json_to_proto_metadata(json_map);
-        
+
         assert_eq!(proto_metadata.len(), 2);
         assert!(proto_metadata.iter().any(|item| key == "active"));
         assert!(proto_metadata.iter().any(|item| key == "score"));

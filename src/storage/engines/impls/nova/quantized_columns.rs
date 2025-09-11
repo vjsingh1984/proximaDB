@@ -12,9 +12,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 // Use unified quantization from compute module
-use crate::compute::quantization::unified::{
-    Codebook, UnifiedQuantizationEngine,
-};
+use crate::compute::quantization::unified::{Codebook, UnifiedQuantizationEngine};
 
 /// Metadata for quantized columns in Parquet
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

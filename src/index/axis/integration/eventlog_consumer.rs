@@ -972,10 +972,10 @@ impl AxisEventLogConsumer {
                                         let record = VectorRecord {
                                             id: id.clone().unwrap_or_default(), // Use empty string if no ID
                                             vector,
-                                            quantized_vector: Some(quantized_vector),
-                                            metadata: Vec::new(), // TODO: Extract metadata columns
-                                            version: Some(version as u32),
-                                            timestamp: timestamp as u32,
+                                            quantized_vector: quantized_vector,
+                                            metadata: std::collections::HashMap::new(), // TODO: Extract metadata columns
+                                            version: Some(version),
+                                            timestamp: timestamp,
                                             expires_at: None,
                                             updated_at: None,
                                             source: None,
@@ -1112,8 +1112,8 @@ impl AxisEventLogConsumer {
                                     let record = VectorRecord {
                                         id: format!("raptor_{}_{}", file_path, row_idx),
                                         vector: vec![0.0; 128], // Placeholder vector
-                                        quantized_vector: None,
-                                        metadata: Vec::new(),
+                                        quantized_vector: Vec::new(),
+                                        metadata: std::collections::HashMap::new(),
                                         version: Some(0),
                                         timestamp: 0,
                                         expires_at: None,
