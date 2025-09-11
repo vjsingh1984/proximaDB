@@ -52,7 +52,7 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use crate::core::error::ProximaDBError;
+use crate::core::error::{ProximaDBError, VectorDBError, QueryError};
 use crate::core::service_types::VectorRecord;
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
@@ -269,6 +269,7 @@ pub struct HybridQueryResult {
     /// Matching nodes with scores
     pub nodes: Vec<HybridNodeResult>,
     /// Execution statistics
+    #[serde(skip)]
     pub stats: QueryStats,
     /// Debug information (if requested)
     pub debug_info: Option<HybridDebugInfo>,
@@ -841,7 +842,7 @@ impl HybridQueryEngine {
 
         // Calculate similarity for current node
         let node_similarity = if let Some(node) = self.graph_memory.get_node(current_node_id) {
-            self.calculate_node_similarity(node, query_vector)?
+            self.calculate_node_similarity(&*node, query_vector)?
         } else {
             return Ok(());
         };
@@ -980,7 +981,7 @@ impl HybridQueryEngine {
                 serde_json::Value::Number(serde_json::Number::from(*i))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or_default())
+                serde_json::Value::Number(serde_json::Number::from_f64(*d).unwrap_or_else(|| serde_json::Number::from(0)))
             }
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(*b)
@@ -1053,7 +1054,7 @@ impl HybridQueryEngine {
                     (actual, expected)
                 {
                     let regex = regex::Regex::new(pattern).map_err(|e| {
-                        ProximaDBError::invalid_argument(&format!("Invalid regex: {}", e))
+                        VectorDBError::Query(QueryError::InvalidFilter(format!("Invalid regex: {}", e)))
                     })?;
                     Ok(regex.is_match(text))
                 } else {
@@ -1072,9 +1073,9 @@ impl HybridQueryEngine {
                 Ok(f1.partial_cmp(&f2).unwrap_or(std::cmp::Ordering::Equal) as i32)
             }
             (serde_json::Value::String(s1), serde_json::Value::String(s2)) => Ok(s1.cmp(s2) as i32),
-            _ => Err(ProximaDBError::invalid_argument(
-                "Cannot compare values of different types",
-            )),
+            _ => Err(VectorDBError::Query(QueryError::InvalidFilter(
+                "Cannot compare values of different types".to_string(),
+            ))),
         }
     }
 
@@ -1099,15 +1100,14 @@ impl HybridQueryEngine {
         query_vector: &[f32],
     ) -> QueryResult<f32> {
         // Try to get node embedding from properties
-        if let Some(embedding_prop) = node.properties.get("embedding") {
-            if let Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(
-                vector_data,
-            )) = &embedding_prop.value
-            {
-                // Compute cosine similarity between node embedding and query vector
-                let node_embedding: Vec<f32> =
-                    vector_data.elements.iter().map(|&x| x as f32).collect();
-                return Ok(self.cosine_similarity(&node_embedding, query_vector));
+        // Note: VectorValue variant doesn't exist in current proto definition
+        // This would need to be implemented differently, perhaps storing embeddings elsewhere
+        if false { // Disabled until VectorValue is available
+            if let Some(_embedding_prop) = node.properties.get("embedding") {
+                // This variant doesn't exist in the current proto definition
+                // Would need VectorValue variant in property_value::Value
+                // let node_embedding: Vec<f32> = vector_data.elements.iter().map(|&x| x as f32).collect();
+                // return Ok(self.cosine_similarity(&node_embedding, query_vector));
             }
         }
 
@@ -1391,7 +1391,7 @@ impl HybridQueryEngine {
                 Some(crate::proto::proximadb_v1::metadata_item::Value::IntValue(i)) => {
                     i.to_string()
                 }
-                Some(crate::proto::proximadb_v1::metadata_item::Value::FloatValue(f)) => {
+                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f)) => {
                     f.to_string()
                 }
                 Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {

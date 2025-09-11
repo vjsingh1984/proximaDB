@@ -932,7 +932,7 @@ pub async fn batch_create_edges(
     match app_state
         .unified_handlers
         .graph_service
-        .batch_create_edges_with_strategy(request.edges, strategy.as_str())
+        .batch_create_edges(request.edges)
     {
         Ok(edges) => {
             info!("Successfully batch created {} edges", edges.len());

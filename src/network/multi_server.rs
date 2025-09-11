@@ -932,7 +932,7 @@ impl MultiServer {
             debug!("✅ Added GraphService to gRPC server");
 
             // Build server with all services
-            server_builder = server_builder
+            let server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
@@ -953,7 +953,7 @@ impl MultiServer {
             let grpc_bind_addr = self.config.grpc_bind_address();
 
             let grpc_handle = tokio::spawn(async move {
-                if let Err(e) = server_builder.serve(grpc_bind_addr).await {
+                if let Err(e) = server.serve(grpc_bind_addr).await {
                     tracing::error!("gRPC server error: {}", e);
                 }
             });

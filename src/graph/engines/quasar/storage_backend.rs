@@ -545,7 +545,7 @@ impl ColdStorageBackend {
             embedding: node
                 .embedding
                 .as_ref()
-                .and_then(|e| e.vector_data.as_ref().map(|v| v.values.clone())),
+                .and_then(|e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone())),
             created_at: node.created_at.as_ref().map(|t| t.seconds as u64),
             updated_at: node.updated_at.as_ref().map(|t| t.seconds as u64),
         })
@@ -601,10 +601,15 @@ impl ColdStorageBackend {
             labels: storable.labels,
             properties,
             embedding: storable.embedding.map(|values| {
+                let dimension = values.len() as u32;
                 crate::proto::proximadb_v1::EmbeddingVersion {
-                    version: 1,
-                    vector_data: Some(crate::proto::proximadb_v1::VectorData { values }),
-                    metadata: std::collections::HashMap::new(),
+                    model_id: "default".to_string(),
+                    model_version: "1".to_string(),
+                    vector: values,
+                    dimension,
+                    created_at: None,
+                    model_params: std::collections::HashMap::new(),
+                    modality: crate::proto::proximadb_v1::Modality::Text.into(),
                 }
             }),
             created_at: storable.created_at.map(|t| ::prost_types::Timestamp {
@@ -631,7 +636,7 @@ impl ColdStorageBackend {
             to_node_id: storable.to_node_id,
             edge_type: storable.edge_type,
             properties,
-            weight: storable.weight,
+            weight: storable.weight.map(|w| w as f64),
             created_at: storable.created_at.map(|t| ::prost_types::Timestamp {
                 seconds: t as i64,
                 nanos: 0,
@@ -684,11 +689,6 @@ impl ColdStorageBackend {
         Ok(all_nodes)
     }
 
-    /// Get edge count from cold storage
-    pub async fn edge_count(&self) -> Result<usize> {
-        let edge_index = self.edge_index.read().await;
-        Ok(edge_index.len())
-    }
 
     /// Get storage statistics
     pub async fn get_stats(&self) -> StorageStats {

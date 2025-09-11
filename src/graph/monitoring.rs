@@ -497,35 +497,35 @@ impl GraphMonitor {
             .metrics_collector
             .operation_counts
             .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to read operation counts"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read operation counts".to_string()))?
             .clone();
 
         let error_counts = self
             .metrics_collector
             .error_counts
             .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to read error counts"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read error counts".to_string()))?
             .clone();
 
         let resource_metrics = self
             .metrics_collector
             .resource_metrics
             .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to read resource metrics"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read resource metrics".to_string()))?
             .clone();
 
         let business_metrics = self
             .metrics_collector
             .business_metrics
             .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to read business metrics"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read business metrics".to_string()))?
             .clone();
 
         let cache_metrics = self
             .metrics_collector
             .cache_metrics
             .read()
-            .map_err(|_| ProximaDBError::Internal("Failed to read cache metrics"))?
+            .map_err(|_| ProximaDBError::Internal("Failed to read cache metrics".to_string()))?
             .clone();
 
         Ok(MetricsSnapshot {

@@ -42,6 +42,8 @@ impl CollectionService for CollectionServiceImpl {
                 primary_index: "default".to_string(),
                 auto_index_selection: false,
                 storage_config: None,
+                embedding_models: vec![],
+                owner: String::new(),
                 description: cfg.description.clone(),
                 tags: cfg.tags.clone(),
             }),

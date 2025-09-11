@@ -393,16 +393,20 @@ impl QueryPlanner {
 
         for entry in memory_pool.node_property_indexes.iter() {
             let prop_name = entry.key().clone();
-            let prop_index = entry.value();
+            let prop_values = entry.value();
+            // Use length of property values as a rough estimate for stats
+            let unique_values = prop_values.len() as u64;
+            let total_entries = prop_values.len() as u64;
+            
             stats
                 .property_selectivity
-                .insert(prop_name.clone(), prop_index.stats.unique_values as u64);
+                .insert(prop_name.clone(), unique_values);
             stats.index_stats.insert(
                 format!("node_prop_{}", prop_name),
                 IndexStats {
-                    cardinality: prop_index.stats.total_entries as u64,
+                    cardinality: total_entries,
                     selectivity: if stats.node_count > 0 {
-                        prop_index.stats.total_entries as f64 / stats.node_count as f64
+                        total_entries as f64 / stats.node_count as f64
                     } else {
                         0.0
                     },
@@ -414,16 +418,20 @@ impl QueryPlanner {
 
         for entry in memory_pool.edge_property_indexes.iter() {
             let prop_name = entry.key().clone();
-            let prop_index = entry.value();
+            let prop_values = entry.value();
+            // Use length of property values as a rough estimate for stats
+            let unique_values = prop_values.len() as u64;
+            let total_entries = prop_values.len() as u64;
+            
             stats
                 .property_selectivity
-                .insert(prop_name.clone(), prop_index.stats.unique_values as u64);
+                .insert(prop_name.clone(), unique_values);
             stats.index_stats.insert(
                 format!("edge_prop_{}", prop_name),
                 IndexStats {
-                    cardinality: prop_index.stats.total_entries as u64,
+                    cardinality: total_entries,
                     selectivity: if stats.edge_count > 0 {
-                        prop_index.stats.total_entries as f64 / stats.edge_count as f64
+                        total_entries as f64 / stats.edge_count as f64
                     } else {
                         0.0
                     },
@@ -1037,7 +1045,7 @@ impl QueryPlanner {
             VectorDBError::Internal("Failed to acquire stats read lock".to_string())
         })?;
 
-        Ok(stats.clone())
+        Ok((*stats).clone())
     }
 
     /// Clear plan cache
