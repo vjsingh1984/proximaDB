@@ -106,6 +106,19 @@ graph TD
     style SWIFT fill:#fff9c4
 ----
 
+=== Engine Performance Radar
+
+[source,mermaid]
+----
+%%{init: {"themeVariables": {"primaryColor": "#74b9ff"}}}%%
+pie title Engine Usage by Workload Type
+    "Real-time OLTP (SST)" : 30
+    "Analytics (VIPER)" : 25
+    "Similarity Search (HELIX)" : 20
+    "Graph Navigation (RAPTOR)" : 15
+    "Advanced Workloads" : 10
+----
+
 === Use Case Mapping
 
 [cols="2,2,3", options="header"]
