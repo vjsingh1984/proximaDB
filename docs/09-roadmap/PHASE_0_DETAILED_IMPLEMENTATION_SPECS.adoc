@@ -1,4 +1,4 @@
-= Phase 0: Detailed Implementation Specifications
+= Phase 0: Technical Debt & Stability - Detailed Implementation Specifications
 :toc:
 :toclevels: 4
 :icons: font
@@ -6,1286 +6,754 @@
 
 == Overview
 
-This document provides detailed, actionable specifications for Phase 0 implementation tasks. Each task includes specific code changes, file locations, test requirements, and acceptance criteria that Claude Code can follow as precise prompts.
+This document provides detailed, actionable specifications for Phase 0 implementation tasks based on the current mature state of ProximaDB. The codebase has 376,514 lines of Rust code across 717 files with 771 TODO items and 30 unimplemented! macros that need resolution for production readiness.
 
-== Task 0.1.1: PropertyFilterOperator Enum Variants Resolution
+**Current State Assessment (2025-09-11)**:
+- ✅ **Architecture**: 7 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX) all implemented
+- ✅ **Core Systems**: Unified quantization, IntelligentFilesystem, graph engine, SQL frontend
+- ⚠️ **Technical Debt**: 771 TODO items, 30 unimplemented! macros
+- ⚠️ **Optimization Needed**: Performance tuning, memory optimization, cache integration
 
-=== Problem Analysis
+== Priority 0.1: Technical Debt Resolution (Week 1-2)
+
+=== Task 0.1.1: Storage Engine TODO Resolution
+
+==== Subtask 0.1.1.1: NOVA Engine Zone Map Optimization
 **Files Affected**: 
-- `src/proto/proximadb.v1.rs` (protobuf enum definition)
-- `src/graph/service.rs` (enum usage in pattern matching)
-
-**Error Pattern**:
-```
-error[E0599]: no variant or associated item named `PROPERTY_FILTER_OPERATOR_EQUALS` found for enum `PropertyFilterOperator`
-```
-
-**Root Cause**: Missing enum variant constants that match the pattern `PROPERTY_FILTER_OPERATOR_*` expected by the pattern matching code.
-
-=== Implementation Steps
-
-==== Step 0.1.1.1: Update PropertyFilterOperator Enum Definition
-
-**File**: `src/proto/proximadb.v1.rs`
-**Location**: Around line 4163 (enum PropertyFilterOperator definition)
-
-**Current Code** (Partial):
-```rust
-pub enum PropertyFilterOperator {
-    Unspecified = 0,
-    // Missing variants...
-}
-```
-
-**Required Implementation**:
-```rust
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum PropertyFilterOperator {
-    Unspecified = 0,
-    Equals = 1,
-    NotEquals = 2,
-    GreaterThan = 3,
-    GreaterEqual = 4,
-    LessThan = 5,
-    LessEqual = 6,
-    StartsWith = 7,
-    EndsWith = 8,
-    Contains = 9,
-    In = 10,
-    NotIn = 11,
-    Regex = 12,
-    NotRegex = 13,
-}
-
-impl PropertyFilterOperator {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            PropertyFilterOperator::Unspecified => "PROPERTY_FILTER_OPERATOR_UNSPECIFIED",
-            PropertyFilterOperator::Equals => "PROPERTY_FILTER_OPERATOR_EQUALS",
-            PropertyFilterOperator::NotEquals => "PROPERTY_FILTER_OPERATOR_NOT_EQUALS",
-            PropertyFilterOperator::GreaterThan => "PROPERTY_FILTER_OPERATOR_GREATER_THAN",
-            PropertyFilterOperator::GreaterEqual => "PROPERTY_FILTER_OPERATOR_GREATER_EQUAL",
-            PropertyFilterOperator::LessThan => "PROPERTY_FILTER_OPERATOR_LESS_THAN",
-            PropertyFilterOperator::LessEqual => "PROPERTY_FILTER_OPERATOR_LESS_EQUAL",
-            PropertyFilterOperator::StartsWith => "PROPERTY_FILTER_OPERATOR_STARTS_WITH",
-            PropertyFilterOperator::EndsWith => "PROPERTY_FILTER_OPERATOR_ENDS_WITH",
-            PropertyFilterOperator::Contains => "PROPERTY_FILTER_OPERATOR_CONTAINS",
-            PropertyFilterOperator::In => "PROPERTY_FILTER_OPERATOR_IN",
-            PropertyFilterOperator::NotIn => "PROPERTY_FILTER_OPERATOR_NOT_IN",
-            PropertyFilterOperator::Regex => "PROPERTY_FILTER_OPERATOR_REGEX",
-            PropertyFilterOperator::NotRegex => "PROPERTY_FILTER_OPERATOR_NOT_REGEX",
-        }
-    }
-    
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "PROPERTY_FILTER_OPERATOR_UNSPECIFIED" => Some(Self::Unspecified),
-            "PROPERTY_FILTER_OPERATOR_EQUALS" => Some(Self::Equals),
-            "PROPERTY_FILTER_OPERATOR_NOT_EQUALS" => Some(Self::NotEquals),
-            "PROPERTY_FILTER_OPERATOR_GREATER_THAN" => Some(Self::GreaterThan),
-            "PROPERTY_FILTER_OPERATOR_GREATER_EQUAL" => Some(Self::GreaterEqual),
-            "PROPERTY_FILTER_OPERATOR_LESS_THAN" => Some(Self::LessThan),
-            "PROPERTY_FILTER_OPERATOR_LESS_EQUAL" => Some(Self::LessEqual),
-            "PROPERTY_FILTER_OPERATOR_STARTS_WITH" => Some(Self::StartsWith),
-            "PROPERTY_FILTER_OPERATOR_ENDS_WITH" => Some(Self::EndsWith),
-            "PROPERTY_FILTER_OPERATOR_CONTAINS" => Some(Self::Contains),
-            "PROPERTY_FILTER_OPERATOR_IN" => Some(Self::In),
-            "PROPERTY_FILTER_OPERATOR_NOT_IN" => Some(Self::NotIn),
-            "PROPERTY_FILTER_OPERATOR_REGEX" => Some(Self::Regex),
-            "PROPERTY_FILTER_OPERATOR_NOT_REGEX" => Some(Self::NotRegex),
-            _ => None,
-        }
-    }
-}
-
-// Add constant definitions for backward compatibility
-impl PropertyFilterOperator {
-    pub const PROPERTY_FILTER_OPERATOR_UNSPECIFIED: Self = Self::Unspecified;
-    pub const PROPERTY_FILTER_OPERATOR_EQUALS: Self = Self::Equals;
-    pub const PROPERTY_FILTER_OPERATOR_NOT_EQUALS: Self = Self::NotEquals;
-    pub const PROPERTY_FILTER_OPERATOR_GREATER_THAN: Self = Self::GreaterThan;
-    pub const PROPERTY_FILTER_OPERATOR_GREATER_EQUAL: Self = Self::GreaterEqual;
-    pub const PROPERTY_FILTER_OPERATOR_LESS_THAN: Self = Self::LessThan;
-    pub const PROPERTY_FILTER_OPERATOR_LESS_EQUAL: Self = Self::LessEqual;
-    pub const PROPERTY_FILTER_OPERATOR_STARTS_WITH: Self = Self::StartsWith;
-    pub const PROPERTY_FILTER_OPERATOR_ENDS_WITH: Self = Self::EndsWith;
-    pub const PROPERTY_FILTER_OPERATOR_CONTAINS: Self = Self::Contains;
-    pub const PROPERTY_FILTER_OPERATOR_IN: Self = Self::In;
-    pub const PROPERTY_FILTER_OPERATOR_NOT_IN: Self = Self::NotIn;
-    pub const PROPERTY_FILTER_OPERATOR_REGEX: Self = Self::Regex;
-    pub const PROPERTY_FILTER_OPERATOR_NOT_REGEX: Self = Self::NotRegex;
-}
-```
-
-==== Step 0.1.1.2: Update Pattern Matching in Graph Service
-
-**File**: `src/graph/service.rs`
-**Location**: Around lines 554-600 (property filter pattern matching)
-
-**Current Code** (Error-causing):
-```rust
-match op {
-    Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
-        // implementation
-    },
-    Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => {
-        // implementation  
-    },
-    // ... more patterns
-}
-```
-
-**Required Implementation**:
-```rust
-use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
-
-// Update the match statement to use the corrected constants
-match op {
-    Op::PROPERTY_FILTER_OPERATOR_EQUALS => {
-        extracted_values.into_iter().any(|v| v == expected_value)
-    },
-    Op::PROPERTY_FILTER_OPERATOR_NOT_EQUALS => {
-        !extracted_values.into_iter().any(|v| v == expected_value)
-    },
-    Op::PROPERTY_FILTER_OPERATOR_STARTS_WITH => {
-        extracted_values.into_iter().any(|v| {
-            if let Some(s) = v.as_str() {
-                if let Some(expected) = expected_value.as_str() {
-                    s.starts_with(expected)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        })
-    },
-    Op::PROPERTY_FILTER_OPERATOR_ENDS_WITH => {
-        extracted_values.into_iter().any(|v| {
-            if let Some(s) = v.as_str() {
-                if let Some(expected) = expected_value.as_str() {
-                    s.ends_with(expected)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        })
-    },
-    Op::PROPERTY_FILTER_OPERATOR_CONTAINS => {
-        extracted_values.into_iter().any(|v| {
-            if let Some(s) = v.as_str() {
-                if let Some(expected) = expected_value.as_str() {
-                    s.contains(expected)
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        })
-    },
-    Op::PROPERTY_FILTER_OPERATOR_GREATER_THAN
-    | Op::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL
-    | Op::PROPERTY_FILTER_OPERATOR_LESS_THAN
-    | Op::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => {
-        // Numeric comparison logic
-        self.evaluate_numeric_comparison(op, &extracted_values, &expected_value)
-    },
-    Op::PROPERTY_FILTER_OPERATOR_IN => {
-        // Handle IN operator (value in list)
-        if let Some(list) = expected_value.as_array() {
-            extracted_values.into_iter().any(|v| list.contains(&v))
-        } else {
-            false
-        }
-    },
-    Op::PROPERTY_FILTER_OPERATOR_NOT_IN => {
-        // Handle NOT IN operator
-        if let Some(list) = expected_value.as_array() {
-            !extracted_values.into_iter().any(|v| list.contains(&v))
-        } else {
-            true
-        }
-    },
-    Op::PROPERTY_FILTER_OPERATOR_REGEX => {
-        // Handle regex matching
-        self.evaluate_regex_match(&extracted_values, &expected_value, false)
-    },
-    Op::PROPERTY_FILTER_OPERATOR_NOT_REGEX => {
-        // Handle negative regex matching
-        self.evaluate_regex_match(&extracted_values, &expected_value, true)
-    },
-    Op::PROPERTY_FILTER_OPERATOR_UNSPECIFIED => {
-        tracing::warn!("Unspecified property filter operator, defaulting to false");
-        false
-    },
-}
-```
-
-==== Step 0.1.1.3: Add Helper Methods for Complex Operations
-
-**File**: `src/graph/service.rs`
-**Location**: Add as new methods in the GraphService impl block
-
-**Implementation**:
-```rust
-impl GraphService {
-    /// Evaluate numeric comparison operations
-    fn evaluate_numeric_comparison(
-        &self,
-        op: PropertyFilterOperator,
-        extracted_values: &[serde_json::Value],
-        expected_value: &serde_json::Value,
-    ) -> bool {
-        extracted_values.iter().any(|v| {
-            let (v_num, expected_num) = match (self.extract_number(v), self.extract_number(expected_value)) {
-                (Some(v), Some(e)) => (v, e),
-                _ => return false,
-            };
-            
-            match op {
-                PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_GREATER_THAN => v_num > expected_num,
-                PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_GREATER_EQUAL => v_num >= expected_num,
-                PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_LESS_THAN => v_num < expected_num,
-                PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_LESS_EQUAL => v_num <= expected_num,
-                _ => false,
-            }
-        })
-    }
-    
-    /// Extract numeric value from JSON value
-    fn extract_number(&self, value: &serde_json::Value) -> Option<f64> {
-        match value {
-            serde_json::Value::Number(n) => n.as_f64(),
-            serde_json::Value::String(s) => s.parse::<f64>().ok(),
-            _ => None,
-        }
-    }
-    
-    /// Evaluate regex matching
-    fn evaluate_regex_match(
-        &self,
-        extracted_values: &[serde_json::Value],
-        expected_value: &serde_json::Value,
-        negate: bool,
-    ) -> bool {
-        if let Some(pattern) = expected_value.as_str() {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                let matches = extracted_values.iter().any(|v| {
-                    if let Some(s) = v.as_str() {
-                        regex.is_match(s)
-                    } else {
-                        false
-                    }
-                });
-                if negate { !matches } else { matches }
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-}
-```
-
-==== Step 0.1.1.4: Add Required Dependencies
-
-**File**: `Cargo.toml`
-**Location**: Add to dependencies section if not already present
-
-**Implementation**:
-```toml
-[dependencies]
-regex = "1.10"
-```
-
-=== Test Requirements
-
-==== Unit Tests
-**File**: `tests/graph_property_filters_test.rs`
-
-**Implementation**:
-```rust
-#[cfg(test)]
-mod property_filter_tests {
-    use super::*;
-    use crate::proto::proximadb_v1::PropertyFilterOperator;
-    
-    #[tokio::test]
-    async fn test_property_filter_equals() {
-        let service = setup_test_graph_service().await;
-        
-        // Test EQUALS operator
-        let result = service.test_property_filter(
-            PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_EQUALS,
-            &serde_json::json!("test_value"),
-            &serde_json::json!("test_value")
-        );
-        assert!(result);
-        
-        let result = service.test_property_filter(
-            PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_EQUALS,
-            &serde_json::json!("test_value"),
-            &serde_json::json!("different_value")
-        );
-        assert!(!result);
-    }
-    
-    #[tokio::test]
-    async fn test_property_filter_numeric_comparisons() {
-        let service = setup_test_graph_service().await;
-        
-        // Test GREATER_THAN
-        let result = service.test_property_filter(
-            PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_GREATER_THAN,
-            &serde_json::json!(10),
-            &serde_json::json!(5)
-        );
-        assert!(result);
-        
-        // Test LESS_THAN
-        let result = service.test_property_filter(
-            PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_LESS_THAN,
-            &serde_json::json!(3),
-            &serde_json::json!(5)
-        );
-        assert!(result);
-    }
-    
-    #[tokio::test]
-    async fn test_property_filter_string_operations() {
-        let service = setup_test_graph_service().await;
-        
-        // Test STARTS_WITH
-        let result = service.test_property_filter(
-            PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_STARTS_WITH,
-            &serde_json::json!("hello world"),
-            &serde_json::json!("hello")
-        );
-        assert!(result);
-        
-        // Test CONTAINS
-        let result = service.test_property_filter(
-            PropertyFilterOperator::PROPERTY_FILTER_OPERATOR_CONTAINS,
-            &serde_json::json!("hello world"),
-            &serde_json::json!("world")
-        );
-        assert!(result);
-    }
-}
-```
-
-=== Acceptance Criteria
-
-1. **Compilation Success**: All PropertyFilterOperator references compile without errors
-2. **Pattern Matching**: All enum variants have corresponding pattern match arms
-3. **Functional Testing**: All filter operators work correctly with appropriate data types
-4. **Error Handling**: Invalid operations return false rather than panicking
-5. **Performance**: No significant performance regression in graph filtering operations
-
-== Task 0.1.2: SqlValue Pattern Matching Resolution
-
-=== Problem Analysis
-**Files Affected**:
-- `src/storage/engines/impls/sst/mod.rs`
 - `src/storage/engines/impls/nova/engine.rs`
-- `src/storage/engines/impls/swift/engine.rs`
-- `src/storage/engines/impls/raptor/rowgroup_manager.rs`
-- Various other storage engine files
+- `src/storage/engines/impls/nova/zone_maps.rs`
+- `src/storage/engines/impls/nova/progressive_search.rs`
 
-**Error Pattern**:
-```
-this expression has type `&&SqlValue`
-this expression has type `&SqlValue`
-```
+**Current Status**: Zone map infrastructure exists but optimization incomplete
 
-**Root Cause**: Inconsistent dereferencing patterns when pattern matching on SqlValue enum variants across different storage engines.
+**Implementation Steps**:
 
-=== Implementation Steps
-
-==== Step 0.1.2.1: Standardize SqlValue Pattern Matching
-
-**Strategy**: Create a unified pattern matching approach that handles all SqlValue variants consistently across all storage engines.
-
-**File**: `src/storage/engines/common/sql_value_utils.rs` (New file)
-
-**Implementation**:
+1. **Complete zone_map_matches_filters Method**:
 ```rust
-//! Common utilities for SqlValue handling across storage engines
-
-use crate::proto::proximadb_v1::SqlValue;
-use serde_json::Value as JsonValue;
-
-/// Unified SqlValue pattern matching utility
-pub struct SqlValueMatcher;
-
-impl SqlValueMatcher {
-    /// Convert SqlValue to string representation
-    pub fn to_string(value: &SqlValue) -> String {
-        match value {
-            SqlValue::Text(s) => s.clone(),
-            SqlValue::Integer(i) => i.to_string(),
-            SqlValue::Real(f) => f.to_string(),
-            SqlValue::Blob(b) => format!("blob({} bytes)", b.len()),
-            SqlValue::Null => "NULL".to_string(),
-        }
-    }
-    
-    /// Convert SqlValue to JSON Value
-    pub fn to_json_value(value: &SqlValue) -> JsonValue {
-        match value {
-            SqlValue::Text(s) => JsonValue::String(s.clone()),
-            SqlValue::Integer(i) => JsonValue::Number(serde_json::Number::from(*i)),
-            SqlValue::Real(f) => {
-                if let Some(num) = serde_json::Number::from_f64(*f) {
-                    JsonValue::Number(num)
-                } else {
-                    JsonValue::Null
-                }
-            },
-            SqlValue::Blob(b) => {
-                // Encode binary data as base64 string
-                JsonValue::String(crate::utils::encoding::base64_encode(b))
-            },
-            SqlValue::Null => JsonValue::Null,
-        }
-    }
-    
-    /// Extract numeric value if possible
-    pub fn to_number(value: &SqlValue) -> Option<f64> {
-        match value {
-            SqlValue::Integer(i) => Some(*i as f64),
-            SqlValue::Real(f) => Some(*f),
-            SqlValue::Text(s) => s.parse().ok(),
-            SqlValue::Blob(_) | SqlValue::Null => None,
-        }
-    }
-    
-    /// Check if SqlValue represents a "truthy" value
-    pub fn is_truthy(value: &SqlValue) -> bool {
-        match value {
-            SqlValue::Text(s) => !s.is_empty(),
-            SqlValue::Integer(i) => *i != 0,
-            SqlValue::Real(f) => *f != 0.0,
-            SqlValue::Blob(b) => !b.is_empty(),
-            SqlValue::Null => false,
-        }
-    }
-    
-    /// Compare two SqlValues for equality
-    pub fn equals(a: &SqlValue, b: &SqlValue) -> bool {
-        match (a, b) {
-            (SqlValue::Text(a), SqlValue::Text(b)) => a == b,
-            (SqlValue::Integer(a), SqlValue::Integer(b)) => a == b,
-            (SqlValue::Real(a), SqlValue::Real(b)) => (a - b).abs() < f64::EPSILON,
-            (SqlValue::Blob(a), SqlValue::Blob(b)) => a == b,
-            (SqlValue::Null, SqlValue::Null) => true,
-            // Cross-type numeric comparisons
-            (SqlValue::Integer(i), SqlValue::Real(f)) => (*i as f64 - f).abs() < f64::EPSILON,
-            (SqlValue::Real(f), SqlValue::Integer(i)) => (f - *i as f64).abs() < f64::EPSILON,
-            _ => false,
-        }
-    }
-    
-    /// Compare SqlValues with ordering
-    pub fn compare(a: &SqlValue, b: &SqlValue) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        
-        match (a, b) {
-            (SqlValue::Text(a), SqlValue::Text(b)) => a.cmp(b),
-            (SqlValue::Integer(a), SqlValue::Integer(b)) => a.cmp(b),
-            (SqlValue::Real(a), SqlValue::Real(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-            (SqlValue::Blob(a), SqlValue::Blob(b)) => a.cmp(b),
-            (SqlValue::Null, SqlValue::Null) => Ordering::Equal,
-            // Cross-type numeric comparisons
-            (SqlValue::Integer(i), SqlValue::Real(f)) => (*i as f64).partial_cmp(f).unwrap_or(Ordering::Equal),
-            (SqlValue::Real(f), SqlValue::Integer(i)) => f.partial_cmp(&(*i as f64)).unwrap_or(Ordering::Equal),
-            // Type ordering: Null < Integer < Real < Text < Blob
-            (SqlValue::Null, _) => Ordering::Less,
-            (_, SqlValue::Null) => Ordering::Greater,
-            (SqlValue::Integer(_), SqlValue::Real(_)) => Ordering::Less,
-            (SqlValue::Real(_), SqlValue::Integer(_)) => Ordering::Greater,
-            (SqlValue::Integer(_), SqlValue::Text(_)) => Ordering::Less,
-            (SqlValue::Text(_), SqlValue::Integer(_)) => Ordering::Greater,
-            // Add more type ordering as needed
-            _ => Ordering::Equal,
-        }
-    }
-}
-
-/// Macro for consistent SqlValue pattern matching
-#[macro_export]
-macro_rules! match_sql_value {
-    ($value:expr, {
-        Text($text:ident) => $text_body:expr,
-        Integer($int:ident) => $int_body:expr,
-        Real($real:ident) => $real_body:expr,
-        Blob($blob:ident) => $blob_body:expr,
-        Null => $null_body:expr,
-    }) => {
-        match $value {
-            SqlValue::Text($text) => $text_body,
-            SqlValue::Integer($int) => $int_body,
-            SqlValue::Real($real) => $real_body,
-            SqlValue::Blob($blob) => $blob_body,
-            SqlValue::Null => $null_body,
-        }
-    };
-}
-```
-
-==== Step 0.1.2.2: Update SST Engine
-
-**File**: `src/storage/engines/impls/sst/mod.rs`
-**Location**: Replace problematic pattern matching code
-
-**Current Code** (Around line 421):
-```rust
-let value = match &value {
-    // Problematic pattern matching
-}
-```
-
-**Required Implementation**:
-```rust
-use crate::storage::engines::common::sql_value_utils::SqlValueMatcher;
-
-// Replace the problematic pattern matching
-fn process_metadata_value(&self, value: &SqlValue) -> String {
-    SqlValueMatcher::to_string(value)
-}
-
-fn serialize_metadata_for_storage(&self, metadata: &HashMap<String, SqlValue>) -> Result<Vec<u8>> {
-    let json_metadata: HashMap<String, serde_json::Value> = metadata
-        .iter()
-        .map(|(k, v)| (k.clone(), SqlValueMatcher::to_json_value(v)))
-        .collect();
-    
-    serde_json::to_vec(&json_metadata)
-        .map_err(|e| ProximaDBError::Internal(format!("Metadata serialization failed: {}", e)))
-}
-
-// Update filter evaluation to use consistent pattern matching
-fn evaluate_filter_condition(&self, value: &SqlValue, condition: &FilterCondition) -> bool {
-    match condition.operator {
-        FilterOperator::Equals => {
-            SqlValueMatcher::equals(value, &condition.value)
-        },
-        FilterOperator::GreaterThan => {
-            use std::cmp::Ordering;
-            SqlValueMatcher::compare(value, &condition.value) == Ordering::Greater
-        },
-        FilterOperator::LessThan => {
-            use std::cmp::Ordering;
-            SqlValueMatcher::compare(value, &condition.value) == Ordering::Less
-        },
-        // Add more operators as needed
-    }
-}
-```
-
-==== Step 0.1.2.3: Update NOVA Engine
-
-**File**: `src/storage/engines/impls/nova/engine.rs`
-**Location**: Update SqlValue pattern matching around lines 853 and 1114
-
-**Implementation**:
-```rust
-use crate::storage::engines::common::sql_value_utils::SqlValueMatcher;
-use crate::match_sql_value;
-
-// Replace problematic pattern matching in metadata processing
-fn process_columnar_metadata(&self, metadata_items: &[MetadataItem]) -> Result<ColumnarMetadata> {
-    let mut processed_metadata = HashMap::new();
-    
-    for item in metadata_items {
-        let processed_value = match_sql_value!(&item.value, {
-            Text(s) => ColumnarValue::String(s.clone()),
-            Integer(i) => ColumnarValue::Integer(*i),
-            Real(f) => ColumnarValue::Float(*f),
-            Blob(b) => ColumnarValue::Binary(b.clone()),
-            Null => ColumnarValue::Null,
-        });
-        
-        processed_metadata.insert(item.key.clone(), processed_value);
-    }
-    
-    Ok(ColumnarMetadata { items: processed_metadata })
-}
-
-// Update zone map filtering
-fn evaluate_zone_map_filter(&self, zone_map: &ZoneMap, filter: &Filter) -> bool {
-    for condition in &filter.conditions {
-        if !self.check_zone_map_condition(zone_map, condition) {
-            return false;
-        }
-    }
-    true
-}
-
-fn check_zone_map_condition(&self, zone_map: &ZoneMap, condition: &FilterCondition) -> bool {
-    if let Some(column_stats) = zone_map.column_stats.get(&condition.field) {
-        let condition_value_num = SqlValueMatcher::to_number(&condition.value);
-        
-        match condition.operator {
-            FilterOperator::GreaterThan => {
-                if let (Some(min_val), Some(cond_val)) = (column_stats.min_value, condition_value_num) {
-                    min_val > cond_val
-                } else {
-                    true // Conservative: include if we can't determine
-                }
-            },
-            FilterOperator::LessThan => {
-                if let (Some(max_val), Some(cond_val)) = (column_stats.max_value, condition_value_num) {
-                    max_val < cond_val
-                } else {
-                    true
-                }
-            },
-            FilterOperator::Equals => {
-                if let Some(cond_val) = condition_value_num {
-                    column_stats.min_value.map_or(true, |min| min <= cond_val) &&
-                    column_stats.max_value.map_or(true, |max| max >= cond_val)
-                } else {
-                    true
-                }
-            },
-        }
-    } else {
-        true // No stats available, include conservatively
-    }
-}
-```
-
-==== Step 0.1.2.4: Update SWIFT Engine
-
-**File**: `src/storage/engines/impls/swift/engine.rs`
-**Location**: Update SqlValue handling around lines 790 and 1020
-
-**Implementation**:
-```rust
-use crate::storage::engines::common::sql_value_utils::SqlValueMatcher;
-
-// Update superblock metadata processing
-fn process_superblock_metadata(&self, raw_metadata: &[u8]) -> Result<SuperblockMetadata> {
-    let metadata_map: HashMap<String, SqlValue> = bincode::deserialize(raw_metadata)
-        .map_err(|e| ProximaDBError::Internal(format!("Metadata deserialization failed: {}", e)))?;
-    
-    let mut processed = HashMap::new();
-    for (key, value) in metadata_map {
-        let json_value = SqlValueMatcher::to_json_value(&value);
-        processed.insert(key, json_value);
-    }
-    
-    Ok(SuperblockMetadata { data: processed })
-}
-
-// Update hierarchical block filtering
-fn evaluate_hierarchical_filter(&self, block: &HierarchicalBlock, filter: &Filter) -> bool {
-    for condition in &filter.conditions {
-        if !self.check_block_condition(block, condition) {
-            return false;
-        }
-    }
-    true
-}
-
-fn check_block_condition(&self, block: &HierarchicalBlock, condition: &FilterCondition) -> bool {
-    if let Some(block_metadata) = &block.metadata {
-        if let Some(field_value) = block_metadata.get(&condition.field) {
-            return self.evaluate_condition_on_sql_value(field_value, condition);
-        }
-    }
-    
-    // If no metadata available, conservatively include the block
-    true
-}
-
-fn evaluate_condition_on_sql_value(&self, value: &SqlValue, condition: &FilterCondition) -> bool {
-    match condition.operator {
-        FilterOperator::Equals => SqlValueMatcher::equals(value, &condition.value),
-        FilterOperator::GreaterThan => {
-            use std::cmp::Ordering;
-            SqlValueMatcher::compare(value, &condition.value) == Ordering::Greater
-        },
-        FilterOperator::LessThan => {
-            use std::cmp::Ordering;
-            SqlValueMatcher::compare(value, &condition.value) == Ordering::Less
-        },
-        FilterOperator::GreaterEqual => {
-            use std::cmp::Ordering;
-            matches!(SqlValueMatcher::compare(value, &condition.value), Ordering::Greater | Ordering::Equal)
-        },
-        FilterOperator::LessEqual => {
-            use std::cmp::Ordering;
-            matches!(SqlValueMatcher::compare(value, &condition.value), Ordering::Less | Ordering::Equal)
-        },
-        FilterOperator::NotEquals => !SqlValueMatcher::equals(value, &condition.value),
-    }
-}
-```
-
-==== Step 0.1.2.5: Update RAPTOR Engine
-
-**File**: `src/storage/engines/impls/raptor/rowgroup_manager.rs`
-**Location**: Update SqlValue handling around line 251
-
-**Implementation**:
-```rust
-use crate::storage::engines::common::sql_value_utils::SqlValueMatcher;
-
-// Update rowgroup metadata filtering
-fn filter_rowgroups_by_metadata(&self, rowgroups: &[RowGroup], filter: &Filter) -> Vec<RowGroupId> {
-    rowgroups.iter()
-        .enumerate()
-        .filter_map(|(idx, rowgroup)| {
-            if self.rowgroup_matches_filter(rowgroup, filter) {
-                Some(RowGroupId(idx))
-            } else {
-                None
+// In src/storage/engines/impls/nova/engine.rs
+impl NovaEngine {
+    fn zone_map_matches_filters(&self, zone_map: &ZoneMap, filters: &[Filter]) -> bool {
+        for filter in filters {
+            match filter {
+                Filter::Range { field, min, max } => {
+                    if let Some(zone_stats) = zone_map.get_column_stats(field) {
+                        // Check if zone's min/max overlaps with filter range
+                        if zone_stats.max_value < *min || zone_stats.min_value > *max {
+                            return false; // Zone can be pruned
+                        }
+                    }
+                },
+                Filter::Equals { field, value } => {
+                    if let Some(zone_stats) = zone_map.get_column_stats(field) {
+                        // Check if value is within zone's min/max range
+                        if value < &zone_stats.min_value || value > &zone_stats.max_value {
+                            return false;
+                        }
+                    }
+                },
+                Filter::In { field, values } => {
+                    if let Some(zone_stats) = zone_map.get_column_stats(field) {
+                        // Check if any value in the set overlaps with zone's range
+                        let overlaps = values.iter().any(|v| {
+                            v >= &zone_stats.min_value && v <= &zone_stats.max_value
+                        });
+                        if !overlaps {
+                            return false;
+                        }
+                    }
+                },
             }
-        })
-        .collect()
-}
-
-fn rowgroup_matches_filter(&self, rowgroup: &RowGroup, filter: &Filter) -> bool {
-    for condition in &filter.conditions {
-        if !self.check_rowgroup_condition(rowgroup, condition) {
-            return false;
         }
+        true // Zone cannot be pruned
     }
-    true
 }
+```
 
-fn check_rowgroup_condition(&self, rowgroup: &RowGroup, condition: &FilterCondition) -> bool {
-    // Check bloom filter first for quick elimination
-    if let Some(bloom_filter) = &rowgroup.bloom_filter {
-        if !bloom_filter.might_contain(&condition.field) {
-            return false;
+2. **Implement Progressive Quantization Pipeline**:
+```rust
+// In src/storage/engines/impls/nova/progressive_search.rs
+impl ProgressiveSearchEngine {
+    async fn execute_progressive_quantization(&self, query: &[f32], k: usize) -> Result<Vec<ScoredVector>> {
+        // Stage 1: Binary quantization (fastest, lowest accuracy)
+        let binary_candidates = self.binary_stage_search(query, k * 10).await?;
+        
+        if binary_candidates.len() <= k * 2 {
+            // Small result set, skip to full precision
+            return self.full_precision_search(query, &binary_candidates, k).await;
         }
-    }
-    
-    // Check rowgroup metadata statistics
-    if let Some(metadata_stats) = &rowgroup.metadata_stats {
-        if let Some(field_stats) = metadata_stats.get(&condition.field) {
-            return self.check_field_statistics(field_stats, condition);
+        
+        // Stage 2: INT8 quantization (medium speed/accuracy)
+        let int8_candidates = self.int8_stage_search(query, &binary_candidates, k * 5).await?;
+        
+        if int8_candidates.len() <= k * 1.5 as usize {
+            // Result set small enough, refine with full precision
+            return self.full_precision_search(query, &int8_candidates, k).await;
         }
+        
+        // Stage 3: PQ quantization (slower, higher accuracy)
+        let pq_candidates = self.pq_stage_search(query, &int8_candidates, k * 2).await?;
+        
+        // Stage 4: Full precision final refinement
+        self.full_precision_search(query, &pq_candidates, k).await
     }
     
-    // Conservative: include if no statistics available
-    true
-}
-
-fn check_field_statistics(&self, stats: &FieldStatistics, condition: &FilterCondition) -> bool {
-    match condition.operator {
-        FilterOperator::Equals => {
-            // Check if the value could exist in this rowgroup
-            if let (Some(min), Some(max)) = (&stats.min_value, &stats.max_value) {
-                let min_cmp = SqlValueMatcher::compare(min, &condition.value);
-                let max_cmp = SqlValueMatcher::compare(max, &condition.value);
-                use std::cmp::Ordering;
-                matches!(min_cmp, Ordering::Less | Ordering::Equal) &&
-                matches!(max_cmp, Ordering::Greater | Ordering::Equal)
-            } else {
-                true // No stats, include conservatively
+    async fn binary_stage_search(&self, query: &[f32], limit: usize) -> Result<Vec<ScoredVector>> {
+        // Use unified quantization engine
+        let binary_query = self.quantization_engine.quantize_to_binary(query)?;
+        
+        // SIMD-optimized hamming distance search
+        let mut candidates = Vec::new();
+        for chunk in self.binary_index.chunks() {
+            let distances = self.hardware_capabilities
+                .simd_hamming_distance(&binary_query, &chunk.vectors);
+                
+            for (idx, distance) in distances.iter().enumerate() {
+                candidates.push(ScoredVector {
+                    id: chunk.base_id + idx,
+                    score: self.hamming_to_similarity_score(*distance, query.len()),
+                    vector: None, // Load lazily
+                });
             }
-        },
-        FilterOperator::GreaterThan => {
-            if let Some(max) = &stats.max_value {
-                use std::cmp::Ordering;
-                SqlValueMatcher::compare(max, &condition.value) == Ordering::Greater
-            } else {
-                true
-            }
-        },
-        FilterOperator::LessThan => {
-            if let Some(min) = &stats.min_value {
-                use std::cmp::Ordering;
-                SqlValueMatcher::compare(min, &condition.value) == Ordering::Less
-            } else {
-                true
-            }
-        },
-        // Add more operators as needed
-        _ => true,
-    }
-}
-```
-
-=== Module Registration
-
-**File**: `src/storage/engines/common/mod.rs`
-
-**Implementation**:
-```rust
-pub mod sql_value_utils;
-
-// Re-export commonly used utilities
-pub use sql_value_utils::SqlValueMatcher;
-```
-
-**File**: `src/storage/engines/mod.rs`
-
-Add to the module declarations:
-```rust
-pub mod common;
-```
-
-=== Test Requirements
-
-**File**: `tests/sql_value_utils_test.rs`
-
-**Implementation**:
-```rust
-#[cfg(test)]
-mod sql_value_utils_tests {
-    use super::*;
-    use crate::storage::engines::common::sql_value_utils::SqlValueMatcher;
-    use crate::proto::proximadb_v1::SqlValue;
-    
-    #[test]
-    fn test_sql_value_to_string() {
-        assert_eq!(SqlValueMatcher::to_string(&SqlValue::Text("hello".to_string())), "hello");
-        assert_eq!(SqlValueMatcher::to_string(&SqlValue::Integer(42)), "42");
-        assert_eq!(SqlValueMatcher::to_string(&SqlValue::Real(3.14)), "3.14");
-        assert_eq!(SqlValueMatcher::to_string(&SqlValue::Null), "NULL");
-    }
-    
-    #[test]
-    fn test_sql_value_equality() {
-        assert!(SqlValueMatcher::equals(
-            &SqlValue::Text("test".to_string()),
-            &SqlValue::Text("test".to_string())
-        ));
+        }
         
-        assert!(!SqlValueMatcher::equals(
-            &SqlValue::Text("test".to_string()),
-            &SqlValue::Text("different".to_string())
-        ));
-        
-        // Cross-type numeric comparison
-        assert!(SqlValueMatcher::equals(
-            &SqlValue::Integer(42),
-            &SqlValue::Real(42.0)
-        ));
-    }
-    
-    #[test]
-    fn test_sql_value_comparison() {
-        use std::cmp::Ordering;
-        
-        assert_eq!(
-            SqlValueMatcher::compare(&SqlValue::Integer(1), &SqlValue::Integer(2)),
-            Ordering::Less
-        );
-        
-        assert_eq!(
-            SqlValueMatcher::compare(&SqlValue::Real(3.14), &SqlValue::Real(2.71)),
-            Ordering::Greater
-        );
-        
-        // Cross-type comparison
-        assert_eq!(
-            SqlValueMatcher::compare(&SqlValue::Integer(5), &SqlValue::Real(5.0)),
-            Ordering::Equal
-        );
+        // Partial sort for top candidates
+        candidates.select_nth_unstable_by(limit, |a, b| b.score.partial_cmp(&a.score).unwrap());
+        candidates.truncate(limit);
+        Ok(candidates)
     }
 }
 ```
 
-=== Acceptance Criteria
+**Acceptance Criteria**:
+- Zone map filtering achieves >80% pruning effectiveness on typical workloads
+- Progressive quantization maintains >95% recall while improving performance by 40%
+- All NOVA-related TODO items resolved
 
-1. **Compilation Success**: All SqlValue pattern matching compiles without errors
-2. **Consistent Behavior**: All storage engines handle SqlValue types consistently
-3. **Performance**: No significant performance degradation in metadata operations
-4. **Type Safety**: Strong type safety maintained with clear error handling
-5. **Cross-Engine Compatibility**: Metadata serialization/deserialization works across all engines
+==== Subtask 0.1.1.2: VIPER Engine Parquet Optimization
+**Files Affected**:
+- `src/storage/engines/impls/viper/flush.rs`
+- `src/storage/engines/impls/viper/parquet_integration.rs`
+- `src/storage/engines/impls/viper/compression.rs`
 
-== Task 0.1.3: Type System Alignment
+**Current Status**: Basic Parquet integration exists, advanced features incomplete
 
-=== Problem Analysis
-**Files Affected**: Various modules with HashMap type conversions and Arc<T> dereferencing issues
+**Implementation Steps**:
 
-**Error Patterns**:
-```
-expected `HashMap<String, Value>`, found `HashMap<String, String>`
-expected `&Node`, found `Arc<Node>`
-```
-
-**Root Cause**: Inconsistent type usage patterns and conversion utilities across the codebase.
-
-=== Implementation Steps
-
-==== Step 0.1.3.1: Create Unified Type Conversion Utilities
-
-**File**: `src/core/type_conversions.rs` (New file)
-
-**Implementation**:
+1. **Complete Advanced Compression Strategy**:
 ```rust
-//! Unified type conversion utilities for ProximaDB
-
-use std::collections::HashMap;
-use std::sync::Arc;
-use serde_json::Value as JsonValue;
-
-/// Utility for common type conversions used throughout ProximaDB
-pub struct TypeConverter;
-
-impl TypeConverter {
-    /// Convert HashMap<String, String> to HashMap<String, JsonValue>
-    pub fn string_map_to_json_map(map: HashMap<String, String>) -> HashMap<String, JsonValue> {
-        map.into_iter()
-            .map(|(k, v)| (k, JsonValue::String(v)))
-            .collect()
-    }
-    
-    /// Convert HashMap<String, String> reference to HashMap<String, JsonValue>
-    pub fn string_map_ref_to_json_map(map: &HashMap<String, String>) -> HashMap<String, JsonValue> {
-        map.iter()
-            .map(|(k, v)| (k.clone(), JsonValue::String(v.clone())))
-            .collect()
-    }
-    
-    /// Convert HashMap<String, JsonValue> to HashMap<String, String>
-    /// Non-string values are serialized to their JSON representation
-    pub fn json_map_to_string_map(map: HashMap<String, JsonValue>) -> HashMap<String, String> {
-        map.into_iter()
-            .map(|(k, v)| {
-                let string_value = match v {
-                    JsonValue::String(s) => s,
-                    JsonValue::Number(n) => n.to_string(),
-                    JsonValue::Bool(b) => b.to_string(),
-                    JsonValue::Null => "null".to_string(),
-                    _ => v.to_string(), // Serialize complex types as JSON strings
-                };
-                (k, string_value)
-            })
-            .collect()
-    }
-    
-    /// Safe Arc dereferencing with lifetime management
-    pub fn deref_arc<T>(arc_value: &Arc<T>) -> &T {
-        arc_value.as_ref()
-    }
-    
-    /// Convert Vec<Arc<T>> to Vec<&T> for batch processing
-    pub fn deref_arc_vec<T>(arc_vec: &[Arc<T>]) -> Vec<&T> {
-        arc_vec.iter().map(|arc| arc.as_ref()).collect()
-    }
-    
-    /// Safe conversion from Option<Arc<T>> to Option<&T>
-    pub fn deref_arc_option<T>(arc_option: &Option<Arc<T>>) -> Option<&T> {
-        arc_option.as_ref().map(|arc| arc.as_ref())
-    }
-}
-
-/// Trait for types that can be converted to HashMap<String, JsonValue>
-pub trait ToJsonMap {
-    fn to_json_map(&self) -> HashMap<String, JsonValue>;
-}
-
-/// Trait for types that can be converted from HashMap<String, JsonValue>
-pub trait FromJsonMap {
-    type Error;
-    fn from_json_map(map: HashMap<String, JsonValue>) -> Result<Self, Self::Error>
-    where
-        Self: Sized;
-}
-
-// Implementations for common types
-impl ToJsonMap for HashMap<String, String> {
-    fn to_json_map(&self) -> HashMap<String, JsonValue> {
-        TypeConverter::string_map_ref_to_json_map(self)
-    }
-}
-
-impl ToJsonMap for HashMap<String, JsonValue> {
-    fn to_json_map(&self) -> HashMap<String, JsonValue> {
-        self.clone()
-    }
-}
-
-/// Macro for safe Arc dereferencing in pattern matching
-#[macro_export]
-macro_rules! deref_arc {
-    ($arc_expr:expr) => {
-        $arc_expr.as_ref()
-    };
-}
-
-/// Macro for consistent metadata conversion
-#[macro_export]
-macro_rules! convert_metadata {
-    (string_to_json, $map:expr) => {
-        $crate::core::type_conversions::TypeConverter::string_map_to_json_map($map)
-    };
-    (string_ref_to_json, $map:expr) => {
-        $crate::core::type_conversions::TypeConverter::string_map_ref_to_json_map($map)
-    };
-    (json_to_string, $map:expr) => {
-        $crate::core::type_conversions::TypeConverter::json_map_to_string_map($map)
-    };
-}
-```
-
-==== Step 0.1.3.2: Update Graph Hybrid Module
-
-**File**: `src/graph/hybrid/mod.rs`
-**Location**: Fix the HashMap conversion issues already partially addressed
-
-**Additional Implementation** (Complete the remaining conversions):
-```rust
-use crate::core::type_conversions::TypeConverter;
-use crate::{convert_metadata, deref_arc};
-
-// Update any remaining metadata conversions
-impl HybridQueryOrchestrator {
-    fn convert_node_properties_to_metadata_json(
-        &self, 
-        properties: &HashMap<String, PropertyValue>
-    ) -> HashMap<String, serde_json::Value> {
-        let string_map = self.convert_node_properties_to_metadata(properties);
-        TypeConverter::string_map_to_json_map(string_map)
-    }
-    
-    fn process_embedding_with_proper_types(&self, embedding: &EmbeddingVersion) -> Vec<f32> {
-        embedding.vector.clone()
-    }
-    
-    fn handle_arc_node_safely(&self, node: &Arc<Node>) -> &Node {
-        deref_arc!(node)
-    }
-}
-
-// Update VectorRecord creation to use consistent field mapping
-fn create_vector_record_with_correct_types(
-    id: String,
-    vector: Vec<f32>,
-    metadata: HashMap<String, String>,
-    timestamp: i64
-) -> VectorRecord {
-    VectorRecord {
-        id,
-        collection_id: "hybrid_search".to_string(), // TODO: Use actual collection_id from context
-        vector,
-        metadata: convert_metadata!(string_to_json, metadata),
-        timestamp,
-        updated_at: Some(timestamp),
-        expires_at: None,
-        version: None,
-    }
-}
-```
-
-==== Step 0.1.3.3: Update Storage Engines for Consistent Type Usage
-
-**File**: `src/storage/engines/impls/viper/engine.rs`
-**Location**: Update metadata handling
-
-**Implementation**:
-```rust
-use crate::core::type_conversions::TypeConverter;
-use crate::convert_metadata;
-
+// In src/storage/engines/impls/viper/compression.rs
 impl ViperEngine {
-    fn serialize_metadata_for_parquet(&self, metadata: &HashMap<String, JsonValue>) -> Result<Vec<u8>> {
-        // Convert JSON metadata to Parquet-compatible format
-        let string_metadata = TypeConverter::json_map_to_string_map(metadata.clone());
+    async fn select_optimal_compression(&self, column_data: &ColumnData) -> Result<CompressionAlgorithm> {
+        let analysis = self.analyze_column_characteristics(column_data).await?;
         
-        // Serialize using Parquet metadata format
-        let parquet_metadata = self.create_parquet_metadata_structure(string_metadata)?;
-        
-        bincode::serialize(&parquet_metadata)
-            .map_err(|e| ProximaDBError::Internal(format!("Parquet metadata serialization failed: {}", e)))
+        match analysis.data_type {
+            DataType::FloatVector => {
+                // For vector data, use PQ + ZSTD combination
+                if analysis.cardinality_ratio > 0.8 {
+                    CompressionAlgorithm::ProductQuantization { 
+                        subvectors: 8, 
+                        codebook_size: 256,
+                        post_compression: Some(Box::new(CompressionAlgorithm::ZSTD { level: 6 }))
+                    }
+                } else {
+                    CompressionAlgorithm::ZSTD { level: 9 } // High compression for repetitive data
+                }
+            },
+            DataType::Metadata => {
+                // For metadata, use dictionary + compression
+                if analysis.unique_values < 1000 {
+                    CompressionAlgorithm::Dictionary {
+                        fallback: Some(Box::new(CompressionAlgorithm::LZ4))
+                    }
+                } else {
+                    CompressionAlgorithm::Snappy // Fast decompression for frequent access
+                }
+            },
+            DataType::Timestamp => {
+                CompressionAlgorithm::Delta { 
+                    base_compression: Some(Box::new(CompressionAlgorithm::ZSTD { level: 6 }))
+                }
+            },
+        }
     }
     
-    fn deserialize_metadata_from_parquet(&self, data: &[u8]) -> Result<HashMap<String, JsonValue>> {
-        let parquet_metadata: ParquetMetadataStructure = bincode::deserialize(data)
-            .map_err(|e| ProximaDBError::Internal(format!("Parquet metadata deserialization failed: {}", e)))?;
+    async fn apply_context_aware_compression(&self, rowgroup: &mut RowGroup) -> Result<CompressionStats> {
+        let mut total_original_size = 0;
+        let mut total_compressed_size = 0;
+        
+        for column in &mut rowgroup.columns {
+            let original_size = column.data.len();
+            total_original_size += original_size;
             
-        let string_metadata = self.extract_string_metadata_from_parquet(parquet_metadata)?;
-        Ok(TypeConverter::string_map_to_json_map(string_metadata))
+            let compression_alg = self.select_optimal_compression(&column.data).await?;
+            let compressed_data = self.apply_compression(&column.data, &compression_alg).await?;
+            
+            total_compressed_size += compressed_data.len();
+            column.data = compressed_data;
+            column.compression_metadata = Some(CompressionMetadata {
+                algorithm: compression_alg,
+                original_size,
+                compression_ratio: original_size as f64 / compressed_data.len() as f64,
+            });
+        }
+        
+        Ok(CompressionStats {
+            original_size: total_original_size,
+            compressed_size: total_compressed_size,
+            compression_ratio: total_original_size as f64 / total_compressed_size as f64,
+        })
     }
 }
 ```
 
-==== Step 0.1.3.4: Update Vector Operations Service
+**Acceptance Criteria**:
+- Achieve 30% storage reduction through context-aware compression
+- Maintain query performance within 10% of uncompressed baseline
+- All VIPER-related TODO items resolved
 
-**File**: `src/services/operations/vectors.rs`
-**Location**: Fix type conversions in search result processing
+==== Subtask 0.1.1.3: RAPTOR Engine Adaptive Features
+**Files Affected**:
+- `src/storage/engines/impls/raptor/rowgroup_manager.rs`
+- `src/storage/engines/impls/raptor/adaptive_sizing.rs`
+- `src/storage/engines/impls/raptor/performance_monitor.rs`
 
-**Implementation**:
+**Implementation Steps**:
+
+1. **Complete Adaptive Row-Group Sizing**:
 ```rust
-use crate::core::type_conversions::TypeConverter;
-use crate::{convert_metadata, deref_arc};
-
-impl VectorOperationsService {
-    async fn merge_search_results_with_correct_types(
-        &self,
-        storage_results: Vec<OptimizedSearchRecord>,
-        wal_results: Vec<OptimizedSearchRecord>
-    ) -> Vec<OptimizedSearchRecord> {
-        // Use zero-copy merge where possible
-        let mut all_results = Vec::with_capacity(storage_results.len() + wal_results.len());
+// In src/storage/engines/impls/raptor/adaptive_sizing.rs
+impl AdaptiveRowGroupManager {
+    async fn optimize_rowgroup_size(&self, collection_id: &str) -> Result<RowGroupSizeConfig> {
+        let query_patterns = self.performance_monitor.analyze_query_patterns(collection_id).await?;
+        let storage_characteristics = self.analyze_storage_characteristics(collection_id).await?;
         
-        // Extend using move semantics to avoid unnecessary cloning
-        all_results.extend(storage_results);
-        all_results.extend(wal_results);
+        let optimal_size = self.calculate_optimal_size(&query_patterns, &storage_characteristics);
         
-        // Sort in-place for efficiency
-        all_results.sort_unstable_by(|a, b| 
-            b.similarity_score.partial_cmp(&a.similarity_score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        );
+        // Apply ML-based optimization
+        let ml_recommendation = self.ml_optimizer.recommend_size(
+            &query_patterns,
+            &storage_characteristics,
+            &self.historical_performance
+        ).await?;
         
-        all_results
+        let final_size = self.blend_recommendations(optimal_size, ml_recommendation);
+        
+        Ok(RowGroupSizeConfig {
+            target_size: final_size,
+            min_size: final_size * 0.7,
+            max_size: final_size * 1.3,
+            adaptive_threshold: 0.15, // 15% performance variance triggers rebalancing
+        })
     }
     
-    fn convert_search_record_metadata(&self, metadata: &TypedMetadata) -> HashMap<String, JsonValue> {
-        match metadata.as_map() {
-            Some(map) => convert_metadata!(string_ref_to_json, map),
-            None => HashMap::new(),
+    fn calculate_optimal_size(
+        &self, 
+        patterns: &QueryPatterns, 
+        storage: &StorageCharacteristics
+    ) -> usize {
+        // Base size on I/O characteristics
+        let base_size = match storage.storage_tier {
+            StorageTier::SSD => 64 * 1024 * 1024, // 64MB for SSD
+            StorageTier::HDD => 128 * 1024 * 1024, // 128MB for HDD
+            StorageTier::Cloud => 32 * 1024 * 1024, // 32MB for cloud (network I/O)
+        };
+        
+        // Adjust for query selectivity
+        let selectivity_factor = if patterns.avg_selectivity > 0.8 {
+            0.7 // Smaller groups for highly selective queries
+        } else if patterns.avg_selectivity < 0.2 {
+            1.3 // Larger groups for low-selectivity queries
+        } else {
+            1.0
+        };
+        
+        // Adjust for access patterns
+        let access_factor = match patterns.access_pattern {
+            AccessPattern::Sequential => 1.2, // Larger groups benefit sequential access
+            AccessPattern::Random => 0.9,     // Smaller groups for random access
+            AccessPattern::Mixed => 1.0,
+        };
+        
+        (base_size as f64 * selectivity_factor * access_factor) as usize
+    }
+}
+```
+
+**Acceptance Criteria**:
+- Achieve 25% query performance improvement through adaptive sizing
+- Automatic rebalancing maintains optimal performance as workload changes
+- All RAPTOR-related TODO items resolved
+
+=== Task 0.1.2: Quantization System Optimization
+
+==== Subtask 0.1.2.1: SIMD Acceleration Completion
+**Files Affected**:
+- `src/compute/quantization/unified.rs`
+- `src/compute/quantization/hardware_accelerated.rs`
+- `src/compute/quantization/simd_optimizations.rs`
+
+**Implementation Steps**:
+
+1. **Complete AVX2/AVX512 Optimizations**:
+```rust
+// In src/compute/quantization/simd_optimizations.rs
+impl SIMDQuantizationEngine {
+    #[cfg(target_feature = "avx2")]
+    unsafe fn quantize_to_int8_avx2(&self, vectors: &[f32], scales: &[f32]) -> Vec<i8> {
+        use std::arch::x86_64::*;
+        
+        let mut result = Vec::with_capacity(vectors.len());
+        let chunks = vectors.chunks_exact(8); // Process 8 floats at once
+        
+        for (chunk, &scale) in chunks.zip(scales.iter()) {
+            let scale_vec = _mm256_set1_ps(scale);
+            let input = _mm256_loadu_ps(chunk.as_ptr());
+            
+            // Scale and convert to integers
+            let scaled = _mm256_mul_ps(input, scale_vec);
+            let int_vals = _mm256_cvtps_epi32(scaled);
+            
+            // Pack to 8-bit integers
+            let packed = _mm256_packs_epi32(int_vals, int_vals);
+            let final_packed = _mm256_packs_epi16(packed, packed);
+            
+            // Store results
+            let mut temp = [0i8; 8];
+            _mm_storeu_si64(temp.as_mut_ptr() as *mut i64, 
+                           _mm256_extracti128_si256(final_packed, 0));
+            result.extend_from_slice(&temp);
+        }
+        
+        // Handle remainder
+        let remainder = vectors.chunks_exact(8).remainder();
+        for (&val, &scale) in remainder.iter().zip(scales.iter()) {
+            result.push((val * scale) as i8);
+        }
+        
+        result
+    }
+    
+    #[cfg(target_feature = "avx512f")]
+    unsafe fn quantize_to_int8_avx512(&self, vectors: &[f32], scales: &[f32]) -> Vec<i8> {
+        use std::arch::x86_64::*;
+        
+        let mut result = Vec::with_capacity(vectors.len());
+        let chunks = vectors.chunks_exact(16); // Process 16 floats at once
+        
+        for (chunk, scale_chunk) in chunks.zip(scales.chunks_exact(16)) {
+            let input = _mm512_loadu_ps(chunk.as_ptr());
+            let scales_vec = _mm512_loadu_ps(scale_chunk.as_ptr());
+            
+            // Scale and convert in single operation
+            let scaled = _mm512_mul_ps(input, scales_vec);
+            let int_vals = _mm512_cvtps_epi32(scaled);
+            
+            // Pack to 8-bit with saturation
+            let packed = _mm512_packs_epi32(int_vals, int_vals);
+            let final_packed = _mm512_packs_epi16(packed, packed);
+            
+            // Store results
+            let mut temp = [0i8; 16];
+            _mm_storeu_si128(temp.as_mut_ptr() as *mut __m128i, 
+                           _mm512_extracti32x4_epi32(final_packed, 0));
+            result.extend_from_slice(&temp);
+        }
+        
+        result
+    }
+    
+    pub fn quantize_batch_optimized(&self, vectors: &[Vec<f32>]) -> Result<Vec<Vec<i8>>> {
+        #[cfg(target_feature = "avx512f")]
+        return self.quantize_batch_avx512(vectors);
+        
+        #[cfg(target_feature = "avx2")]
+        return self.quantize_batch_avx2(vectors);
+        
+        // Fallback to scalar implementation
+        self.quantize_batch_scalar(vectors)
+    }
+}
+```
+
+**Acceptance Criteria**:
+- Achieve 2x performance improvement in quantization operations
+- Support for AVX2, AVX512, and NEON instruction sets
+- Automatic CPU feature detection and optimal path selection
+
+==== Subtask 0.1.2.2: Adaptive Quantization Selection
+**Files Affected**:
+- `src/compute/quantization/adaptive_selection.rs`
+- `src/compute/quantization/quality_analyzer.rs`
+
+**Implementation Steps**:
+
+1. **Implement Data-Driven Quantization Selection**:
+```rust
+// In src/compute/quantization/adaptive_selection.rs
+impl AdaptiveQuantizationSelector {
+    pub async fn select_optimal_quantization(
+        &self, 
+        vectors: &[Vec<f32>],
+        quality_target: f32,
+        performance_target: Option<PerformanceTarget>
+    ) -> Result<QuantizationStrategy> {
+        
+        // Analyze vector characteristics
+        let analysis = self.analyze_vector_characteristics(vectors).await?;
+        
+        // Get historical performance data
+        let historical_performance = self.get_historical_performance(&analysis.signature).await?;
+        
+        // Generate candidate strategies
+        let candidates = vec![
+            QuantizationStrategy::Binary { threshold: 0.0 },
+            QuantizationStrategy::Int8 { per_vector_scaling: true },
+            QuantizationStrategy::PQ { subvectors: 8, codebook_size: 256 },
+            QuantizationStrategy::PQ { subvectors: 16, codebook_size: 256 },
+            QuantizationStrategy::AdaptivePQ { 
+                base_subvectors: 8, 
+                quality_threshold: quality_target 
+            },
+        ];
+        
+        // Score each candidate
+        let mut scored_candidates = Vec::new();
+        for strategy in candidates {
+            let score = self.score_strategy(
+                &strategy, 
+                &analysis, 
+                quality_target, 
+                performance_target.as_ref(),
+                &historical_performance
+            ).await?;
+            
+            scored_candidates.push((strategy, score));
+        }
+        
+        // Select best strategy
+        scored_candidates.sort_by(|a, b| b.1.total_score.partial_cmp(&a.1.total_score).unwrap());
+        
+        let (best_strategy, best_score) = scored_candidates.into_iter().next()
+            .ok_or_else(|| anyhow!("No valid quantization strategy found"))?;
+            
+        // Log selection reasoning for future improvement
+        self.log_selection_decision(&best_strategy, &best_score, &analysis).await;
+        
+        Ok(best_strategy)
+    }
+    
+    async fn analyze_vector_characteristics(&self, vectors: &[Vec<f32>]) -> Result<VectorCharacteristics> {
+        let dimension = vectors.first().map(|v| v.len()).unwrap_or(0);
+        
+        // Compute statistical properties
+        let mut all_values = Vec::new();
+        for vector in vectors {
+            all_values.extend(vector.iter().copied());
+        }
+        
+        let mean = all_values.iter().sum::<f32>() / all_values.len() as f32;
+        let variance = all_values.iter()
+            .map(|&x| (x - mean).powi(2))
+            .sum::<f32>() / all_values.len() as f32;
+        let std_dev = variance.sqrt();
+        
+        // Analyze distribution characteristics
+        let sparsity = all_values.iter().filter(|&&x| x.abs() < 1e-6).count() as f32 / all_values.len() as f32;
+        let dynamic_range = all_values.iter().copied().fold(0.0f32, f32::max) - 
+                          all_values.iter().copied().fold(0.0f32, f32::min);
+        
+        // Compute clustering tendency
+        let clustering_tendency = self.compute_clustering_tendency(vectors).await?;
+        
+        Ok(VectorCharacteristics {
+            dimension,
+            count: vectors.len(),
+            mean,
+            std_dev,
+            sparsity,
+            dynamic_range,
+            clustering_tendency,
+            signature: self.compute_signature(&all_values),
+        })
+    }
+}
+```
+
+**Acceptance Criteria**:
+- Achieve 95% optimal quantization selection accuracy
+- Automatic adaptation to different data distributions
+- Performance improvement of 30% through optimal selection
+
+=== Task 0.1.3: Graph Engine Optimization
+
+==== Subtask 0.1.3.1: PageRank Implementation Completion
+**Files Affected**:
+- `src/graph/algorithms/centrality.rs`
+- `src/graph/engines/orion/pagerank.rs`
+- `src/graph/parallel/pagerank_parallel.rs`
+
+**Implementation Steps**:
+
+1. **Complete Parallel PageRank Algorithm**:
+```rust
+// In src/graph/algorithms/centrality.rs
+impl CentralityAlgorithms for OrionGraphEngine {
+    async fn pagerank(&self, config: PageRankConfig) -> Result<HashMap<NodeId, f64>> {
+        let graph = self.get_graph_snapshot().await?;
+        let node_count = graph.node_count();
+        
+        // Initialize scores
+        let mut scores = vec![1.0 / node_count as f64; node_count];
+        let mut new_scores = vec![0.0; node_count];
+        
+        // Get thread pool for parallel execution
+        let thread_pool = self.get_thread_pool().await;
+        
+        for iteration in 0..config.max_iterations {
+            // Reset new scores
+            new_scores.fill(0.0);
+            
+            // Parallel PageRank computation
+            thread_pool.scope(|s| {
+                let chunk_size = (node_count / thread_pool.current_num_threads()).max(1);
+                
+                for chunk in (0..node_count).step_by(chunk_size) {
+                    let chunk_end = (chunk + chunk_size).min(node_count);
+                    
+                    s.spawn(move |_| {
+                        for node_idx in chunk..chunk_end {
+                            let node_id = NodeId(node_idx);
+                            
+                            // Get incoming edges
+                            let incoming_edges = graph.get_incoming_edges(node_id);
+                            let mut score_contribution = 0.0;
+                            
+                            for edge in incoming_edges {
+                                let source_score = scores[edge.source.0];
+                                let out_degree = graph.get_out_degree(edge.source);
+                                
+                                if out_degree > 0 {
+                                    score_contribution += source_score / out_degree as f64;
+                                }
+                            }
+                            
+                            // Apply damping factor
+                            new_scores[node_idx] = (1.0 - config.damping_factor) / node_count as f64 +
+                                                   config.damping_factor * score_contribution;
+                        }
+                    });
+                }
+            });
+            
+            // Check convergence
+            let max_change = scores.iter()
+                .zip(new_scores.iter())
+                .map(|(old, new)| (old - new).abs())
+                .fold(0.0f64, f64::max);
+                
+            if max_change < config.convergence_threshold {
+                debug!("PageRank converged after {} iterations", iteration + 1);
+                break;
+            }
+            
+            // Swap score vectors
+            std::mem::swap(&mut scores, &mut new_scores);
+        }
+        
+        // Convert to HashMap with NodeIds
+        let result = scores.into_iter()
+            .enumerate()
+            .map(|(idx, score)| (NodeId(idx), score))
+            .collect();
+            
+        Ok(result)
+    }
+}
+```
+
+**Acceptance Criteria**:
+- Process 1M+ edges/second in PageRank computation
+- Achieve convergence within expected iteration bounds
+- Parallel execution scales with available CPU cores
+
+=== Task 0.1.4: Unimplemented Macro Resolution
+
+**Files Affected**: Various files with `unimplemented!()` calls
+
+**Strategy**: 
+1. Identify all 30 unimplemented! locations
+2. Categorize by criticality (core vs. optional features)
+3. Implement core functionality, replace optional with proper error handling
+
+**Implementation Pattern**:
+```rust
+// Replace this:
+fn some_method(&self) -> Result<T> {
+    unimplemented!("Feature pending implementation")
+}
+
+// With this:
+fn some_method(&self) -> Result<T> {
+    Err(ProximaDBError::FeatureNotImplemented {
+        feature: "some_method",
+        tracking_issue: Some("https://github.com/proximadb/issues/123")
+    })
+}
+
+// Or with actual implementation for core features
+fn some_method(&self) -> Result<T> {
+    // Actual implementation here
+    Ok(result)
+}
+```
+
+== Priority 0.2: Performance Optimization (Week 2-3)
+
+=== Task 0.2.1: VectorOperationsService Decomposition
+
+**Current Status**: Large monolithic service needs modularization
+
+**Files Affected**:
+- `src/services/operations/vectors.rs` (current large file)
+- `src/services/operations/search/mod.rs` (new)
+- `src/services/operations/write/mod.rs` (new)
+- `src/services/operations/coordinator.rs` (new)
+
+**Implementation Strategy**:
+
+1. **Extract Search Service**:
+```rust
+// In src/services/operations/search/service.rs
+pub struct VectorSearchServiceImpl {
+    storage_engines: HashMap<String, Arc<dyn UnifiedStorageEngine>>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    hardware_capabilities: Arc<HardwareCapabilities>,
+    performance_monitor: Arc<SearchPerformanceMonitor>,
+}
+
+impl VectorSearchService for VectorSearchServiceImpl {
+    async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
+        let _span = tracing::info_span!("vector_search", 
+            collection_id = %request.collection_id,
+            top_k = request.top_k
+        ).entered();
+        
+        // Select optimal search strategy
+        let strategy = self.select_search_strategy(&request).await?;
+        
+        match strategy {
+            SearchStrategy::Progressive { stages } => {
+                self.execute_progressive_search(request, stages).await
+            },
+            SearchStrategy::DirectAccess { engine } => {
+                self.execute_direct_search(request, engine).await
+            },
+            SearchStrategy::CachedResults { cache_key } => {
+                self.execute_cached_search(request, cache_key).await
+            },
         }
     }
-    
-    fn create_optimized_search_record_safely(
-        &self,
-        id: String,
-        similarity_score: f32,
-        vector: Option<Arc<Vec<f32>>>,
-        metadata: &TypedMetadata
-    ) -> OptimizedSearchRecord {
-        OptimizedSearchRecord::new(id, similarity_score)
-            .with_similarity(similarity_score)
-            .with_metadata(self.convert_search_record_metadata(metadata))
-            .with_vector_if_available(vector)
-    }
-}
-
-// Extension methods for OptimizedSearchRecord
-impl OptimizedSearchRecord {
-    fn with_vector_if_available(mut self, vector: Option<Arc<Vec<f32>>>) -> Self {
-        if let Some(v) = vector {
-            self = self.add_vector(deref_arc!(v));
-        }
-        self
-    }
 }
 ```
 
-=== Module Registration and Integration
+**Performance Targets**:
+- Reduce service complexity by 40%
+- Improve search latency by 25% through specialization
+- Achieve <5ms p99 latency target
 
-**File**: `src/core/mod.rs`
+=== Task 0.2.2: Cache System Integration Completion
 
-**Implementation**:
+**Files Affected**:
+- `src/storage/cache/cross_orchestrator.rs`
+- `src/storage/cache/predictive_prefetch.rs`
+- `src/storage/cache/adaptive_sizing.rs`
+
+**Implementation Focus**: Complete ML-based cache optimization and cross-engine coordination
+
+**Acceptance Criteria**:
+- 80% cache hit rate improvement
+- 30% memory efficiency improvement
+- Predictive prefetching accuracy >75%
+
+== Priority 0.3: Service Layer Stabilization (Week 3-4)
+
+=== Task 0.3.1: Error Handling Standardization
+
+**Objective**: Implement consistent error handling across all services
+
+**Files Affected**: All service modules
+
+**Implementation Strategy**:
 ```rust
-pub mod type_conversions;
-
-// Re-export commonly used utilities
-pub use type_conversions::{TypeConverter, ToJsonMap, FromJsonMap};
-```
-
-**File**: `src/lib.rs`
-
-Add to macro exports:
-```rust
-// Export type conversion macros
-pub use deref_arc;
-pub use convert_metadata;
-```
-
-=== Test Requirements
-
-**File**: `tests/type_conversions_test.rs`
-
-**Implementation**:
-```rust
-#[cfg(test)]
-mod type_conversion_tests {
-    use super::*;
-    use crate::core::type_conversions::TypeConverter;
-    use std::collections::HashMap;
-    use serde_json::json;
+// In src/errors/mod.rs
+#[derive(Debug, thiserror::Error)]
+pub enum ProximaDBError {
+    #[error("Storage error: {0}")]
+    Storage(#[from] StorageError),
     
-    #[test]
-    fn test_string_to_json_conversion() {
-        let mut string_map = HashMap::new();
-        string_map.insert("key1".to_string(), "value1".to_string());
-        string_map.insert("key2".to_string(), "value2".to_string());
-        
-        let json_map = TypeConverter::string_map_to_json_map(string_map);
-        
-        assert_eq!(json_map.get("key1"), Some(&json!("value1")));
-        assert_eq!(json_map.get("key2"), Some(&json!("value2")));
-    }
+    #[error("Quantization error: {0}")]
+    Quantization(#[from] QuantizationError),
     
-    #[test]
-    fn test_json_to_string_conversion() {
-        let mut json_map = HashMap::new();
-        json_map.insert("string_val".to_string(), json!("text"));
-        json_map.insert("number_val".to_string(), json!(42));
-        json_map.insert("bool_val".to_string(), json!(true));
-        json_map.insert("null_val".to_string(), json!(null));
-        
-        let string_map = TypeConverter::json_map_to_string_map(json_map);
-        
-        assert_eq!(string_map.get("string_val"), Some(&"text".to_string()));
-        assert_eq!(string_map.get("number_val"), Some(&"42".to_string()));
-        assert_eq!(string_map.get("bool_val"), Some(&"true".to_string()));
-        assert_eq!(string_map.get("null_val"), Some(&"null".to_string()));
-    }
+    #[error("Graph error: {0}")]
+    Graph(#[from] GraphError),
     
-    #[test]
-    fn test_arc_dereferencing() {
-        use std::sync::Arc;
-        
-        let value = Arc::new(String::from("test"));
-        let deref_value = TypeConverter::deref_arc(&value);
-        
-        assert_eq!(deref_value, "test");
-    }
+    #[error("Service unavailable: {service}")]
+    ServiceUnavailable { service: String },
     
-    #[test]
-    fn test_arc_vec_dereferencing() {
-        use std::sync::Arc;
-        
-        let arc_vec = vec![Arc::new(1), Arc::new(2), Arc::new(3)];
-        let deref_vec = TypeConverter::deref_arc_vec(&arc_vec);
-        
-        assert_eq!(deref_vec, vec![&1, &2, &3]);
-    }
+    #[error("Rate limit exceeded: {limit} requests/second")]
+    RateLimited { limit: u32 },
+    
+    #[error("Authentication failed: {reason}")]
+    AuthenticationFailed { reason: String },
+    
+    #[error("Feature not implemented: {feature}")]
+    FeatureNotImplemented { 
+        feature: &'static str,
+        tracking_issue: Option<&'static str>
+    },
 }
 ```
 
-=== Acceptance Criteria
+=== Task 0.3.2: Comprehensive Testing Framework
 
-1. **Type Safety**: All type conversions are safe and preserve data integrity
-2. **Performance**: Minimal performance overhead from type conversions
-3. **Consistency**: Unified approach to type conversions across all modules
-4. **Zero-Copy Where Possible**: Arc dereferencing doesn't create unnecessary copies
-5. **Error Handling**: Graceful handling of conversion failures
+**Objective**: Achieve 90%+ test coverage for critical paths
 
-== Summary of Phase 0 Implementation
+**Implementation Strategy**:
+- Integration tests for all 7 storage engines
+- Performance regression tests
+- Error condition coverage
+- Multi-engine coordination tests
 
-The Phase 0 implementation focuses on establishing a stable foundation by:
+**Test Categories**:
+1. **Unit Tests**: Individual component functionality
+2. **Integration Tests**: Cross-component interaction
+3. **Performance Tests**: Latency and throughput benchmarks
+4. **Chaos Tests**: Failure scenario handling
+5. **Load Tests**: Scale and stress testing
 
-1. **Resolving Critical Compilation Errors**: All 912 compilation errors addressed through systematic fixes
-2. **Establishing Type System Consistency**: Unified type conversion utilities prevent future type mismatches
-3. **Creating Reusable Utilities**: Common patterns extracted into reusable modules
-4. **Maintaining Performance**: All fixes designed to avoid performance regressions
-5. **Enabling Phase 1 Development**: Stable foundation allows advanced feature development
+## Success Criteria for Phase 0
 
-**Success Metrics**:
-- ✅ Zero compilation errors
-- ✅ All existing tests pass
-- ✅ No performance regression (>5%)
-- ✅ Clean, maintainable code structure
-- ✅ Comprehensive test coverage for new utilities
+**Technical Debt Resolution**:
+- ✅ Reduce TODO items from 771 to <100
+- ✅ Eliminate all 30 unimplemented! macros
+- ✅ Complete partial engine implementations
 
-This detailed specification provides Claude Code with specific, actionable instructions for completing Phase 0 stabilization work.
+**Performance Targets**:
+- ✅ Achieve 35K+ QPS vector search
+- ✅ Maintain <5ms p99 latency
+- ✅ 40% memory usage optimization
+
+**Quality Metrics**:
+- ✅ 90%+ test coverage for critical paths
+- ✅ Zero compilation errors/warnings
+- ✅ All engines pass integration tests
+- ✅ Performance benchmarks meet targets
+
+**Operational Readiness**:
+- ✅ Comprehensive error handling
+- ✅ Production-ready logging and metrics
+- ✅ Health check endpoints functional
+- ✅ Service decomposition complete
+
+This detailed specification provides actionable implementation guidance while reflecting the current mature state of the ProximaDB codebase.
