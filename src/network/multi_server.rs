@@ -534,7 +534,7 @@ impl SharedServices {
                 axis_manager,
                 collection_service.clone(),
             )
-            .with_orchestrator(orchestrator.clone()),
+            .with_orchestrator(Some(orchestrator.clone())),
         );
 
         info!(
@@ -680,6 +680,8 @@ impl SharedServices {
             parallel_scan_threshold: 1000,
             sparsity_threshold: 0.5,
             quantization_size_threshold: 1024 * 1024, // 1MB
+            max_memory_mb: 512,
+            snapshot_interval_seconds: 300, // 5 minutes
         };
         let metrics_store = Arc::new(
             crate::metrics::store::MetricsPersistenceLayer::new(filesystem_factory, metrics_config)
