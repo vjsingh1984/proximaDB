@@ -317,6 +317,7 @@ impl ViperEngine {
             collections: Arc::new(RwLock::new(HashMap::new())),
             quantization_engine,
             universal_optimizer,
+            orchestrator: None,
         })
     }
 
@@ -1896,7 +1897,7 @@ impl UnifiedStorageEngine for ViperEngine {
 
                 let mut record = OptimizedSearchRecord::new(r.id, r.score as f32)
                     .add_vector(r.vector)
-                    .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                    .with_metadata(metadata_map);
 
                 if let Some(sim) = r.similarity {
                     record = record.with_similarity(sim);

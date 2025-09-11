@@ -2387,11 +2387,11 @@ impl UnifiedStorageEngine for SstStorage {
                 if let Some(ref compression) = collection_config
                     .storage_config
                     .as_ref()
-                    .and_then(|s| s.compression.as_ref())
+                    .filter(|s| s.compression != 0)
                 {
                     debug!(
-                        "   ✅ Found compression in collection_config: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level
+                        "   ✅ Found compression in collection_config: compression={:?}",
+                        compression.compression
                     );
                 } else {
                     debug!("   ⚠️ No compression config in collection_config");
@@ -2484,7 +2484,7 @@ impl UnifiedStorageEngine for SstStorage {
                 config
                     .storage_config
                     .as_ref()
-                    .and_then(|s| s.compression.as_ref())
+                    .filter(|s| s.compression != 0)
                     .clone()
             });
 
@@ -2611,11 +2611,11 @@ impl UnifiedStorageEngine for SstStorage {
                 if let Some(ref compression) = config
                     .storage_config
                     .as_ref()
-                    .and_then(|s| s.compression.as_ref())
+                    .filter(|s| s.compression != 0)
                 {
                     debug!(
-                        "   ✅ Found compression in collection_config: algorithm={}, level={:?}",
-                        compression.algorithm, compression.level
+                        "   ✅ Found compression in collection_config: compression={:?}",
+                        compression.compression
                     );
                 } else {
                     debug!("   ⚠️ No compression config in collection_config");
@@ -2780,7 +2780,7 @@ impl UnifiedStorageEngine for SstStorage {
                         config
                             .storage_config
                             .as_ref()
-                            .and_then(|s| s.compression.as_ref())
+                            .filter(|s| s.compression != 0)
                             .clone()
                     });
 
@@ -3008,7 +3008,7 @@ impl UnifiedStorageEngine for SstStorage {
     ) -> anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         let search_start = std::time::Instant::now();
         if let Some(orch) = &self.orchestrator {
-            orch.track_access_async(
+            (**orch).pattern_tracker().track_access_async(
                 format!("{}::sst::metadata", ctx.collection_id()),
                 crate::storage::cache::orchestrator::CacheType::Metadata,
             );

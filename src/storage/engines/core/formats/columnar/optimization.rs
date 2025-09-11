@@ -580,10 +580,10 @@ impl ColumnarOptimizer {
                 .clone()
                 .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
             vector: vec![0.0; 768], // Placeholder
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             expires_at: None,
             version: None,
             source: None,

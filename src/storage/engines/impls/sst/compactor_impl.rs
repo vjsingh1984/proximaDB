@@ -332,7 +332,7 @@ impl SstCompactor {
             for record in records {
                 stats.records_read += 1;
                 heap.push(Reverse(MergeEntry {
-                    timestamp: record.timestamp.unwrap_or(0) as u32,
+                    timestamp: record.timestamp as u32,
                     record,
                     file_index: file_idx,
                 }));
@@ -497,7 +497,7 @@ impl SstCompactor {
             if let Some(record) = iter.next() {
                 let rec = record?;
                 heap.push(Reverse(MergeEntry {
-                    timestamp: rec.timestamp,
+                    timestamp: rec.timestamp as u32,
                     record: rec,
                     file_index: file_idx,
                 }));
@@ -524,7 +524,7 @@ impl SstCompactor {
                 if let Some(next_record) = iter.next() {
                     let rec = next_record?;
                     heap.push(Reverse(MergeEntry {
-                        timestamp: rec.timestamp,
+                        timestamp: rec.timestamp as u32,
                         record: rec,
                         file_index: entry.file_index,
                     }));

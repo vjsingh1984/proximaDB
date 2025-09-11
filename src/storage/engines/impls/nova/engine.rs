@@ -944,12 +944,12 @@ impl NovaFile {
         Ok(VectorRecord {
             id: format!("vec_rg{}_row{}", location.row_group_id, location.row_offset),
             vector: vec![0.0; self.metadata.dimension],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             source: None,
         })
     }

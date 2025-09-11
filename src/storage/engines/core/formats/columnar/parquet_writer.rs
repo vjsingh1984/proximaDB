@@ -805,22 +805,23 @@ impl StreamingParquetWriter {
             if !record.metadata.is_empty() {
                 // Convert Vec<MetadataItem> to serde_json::Map
                 let mut metadata_map = serde_json::Map::new();
-                for item in &record.metadata {
-                    let key = &item.key;
-                    let value = &item.value;
-                    let json_value = match value {
-                        Some(metadata_item::Value::StringValue(s)) => {
+                for (key, value) in &record.metadata {
+                    let json_value = match &value.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(metadata_item::Value::NumberValue(f)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                             if let Some(n) = serde_json::Number::from_f64(*f) {
                                 serde_json::Value::Number(n)
                             } else {
                                 serde_json::Value::Null
                             }
                         }
-                        Some(metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                        None => serde_json::Value::Null,
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                            serde_json::Value::Number(serde_json::Number::from(*i))
+                        }
+                        _ => serde_json::Value::Null,
                     };
                     metadata_map.insert(key.clone(), json_value);
                 }

@@ -1271,8 +1271,8 @@ impl Compaction {
                             .map(|(k, v)| {
                                 (
                                     k.clone(),
-                                    crate::storage::engines::impls::viper::FilterValue::String(
-                                        v.to_string(),
+                                    crate::storage::engines::impls::viper::FilterValue::Equals(
+                                        serde_json::Value::String(v.to_string()),
                                     ),
                                 )
                             })

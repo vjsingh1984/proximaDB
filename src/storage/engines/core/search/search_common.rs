@@ -361,7 +361,7 @@ impl UniversalSearchPipeline {
 
         let mut filtered = Vec::new();
         for record in records {
-            if let Some(ref binary) = record.quantized_vector {
+            if !record.quantized_vector.is_empty() {
                 // Calculate binary similarity using distance compute
                 // For now, skip binary filtering if we can't compute similarity
                 let similarity = 1.0; // TODO: Implement binary similarity
@@ -449,29 +449,34 @@ impl UniversalSearchPipeline {
             // Convert metadata_map (HashMap<String, serde_json::Value>) to TypedMetadata
             let mut typed_metadata_map = std::collections::HashMap::new();
             for (key, value) in metadata_map {
-                let typed_value = match value {
-                    serde_json::Value::String(s) => {
-                        MetadataValue::String(std::sync::Arc::from(s.as_str()))
-                    }
+                use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
+                let sql_value = match value {
+                    serde_json::Value::String(s) => proximadb_v1::SqlValue {
+                        value: Some(sql_value::Value::StringValue(s)),
+                    },
                     serde_json::Value::Number(n) => {
                         if let Some(f) = n.as_f64() {
-                            MetadataValue::Number(f)
+                            proximadb_v1::SqlValue {
+                                value: Some(sql_value::Value::NumberValue(f)),
+                            }
                         } else {
-                            MetadataValue::Null
+                            proximadb_v1::SqlValue { value: None }
                         }
                     }
-                    serde_json::Value::Bool(b) => MetadataValue::Bool(b),
-                    _ => MetadataValue::Null,
+                    serde_json::Value::Bool(b) => proximadb_v1::SqlValue {
+                        value: Some(sql_value::Value::BoolValue(b)),
+                    },
+                    _ => proximadb_v1::SqlValue { value: None },
                 };
-                typed_metadata_map.insert(key, typed_value);
+                typed_metadata_map.insert(key, sql_value);
             }
 
             results.push(
                 OptimizedSearchRecord::new(record.id.clone(), similarity_result.normalized_score)
                     .with_similarity(similarity_result.normalized_score)
                     .add_vector(record.vector)
-                    .with_metadata(TypedMetadata::from_map(typed_metadata_map))
-                    .with_version_info(record.updated_at.unwrap_or(0), record.timestamp as u32),
+                    .with_metadata(typed_metadata_map)
+                    .with_version_info(record.updated_at.unwrap_or(0), record.timestamp),
             );
         }
 

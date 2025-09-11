@@ -345,12 +345,12 @@ impl PrismFastLanesSerializer {
             records.push(VectorRecord {
                 id,
                 vector,
-                metadata: vec![],
-                timestamp: 0,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: Vec::new(),
                 source: None,
             });
         }

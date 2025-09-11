@@ -70,7 +70,7 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::proto::proximadb_v1::{VectorRecord, metadata_item};
+use crate::proto::proximadb_v1::{VectorRecord, metadata_item, sql_value};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 
@@ -2538,9 +2538,9 @@ impl RaptorWriter {
         let fp32_vector = vector.vector.clone();
 
         // Get quantized vector - either pre-quantized or quantize now
-        let quantized_vector = if let Some(ref pre_quantized) = vector.quantized_vector {
+        let quantized_vector = if !vector.quantized_vector.is_empty() {
             // Use pre-quantized data if available
-            pre_quantized.clone()
+            vector.quantized_vector.clone()
         } else {
             // Quantize vector using unified engine
             let quantized_batch = self
@@ -2560,26 +2560,15 @@ impl RaptorWriter {
             .metadata
             .iter()
             .map(|(key, value)| {
-                let value_bytes = match &value {
-                    Some(val) => {
-                        // Serialize metadata value to bytes
-                        match val {
-                            metadata_item::Value::StringValue(s) => s.as_bytes().to_vec(),
-                            metadata_item::Value::NumberValue(n) => n.to_le_bytes().to_vec(),
-                            metadata_item::Value::BoolValue(b) => vec![if *b { 1 } else { 0 }],
-                            /* Removed ListValue and MapValue - not in current proto
-                            metadata_item::Value::ListValue(list) => {
-                                // Serialize list as length-prefixed items
-                                let mut bytes = Vec::new();
-                                bytes.extend(&(list.values.len()).to_le_bytes());
-                                for v in &list.values {
-                                    // Recursive serialization
-                                    bytes.extend(&[0]); // Placeholder
-                                }
-                                bytes
-                            }*/
-                        }
-                    }
+                let value_bytes = match &value.value {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.as_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_le_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => vec![if *b { 1 } else { 0 }],
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_le_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => b.clone(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => Vec::new(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Vec::new(), // TODO: serialize arrays
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => Vec::new(), // TODO: serialize objects
                     None => Vec::new(),
                 };
                 (key.clone(), value_bytes)
@@ -2601,7 +2590,7 @@ impl RaptorWriter {
             vector: fp32_vector,
             quantized_vector,
             metadata,
-            timestamp: vector.timestamp,
+            timestamp: vector.timestamp as u32,
             updated_at: vector.updated_at.map(|v| v as u32),
             expires_at: vector.expires_at.map(|v| v as u32),
             version: vector.version.map(|v| v as u32),
@@ -4378,9 +4367,7 @@ impl RaptorWriter {
     fn update_column_projections(&mut self, vector: &VectorRecord, location: RowLocation) {
         // Extract metadata columns for projection
         if !vector.metadata.is_empty() {
-            for item in &vector.metadata {
-                let key = &item.key;
-                let value = &item.value;
+            for (key, value) in &vector.metadata {
                 self.column_projections
                     .metadata_columns
                     .entry(key.clone())

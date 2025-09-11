@@ -563,7 +563,7 @@ impl ModularBlockReader {
                         )
                         .with_similarity(distance.normalized_score)
                         .add_vector(full_vector)
-                        .with_metadata(TypedMetadata::default()),
+                        .with_metadata(HashMap::new()),
                     );
                 }
             }
@@ -639,7 +639,7 @@ impl ModularBlockReader {
                     OptimizedSearchRecord::new(record.id.clone(), distance.rank_value)
                         .with_similarity(distance.normalized_score)
                         .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::default()),
+                        .with_metadata(HashMap::new()),
                 );
             }
         }
@@ -4462,7 +4462,7 @@ impl ReadingStrategySelector {
                 // Check if record is a tombstone (expired or empty vector)
                 let is_tombstone = record
                     .expires_at
-                    .map_or(false, |exp| exp < chrono::Utc::now().timestamp() as u32)
+                    .map_or(false, |exp| exp < chrono::Utc::now().timestamp() as i64)
                     || record.vector.is_empty();
 
                 if is_tombstone {

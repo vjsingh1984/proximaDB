@@ -906,7 +906,7 @@ impl RaptorReader {
                     if let Some(u8_array) =
                         quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
                     {
-                        record.quantized_vector = Some(u8_array.values().to_vec());
+                        record.quantized_vector = u8_array.values().to_vec();
                     }
                 }
             }
@@ -914,25 +914,25 @@ impl RaptorReader {
             // Extract timestamp fields (optional)
             if let Some(ts_array) = timestamp_array {
                 if !ts_array.is_null(row_idx) {
-                    record.timestamp = ts_array.value(row_idx);
+                    record.timestamp = ts_array.value(row_idx) as i64;
                 }
             }
 
             if let Some(upd_array) = updated_at_array {
                 if !upd_array.is_null(row_idx) {
-                    record.updated_at = Some(upd_array.value(row_idx));
+                    record.updated_at = Some(upd_array.value(row_idx) as i64);
                 }
             }
 
             if let Some(exp_array) = expires_at_array {
                 if !exp_array.is_null(row_idx) {
-                    record.expires_at = Some(exp_array.value(row_idx));
+                    record.expires_at = Some(exp_array.value(row_idx) as i64);
                 }
             }
 
             if let Some(ver_array) = version_array {
                 if !ver_array.is_null(row_idx) {
-                    record.version = Some(ver_array.value(row_idx));
+                    record.version = Some(ver_array.value(row_idx) as i64);
                 }
             }
 
@@ -945,30 +945,33 @@ impl RaptorReader {
                     >(json_str)
                     {
                         for (key, value) in metadata_map {
-                            let metadata_value = match value {
+                            let sql_value = match value {
                                 serde_json::Value::String(s) => {
-                                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)
+                                    crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                                    }
                                 }
                                 serde_json::Value::Number(n) => {
                                     // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
-                                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                                        n.as_f64().unwrap_or(0.0),
-                                    )
+                                    crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                            n.as_f64().unwrap_or(0.0),
+                                        )),
+                                    }
                                 }
                                 serde_json::Value::Bool(b) => {
-                                    crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)
+                                    crate::proto::proximadb_v1::SqlValue {
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                                    }
                                 }
-                                _ => crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                    value.to_string(),
-                                ),
+                                _ => crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        value.to_string(),
+                                    )),
+                                },
                             };
 
-                            record
-                                .metadata
-                                .push(crate::proto::proximadb_v1::MetadataItem {
-                                    key: key.clone(),
-                                    value: Some(metadata_value),
-                                });
+                            record.metadata.insert(key, sql_value);
                         }
                     }
                 }
@@ -978,12 +981,9 @@ impl RaptorReader {
             if let Some(source_array) = source_content_array {
                 if !source_array.is_null(row_idx) {
                     let source_bytes = source_array.value(row_idx);
-                    // Deserialize SourceContent from bytes
-                    if let Ok(source_content) = bincode::deserialize::<
-                        crate::proto::proximadb_v1::SourceContent,
-                    >(source_bytes)
-                    {
-                        record.source = Some(source_content);
+                    // Convert bytes to source string
+                    if let Ok(source_string) = String::from_utf8(source_bytes.to_vec()) {
+                        record.source = Some(source_string);
                     }
                 }
             }

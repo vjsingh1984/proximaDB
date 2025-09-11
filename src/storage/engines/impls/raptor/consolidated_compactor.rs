@@ -285,13 +285,13 @@ impl RaptorCompactor {
             vectors.push(VectorRecord {
                 id,
                 vector: vector_data,
-                metadata: Vec::new(), // Would extract metadata if present
+                metadata: HashMap::new(), // Would extract metadata if present
                 version: None,
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 source: None,
-                quantized_vector: None, // No quantized data in this extraction
+                quantized_vector: Vec::new(), // No quantized data in this extraction
             });
         }
 

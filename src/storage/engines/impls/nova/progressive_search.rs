@@ -714,12 +714,12 @@ impl ProgressiveColumnarSearch {
                     .clone()
                     .unwrap_or_else(|| format!("unknown_{}", i)),
                 vector: full_vector,
-                metadata: Vec::new(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: Vec::new(),
                 source: None,
             };
             final_candidates.push((record, exact_distance));

@@ -241,7 +241,7 @@ impl SharedParquetFormatReader {
     ) -> Result<Vec<RecordBatch>, ProximaDBError> {
         if let Some(orch) = &self.orchestrator {
             let key = format!("{}::parquet::metadata_cached", self.collection_id);
-            orch.track_access_async(key, crate::storage::cache::orchestrator::CacheType::Metadata);
+            (**orch).pattern_tracker().track_access_async(key, crate::storage::cache::orchestrator::CacheType::Metadata);
         }
         // This would extract row group statistics from cached metadata
         // and use them for filtering without downloading the footer

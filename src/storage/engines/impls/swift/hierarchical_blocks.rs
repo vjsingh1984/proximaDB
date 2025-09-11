@@ -219,39 +219,42 @@ impl MetadataIndex {
         // Process each record's metadata
         for record in &block.records {
             if !record.metadata.is_empty() {
-                for item in &record.metadata {
+                for (key, value) in &record.metadata {
                     // Only index filterable columns
-                    if !self.filterable_columns.contains(&item.key) {
+                    if !self.filterable_columns.contains(key) {
                         continue;
                     }
 
-                    // Convert MetadataItem value to serde_json::Value
-                    let json_value = match &item.value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                    // Convert SqlValue to serde_json::Value
+                    let json_value = match &value.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             serde_json::json!(n)
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                            serde_json::json!(i)
                         }
                         _ => serde_json::Value::Null,
                     };
 
                     // Get or create column index
-                    let new_index = if !self.column_indexes.contains_key(&item.key) {
+                    let new_index = if !self.column_indexes.contains_key(key) {
                         Some(self.create_column_index(&json_value))
                     } else {
                         None
                     };
 
                     if let Some(idx) = new_index {
-                        self.column_indexes.insert(item.key.clone(), idx);
+                        self.column_indexes.insert(key.clone(), idx);
                     }
 
                     // Update index with this value
-                    if let Some(column_index) = self.column_indexes.get_mut(&item.key) {
+                    if let Some(column_index) = self.column_indexes.get_mut(key) {
                         Self::update_column_index_static(column_index, &json_value, block_id)?;
                     }
                 }

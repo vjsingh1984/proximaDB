@@ -480,7 +480,7 @@ impl ParquetReconstructor {
                 updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: Vec::new(),
                 source: None,
             });
         }

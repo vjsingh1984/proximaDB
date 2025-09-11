@@ -752,7 +752,7 @@ impl RaptorEngine {
                 };
                 let search_result = OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
-                    .with_metadata(TypedMetadata::default());
+                    .with_metadata(HashMap::new());
 
                 all_results.push(search_result);
             }
@@ -1335,7 +1335,7 @@ impl RaptorEngine {
                 };
                 let search_result = OptimizedSearchRecord::new(id, similarity_score)
                     .with_similarity(similarity_score)
-                    .with_metadata(TypedMetadata::default());
+                    .with_metadata(HashMap::new());
 
                 all_results.push(search_result);
             }

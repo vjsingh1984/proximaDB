@@ -202,7 +202,7 @@ impl OptimizedNovaOperations {
                             metadata: Default::default(),
                             timestamp: 0,
                             updated_at: None,
-                            quantized_vector: None,
+                            quantized_vector: Vec::new(),
                             expires_at: None,
                             version: None,
                             source: None,

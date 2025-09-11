@@ -815,7 +815,7 @@ impl UnifiedParquetReader {
             metadata: vec![], // Would extract from metadata columns
             timestamp: timestamp.unwrap_or(0),
             updated_at: None,
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             expires_at: None,
             version: version,
             source: None,
@@ -1197,7 +1197,7 @@ impl UnifiedParquetReader {
             updated_at: None,
             expires_at: None,
             version: version.map(|v| v as u32),
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             source: None,
         }))
     }
@@ -1666,6 +1666,10 @@ impl UnifiedParquetReader {
                         timestamp: Some(vector_record.timestamp),
                         source: None,
                         expanded_context: vec![],
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                        semantic_similarity: None,
                     });
                 }
             }

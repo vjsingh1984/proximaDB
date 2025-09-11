@@ -416,7 +416,7 @@ impl DecompressionCache {
                 std::mem::size_of::<crate::core::VectorRecord>()
                     + r.id.len()
                     + r.vector.len() * std::mem::size_of::<f32>()
-                    + r.metadata.iter().map(|m| m.key.len() + 8).sum::<usize>() // Rough metadata size
+                    + r.metadata.iter().map(|(k, _)| k.len() + 8).sum::<usize>() // Rough metadata size
             })
             .sum()
     }

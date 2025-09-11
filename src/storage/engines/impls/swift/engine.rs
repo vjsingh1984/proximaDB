@@ -783,31 +783,13 @@ impl UnifiedStorageEngine for SwiftEngine {
                     record.id.clone()
                 };
 
-                let metadata_map: HashMap<String, serde_json::Value> = record
-                    .metadata
-                    .into_iter()
-                    .map(|(key, value)| {
-                        let value = match &value {
-                            Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
-                            ) => serde_json::Value::String(s.clone()),
-                            Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
-                            ) => serde_json::json!(n),
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
-                                b,
-                            )) => serde_json::Value::Bool(*b),
-                            None => serde_json::Value::Null,
-                        };
-                        (key, value)
-                    })
-                    .collect();
+                // Use metadata directly from the record (it's already HashMap<String, SqlValue>)
 
                 let mut search_record =
                     OptimizedSearchRecord::new(id, similarity_result.normalized_score)
                         .with_similarity(similarity_result.normalized_score)
                         .add_vector(record.vector)
-                        .with_metadata(TypedMetadata::from_json_map(metadata_map));
+                        .with_metadata(record.metadata);
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);
@@ -1012,28 +994,7 @@ impl SwiftEngine {
                         distance_metric,
                     );
 
-                // Convert metadata from proto to internal format
-                let metadata: std::collections::HashMap<String, serde_json::Value> = record
-                    .metadata
-                    .iter()
-                    .map(|(key, value)| {
-                        let value = match &value {
-                            Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(s),
-                            ) => serde_json::Value::String(s.clone()),
-                            Some(
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n),
-                            ) => {
-                                serde_json::json!(n)
-                            }
-                            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(
-                                b,
-                            )) => serde_json::Value::Bool(*b),
-                            None => serde_json::Value::Null,
-                        };
-                        (key.clone(), value)
-                    })
-                    .collect();
+                // Use metadata directly from the record (it's already HashMap<String, SqlValue>)
 
                 let id = if record.id.is_empty() {
                     format!("unknown_{}", idx)
@@ -1045,7 +1006,7 @@ impl SwiftEngine {
                     OptimizedSearchRecord::new(id, similarity_result.normalized_score)
                         .with_similarity(similarity_result.normalized_score)
                         .add_vector(record.vector.clone())
-                        .with_metadata(TypedMetadata::from_json_map(metadata));
+                        .with_metadata(record.metadata.clone());
 
                 if let Some(version) = record.version {
                     search_record = search_record.with_version_info(version, record.timestamp);

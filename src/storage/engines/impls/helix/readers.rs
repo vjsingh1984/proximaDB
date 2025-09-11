@@ -150,17 +150,21 @@ pub async fn search_sstable(
                     .metadata
                     .iter()
                     .filter_map(|(key, value)| {
-                        if let Some(value) = &value {
+                        if let Some(value) = &value.value {
                             let value_str = match value {
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                     s,
                                 ) => s.clone(),
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                     n,
                                 ) => n.to_string(),
-                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                     b.to_string()
                                 }
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                    i.to_string()
+                                }
+                                _ => "".to_string()
                             };
                             Some((key.clone(), value_str))
                         } else {
@@ -186,8 +190,8 @@ pub async fn search_sstable(
                 OptimizedSearchRecord::new(record.id.clone(), 1.0 / (1.0 + distance))
                     .with_similarity(distance)
                     .add_vector(record.vector)
-                    .with_metadata(TypedMetadata::new()) // TODO: Convert record.metadata properly
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp as u32),
+                    .with_metadata(std::collections::HashMap::new()) // TODO: Convert record.metadata properly
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp),
             );
         }
     }
