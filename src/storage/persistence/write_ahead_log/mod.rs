@@ -2112,10 +2112,10 @@ impl WriteAheadLogManager {
                         Some(serde_json::Value::String(s.clone()))
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
-                        serde_json::Number::from_f64(n).map(serde_json::Value::Number)
+                        serde_json::Number::from_f64(*n).map(serde_json::Value::Number)
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
-                        Some(serde_json::Value::Bool(b))
+                        Some(serde_json::Value::Bool(*b))
                     }
                 })?;
 

@@ -26,14 +26,14 @@
 //! - **Statistics Integration**: Use real-time statistics for accurate cost estimates
 
 use super::ast::CompiledPattern;
-use super::{QueryContext, QueryResult, QueryStats};
-use crate::core::error::{ProximaDBError, VectorDBError};
-use crate::graph::{EdgeId, GraphMemoryPool, NodeId};
+use super::QueryResult;
+use crate::core::error::VectorDBError;
+use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Cost-based query planner
 pub struct QueryPlanner {
@@ -391,6 +391,10 @@ impl QueryPlanner {
         stats.property_selectivity.clear();
         stats.index_stats.clear();
 
+        // Store node_count and edge_count to avoid borrowing conflicts
+        let node_count = stats.node_count;
+        let edge_count = stats.edge_count;
+
         for entry in memory_pool.node_property_indexes.iter() {
             let prop_name = entry.key().clone();
             let prop_values = entry.value();
@@ -405,8 +409,8 @@ impl QueryPlanner {
                 format!("node_prop_{}", prop_name),
                 IndexStats {
                     cardinality: total_entries,
-                    selectivity: if stats.node_count > 0 {
-                        total_entries as f64 / stats.node_count as f64
+                    selectivity: if node_count > 0 {
+                        total_entries as f64 / node_count as f64
                     } else {
                         0.0
                     },
@@ -430,8 +434,8 @@ impl QueryPlanner {
                 format!("edge_prop_{}", prop_name),
                 IndexStats {
                     cardinality: total_entries,
-                    selectivity: if stats.edge_count > 0 {
-                        total_entries as f64 / stats.edge_count as f64
+                    selectivity: if edge_count > 0 {
+                        total_entries as f64 / edge_count as f64
                     } else {
                         0.0
                     },
@@ -450,7 +454,7 @@ impl QueryPlanner {
         query_type: &str,
         parameters: &HashMap<String, serde_json::Value>,
     ) -> QueryResult<QueryPlan> {
-        let start_time = Instant::now();
+        let _start_time = Instant::now();
 
         // Generate cache key
         let cache_key = self.generate_cache_key(query_type, parameters);

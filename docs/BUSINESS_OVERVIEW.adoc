@@ -22,6 +22,29 @@ pie title Business Value Distribution
     "Operational Efficiency" : 15
 ----
 
+**Business Value Breakdown:**
+
+[cols="2,1,3"]
+|===
+|Value Category |Percentage |Description
+
+|Infrastructure Cost Savings
+|40%
+|90% reduction in database and hosting costs
+
+|Development Time Reduction  
+|25%
+|18-month faster time-to-market vs building separately
+
+|Performance Gains
+|20%
+|2.5-3x improved response times, better user experience
+
+|Operational Efficiency
+|15%
+|75% reduction in maintenance overhead and complexity
+|===
+
 === Value Proposition
 
 **Traditional Approach**: Organizations spend months integrating multiple AI components
@@ -79,17 +102,17 @@ pie title Business Value Distribution
 [source,mermaid]
 ----
 sankey-beta
-    Current Costs,Vector Database,120
-    Current Costs,Graph Database,80
-    Current Costs,Integration,60
-    Current Costs,Operations,40
+    Current Solution,Vector Database,120
+    Current Solution,Graph Database,80
+    Current Solution,Integration Cost,60
+    Current Solution,Operations,40
     
     ProximaDB,Unified Platform,90
-    ProximaDB,Operations,30
+    ProximaDB,Reduced Operations,10
     
-    Savings,Infrastructure,210
-    Savings,Development,60
-    Savings,Operations,30
+    Total Savings,Infrastructure Reduction,210
+    Total Savings,Integration Elimination,60
+    Total Savings,Operations Efficiency,30
 ----
 
 **Year 1 ROI Calculation:**
@@ -152,18 +175,18 @@ flowchart TD
 quadrantChart
     title Competitive Landscape Analysis
     x-axis Low Performance --> High Performance
-    y-axis Simple --> Complex Architecture
+    y-axis Complex Architecture --> Simple Architecture
     
     quadrant-1 High Performance, Simple
     quadrant-2 High Performance, Complex
-    quadrant-3 Low Performance, Simple  
-    quadrant-4 Low Performance, Complex
+    quadrant-3 Low Performance, Complex  
+    quadrant-4 Low Performance, Simple
     
-    ProximaDB: [0.9, 0.2]
-    Pinecone: [0.6, 0.3]
-    Weaviate: [0.5, 0.7]
-    Milvus: [0.7, 0.8]
-    Chroma: [0.4, 0.4]
+    ProximaDB: [0.9, 0.8]
+    Pinecone: [0.6, 0.7]
+    Weaviate: [0.5, 0.3]
+    Milvus: [0.7, 0.2]
+    Chroma: [0.4, 0.6]
 ----
 
 **Unique Position**: High performance with operational simplicity

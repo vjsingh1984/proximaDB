@@ -246,7 +246,7 @@ impl PulsarGraphEngine {
                 // Execute on majority of replicas
                 let required_success = (replica_shards.len() / 2) + 1;
                 let mut successes = 0;
-                let mut last_result = None;
+                let mut last_result: Option<T> = None;
 
                 for shard in &replica_shards {
                     if let Ok(result) = operation(shard.as_ref()) {
@@ -266,7 +266,7 @@ impl PulsarGraphEngine {
             }
             ConsistencyLevel::All => {
                 // Execute on all replicas
-                let mut last_result = None;
+                let mut last_result: Option<T> = None;
 
                 for shard in &replica_shards {
                     let result = operation(shard.as_ref())?;

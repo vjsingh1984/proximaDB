@@ -139,7 +139,6 @@ impl IncrementalUpdater {
 }
 
 /// Cache for filter bitmap results with advanced features
-#[derive(Debug)]
 pub struct BitmapFilterCache {
     base: BaseCacheImpl<String, CachedFilterResult>,
     optimizer: Arc<FilterOptimizer>,
@@ -304,7 +303,10 @@ impl BitmapFilterCache {
                 return Some(CachedFilterResult {
                     bitmap: RoaringBitmap::new(),
                     filter_expr: format!("{:?}({:?})", op, filter_keys),
-                    cached_at: chrono::Utc::now().timestamp_millis() as u64,
+                    cached_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
                     dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
                 });
             }
@@ -313,7 +315,10 @@ impl BitmapFilterCache {
         result_bitmap.map(|bitmap| CachedFilterResult {
             bitmap,
             filter_expr: format!("{:?}({:?})", op, filter_keys),
-            cached_at: chrono::Utc::now().timestamp_millis() as u64,
+            cached_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
         })
     }

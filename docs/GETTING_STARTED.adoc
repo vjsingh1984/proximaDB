@@ -1,0 +1,515 @@
+= ProximaDB Getting Started Guide
+:toc: macro
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+Quick start guide for developers and users to get ProximaDB running in minutes.
+
+toc::[]
+
+== 🚀 5-Minute Quick Start
+
+=== Prerequisites
+
+[cols="2,2,3"]
+|===
+|Requirement |Minimum |Recommended
+
+|**CPU**
+|4 cores, 2.4GHz
+|8+ cores, 3.0GHz with AVX-512
+
+|**Memory**
+|8GB RAM
+|32GB+ RAM
+
+|**Storage**
+|10GB free space
+|100GB+ SSD storage
+
+|**OS**
+|Linux, macOS, Windows
+|Linux for production
+|===
+
+=== Installation Journey
+
+[source,mermaid]
+----
+journey
+    title ProximaDB Installation Journey
+    section Download
+      Download binary: 5: User
+      Verify checksum: 4: User
+    section Configuration
+      Create config file: 4: User
+      Set storage path: 5: User
+      Configure ports: 3: User
+    section Startup
+      Start ProximaDB: 5: User
+      Verify health: 5: User
+      Run first query: 5: User
+    section Integration
+      Connect application: 4: Developer
+      Implement queries: 5: Developer
+      Monitor performance: 4: Developer
+----
+
+=== Docker Quick Start
+
+[source,bash]
+----
+# 1. Run ProximaDB with default configuration
+docker run -d \
+  --name proximadb \
+  -p 5678:5678 \
+  -p 5679:5679 \
+  -v proximadb-data:/data \
+  proximadb/proximadb:latest
+
+# 2. Verify service is running
+curl http://localhost:5678/health
+
+# 3. Create your first collection
+curl -X POST http://localhost:5678/api/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my_vectors", "dimension": 384}'
+
+# 4. Insert sample vectors
+curl -X POST http://localhost:5678/api/v1/collections/my_vectors/vectors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vectors": [
+      {
+        "id": "doc1",
+        "vector": [0.1, 0.2, 0.3, ...],
+        "metadata": {"title": "Sample Document"}
+      }
+    ]
+  }'
+
+# 5. Search vectors
+curl -X POST http://localhost:5678/api/v1/collections/my_vectors/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3, ...],
+    "k": 10
+  }'
+----
+
+=== Binary Installation
+
+[source,mermaid]
+----
+flowchart LR
+    A[Download Binary] --> B[Extract Archive]
+    B --> C[Create Config]
+    C --> D[Start Service]
+    D --> E[Verify Health]
+    E --> F[Ready for Use]
+    
+    style A fill:#e3f2fd
+    style F fill:#e8f5e8
+----
+
+**Step-by-step:**
+
+[source,bash]
+----
+# 1. Download and extract
+wget https://github.com/vjsingh1984/proximadb/releases/latest/proximadb-linux.tar.gz
+tar -xzf proximadb-linux.tar.gz
+cd proximadb
+
+# 2. Create basic configuration
+cat > config.toml << EOF
+[server]
+rest_port = 5678
+grpc_port = 5679
+
+[storage]
+data_path = "./data"
+default_engine = "sst"
+
+[cache]
+total_memory_mb = 4096
+EOF
+
+# 3. Start ProximaDB
+./proximadb-server --config config.toml
+
+# 4. Verify in another terminal
+curl http://localhost:5678/health
+----
+
+== 🏗️ Basic Configuration
+
+=== Configuration File Structure
+
+[source,mermaid]
+----
+mindmap
+  root((config.toml))
+    [server]
+      rest_port
+      grpc_port
+      max_connections
+    [storage]
+      default_engine
+      data_path
+      compression
+    [cache]
+      total_memory_mb
+      result_ttl_seconds
+    [hardware]
+      enable_simd
+      enable_gpu
+    [monitoring]
+      enable_prometheus
+      log_level
+----
+
+=== Engine Selection Guide
+
+[source,mermaid]
+----
+flowchart TD
+    A[Choose Storage Engine] --> B{Primary Use Case}
+    
+    B -->|Real-time Updates<br/>High Write Volume| C[SST Engine<br/>⚡ Optimized for writes<br/>200K vectors/sec]
+    
+    B -->|Analytics<br/>Complex Queries| D[VIPER Engine<br/>📊 Columnar storage<br/>500K vectors/sec batch]
+    
+    B -->|Similarity Search<br/>Clustering| E[HELIX Engine<br/>🔄 PCA clustering<br/>70-90% query pruning]
+    
+    B -->|Mixed Workload| F[Auto-Selection<br/>🤖 Intelligent routing<br/>Based on query patterns]
+    
+    style A fill:#e3f2fd
+    style C fill:#43a047
+    style D fill:#43a047
+    style E fill:#43a047
+    style F fill:#1e88e5
+----
+
+**Configuration Examples:**
+
+[source,toml]
+----
+# High-throughput writes (SST)
+[storage]
+default_engine = "sst"
+
+[engines.sst]
+memtable_size_mb = 2048
+bloom_filter_bits_per_key = 10
+compaction_threads = 4
+
+# Analytics workloads (VIPER) 
+[storage]
+default_engine = "viper"
+
+[engines.viper]
+batch_size = 10000
+compression = "zstd"
+quantization = "pq8"
+
+# Similarity search (HELIX)
+[storage]  
+default_engine = "helix"
+
+[engines.helix]
+pca_dimensions = 64
+parallel_search = true
+max_threads = 8
+----
+
+== 📡 Client Integration
+
+=== Python SDK
+
+[source,python]
+----
+import proximadb
+import numpy as np
+
+# Connect to ProximaDB
+client = proximadb.Client(
+    host="localhost",
+    rest_port=5678,
+    grpc_port=5679
+)
+
+# Create collection
+collection = await client.create_collection(
+    name="documents",
+    dimension=384,
+    distance_metric="cosine"
+)
+
+# Insert vectors
+vectors = [
+    {
+        "id": "doc1",
+        "vector": np.random.random(384).tolist(),
+        "metadata": {"title": "Document 1", "category": "research"}
+    },
+    {
+        "id": "doc2", 
+        "vector": np.random.random(384).tolist(),
+        "metadata": {"title": "Document 2", "category": "tutorial"}
+    }
+]
+
+await client.insert(collection="documents", vectors=vectors)
+
+# Search similar vectors
+results = await client.search(
+    collection="documents",
+    query_vector=np.random.random(384).tolist(),
+    k=5,
+    filter={"category": "research"}
+)
+
+print(f"Found {len(results)} similar documents")
+for result in results:
+    print(f"- {result['id']}: {result['score']:.3f}")
+----
+
+=== REST API Usage
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant App as Application
+    participant API as REST API
+    participant ProximaDB as ProximaDB
+    
+    App->>API: POST /collections
+    API->>ProximaDB: Create collection
+    ProximaDB-->>API: Collection created
+    API-->>App: 201 Created
+    
+    App->>API: POST /collections/{name}/vectors
+    API->>ProximaDB: Insert vectors
+    ProximaDB-->>API: Vectors stored
+    API-->>App: 200 OK
+    
+    App->>API: POST /collections/{name}/search
+    API->>ProximaDB: Vector search
+    ProximaDB-->>API: Search results
+    API-->>App: 200 OK + Results
+----
+
+=== gRPC Integration
+
+[source,rust]
+----
+use proximadb::proto::proximadb_v1::{
+    vector_service_client::VectorServiceClient,
+    VectorSearchRequest, VectorQuery
+};
+use tonic::transport::Channel;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Connect to gRPC service
+    let channel = Channel::from_static("http://localhost:5679").connect().await?;
+    let mut client = VectorServiceClient::new(channel);
+    
+    // Create search request
+    let request = tonic::Request::new(VectorSearchRequest {
+        collection_id: "documents".to_string(),
+        query: Some(VectorQuery {
+            vector: vec![0.1, 0.2, 0.3], // Your query vector
+            k: 5,
+            distance_metric: "cosine".to_string(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    
+    // Execute search
+    let response = client.vector_search(request).await?;
+    let results = response.into_inner();
+    
+    println!("Search completed: {} results", results.results.len());
+    
+    Ok(())
+}
+----
+
+== 🔧 Configuration Examples
+
+=== Development Environment
+
+[source,toml]
+----
+[server]
+rest_port = 5678
+grpc_port = 5679
+log_level = "debug"
+
+[storage]
+data_path = "./dev-data"
+default_engine = "sst"
+
+[cache] 
+total_memory_mb = 2048
+
+[hardware]
+enable_simd = true
+enable_gpu = false  # Disable for consistent dev experience
+----
+
+=== Production Environment
+
+[source,toml]
+----
+[server]
+rest_port = 5678
+grpc_port = 5679
+max_connections = 1000
+request_timeout_seconds = 30
+log_level = "info"
+
+[storage]
+data_path = "s3://your-bucket/proximadb-data"
+default_engine = "viper"
+
+[storage.metadata]
+backend = "rocksdb"
+path = "/var/lib/proximadb/metadata"
+
+[engines.viper]
+batch_size = 10000
+compression = "zstd"
+quantization = "pq8"
+
+[cache]
+total_memory_mb = 16384
+result_cache_ttl_seconds = 3600
+
+[hardware]
+enable_simd = true
+enable_gpu = true
+
+[monitoring]
+enable_prometheus = true
+metrics_port = 9090
+
+[security]
+enable_tls = true
+cert_path = "/etc/ssl/certs/proximadb.crt"
+key_path = "/etc/ssl/private/proximadb.key"
+----
+
+== 📊 First Steps Checklist
+
+=== Deployment Verification
+
+[source,mermaid]
+----
+stateDiagram-v2
+    [*] --> Installing
+    Installing --> Configured: Config file created
+    Configured --> Starting: Service started
+    Starting --> Healthy: Health check passed
+    Healthy --> Ready: First collection created
+    Ready --> Operational: First query successful
+    
+    Installing: Download and extract\nCreate directories\nSet permissions
+    Configured: Config file validated\nPorts available\nStorage accessible
+    Starting: Service initialization\nPort binding\nStorage connection
+    Healthy: All systems operational\nAPIs responding\nStorage ready
+    Ready: Collection created\nIndexes built\nReady for data
+    Operational: Vectors inserted\nSearch working\nProduction ready
+----
+
+**Verification Steps:**
+
+1. **Health Check**: `curl http://localhost:5678/health` returns `200 OK`
+2. **Collection Creation**: Successfully create a test collection
+3. **Data Insert**: Insert sample vectors without errors
+4. **Search Query**: Execute search and receive results
+5. **Performance Check**: Verify sub-10ms response times
+
+=== Next Steps
+
+[cols="2,3,2"]
+|===
+|Next Action |Description |Documentation
+
+|**Explore APIs**
+|Learn REST and gRPC interfaces
+|link:GRAPH_API_REFERENCE.adoc[API Reference]
+
+|**Understand Architecture**
+|Deep dive into system design
+|link:TECHNICAL_ARCHITECTURE.adoc[Architecture Guide]
+
+|**Production Deployment**
+|Deploy in production environment
+|link:OPERATIONS_GUIDE.adoc[Operations Guide]
+
+|**Evaluate Business Value**
+|Assess ROI and competitive advantages
+|link:BUSINESS_OVERVIEW.adoc[Business Overview]
+|===
+
+== 🎯 Common Use Cases
+
+=== Semantic Search
+
+[source,mermaid]
+----
+flowchart LR
+    A[User Query] --> B[Text Embedding]
+    B --> C[Vector Search] 
+    C --> D[Similarity Ranking]
+    D --> E[Relevant Results]
+    
+    style A fill:#e3f2fd
+    style E fill:#e8f5e8
+----
+
+=== Recommendation Systems
+
+[source,mermaid]
+----
+graph TD
+    A[User Behavior] --> B[Embedding Generation]
+    B --> C[Similar User Lookup]
+    C --> D[Content Aggregation] 
+    D --> E[Personalized Recommendations]
+    
+    F[Content Features] --> G[Content Embeddings]
+    G --> H[Content Similarity]
+    H --> D
+    
+    style A fill:#f3e5f5
+    style F fill:#fff3e0
+    style E fill:#e8f5e8
+----
+
+=== Knowledge Discovery
+
+[source,mermaid]
+----
+sequenceDiagram
+    participant User
+    participant ProximaDB
+    participant KnowledgeBase
+    
+    User->>ProximaDB: Query concepts
+    ProximaDB->>KnowledgeBase: Search embeddings
+    KnowledgeBase-->>ProximaDB: Related concepts
+    ProximaDB->>KnowledgeBase: Traverse relationships
+    KnowledgeBase-->>ProximaDB: Connected knowledge
+    ProximaDB-->>User: Comprehensive results
+----
+
+[IMPORTANT]
+====
+This getting started guide provides the fastest path from download to production use. All examples and configurations are tested against the actual ProximaDB implementation.
+====

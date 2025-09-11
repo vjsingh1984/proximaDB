@@ -687,7 +687,6 @@ impl CascadeInvalidator {
 }
 
 /// Orchestrates multiple specialized caches for cross-cache operations
-#[derive(Debug)]
 pub struct CrossCacheOrchestrator {
     /// Query result cache
     query_cache: Option<Arc<QueryCache>>,

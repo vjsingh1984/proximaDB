@@ -14,9 +14,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .out_dir("src/proto")
         .file_descriptor_set_path("src/proto/proximadb_v1_descriptor.bin")
         .protoc_arg("--experimental_allow_proto3_optional") // Allow proto3 optional fields
-        // Add serde derives to messages only (not enums - they get prost::Enumeration)
-        .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Skip serde for fields containing prost_types::Value/Struct/Timestamp since they don't implement serde
+        // Skip serde for types containing prost_types since they don't implement serde
+        // Apply serde selectively to safe types only
+        .type_attribute("TypedField", "#[serde(skip)]")
+        .type_attribute("Entity", "#[serde(skip)]") 
+        .type_attribute("EmbeddingVersion", "#[serde(skip)]")
+        .type_attribute("Provenance", "#[serde(skip)]")
+        .type_attribute("TemporalInfo", "#[serde(skip)]")
         .field_attribute("SearchParams.filters", "#[serde(skip)]")
         .field_attribute("SearchParams.custom_hints", "#[serde(skip)]")
         .field_attribute("StructuredContent.data", "#[serde(skip)]")

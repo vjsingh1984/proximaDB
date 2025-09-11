@@ -26,7 +26,7 @@ pub struct EntityApiState {
 }
 
 /// Request body for entity upsert
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug)]
 pub struct UpsertEntityRequest {
     pub entity: Entity,
     pub create_collection_if_missing: Option<bool>,
@@ -58,7 +58,7 @@ pub struct SearchEntitiesRequest {
 }
 
 /// Response for entity search
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct SearchEntitiesResponse {
     pub results: Vec<EntityResult>,
     pub total: u32,
