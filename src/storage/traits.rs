@@ -1658,8 +1658,7 @@ impl StorageQueryContext {
                 .unwrap_or(PerformanceTier::Warm),
             compression_enabled: config
                 .and_then(|c| c.storage_config.as_ref())
-                .and_then(|s| s.compression.as_ref())
-                .map(|_| true)
+                .map(|s| s.compression != 0)  // Assume 0 means no compression
                 .unwrap_or(false),
             quantization_enabled: config
                 .and_then(|c| c.quantization.as_ref())

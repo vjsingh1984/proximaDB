@@ -141,14 +141,14 @@ impl MetadataSorter {
 
     /// Extract metadata value for sorting (handles different data types)
     fn extract_metadata_value(&self, record: &VectorRecord, key: &str) -> SortableValue {
-        // Find the metadata item
-        for item in &record.metadata {
-            if item.key == key {
-                match &item.value {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+        // Find the metadata item in the HashMap
+        if let Some(sql_value) = record.metadata.get(key) {
+            if let Some(value) = &sql_value.value {
+                match value {
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                         return SortableValue::from_string(s);
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                         // Check if it's an integer
                         if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
                             return SortableValue::Number(*n as i64);
@@ -157,11 +157,11 @@ impl MetadataSorter {
                             return SortableValue::Float(n.to_string());
                         }
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                         // Convert bool to string for sorting
                         return SortableValue::String(b.to_string());
                     }
-                    None => {
+                    _ => {
                         return SortableValue::Null;
                     }
                 }

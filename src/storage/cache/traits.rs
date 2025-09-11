@@ -64,9 +64,9 @@ pub trait BaseCache: Send + Sync {
         let tier = self.select_tier(&key, &value).await;
 
         match tier {
-            CacheTier::L1 => self.put_l1(key.clone(), key.clone()).await,
-            CacheTier::L2 => self.put_l2(key.clone(), key.clone()).await,
-            CacheTier::L3 => self.put_l3(key.clone(), key.clone()).await,
+            CacheTier::L1 => self.put_l1(key.clone(), value.clone()).await,
+            CacheTier::L2 => self.put_l2(key.clone(), value.clone()).await,
+            CacheTier::L3 => self.put_l3(key.clone(), value.clone()).await,
         }
 
         self.post_put_hook(&key, &value).await;

@@ -116,7 +116,7 @@ where
     }
 
     async fn put_l1(&self, key: Self::Key, value: Self::Value) {
-        let entry = CacheEntry::new(key.clone());
+        let entry = CacheEntry::new(value);
 
         // Try to insert
         match self.l1_backend.put(key.clone(), entry.clone()).await {
@@ -149,7 +149,7 @@ where
                         self.metrics.record_eviction();
 
                         // Now try to insert the new entry
-                        if self.l1_backend.put(key.clone(), entry).await.is_ok() {
+                        if self.l1_backend.put(key.clone(), entry.clone()).await.is_ok() {
                             strategy.update_on_insert(&key, 0);
                             self.metrics.record_put();
                         } else {
@@ -213,7 +213,7 @@ where
     async fn promote_to_l1(&self, key: &Self::Key, value: &Self::Value) {
         // Check if value is small enough for L1
         if value.size_bytes() <= self.max_entry_size_for_l1 {
-            self.put_l1(key.clone(), key.clone()).await;
+            self.put_l1(key.clone(), value.clone()).await;
         }
     }
 
@@ -223,7 +223,7 @@ where
 
         // Also ensure it's in L2
         if self.l2_backend.is_some() {
-            self.put_l2(key.clone(), key.clone()).await;
+            self.put_l2(key.clone(), value.clone()).await;
         }
     }
 

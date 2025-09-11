@@ -83,6 +83,7 @@ use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
 use crate::core::{String, VectorId, VectorRecord};
+use std::collections::HashMap;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
 
@@ -1326,15 +1327,15 @@ impl WriteAheadLogManager {
         let record = crate::proto::proximadb_v1::VectorRecord {
             id: vector_id.clone(),
             vector: Vec::new(),
-            metadata: Vec::new(),
+            metadata: HashMap::new(),
             version: None,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() as u32,
+                .as_secs() as i64,
             updated_at: None,
             expires_at: Some(0), // Setting to 0 or past time marks for deletion
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
             source: None, // No source content for deletion record
         };
 
@@ -1711,11 +1712,11 @@ impl WriteAheadLogManager {
                         version: r.version,
                         timestamp: r.timestamp.unwrap_or(0),
                         expires_at: None,
-                        quantized_vector: None,
+                        quantized_vector: Vec::new(),
                         source: None,
                         updated_at: None,
                     };
-                    (r.id, r.score, record)
+                    (r.id, r.score as f32, record)
                 })
                 .collect())
         }
@@ -1976,22 +1977,26 @@ impl WriteAheadLogManager {
                 value,
             } => {
                 // Find the metadata field in the record
-                for metadata in &record.metadata {
-                    if metadata.key == *field {
+                for (key, sql_value) in &record.metadata {
+                    if key == field {
                         // Get the metadata value as string for comparison
-                        let metadata_value = metadata
+                        let metadata_value = sql_value
                             .value
                             .as_ref()
                             .map(|v| match v {
-                                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                     s,
                                 ) => s.clone(),
-                                crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                     n,
                                 ) => n.to_string(),
-                                crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                     b.to_string()
                                 }
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                    i.to_string()
+                                }
+                                _ => "".to_string()
                             })
                             .clone();
 
@@ -2106,10 +2111,10 @@ impl WriteAheadLogManager {
                         Some(serde_json::Value::String(s.clone()))
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
-                        serde_json::Number::from_f64(*n).map(serde_json::Value::Number)
+                        serde_json::Number::from_f64(n).map(serde_json::Value::Number)
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
-                        Some(serde_json::Value::Bool(*b))
+                        Some(serde_json::Value::Bool(b))
                     }
                 })?;
 

@@ -111,7 +111,7 @@ impl IndexNodeCache {
         let node = IndexNode {
             id: format!("sst_index_{}", file_path),
             level: 0, // SSTable indices are flat
-            children: index.entries.iter().map(|e| e.item.clone()).collect(),
+            children: index.entries.iter().map(|e| format!("{:?}", e)).collect(),
             data: index_data,
         };
 

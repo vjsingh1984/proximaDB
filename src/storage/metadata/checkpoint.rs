@@ -345,9 +345,10 @@ impl FilestoreCheckpoint {
 
         // Create a wrapper message for all collections
         let snapshot = crate::proto::proximadb_v1::CollectionSnapshot {
-            collections,
-            version: 1,
-            timestamp: chrono::Utc::now().timestamp_micros(),
+            collection: collections.get(0).cloned(),
+            vectors: Vec::new(),
+            snapshot_timestamp: chrono::Utc::now().timestamp_micros(),
+            snapshot_version: "1".to_string(),
         };
 
         // Serialize to protobuf binary

@@ -166,7 +166,7 @@ impl RelationsStore for InMemoryRelationsStore {
             entity_id: relation.target_entity_id.clone(),
             weight: relation.weight,
             properties: relation.properties.clone(),
-            created_at: relation.created_at,
+            created_at: relation.created_at.as_ref().map(|t| t.seconds as u32).unwrap_or(0),
         };
 
         // Create edge for reverse traversal
@@ -174,7 +174,7 @@ impl RelationsStore for InMemoryRelationsStore {
             entity_id: relation.source_entity_id.clone(),
             weight: relation.weight,
             properties: relation.properties.clone(),
-            created_at: relation.created_at,
+            created_at: relation.created_at.as_ref().map(|t| t.seconds as u32).unwrap_or(0),
         };
 
         // Update forward edges
@@ -219,7 +219,10 @@ impl RelationsStore for InMemoryRelationsStore {
                         target_entity_id: edge.entity_id.clone(),
                         relation_type: relation_type.clone(),
                         weight: edge.weight,
-                        created_at: edge.created_at,
+                        created_at: Some(::prost_types::Timestamp { 
+                            seconds: edge.created_at as i64, 
+                            nanos: 0 
+                        }),
                         properties: edge.properties.clone(),
                     });
                 }
@@ -246,7 +249,10 @@ impl RelationsStore for InMemoryRelationsStore {
                         target_entity_id: edge.entity_id.clone(),
                         relation_type: relation_type.to_string(),
                         weight: edge.weight,
-                        created_at: edge.created_at,
+                        created_at: Some(::prost_types::Timestamp { 
+                            seconds: edge.created_at as i64, 
+                            nanos: 0 
+                        }),
                         properties: edge.properties.clone(),
                     });
                 }
@@ -351,7 +357,10 @@ impl RelationsStore for InMemoryRelationsStore {
                         target_entity_id: edge.entity_id.clone(),
                         relation_type: rel_type.to_string(),
                         weight: edge.weight,
-                        created_at: edge.created_at,
+                        created_at: Some(::prost_types::Timestamp { 
+                            seconds: edge.created_at as i64, 
+                            nanos: 0 
+                        }),
                         properties: edge.properties.clone(),
                     });
 

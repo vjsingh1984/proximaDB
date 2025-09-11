@@ -486,14 +486,14 @@ impl MetadataStoreInterface for MetadataStore {
                     storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper.into(), // Default
                     storage_config: None,
                     index_configs: Vec::new(),
-                    primary_index: None,
-                    auto_index_selection: Some(true),
+                    primary_index: String::new(),
+                    auto_index_selection: true,
                     filterable_columns: Vec::new(),
                     quantization: None,
                     description: versioned.description.clone(),
                     tags: versioned.tags.clone(),
                     owner: versioned.owner.clone(),
-                    embedding_models: None,
+                    embedding_models: Vec::new(),
                 };
 
                 let stats = CollectionStats {
@@ -580,14 +580,14 @@ impl MetadataStoreInterface for MetadataStore {
                         storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper.into(),
                         storage_config: None,
                         index_configs: Vec::new(),
-                        primary_index: None,
-                        auto_index_selection: Some(true),
+                        primary_index: String::new(),
+                        auto_index_selection: true,
                         filterable_columns: Vec::new(),
                         quantization: None,
                         description: versioned.description.clone(),
                         tags: versioned.tags.clone(),
                         owner: versioned.owner.clone(),
-                        embedding_models: None,
+                        embedding_models: Vec::new(),
                     };
 
                     let stats = CollectionStats {

@@ -55,24 +55,27 @@ impl WALVectorBatch {
 
         // Add all metadata keys to bloom filter
         for record in self.vector_records.iter() {
-            for item in &record.metadata {
-                bloom_filter.insert(item.key.as_bytes());
+            for (key, value) in &record.metadata {
+                bloom_filter.insert(key.as_bytes());
 
                 // Also add key=value pairs for exact matching
-                let value_str = match &item.value {
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                let value_str = match &value.value {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         s.clone()
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         n.to_string()
                     }
-                    Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         b.to_string()
+                    }
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        i.to_string()
                     }
                     _ => continue,
                 };
 
-                let key_value = format!("{}={}", item.key, value_str);
+                let key_value = format!("{}={}", key, value_str);
                 bloom_filter.insert(key_value.as_bytes());
             }
         }
@@ -552,7 +555,7 @@ impl WALBehaviorWrapper {
         for (_rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
             let search_result = crate::proto::proximadb_v1::SearchVectorRecord {
                 id: vector_record.id.clone(),
-                score: similarity.raw_value,
+                score: similarity.raw_value as f64,
                 similarity: Some(similarity.normalized_score),
                 vector: if include_vectors {
                     vector_record.vector.clone()
@@ -562,12 +565,16 @@ impl WALBehaviorWrapper {
                 metadata: if include_metadata {
                     vector_record.metadata.clone()
                 } else {
-                    Vec::new()
+                    std::collections::HashMap::new()
                 },
                 version: vector_record.version,
                 timestamp: Some(vector_record.timestamp),
                 source: None,
                 expanded_context: Vec::new(),
+                quantization_info: None,
+                engine_stats: std::collections::HashMap::new(),
+                index_path: None,
+                semantic_similarity: None,
             };
             search_results.push(search_result);
         }
