@@ -25,7 +25,7 @@
 
 use anyhow::Result;
 
-use crate::core::search::results::InternalSearchResult;
+use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, DistanceMetric, IndexingAlgorithm, MetadataItem,
     SearchParams, SearchQuery, SearchResult as ProtoSearchResult, SearchVectorRecord, SqlValue,
@@ -203,12 +203,12 @@ pub fn convert_serde_json_to_sql_value_map(
 // Native to Proto Conversions
 // ============================================================================
 
-impl From<InternalSearchResult> for SearchVectorRecord {
-    fn from(native: InternalSearchResult) -> Self {
+impl From<OptimizedSearchRecord> for SearchVectorRecord {
+    fn from(native: OptimizedSearchRecord) -> Self {
         SearchVectorRecord {
             id: native.id,
             score: native.score as f64,
-            vector: native.vector.clone().unwrap_or_default(),
+            vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
             metadata: convert_serde_json_to_sql_value_map(native.metadata),
             version: native.version.map(|v| v as i64),
             similarity: native.similarity,
@@ -265,12 +265,12 @@ impl From<InternalSearchResult> for SearchVectorRecord {
     }
 }
 
-impl From<&InternalSearchResult> for SearchVectorRecord {
-    fn from(native: &InternalSearchResult) -> Self {
+impl From<&OptimizedSearchRecord> for SearchVectorRecord {
+    fn from(native: &OptimizedSearchRecord) -> Self {
         SearchVectorRecord {
             id: native.id.clone(),
             score: native.score as f64,
-            vector: native.vector.clone().unwrap_or_default(),
+            vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
             metadata: convert_serde_json_to_sql_value_map(native.metadata.clone()),
             version: native.version.map(|v| v as i64),
             similarity: native.similarity,
