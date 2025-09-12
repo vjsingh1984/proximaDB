@@ -765,13 +765,78 @@ impl SharedServices {
             recovered_collections.len()
         );
 
-        // TODO: Implement actual vector recovery from write buffer
-        // This would involve:
-        // 1. For each collection, check if write buffer has unflushed data
-        // 2. Load vectors from write buffer into VectorOperationsService memtable
-        // 3. Mark recovery complete for each collection
+        // Implement comprehensive vector recovery from WAL to VectorOperationsService
+        let mut total_vectors_recovered = 0u64;
+        
+        for collection_id in &recovered_collections {
+            // 1. Check if write buffer has unflushed data for this collection
+            let unflushed_batches = match write_buffer_manager
+                .read_all_batches(collection_id, None)
+                .await
+            {
+                Ok(batches) => batches,
+                Err(e) => {
+                    warn!(
+                        "Failed to read unflushed batches for collection {}: {}",
+                        collection_id, e
+                    );
+                    continue;
+                }
+            };
 
-        info!("✅ SharedServices: Vector recovery completed");
+            if unflushed_batches.is_empty() {
+                debug!("No unflushed vectors found for collection: {}", collection_id);
+                continue;
+            }
+
+            // 2. Load vectors from write buffer into VectorOperationsService memtable
+            let mut collection_vectors_recovered = 0u64;
+            
+            for batch in unflushed_batches {
+                let batch_size = batch.vector_records.len();
+                
+                // Insert each vector into the VectorOperationsService memtable
+                for vector_record in batch.vector_records.iter() {
+                    match vector_operations_service
+                        .insert_vector(collection_id, vector_record.clone())
+                        .await
+                    {
+                        Ok(_) => {
+                            collection_vectors_recovered += 1;
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to recover vector {} for collection {}: {}",
+                                vector_record.id.as_ref().unwrap_or(&"<no_id>".to_string()),
+                                collection_id,
+                                e
+                            );
+                        }
+                    }
+                }
+                
+                debug!(
+                    "Recovered batch {} with {} vectors for collection {}",
+                    batch.batch_id.to_base62(),
+                    batch_size,
+                    collection_id
+                );
+            }
+
+            total_vectors_recovered += collection_vectors_recovered;
+            
+            // 3. Mark recovery complete for this collection
+            info!(
+                "✅ Collection '{}': Recovered {} vectors from WAL to memtable",
+                collection_id, collection_vectors_recovered
+            );
+        }
+
+        info!(
+            "✅ SharedServices: Vector recovery completed - {} vectors across {} collections",
+            total_vectors_recovered, recovered_collections.len()
+        );
+        
         Ok(())
     }
 

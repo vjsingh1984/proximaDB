@@ -3883,6 +3883,7 @@ dependencies = [
  "futures",
  "google-cloud-storage",
  "hyper 0.14.32",
+ "jsonwebtoken",
  "lazy_static",
  "libc",
  "lz4_flex",
@@ -3928,6 +3929,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "urlencoding",
+ "uuid",
  "xz2",
  "zstd",
 ]

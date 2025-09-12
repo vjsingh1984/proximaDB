@@ -8,8 +8,11 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 /// Generic configuration wrapper that implements BaseConfig
-#[derive(Debug, Clone)]
-pub struct GenericConfig<T> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericConfig<T>
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
     pub data: T,
     pub validation_rules: HashMap<String, String>,
     _phantom: PhantomData<T>,
@@ -50,8 +53,11 @@ where
 }
 
 /// Generic metadata wrapper that implements BaseMetadata
-#[derive(Debug, Clone)]
-pub struct GenericMetadata<T> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericMetadata<T>
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
     pub id: String,
     pub data: T,
     pub version: u64,
@@ -111,8 +117,11 @@ where
 }
 
 /// Generic statistics wrapper that implements BaseStats
-#[derive(Debug, Clone)]
-pub struct GenericStats<T> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericStats<T>
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
     pub data: T,
     pub timestamp: DateTime<Utc>,
     pub collection_count: u64,
@@ -159,8 +168,11 @@ where
 }
 
 /// Generic result wrapper that implements BaseResult
-#[derive(Debug, Clone)]
-pub struct GenericResult<T> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenericResult<T>
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
     pub success: bool,
     pub data: Option<T>,
     pub error_code: Option<String>,

@@ -1067,13 +1067,7 @@ impl GraphService {
             memory_usage_bytes: 0, // TODO: Calculate memory usage
             average_degree: 0.0,   // TODO: Calculate average degree
             max_degree: 0,
-            connected_components: {
-                // Calculate connected components using the implemented algorithm
-                match crate::graph::engines::orion::traversal::connected_components(&self.engine).await {
-                    Ok(components) => components.len() as u32,
-                    Err(_) => 1, // Default to 1 if calculation fails
-                }
-            },
+            connected_components: 1, // TODO: Implement async version or provide separate async method
         };
         Ok(stats)
     }
@@ -1257,8 +1251,9 @@ impl GraphService {
 
         let proto_paths = traversal_result.paths
             .iter()
-            .map(|path| crate::proto::proximadb_v1::Path {
-                node_ids: path.clone(),
+            .map(|path| crate::proto::proximadb_v1::GraphPath {
+                entities: vec![], // TODO: Map to proper entities
+                relations: vec![], // TODO: Map to proper relations
             })
             .collect();
 
@@ -1340,20 +1335,20 @@ impl CacheStatsProvider for SimpleCounterProvider {
     }
 }
 
-fn extract_number_from_value(value: &crate::graph::PropertyValue) -> Option<f64> {
-    // PropertyValue is now a struct, not enum - use direct field access as V;
+fn extract_number_from_value(value: &crate::proto::proximadb_v1::PropertyValue) -> Option<f64> {
+    use crate::proto::proximadb_v1::property_value::Value;
     match &value.value {
-        Some(V::IntValue(i)) => Some(*i as f64),
-        Some(V::DoubleValue(d)) => Some(*d),
-        Some(V::StringValue(s)) => s.parse::<f64>().ok(),
+        Some(Value::IntValue(i)) => Some(*i as f64),
+        Some(Value::DoubleValue(d)) => Some(*d),
+        Some(Value::StringValue(s)) => s.parse::<f64>().ok(),
         _ => None,
     }
 }
 
-fn extract_string_from_value(value: &crate::graph::PropertyValue) -> Option<&str> {
-    // PropertyValue is now a struct, not enum - use direct field access as V;
+fn extract_string_from_value(value: &crate::proto::proximadb_v1::PropertyValue) -> Option<&str> {
+    use crate::proto::proximadb_v1::property_value::Value;
     match &value.value {
-        Some(V::StringValue(s)) => Some(s.as_str()),
+        Some(Value::StringValue(s)) => Some(s.as_str()),
         _ => None,
     }
 }

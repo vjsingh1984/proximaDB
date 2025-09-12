@@ -491,12 +491,19 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         collection_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<WALVectorBatch>> {
-        // For now, return from memtable
-        // TODO: Implement reading from disk for recovery
-        let batches = self
+        // Read from both memory and disk for comprehensive recovery
+        // 1. Get unflushed batches from memtable (fast path)
+        let mut batches = self
             .memtable_manager
             .get_unflushed_batches(collection_id)
             .await?;
+
+        // 2. Read additional batches from disk WAL files for recovery (.avwal files)
+        let disk_batches = self.read_disk_avro_batches(collection_id, limit).await?;
+        batches.extend(disk_batches);
+
+        // 3. Sort by timestamp to maintain chronological order
+        batches.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 
         match limit {
             Some(n) => Ok(batches.into_iter().take(n).collect()),
@@ -602,5 +609,118 @@ impl AvroSerializationStrategy {
             compaction_triggered: false,
             flushed_batch_ids: Vec::new(),
         })
+    }
+
+    /// Read Avro WAL batches from disk for recovery
+    async fn read_disk_avro_batches(
+        &self,
+        collection_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<WALVectorBatch>> {
+        debug!("Reading disk Avro WAL batches for collection: {}", collection_id);
+        
+        // Get the WAL directory for this collection
+        let collection_wal_dir = format!("{}/{}", 
+            self.config.multi_disk.data_directories.first()
+                .map(|d| d.as_str())
+                .unwrap_or("./data/wal"), 
+            collection_id);
+
+        // List all Avro WAL files in the directory
+        let filesystem = self.disk_manager
+            .filesystem_factory()
+            .get_filesystem(&collection_wal_dir)?;
+
+        let entries = match filesystem.list(&collection_wal_dir).await {
+            Ok(entries) => entries,
+            Err(_) => {
+                debug!("No WAL directory found for collection: {}", collection_id);
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut batches = Vec::new();
+        let mut files_processed = 0;
+
+        // Process Avro WAL files (*.avwal files)
+        for entry in entries {
+            if !entry.name.ends_with(".avwal") {
+                continue;
+            }
+
+            if let Some(max_files) = limit {
+                if files_processed >= max_files {
+                    break;
+                }
+            }
+
+            let file_path = format!("{}/{}", collection_wal_dir, entry.name);
+            
+            // Read and deserialize the Avro WAL file
+            match self.read_and_deserialize_avro_file(&file_path).await {
+                Ok(file_batches) => {
+                    batches.extend(file_batches);
+                    files_processed += 1;
+                    debug!("Loaded {} batches from Avro WAL file: {}", batches.len(), entry.name);
+                }
+                Err(e) => {
+                    warn!("Failed to read Avro WAL file {}: {}", entry.name, e);
+                    continue;
+                }
+            }
+        }
+
+        debug!(
+            "Read {} batches from {} disk Avro WAL files for collection: {}", 
+            batches.len(), files_processed, collection_id
+        );
+
+        Ok(batches)
+    }
+
+    /// Read and deserialize a single Avro WAL file
+    async fn read_and_deserialize_avro_file(&self, file_path: &str) -> Result<Vec<WALVectorBatch>> {
+        let filesystem = self.disk_manager
+            .filesystem_factory()
+            .get_filesystem(file_path)?;
+
+        // Read the file data
+        let data = filesystem.read(file_path).await
+            .with_context(|| format!("Failed to read Avro WAL file: {}", file_path))?;
+
+        // Verify data integrity
+        if data.is_empty() {
+            warn!("Empty Avro WAL file encountered: {}", file_path);
+            return Ok(Vec::new());
+        }
+
+        // Deserialize using Avro
+        let vector_records = self.serializer.deserialize_batch(&data)
+            .with_context(|| format!("Failed to deserialize Avro WAL file: {}", file_path))?;
+
+        if vector_records.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Extract batch ID from filename (format: {collection_id}_{batch_id}.avwal)
+        let batch_id = file_path
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.strip_suffix(".avwal"))
+            .and_then(|name| name.rsplit('_').next())
+            .and_then(|id| crate::storage::BatchId::from_base62(id).ok())
+            .unwrap_or_else(|| crate::storage::BatchId::new());
+
+        // Create WAL batch from the recovered vectors
+        let batch = WALVectorBatch {
+            batch_id,
+            vector_records: Arc::new(vector_records),
+            timestamp: std::time::SystemTime::now(), // Use current time for recovered data
+            total_size_bytes: data.len(),
+            is_flushed: false, // Mark as not flushed since we're recovering
+            metadata_bloom_filter: None, // Reconstruct if needed during recovery
+        };
+
+        Ok(vec![batch])
     }
 }

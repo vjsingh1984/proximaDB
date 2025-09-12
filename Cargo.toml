@@ -157,7 +157,8 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Utilities
-# # uuid = { version = "1.0", features = ["v4", "serde"] }  # Replaced with internal implementation  # Replaced with internal implementation
+uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
+jsonwebtoken = "9.2"  # JWT token creation and validation
 # # blake3 = "1.5"  # Replaced with internal hash implementation - replaced with internal implementation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 # base64 = "0.21"  # Using internal implementation in utils::encoding
