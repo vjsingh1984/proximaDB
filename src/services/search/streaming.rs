@@ -306,7 +306,7 @@ impl StreamingSearchService {
         let mut deduped_wal_results = Vec::new();
 
         if !wal_results.is_empty() {
-            // Process each InternalSearchResult
+            // Process each OptimizedSearchRecord
             for search_result in wal_results {
                 let should_include = if let Some(ref mut seen) = seen_ids {
                     if search_result.id.is_empty() {

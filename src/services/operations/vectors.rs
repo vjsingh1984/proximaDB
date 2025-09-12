@@ -1950,21 +1950,21 @@ impl VectorOperationsService {
             .collect())
     }
 
-    /// v1: Convert InternalSearchResult to proximadb_v1::SearchResult
+    /// v1: Convert OptimizedSearchRecord to proximadb_v1::SearchResult
     fn convert_to_proto_search_result_v1(
         &self,
-        internal_results: Vec<crate::core::search::InternalSearchResult>,
+        optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord>,
         collection_id: &str,
         include_vectors: bool,
         include_metadata: bool,
     ) -> crate::proto::proximadb_v1::SearchResult {
-        let records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = internal_results
+        let records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = optimized_results
             .iter()
             .map(|result| result.to_search_vector_record_v1(include_vectors, include_metadata))
             .collect();
         crate::proto::proximadb_v1::SearchResult {
             results: records,
-            total_found: internal_results.len() as i64,
+            total_found: optimized_results.len() as i64,
             collection_id: Some(collection_id.to_string()),
         }
     }

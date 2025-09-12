@@ -3074,14 +3074,8 @@ impl UnifiedStorageEngine for SstStorage {
                         .await
                         .map_err(|e| anyhow::anyhow!("Fallback search failed: {}", e))?;
 
-                    // Return the fallback results directly (assuming they already return OptimizedSearchRecord)
-                    // If the fallback method still returns InternalSearchResult, we need to update it too
-                    return Ok(fallback_results
-                        .into_iter()
-                        .map(|r| {
-                            crate::core::search::results::OptimizedSearchRecord::from_internal(r)
-                        })
-                        .collect());
+                    // Return the fallback results directly - they are already OptimizedSearchRecord
+                    return Ok(fallback_results);
                 }
             };
 
@@ -3296,9 +3290,8 @@ impl UnifiedStorageEngine for SstStorage {
         // );
         // let result_set = search_engine.search_unified(...).await?;
 
-        // Convert InternalSearchResult to OptimizedSearchRecord
-        // Note: This still needs to convert from InternalSearchResult because the search engine returns that type
-        // Results are already OptimizedSearchRecord
+        // Use OptimizedSearchRecord directly - no conversion needed
+        // Search engine now returns OptimizedSearchRecord for better performance
         let mut optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
             result_set.results.iter().cloned().collect();
 
