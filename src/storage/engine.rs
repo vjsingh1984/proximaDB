@@ -825,7 +825,17 @@ impl StorageEngine {
                 .drop_collection(collection_id)
                 .await?;
 
-            // TODO: Clean up SST files
+            // Clean up SST files for the dropped collection
+            if let Some(ref sst_storage) = self.sst_storage {
+                match sst_storage.cleanup_collection_files(collection_id).await {
+                    Ok(files_removed) => {
+                        info!("Cleaned up {} SST files for collection {}", files_removed, collection_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to cleanup SST files for collection {}: {}", collection_id, e);
+                    }
+                }
+            }
 
             Ok(true)
         } else {
@@ -951,8 +961,22 @@ impl StorageEngine {
     pub async fn cleanup_for_tests(&self) -> crate::storage::Result<()> {
         tracing::debug!("🧹 Starting storage cleanup for test scenarios");
 
-        // TODO: Get list of all collections from SharedServices
-        let collections: Vec<CollectionMetadata> = Vec::new(); // Placeholder
+        // Get list of all collections from SharedServices
+        let collections: Vec<CollectionMetadata> = match &self.shared_services {
+            Some(services) => {
+                match services.collection_service.list_collections().await {
+                    Ok(collection_list) => collection_list,
+                    Err(e) => {
+                        warn!("Failed to get collections from SharedServices: {}", e);
+                        Vec::new()
+                    }
+                }
+            }
+            None => {
+                warn!("SharedServices not available for collection listing");
+                Vec::new()
+            }
+        };
 
         // Collect collection IDs
         let collection_ids: Vec<String> = collections
@@ -991,14 +1015,16 @@ impl StorageEngine {
 
         // Clear metadata store by deleting all collections
         for _collection in collections {
-            // TODO: Use SharedServices for metadata operations
-            // if let Err(e) = self.metadata_store.delete_collection(&collection.id.as_deref()).await {
-            //     tracing::warn!(
-            //         "Failed to delete collection metadata {}: {}",
-            //         collection.id.as_deref(),
-            //         e
-            //     );
-            // }
+            // Use SharedServices for metadata operations
+            if let Some(ref services) = self.shared_services {
+                if let Err(e) = services.collection_service.delete_collection(&collection.id).await {
+                    tracing::warn!(
+                        "Failed to delete collection metadata {}: {}",
+                        collection.id,
+                        e
+                    );
+                }
+            }
         }
 
         // Clear in-memory structures using DashMap
@@ -1027,12 +1053,18 @@ impl StorageEngine {
 
         // Get vectors from SST storage (if available)
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
-            // TODO: Implement SST iteration for get_all_vectors
-            tracing::debug!(
-                "SST storage available for collection {}, but iteration not yet implemented",
-                collection_id
-            );
-            // Note: This would require implementing vector iteration in SST storage
+            // Implement SST iteration for get_all_vectors
+            match sst_storage.scan_all_vectors(collection_id, offset, limit).await {
+                Ok(sst_vectors) => {
+                    debug!("Retrieved {} vectors from SST storage for collection {}", 
+                           sst_vectors.len(), collection_id);
+                    vectors.extend(sst_vectors);
+                }
+                Err(e) => {
+                    warn!("Failed to scan SST vectors for collection {}: {}", collection_id, e);
+                }
+            }
+            debug!("SST storage scan completed for collection {}", collection_id);
         }
 
         tracing::info!(
