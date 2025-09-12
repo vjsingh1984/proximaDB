@@ -1114,14 +1114,34 @@ impl QueryExecutor {
             for transform in transformations {
                 match transform {
                     crate::query::execution::ProjectionTransform::ExtractMetadata { field } => {
-                        // TODO: Extract specific metadata field with HashMap.get() optimization
-                        // This demonstrates the O(1) access pattern vs O(n) linear scan
+                        // Extract specific metadata field with HashMap.get() optimization
+                        // O(1) access pattern vs O(n) linear scan
+                        if let Some(metadata_value) = row.fields.get(&field) {
+                            // Clone the value for the specific field extraction
+                            row.fields.insert(format!("extracted_{}", field), metadata_value.clone());
+                        } else {
+                            // Field not found - insert null value
+                            row.fields.insert(format!("extracted_{}", field), serde_json::Value::Null);
+                        }
                     }
                     crate::query::execution::ProjectionTransform::SimilarityScore => {
                         // Similarity score is already included
                     }
                     crate::query::execution::ProjectionTransform::FormatTimestamp => {
-                        // TODO: Format timestamp fields
+                        // Format timestamp fields from int64_ms to ISO 8601 strings
+                        let mut formatted_fields = HashMap::new();
+                        for (key, value) in &row.fields {
+                            if key.contains("timestamp") || key.contains("_at") || key.contains("time") {
+                                if let Some(timestamp_ms) = value.as_i64() {
+                                    let formatted = chrono::DateTime::from_timestamp_millis(timestamp_ms)
+                                        .map(|dt| dt.to_rfc3339())
+                                        .unwrap_or_else(|| "invalid_timestamp".to_string());
+                                    formatted_fields.insert(format!("{}_formatted", key), serde_json::Value::String(formatted));
+                                }
+                            }
+                        }
+                        // Add formatted timestamp fields to the row
+                        row.fields.extend(formatted_fields);
                     }
                 }
             }

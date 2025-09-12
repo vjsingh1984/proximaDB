@@ -776,9 +776,14 @@ impl RoaringBitmap {
                         bytes.extend_from_slice(&word.to_le_bytes());
                     }
                 }
-                Container::Run(_) => {
-                    bytes.push(2); // Run container type (simplified)
-                    // TODO: Implement run container serialization
+                Container::Run(runs) => {
+                    bytes.push(2); // Run container type
+                    // Serialize run container with start/length pairs
+                    bytes.extend_from_slice(&(runs.len() as u16).to_le_bytes());
+                    for run in runs {
+                        bytes.extend_from_slice(&run.start.to_le_bytes());
+                        bytes.extend_from_slice(&run.length.to_le_bytes());
+                    }
                 }
             }
         }
