@@ -287,7 +287,9 @@ impl UnifiedOperationCoordinator {
         info!("🔄 Scheduling re-quantization for collection: {}", collection_id);
 
         // 1. Analyze if re-quantization is actually needed
-        let engine_type = crate::storage::engines::StorageEngineType::Sst; // TODO: Get actual engine type
+        // Get actual engine type from collection metadata
+        let engine_type = self.get_collection_engine_type(collection_id).await
+            .unwrap_or(crate::storage::engines::StorageEngineType::Sst); // Fallback to SST
         let needs_requantization = self.requantization_manager
             .analyze_collection(collection_id, engine_type)
             .await?;
@@ -331,6 +333,36 @@ impl UnifiedOperationCoordinator {
               collection_id, duration, result.quality_improvement * 100.0);
 
         Ok(result)
+    }
+    
+    /// Get the storage engine type for a collection
+    async fn get_collection_engine_type(&self, collection_id: &str) -> Result<crate::storage::engines::StorageEngineType> {
+        // Query collection metadata to determine which engine is used
+        if let Some(ref storage_engine) = self.storage_engine {
+            // Use the storage engine's metadata to determine type
+            match storage_engine.collection_metadata(collection_id) {
+                Ok(metadata) => {
+                    // Extract engine type from metadata
+                    if let Some(engine_name) = metadata.get("engine_type").and_then(|v| v.as_str()) {
+                        match engine_name {
+                            "sst" => Ok(crate::storage::engines::StorageEngineType::Sst),
+                            "viper" => Ok(crate::storage::engines::StorageEngineType::Viper),
+                            "nova" => Ok(crate::storage::engines::StorageEngineType::Nova),
+                            "swift" => Ok(crate::storage::engines::StorageEngineType::Swift),
+                            "raptor" => Ok(crate::storage::engines::StorageEngineType::Raptor),
+                            "prism" => Ok(crate::storage::engines::StorageEngineType::Prism),
+                            "helix" => Ok(crate::storage::engines::StorageEngineType::Helix),
+                            _ => Ok(crate::storage::engines::StorageEngineType::Sst), // Default fallback
+                        }
+                    } else {
+                        Ok(crate::storage::engines::StorageEngineType::Sst) // Default fallback
+                    }
+                }
+                Err(_) => Ok(crate::storage::engines::StorageEngineType::Sst), // Default fallback
+            }
+        } else {
+            Ok(crate::storage::engines::StorageEngineType::Sst) // Default fallback
+        }
     }
 
     /// Check for conflicting operations
