@@ -73,7 +73,7 @@ impl From<serde_json::Value> for OrderedValue {
 }
 
 /// Bit set for tracking which blocks contain matching records
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BitSet {
     bits: Vec<u64>,
     size: usize,
@@ -132,13 +132,13 @@ impl BitSet {
 }
 
 /// Histogram for numeric column statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Histogram {
     pub buckets: Vec<HistogramBucket>,
     pub total_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HistogramBucket {
     pub min: f64,
     pub max: f64,
@@ -146,7 +146,7 @@ pub struct HistogramBucket {
 }
 
 /// Table-level statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TableStatistics {
     pub total_records: u64,
     pub total_blocks: u64,
@@ -154,14 +154,14 @@ pub struct TableStatistics {
     pub column_stats: HashMap<String, GlobalColumnStats>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GlobalColumnStats {
     pub null_ratio: f64,
     pub cardinality: u64,
     pub avg_size_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Data {
     Integer,
     Float,
@@ -227,16 +227,16 @@ impl MetadataIndex {
 
                     // Convert SqlValue to serde_json::Value
                     let json_value = match &value.value {
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             serde_json::json!(n)
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::json!(i)
                         }
                         _ => serde_json::Value::Null,

@@ -249,31 +249,31 @@ impl RowGroups {
                         (
                             key.clone(),
                             match &value.value {
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                                     serde_json::Value::Number(
                                         serde_json::Number::from_f64(*n)
                                             .unwrap_or_else(|| serde_json::Number::from(0)),
                                     )
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                                     serde_json::Value::Number(serde_json::Number::from(*i))
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
                                     serde_json::Value::Null // TODO: handle bytes properly
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                     serde_json::Value::Null
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                                     serde_json::Value::Null // TODO: handle arrays properly
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                                     serde_json::Value::Null // TODO: handle objects properly
                                 }
                                 None => serde_json::Value::Null,

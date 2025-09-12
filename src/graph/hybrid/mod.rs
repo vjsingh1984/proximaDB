@@ -74,7 +74,7 @@ pub struct HybridQueryEngine {
 }
 
 /// Configuration for hybrid queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridConfig {
     /// Default similarity threshold for vector operations
     pub default_similarity_threshold: f32,
@@ -107,7 +107,7 @@ pub enum FusionStrategy {
 }
 
 /// Optimization flags for hybrid queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridOptimizations {
     /// Use progressive search for vector component
     pub use_progressive_search: bool,
@@ -120,7 +120,7 @@ pub struct HybridOptimizations {
 }
 
 /// Hybrid query specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridQuery {
     /// Vector component of the query
     pub vector_component: Option<VectorQueryComponent>,
@@ -133,7 +133,7 @@ pub struct HybridQuery {
 }
 
 /// Vector component of a hybrid query
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorQueryComponent {
     /// Query vector
     pub query_vector: Vec<f32>,
@@ -148,7 +148,7 @@ pub struct VectorQueryComponent {
 }
 
 /// Graph component of a hybrid query
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GraphQueryComponent {
     /// Starting nodes for traversal
     pub start_nodes: Vec<NodeId>,
@@ -165,7 +165,7 @@ pub struct GraphQueryComponent {
 }
 
 /// Node filter for graph component
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NodeFilter {
     /// Property name to filter on
     pub property: String,
@@ -176,7 +176,7 @@ pub struct NodeFilter {
 }
 
 /// Edge filter for graph component
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EdgeFilter {
     /// Property name to filter on
     pub property: String,
@@ -187,7 +187,7 @@ pub struct EdgeFilter {
 }
 
 /// Filter operators
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterOperator {
     Equal,
     NotEqual,
@@ -204,7 +204,7 @@ pub enum FilterOperator {
 }
 
 /// Traversal algorithms for graph component
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TraversalAlgorithm {
     BFS,
     DFS,
@@ -214,7 +214,7 @@ pub enum TraversalAlgorithm {
 }
 
 /// Fusion configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FusionConfig {
     /// Fusion strategy
     pub strategy: FusionStrategy,
@@ -225,7 +225,7 @@ pub struct FusionConfig {
 }
 
 /// Weights for fusion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FusionWeights {
     /// Weight for vector similarity score
     pub vector_weight: f32,
@@ -236,7 +236,7 @@ pub struct FusionWeights {
 }
 
 /// Ranking function for results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RankingFunction {
     /// Simple additive combination
     Additive,
@@ -249,7 +249,7 @@ pub enum RankingFunction {
 }
 
 /// Result specification for hybrid queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridResultSpec {
     /// Maximum number of results
     pub limit: Option<usize>,
@@ -356,7 +356,7 @@ pub struct HybridPerformanceMetrics {
 }
 
 /// Node in semantic traversal priority queue
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct SemanticTraversalNode {
     node_id: NodeId,
     depth: u32,
@@ -386,7 +386,7 @@ impl Ord for SemanticTraversalNode {
 }
 
 /// Semantic neighbor with similarity score
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct SemanticNeighbor {
     node_id: NodeId,
     similarity_score: f32,
@@ -1352,8 +1352,8 @@ impl HybridQueryEngine {
                                 .into_iter()
                                 .map(|(k, v)| (k, serde_json::Value::String(v)))
                                 .collect(),
-                            timestamp: node.created_at_ms_ms.unwrap_or(0) as i64,
-                            updated_at: Some(node.updated_at_ms_ms.unwrap_or(0) as i64),
+                            timestamp: node.created_at_ms.unwrap_or(0) as i64,
+                            updated_at: Some(node.updated_at_ms.unwrap_or(0) as i64),
                             expires_at: None,
                             version: None,
                         },

@@ -354,7 +354,7 @@ mod sst_filename_tests {
 /// Used for MVCC (Multi-Version Concurrency Control). Higher sequence numbers
 /// represent newer versions. During reads, we return the latest version that's
 /// visible to the transaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstMetadata {
     /// True if this is a deletion marker - tombstones cascade through LSM levels
     /// until they reach the bottom where they're garbage collected
@@ -370,7 +370,7 @@ pub struct SstMetadata {
 }
 
 /// Combined storage format for SST files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstEntry {
     pub record: VectorRecord,  // Direct storage of proto VectorRecord
     pub sst_meta: SstMetadata, // SST-specific metadata
@@ -445,33 +445,33 @@ impl SstEntry {
                 .iter()
                 .map(|(key, sql_value)| {
                     let value = match &sql_value.value {
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             serde_json::Value::Number(
                                 serde_json::Number::from_f64(*n)
                                     .unwrap_or_else(|| serde_json::Number::from(0)),
                             )
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::Value::Number(
                                 serde_json::Number::from(*i)
                             )
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
                             serde_json::Value::String("[binary]".to_string())
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                             serde_json::Value::Null
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                             serde_json::Value::String("[array]".to_string())
                         }
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                             serde_json::Value::String("[object]".to_string())
                         }
                         None => serde_json::Value::Null,
@@ -557,7 +557,7 @@ impl SstEntry {
 pub const SST_MAGIC: [u8; 4] = *b"SST1";
 
 /// SSTable header for row-based storage format with hierarchical optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstableHeader {
     pub version: u32,
     pub level: u8,
@@ -890,7 +890,7 @@ fn default_block_size() -> u32 {
 }
 
 /// Hierarchical block metadata for serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct HierarchicalBlockMetadata {
     pub block_id: u32,
     pub record_count: u32,
@@ -1345,31 +1345,31 @@ mod block_utils {
 
                 // Convert to JSON value for min/max tracking
                 let value = match &item.1.value {
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
                         serde_json::Value::String("[binary]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         col_stats.null_count += 1;
                         continue;
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                         serde_json::Value::String("[array]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                         serde_json::Value::String("[object]".to_string())
                     }
                     None => {
@@ -4260,19 +4260,19 @@ impl SstStorage {
                 // Convert metadata to comparable format
                 let a_value = a.metadata.get(sort_key).map(|sql_val| {
                     match &sql_val.value {
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
                         _ => String::new(),
                     }
                 });
                 let b_value = b.metadata.get(sort_key).map(|sql_val| {
                     match &sql_val.value {
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
                         _ => String::new(),
                     }
                 });
@@ -4299,10 +4299,10 @@ impl SstStorage {
                 .filter_map(|v| {
                     v.metadata.get(sort_key).map(|sql_val| {
                         match &sql_val.value {
-                            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-                            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
                             _ => String::new(),
                         }
                     })
@@ -4743,7 +4743,7 @@ impl SstStorage {
 // This was never actually used - CompactionCoordinator now uses the unified CompactionResult
 /*
 /// Simplified compaction result for CompactionCoordinator
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineCompactionResult {
     pub files_processed: u64,
     pub bytes_processed: u64,

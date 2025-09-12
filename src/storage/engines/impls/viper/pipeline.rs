@@ -57,7 +57,7 @@ pub struct ViperPipeline {
 }
 
 /// Configuration for VIPER pipeline
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ViperPipelineConfig {
     /// Processing configuration
     pub processing_config: ProcessingConfig,
@@ -76,7 +76,7 @@ pub struct ViperPipelineConfig {
 }
 
 /// Processing configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProcessingConfig {
     /// Enable record preprocessing
     pub enable_preprocessing: bool,
@@ -98,7 +98,7 @@ pub struct ProcessingConfig {
 }
 
 /// Flushing configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushingConfig {
     /// Compression algorithm
     pub compression_algorithm: CompressionAlgorithm,
@@ -120,7 +120,7 @@ pub struct FlushingConfig {
 }
 
 /// Compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionConfig {
     /// Enable ML-guided compaction
     pub enable_ml_compaction: bool,
@@ -142,7 +142,7 @@ pub struct CompactionConfig {
 }
 
 /// Sorting strategy for record processing with optimized rewrite support
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SortingStrategy {
     /// Sort by timestamp for better compression
     ByTimestamp,
@@ -190,7 +190,7 @@ pub enum SortingStrategy {
 }
 
 /// Custom comparison types for specialized sorting
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CustomComparisonType {
     /// Sort by vector L2 norm (magnitude)
     VectorMagnitude,
@@ -203,7 +203,7 @@ pub enum CustomComparisonType {
 }
 
 /// Compression algorithm options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionAlgorithm {
     Snappy,
     Zstd {
@@ -344,11 +344,11 @@ pub struct WriterPool {
 // For now, providing placeholder types to fix compilation
 
 /// Placeholder for ParquetWriter implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DefaultParquetWriter;
 
 /// Placeholder for ParquetWriterFactory implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DefaultParquetWriterFactory;
 
 impl DefaultParquetWriterFactory {
@@ -358,7 +358,7 @@ impl DefaultParquetWriterFactory {
 }
 
 /// Flush result information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushResult {
     pub entries_flushed: u64,
     pub bytes_written: u64,
@@ -398,7 +398,7 @@ pub struct CompactionEngine {
 }
 
 /// Compaction task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionTask {
     pub task_id: String,
     pub collection_id: String,
@@ -423,7 +423,7 @@ pub struct CompactionOperation {
 }
 
 /// Types of compaction operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompactionType {
     /// Merge small files
     FileMerging {
@@ -474,7 +474,7 @@ pub enum CompactionPriority {
 }
 
 /// Compaction status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompactionStatus {
     Pending,
     Running,
@@ -484,7 +484,7 @@ pub enum CompactionStatus {
 }
 
 /// Reorganization strategy for sorted rewrite operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ReorganizationStrategy {
     /// Reorganize by ML-determined feature importance
     ByFeatureImportance,
@@ -503,7 +503,7 @@ pub enum ReorganizationStrategy {
 }
 
 /// Coordination mode for hybrid compaction operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompactionCoordinationMode {
     /// Execute strategies sequentially
     Sequential,
@@ -524,7 +524,7 @@ pub struct CompactionOptimizationModel {
 }
 
 /// Optimization hints from ML model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionOptimizationHints {
     pub recommended_cluster_count: Option<usize>,
     pub important_features: Vec<usize>,
@@ -796,21 +796,21 @@ impl VectorRecordProcessor {
                 (Some(a_meta), Some(b_meta)) => {
                     // Convert metadata values to JSON for comparison
                     let a_json = match &a_meta.value {
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                         _ => serde_json::Value::Null,
                     };
                     let b_json = match &b_meta.value {
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
-                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                         _ => serde_json::Value::Null,
                     };
                     let cmp = self.compare_metadata_values(&a_json, &b_json);
@@ -2937,7 +2937,7 @@ impl CompactionEngine {
 }
 
 /// Result of compaction execution with detailed metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionExecutionResult {
     pub entries_processed: u64,
     pub bytes_read: u64,
@@ -2994,19 +2994,19 @@ impl CompactionEngine {
                         let sql_value = match v {
                             serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
                                 value: Some(
-                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                                 ),
                             },
                             serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
                                 value: Some(
-                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                         n.as_f64().unwrap_or(0.0),
                                     ),
                                 ),
                             },
                             serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
                                 value: Some(
-                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
                                 ),
                             },
                             _ => crate::proto::proximadb_v1::SqlValue { value: None },
@@ -3141,10 +3141,10 @@ impl CompactionEngine {
                         .get(field)
                         .map(|sql_value| {
                             let value_str = match &sql_value.value {
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
                                 _ => String::new(),
                             };
                             format!("{}:{}", field, value_str)

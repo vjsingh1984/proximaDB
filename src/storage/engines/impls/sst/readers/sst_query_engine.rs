@@ -67,7 +67,7 @@ use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 type BloomFilter = SstableBloomFilter;
 
 /// SSTable reading strategies for different access patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SstableReadingStrategy {
     /// Selective reads via cache with range optimization for normal queries
     SelectiveWithCache {
@@ -182,7 +182,7 @@ pub struct MetadataStats {
 /// Enhanced bloom filter supporting metadata columns
 
 /// Reading strategy for SSTable access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ReadStrategy {
     /// Full scan without using bloom filters or indexes
     FullScan,
@@ -212,7 +212,7 @@ impl ReadStrategy {
 }
 
 /// Read modes for data blocks
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ReadMode {
     /// Generator-style streaming (memory efficient)
     Streaming,
@@ -223,7 +223,7 @@ pub enum ReadMode {
 }
 
 /// Operation type for smart cache decisions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OperationType {
     Search,
     Compaction,
@@ -232,7 +232,7 @@ pub enum OperationType {
 }
 
 /// Cache decision based on context
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CacheDecision {
     UseCache,       // Search operations, repeated access patterns
     SkipCache,      // Compaction, full scans, one-time operations
@@ -246,7 +246,7 @@ pub struct ReadingStrategySelector {
 }
 
 /// Configuration for reading strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ReaderConfig {
     pub block_cache_size: usize,
     pub index_cache_size: usize,
@@ -2336,11 +2336,11 @@ impl UnifiedSstableReader {
                         .map(|(k, v)| crate::proto::proximadb_v1::MetadataItem {
                             key: k.clone(),
                             value: match &v.value {
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => 
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => 
                                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone())),
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => 
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => 
                                     Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(*n)),
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => 
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => 
                                     Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(*b)),
                                 _ => None,
                             },

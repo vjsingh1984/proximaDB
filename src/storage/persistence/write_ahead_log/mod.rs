@@ -165,7 +165,7 @@ pub use recovery_thread_pool::{
 pub use serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer};
 
 /// Modern WAL operation - binary payload for batch operations (Proto-first architecture)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WALOperation {
     /// Operation type: "upsert_batch", "delete_batch", "flush", "checkpoint"
     pub operation_type: String,
@@ -257,7 +257,7 @@ pub struct WALStats {
 }
 
 /// Atomic flush cycle for consistent WAL→Storage operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushCycle {
     /// Unique identifier for this flush operation
     pub flush_id: String,
@@ -289,7 +289,7 @@ pub enum FlushCycleState {
 }
 
 /// Result of completing a flush cycle
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushCompletionResult {
     /// Number of entries permanently removed
     pub entries_removed: usize,
@@ -319,7 +319,7 @@ pub struct FlushCompletionResult {
 
 /// Collection assignment info with storage location and critical config
 /// The collection_id is the HashMap key, so not stored here
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionAssignment {
     /// Base storage location for this collection (e.g., "file:///data/disk1" or "s3://bucket/path")
     pub base_location: String,
@@ -374,7 +374,7 @@ pub struct WriteAheadLogManagerRegistry {
 }
 
 /// WriteAheadLogManager pool entry with workload metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteAheadLogManagerPoolEntry {
     /// The WriteAheadLogManager instance
     manager: Arc<WriteAheadLogManager>,
@@ -426,7 +426,7 @@ pub struct WriteAheadLogManagerWorkload {
 ///     .enable_dynamic_scaling(false)
 ///     .build();
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteAheadLogManagerPoolConfig {
     /// Initial pool size (number of WriteAheadLogManager threads to start with)
     pub initial_pool_size: usize,
@@ -443,7 +443,7 @@ pub struct WriteAheadLogManagerPoolConfig {
 }
 
 /// Builder for WriteAheadLogManagerPoolConfig to provide user-friendly configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteAheadLogManagerPoolConfigBuilder {
     config: WriteAheadLogManagerPoolConfig,
 }
@@ -1030,7 +1030,7 @@ pub async fn get_write_ahead_log_manager_pool_stats() -> Result<WriteAheadLogMan
 }
 
 /// Statistics about the current WriteAheadLogManager pool state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteAheadLogManagerPoolStats {
     /// Total number of WriteAheadLogManager instances in the pool
     pub total_managers: usize,
@@ -1816,9 +1816,9 @@ impl WriteAheadLogManager {
                         if include_metadata {
                             vector_record.metadata.iter().map(|(k, v)| {
                                 let json_val = match v.value.as_ref() {
-                                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::json!(*n),
-                                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::json!(*n),
+                                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
                                     _ => serde_json::Value::Null,
                                 };
                                 (k.clone(), json_val)
@@ -1984,16 +1984,16 @@ impl WriteAheadLogManager {
                             .value
                             .as_ref()
                             .map(|v| match v {
-                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                     s,
                                 ) => s.clone(),
-                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                     n,
                                 ) => n.to_string(),
-                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                     b.to_string()
                                 }
-                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                     i.to_string()
                                 }
                                 _ => "".to_string()
