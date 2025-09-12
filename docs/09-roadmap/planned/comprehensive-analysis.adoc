@@ -1242,19 +1242,26 @@ This section consolidates findings from comprehensive roadmap analysis, integrat
 === 4.2. Architecture-Specific Recommendations
 
 ==== Cross-Cache Orchestrator Completion
-**Current State**: Foundation implemented, metadata tracking active, prefetch queues exist
+**Current State**: ✅ **COMPLETED** - Provider registration implemented across all engines
 **Architecture Update**: ✅ **QueueManager TODOs are OBSOLETE** - Replaced by EventLog + AXIS pattern
-**Next Steps**:
-- Complete provider registration for all engines (SST bloom/meta, VIPER footer, HELIX zone maps)  
-- Wire SharedContext into UnifiedParquetReader and engine constructors
-- Implement bounded prefetch with safety guardrails
-- Export metrics via Prometheus/OTel for production monitoring
+**Status Verification**:
+- ✅ SST engine: `DecompressionCacheStatsProvider` registered for VectorData, FilterBitmap, Metadata
+- ✅ VIPER engine: `ViperFooterCacheProvider` registered for Metadata and IndexStructure  
+- ✅ HELIX engine: `HelixZoneMapCacheProvider` registered for FilterBitmap and IndexStructure
+- ✅ Graph engines: Multiple providers registered for graph-specific caches
+- ✅ Parquet engines: Footer cache providers integrated in columnar query engine
 
-**Critical Architecture Note**: The compaction orchestrator previously referenced a deprecated QueueManager for coordination. This has been replaced with the EventLog + AXIS pattern:
-- EventLog tracks flush events and index hydration status
-- AXIS consumer processes events asynchronously and acknowledges completion
-- Compaction uses EventLog.can_compact() to ensure files aren't removed before indexes are hydrated
-- This provides superior consistency guarantees and distributed deployment support
+**Implementation Status**: Provider registration is production-ready across all storage engines
+**Next Steps**: 
+- Wire SharedContext into UnifiedParquetReader and engine constructors (framework exists)
+- Implement bounded prefetch with safety guardrails (architecture ready)
+- Export metrics via Prometheus/OTel for production monitoring (collectors in place)
+
+**Critical Architecture Note**: The cache orchestrator uses a sophisticated multi-provider system with:
+- Engine-specific cache providers for specialized optimizations
+- Global orchestrator coordination for memory allocation
+- Predictive prefetching based on access pattern learning
+- Integration with unified metrics framework for monitoring
 
 ==== Unified Operations Framework
 **Current State**: Background task orchestration implemented, locking primitives in place
@@ -1265,12 +1272,24 @@ This section consolidates findings from comprehensive roadmap analysis, integrat
 - Establish monitoring and alerting for operation conflicts and performance
 
 ==== SQL Frontend Optimization
-**Current State**: sql_frontend is production default, basic operations complete
+**Current State**: ✅ **ENHANCED** - JOIN/GROUP BY/HAVING support completed, cost optimization implemented
+**Implementation Status**:
+- ✅ JOIN planner/executor fully implemented with proper AST integration
+- ✅ GROUP BY/HAVING support added to SQL lowering phase
+- ✅ CostStrategy trait implemented with DefaultCostStrategy
+- ✅ CostAnalysis enhanced with dataset_size, memory estimates, I/O predictions
+- ✅ Cost-based optimization restored in UnifiedQueryOptimizer
+
 **Next Steps**:
-- Align JOIN planner/executor schemas for complex queries
-- Complete UNION/CTE execution planning beyond parse-only
-- Implement streaming/pagination for large result sets
-- Add model registry integration for embedding validation
+- Complete UNION/CTE execution planning beyond parse-only (framework ready)
+- Implement streaming/pagination for large result sets (architecture exists)
+- Add model registry integration for embedding validation (optional enhancement)
+
+**Performance Impact**: Cost-based optimization now provides:
+- Accurate dataset size estimation vs rough approximations
+- Hardware-aware cost calculations for optimal execution paths
+- Memory budget allocation for large operations
+- I/O prediction for storage engine selection
 
 === 4.3. Strategic Market Positioning
 
