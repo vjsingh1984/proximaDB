@@ -68,6 +68,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats};
 use std::time::Instant;
+use tracing::{debug, info, warn};
 use tokio::sync::RwLock;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;

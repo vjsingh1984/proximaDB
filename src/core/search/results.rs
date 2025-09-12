@@ -69,7 +69,7 @@ fn convert_json_map_to_sql_value_map(
 
 /// Optimized search record structure with performance improvements
 /// This variant uses Arc for vectors and TypedMetadata for better performance
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OptimizedSearchRecord {
     /// Vector/document identifier
     pub id: String,
@@ -107,48 +107,8 @@ pub struct OptimizedSearchRecord {
     pub index_path: Option<String>,
 }
 
-// Custom Serialize for OptimizedSearchRecord
-impl Serialize for OptimizedSearchRecord {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // Direct serialization of OptimizedSearchRecord
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("OptimizedSearchRecord", 16)?;
-        state.serialize_field("id", &self.id)?;
-        state.serialize_field("score", &self.score)?;
-        state.serialize_field("vector", &self.vector)?;
-        state.serialize_field("metadata", &self.metadata)?;
-        state.end()
-    }
-}
-
-// Custom Deserialize for OptimizedSearchRecord
-impl<'de> Deserialize<'de> for OptimizedSearchRecord {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // Direct deserialization of OptimizedSearchRecord
-        #[derive(serde::Deserialize)]
-        struct OptimizedSearchRecordHelper {
-            id: String,
-            score: f32,
-            vector: Option<Arc<Vec<f32>>>,
-            metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-        }
-        
-        let helper = OptimizedSearchRecordHelper::deserialize(deserializer)?;
-        Ok(OptimizedSearchRecord {
-            id: helper.id,
-            score: helper.score,
-            vector: helper.vector,
-            metadata: helper.metadata,
-            ..Default::default()
-        })
-    }
-}
+// Serde derives handle serialization/deserialization automatically
+// No custom implementations needed
 
 impl OptimizedSearchRecord {
     /// Create a new OptimizedSearchRecord with just ID and score
@@ -250,51 +210,7 @@ impl OptimizedSearchRecord {
         self
     }
 
-    /// Convert from InternalSearchResult for migration
-    pub fn from_internal(result: InternalSearchResult) -> Self {
-        Self {
-            id: result.id,
-            vector_id: result.vector_id,
-            score: result.score,
-            similarity: result.similarity,
-            vector: result.vector.map(|v| Arc::new(v)),
-            metadata: convert_json_map_to_sql_value_map(result.metadata),
-            debug_info: result.debug_info,
-            version: result.version.map(|v| v as i64),
-            timestamp: result.timestamp.map(|v| v as i64),
-            updated_at: result.updated_at.map(|v| v as i64),
-            expires_at: result.expires_at.map(|v| v as i64),
-            source: result.source,
-            expanded_context: result.expanded_context,
-            semantic_similarity: result.semantic_similarity,
-            quantization_info: result.quantization_info,
-            engine_stats: result.engine_stats,
-            index_path: result.index_path,
-        }
-    }
-
-    /// Convert to InternalSearchResult for compatibility
-    pub fn to_internal(self) -> InternalSearchResult {
-        InternalSearchResult {
-            id: self.id,
-            vector_id: self.vector_id,
-            score: self.score,
-            similarity: self.similarity,
-            vector: self.vector.map(|arc| (*arc).clone()),
-            metadata: convert_sql_value_map_to_json_map(&self.metadata),
-            debug_info: self.debug_info,
-            version: self.version.map(|v| v as u32),
-            timestamp: self.timestamp.map(|v| v as u32),
-            updated_at: self.updated_at.map(|v| v as u32),
-            expires_at: self.expires_at.map(|v| v as u32),
-            source: self.source,
-            expanded_context: self.expanded_context,
-            semantic_similarity: self.semantic_similarity,
-            quantization_info: self.quantization_info,
-            engine_stats: self.engine_stats,
-            index_path: self.index_path,
-        }
-    }
+    // REMOVED: from_internal and to_internal methods - InternalSearchResult eliminated
 }
 
 /// Collection of search results with metadata
@@ -374,22 +290,3 @@ mod arc_slice_serde {
 }
 
 // Manual trait implementations for ordering (HashMap doesn't implement Ord)
-impl Eq for InternalSearchResult {}
-
-impl PartialOrd for InternalSearchResult {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for InternalSearchResult {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Order by score in REVERSE order (higher scores first)
-        // For distance metrics, lower is better, so this gives us better results first
-        other
-            .score
-            .partial_cmp(&self.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| self.id.cmp(&other.id)) // Tie-break by ID for consistency
-    }
-}
