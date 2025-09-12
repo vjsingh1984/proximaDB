@@ -30,6 +30,7 @@ from .models import (
     Collection,
     CollectionConfig,
     CollectionStats,
+    CollectionInfo,
     
     # Vector models
     VectorRecord,
@@ -115,6 +116,15 @@ from .builders import (
     SearchBuilder,
     CollectionBuilder,
     InsertBuilder,
+)
+
+# Authentication
+from .auth import (
+    ProximaDBAuth,
+    AuthConfig,
+    AuthMethod,
+    AuthResult,
+    Permission,
 )
 
 # Ultra-efficient enum packing (75% storage savings)
@@ -208,8 +218,9 @@ __all__ = [
     
     # Models
     "Collection",
-    "CollectionConfig",
+    "CollectionConfig", 
     "CollectionStats",
+    "CollectionInfo",
     "VectorRecord",
     "SearchResult",
     "OperationMetrics",
@@ -275,6 +286,13 @@ __all__ = [
     "SearchBuilder",
     "CollectionBuilder",
     "InsertBuilder",
+    
+    # Authentication
+    "ProximaDBAuth",
+    "AuthConfig",
+    "AuthMethod",
+    "AuthResult",
+    "Permission",
     
     # Factory functions
     "connect",

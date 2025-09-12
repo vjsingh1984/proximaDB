@@ -776,10 +776,31 @@ class CollectionInfo(BaseModel):
     name: str
     dimension: int
     metric: str
-    created_at: int
-    updated_at: int
+    created_at_ms: int  # Milliseconds since epoch (signed int64)
+    updated_at_ms: int  # Milliseconds since epoch (signed int64)
     vector_count: Optional[int] = None
     indexed: bool = False
+    
+    # Backward compatibility properties
+    @property
+    def created_at(self) -> int:
+        """Backward compatibility: created_at in seconds"""
+        return self.created_at_ms // 1000
+    
+    @created_at.setter
+    def created_at(self, value: int):
+        """Backward compatibility: created_at in seconds"""
+        self.created_at_ms = value * 1000
+    
+    @property
+    def updated_at(self) -> int:
+        """Backward compatibility: updated_at in seconds"""
+        return self.updated_at_ms // 1000
+    
+    @updated_at.setter
+    def updated_at(self, value: int):
+        """Backward compatibility: updated_at in seconds"""
+        self.updated_at_ms = value * 1000
 
 
 class Collection(BaseModel):
@@ -787,8 +808,8 @@ class Collection(BaseModel):
     id: str
     config: CollectionConfig
     stats: CollectionStats = Field(default_factory=CollectionStats)  # Made required to match REST API
-    created_at: int = Field(default_factory=lambda: int(__import__('time').time()))  # Renamed from timestamp
-    updated_at: int = Field(default_factory=lambda: int(__import__('time').time()))  # Made required
+    created_at_ms: int = Field(default_factory=lambda: int(__import__('time').time() * 1000))  # Milliseconds since epoch (signed int64)
+    updated_at_ms: int = Field(default_factory=lambda: int(__import__('time').time() * 1000))  # Milliseconds since epoch (signed int64)
     
     @property
     def name(self) -> str:
@@ -797,8 +818,28 @@ class Collection(BaseModel):
     
     @property
     def timestamp(self) -> int:
-        """Backward compatibility property for timestamp"""
-        return self.created_at
+        """Backward compatibility property for timestamp (seconds)"""
+        return self.created_at_ms // 1000
+    
+    @property
+    def created_at(self) -> int:
+        """Backward compatibility: created_at in seconds"""
+        return self.created_at_ms // 1000
+    
+    @created_at.setter
+    def created_at(self, value: int):
+        """Backward compatibility: created_at in seconds"""
+        self.created_at_ms = value * 1000
+    
+    @property
+    def updated_at(self) -> int:
+        """Backward compatibility: updated_at in seconds"""
+        return self.updated_at_ms // 1000
+    
+    @updated_at.setter
+    def updated_at(self, value: int):
+        """Backward compatibility: updated_at in seconds"""
+        self.updated_at_ms = value * 1000
 
 
 # ============================================================================
@@ -810,9 +851,9 @@ class VectorRecord(BaseModel):
     id: Optional[str] = None
     vector: List[float]
     metadata: Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]] = Field(default_factory=dict)
-    timestamp: int = Field(default_factory=lambda: int(__import__('time').time()))  # Required - seconds since epoch (unsigned)
-    updated_at: Optional[int] = None  # Only set if different from timestamp (saves bytes)
-    expires_at: Optional[int] = None  # TTL support (seconds since epoch, unsigned)
+    timestamp_ms: int = Field(default_factory=lambda: int(__import__('time').time() * 1000))  # Required - milliseconds since epoch (signed int64)
+    updated_at_ms: Optional[int] = None  # Only set if different from timestamp_ms (saves bytes)
+    expires_at_ms: Optional[int] = None  # TTL support (milliseconds since epoch, signed int64)
     version: Optional[int] = 0  # Optional to save bytes, use small positive values
 
     @field_validator('vector')
@@ -822,6 +863,37 @@ class VectorRecord(BaseModel):
         if not all(isinstance(x, (int, float)) for x in v):
             raise ValueError("Vector must contain only numeric values")
         return v
+    
+    # Backward compatibility properties
+    @property
+    def timestamp(self) -> int:
+        """Backward compatibility: timestamp in seconds"""
+        return self.timestamp_ms // 1000
+    
+    @timestamp.setter
+    def timestamp(self, value: int):
+        """Backward compatibility: timestamp in seconds"""
+        self.timestamp_ms = value * 1000
+    
+    @property
+    def updated_at(self) -> Optional[int]:
+        """Backward compatibility: updated_at in seconds"""
+        return self.updated_at_ms // 1000 if self.updated_at_ms else None
+    
+    @updated_at.setter
+    def updated_at(self, value: Optional[int]):
+        """Backward compatibility: updated_at in seconds"""
+        self.updated_at_ms = value * 1000 if value is not None else None
+    
+    @property
+    def expires_at(self) -> Optional[int]:
+        """Backward compatibility: expires_at in seconds"""
+        return self.expires_at_ms // 1000 if self.expires_at_ms else None
+    
+    @expires_at.setter
+    def expires_at(self, value: Optional[int]):
+        """Backward compatibility: expires_at in seconds"""
+        self.expires_at_ms = value * 1000 if value is not None else None
 
 
 # ============================================================================
@@ -1114,7 +1186,18 @@ class HealthStatus(BaseModel):
     version: str
     uptime_seconds: int
     services: Dict[str, str]
-    timestamp: int
+    timestamp_ms: int  # Milliseconds since epoch (signed int64)
+    
+    # Backward compatibility property
+    @property
+    def timestamp(self) -> int:
+        """Backward compatibility: timestamp in seconds"""
+        return self.timestamp_ms // 1000
+    
+    @timestamp.setter
+    def timestamp(self, value: int):
+        """Backward compatibility: timestamp in seconds"""
+        self.timestamp_ms = value * 1000
 
 
 # Simple alias

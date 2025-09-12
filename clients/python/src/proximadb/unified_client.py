@@ -54,6 +54,7 @@ from .exceptions import (
     RateLimitError,
     map_http_error,
 )
+from .auth import ProximaDBAuth, AuthConfig, AuthMethod
 
 try:
     from . import proximadb_pb2 as pb2
@@ -82,6 +83,8 @@ class ProximaDBClient:
         api_key: Optional[str] = None,
         protocol: Union[Protocol, str] = Protocol.AUTO,
         config: Optional[ClientConfig] = None,
+        auth_config: Optional[AuthConfig] = None,
+        auth_method: Optional[AuthMethod] = None,
         enable_http2: bool = True,
         pool_size: int = 10,
         pool_maxsize: int = 50,
@@ -101,9 +104,11 @@ class ProximaDBClient:
         
         Args:
             url: ProximaDB server URL
-            api_key: API key for authentication  
+            api_key: API key for authentication (legacy - use auth_config instead)
             protocol: Communication protocol (auto, grpc, rest)
             config: Client configuration object
+            auth_config: Authentication configuration (AuthConfig object)
+            auth_method: Authentication method (API_KEY, JWT, OAUTH2, CLIENT_CERT)
             enable_http2: Enable HTTP/2 support for better performance
             pool_size: Connection pool size for keepalive connections
             pool_maxsize: Maximum connection pool size
@@ -119,6 +124,16 @@ class ProximaDBClient:
         """
         if config is None:
             config = load_config(url=url, api_key=api_key, **kwargs)
+        
+        # Setup authentication
+        self._setup_authentication(
+            auth_config=auth_config,
+            auth_method=auth_method,
+            api_key=api_key,
+            cert_file=cert_file,
+            key_file=key_file,
+            config=config
+        )
         
         # Update config with connection parameters
         if hasattr(config, 'connection'):
@@ -145,12 +160,67 @@ class ProximaDBClient:
         self._operation_router: Optional[OperationRouter] = None
         self._rest_client = None
         self._grpc_client = None
+        self._auth: Optional[ProximaDBAuth] = None
         
         # Setup operation routing if enabled
         if self.enable_operation_routing:
             self._setup_operation_routing(routing_config)
         
         self._setup_client()
+    
+    def _setup_authentication(self, auth_config, auth_method, api_key, cert_file, key_file, config):
+        """Setup authentication configuration"""
+        # If explicit auth_config provided, use it directly
+        if auth_config is not None:
+            base_url = config.url if hasattr(config, 'url') else config.base_url
+            self._auth = ProximaDBAuth(auth_config, base_url)
+            return
+        
+        # Auto-detect authentication method based on provided parameters
+        if auth_method is not None:
+            method = auth_method
+        elif api_key is not None:
+            method = AuthMethod.API_KEY
+        elif cert_file is not None and key_file is not None:
+            method = AuthMethod.CLIENT_CERT
+        else:
+            # No authentication configured
+            return
+        
+        # Create AuthConfig based on detected method
+        if method == AuthMethod.API_KEY:
+            auth_config = AuthConfig(
+                method=AuthMethod.API_KEY,
+                api_key=api_key
+            )
+        elif method == AuthMethod.CLIENT_CERT:
+            auth_config = AuthConfig(
+                method=AuthMethod.CLIENT_CERT,
+                client_cert_file=cert_file,
+                client_key_file=key_file
+            )
+        elif method == AuthMethod.JWT:
+            # For JWT, we expect additional parameters in config
+            auth_config = AuthConfig(
+                method=AuthMethod.JWT,
+                api_key=api_key  # Can be used as a fallback or for initial auth
+            )
+        else:
+            logger.warning(f"Unsupported authentication method: {method}")
+            return
+        
+        base_url = config.url if hasattr(config, 'url') else config.base_url
+        self._auth = ProximaDBAuth(auth_config, base_url)
+        
+        # Perform initial authentication if method requires it
+        try:
+            auth_result = self._auth.authenticate()
+            if auth_result.success:
+                logger.info(f"✅ Authentication successful using {method.value}")
+            else:
+                logger.warning(f"⚠️ Authentication failed: {auth_result.error}")
+        except Exception as e:
+            logger.warning(f"⚠️ Authentication setup failed: {e}")
     
     def _setup_client(self):
         """Setup the underlying client based on protocol preference"""
@@ -344,23 +414,34 @@ class ProximaDBClient:
             self._operation_router = None
     
     def _create_grpc_client(self):
-        """Create gRPC client"""
+        """Create gRPC client with authentication support"""
         from .protocols.grpc_sync import ProximaDBSyncGrpcClient
         from .config import Protocol
         
         # Use the proper protocol URL generation for gRPC
         grpc_url = self.config.get_protocol_url(Protocol.GRPC)
         
+        # Prepare authentication headers
+        auth_headers = {}
+        if self._auth and self._auth.is_authenticated():
+            auth_headers = self._auth.get_auth_headers()
+        
         # Pass compression settings from config
-        return ProximaDBSyncGrpcClient(
+        client = ProximaDBSyncGrpcClient(
             server_address=grpc_url,
             timeout=60.0,
             enable_compression=self.config.compression.enabled if hasattr(self.config, 'compression') else True,
             compression_algorithm=self.config.compression.algorithm if hasattr(self.config, 'compression') else 'gzip'
         )
+        
+        # Set auth headers if available (for gRPC metadata)
+        if auth_headers and hasattr(client, '_auth_headers'):
+            client._auth_headers = auth_headers
+        
+        return client
     
     def _create_rest_client(self):
-        """Create REST client with enhanced configuration"""
+        """Create REST client with enhanced configuration and authentication"""
         from .protocols.rest_sync import ProximaDBClient as RestClient
         
         # Add retry configuration if not present
@@ -373,7 +454,53 @@ class ProximaDBClient:
                 max_backoff: float = 10.0
             self.config.retry = RetryConfig()
         
-        return RestClient(config=self.config)
+        # Pass authentication object to REST client
+        return RestClient(config=self.config, auth=self._auth)
+    
+    # Authentication Methods
+    def get_auth_status(self) -> Dict[str, Any]:
+        """Get current authentication status"""
+        if not self._auth:
+            return {"authenticated": False, "method": None}
+        
+        return {
+            "authenticated": self._auth.is_authenticated(),
+            "method": self._auth.config.method.value if self._auth.config.method else None,
+            "expires_at": self._auth.get_token_expiry() if hasattr(self._auth, 'get_token_expiry') else None,
+            "roles": self._auth.get_user_roles() if hasattr(self._auth, 'get_user_roles') else [],
+            "permissions": self._auth.get_permissions() if hasattr(self._auth, 'get_permissions') else []
+        }
+    
+    def refresh_authentication(self) -> bool:
+        """Refresh authentication tokens if supported"""
+        if not self._auth:
+            return False
+        
+        try:
+            result = self._auth.refresh_token()
+            if result and result.success:
+                logger.info("✅ Authentication refreshed successfully")
+                return True
+            else:
+                logger.warning("⚠️ Authentication refresh failed")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Authentication refresh error: {e}")
+            return False
+    
+    def logout(self) -> bool:
+        """Logout and clear authentication"""
+        if not self._auth:
+            return True
+        
+        try:
+            success = self._auth.logout()
+            if success:
+                logger.info("✅ Logged out successfully")
+            return success
+        except Exception as e:
+            logger.error(f"❌ Logout error: {e}")
+            return False
     
     @property
     def active_protocol(self) -> Protocol:
