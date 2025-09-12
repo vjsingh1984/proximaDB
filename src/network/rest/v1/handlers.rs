@@ -144,7 +144,7 @@ pub async fn collection_operation(
 /// Health check endpoint with proper error handling
 pub async fn health_check(
     State(_state): State<AppState>,
-) -> ApiResult<JsonResponse<serde_json::Value>> {
+) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
     // Return basic health status
     // TODO: Add actual health checks when UnifiedHandlers supports it
 
@@ -278,7 +278,7 @@ pub async fn delete_collection(
 pub async fn vector_search_with_metadata(
     State(state): State<AppState>,
     Json(request): Json<V1VectorSearchRequest>,
-) -> ApiResult<JsonResponse<crate::api::json_types::JsonSuccessResponse<JsonVectorOperationResponse>>> {
+) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -353,7 +353,7 @@ pub struct SqlColumnInfo {
 pub async fn execute_sql(
     State(state): State<AppState>,
     Json(request): Json<SqlQueryRequest>,
-) -> ApiResult<JsonResponse<crate::api::json_types::JsonSuccessResponse<serde_json::Value>>> {
+) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -478,7 +478,7 @@ pub struct ExplainQueryResponse {
 pub async fn explain_sql(
     State(state): State<AppState>,
     Json(request): Json<ExplainQueryRequest>,
-) -> ApiResult<JsonResponse<crate::api::json_types::JsonSuccessResponse<ExplainQueryResponse>>> {
+) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
     let request_id = Uuid::new_v4().to_string();
 
     info!(

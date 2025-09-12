@@ -28,7 +28,7 @@ use crate::proto::proximadb_v1::DistanceMetric;
 use crate::services::VectorOperationsService;
 
 /// SQL execution result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SqlExecutionResult {
     /// Result rows
     pub rows: Vec<ResultRow>,
@@ -39,7 +39,7 @@ pub struct SqlExecutionResult {
 }
 
 /// Single result row
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResultRow {
     /// Row data as key-value pairs
     pub data: HashMap<String, serde_json::Value>,
@@ -48,7 +48,7 @@ pub struct ResultRow {
 }
 
 /// Execution statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExecutionStats {
     /// Total rows scanned
     pub rows_scanned: usize,
@@ -190,16 +190,16 @@ impl SqlExecutor {
                         let mut metadata_map = serde_json::Map::new();
                         for (k, v) in result.metadata.iter() {
                             let json_value = match &v.value {
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                                     serde_json::json!(n)
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                     serde_json::Value::Null
                                 }
                                 _ => serde_json::Value::Null,
@@ -215,16 +215,16 @@ impl SqlExecutor {
                         let key = &field[9..];
                         if let Some(val) = result.metadata.get(key) {
                             let json_value = match &val.value {
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                                     serde_json::json!(n)
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                     serde_json::Value::Null
                                 }
                                 _ => serde_json::Value::Null,

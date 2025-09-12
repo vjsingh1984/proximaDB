@@ -105,7 +105,7 @@ lazy_static::lazy_static! {
 /// Unified vector record - single source of truth, generated from Avro schema
 /// This replaces ALL previous VectorRecord implementations across the codebase
 /// Aligned with proto: no created_at, optional fields where appropriate
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorRecord {
     pub id: String,
     pub collection_id: String,
@@ -280,27 +280,27 @@ impl VectorRecord {
             let sql_value = match value {
                 serde_json::Value::String(s) => {
                     crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
                     }
                 }
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
                         }
                     } else {
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
                         }
                     }
                 }
                 serde_json::Value::Bool(b) => {
                     crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
                     }
                 }
                 _ => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
                 },
             };
             metadata_map.insert(key.clone(), sql_value);
@@ -374,7 +374,7 @@ impl VectorRecord {
 }
 
 /// Domain search hit (engine-agnostic)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchHit {
     pub id: String,
     pub score: f32,
@@ -384,7 +384,7 @@ pub struct SearchHit {
 }
 
 /// Domain search result set
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DomainSearchResult {
     pub results: Vec<SearchHit>,
     pub total_found: i64,
@@ -398,7 +398,7 @@ pub type DistanceMetric = String;
 pub type IndexingAlgorithm = String;  
 pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionAlgorithm {
     None,
     Snappy,
@@ -414,7 +414,7 @@ impl Default for CompressionAlgorithm {
 }
 
 /// Compaction strategies for storage optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompactionStrategy {
     SizeTiered,
     Leveled,
@@ -429,7 +429,7 @@ impl Default for CompactionStrategy {
 }
 
 /// Compaction configuration for storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionConfig {
     pub max_sstable_size_mb: u64,
     pub max_level_size_mb: u64,
@@ -452,7 +452,7 @@ impl Default for CompactionConfig {
 }
 
 /// Collection configuration for CREATE and UPDATE operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionConfig {
     /// Collection name
     pub name: String,
@@ -473,7 +473,7 @@ pub struct CollectionConfig {
 }
 
 /// Service-level Collection type (JSON-serializable)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Collection {
     pub id: String,
     pub name: String,
@@ -487,7 +487,7 @@ pub struct Collection {
 }
 
 /// Vector operation response metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorOperationMetrics {
     /// Total number of vectors processed
     pub total_processed: i64,
@@ -520,7 +520,7 @@ impl Default for VectorOperationMetrics {
 }
 
 /// Vector insert request for zero-copy operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorInsertRequest {
     /// Target collection identifier
     pub collection_id: String,
@@ -533,7 +533,7 @@ pub struct VectorInsertRequest {
 }
 
 /// Vector operation response for INSERT operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorInsertResponse {
     /// Operation success status
     pub success: bool,
@@ -602,7 +602,7 @@ impl VectorInsertResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorSearchRequest {
     pub collection_id: String,
     pub query_vector: Vec<f32>,
@@ -612,7 +612,7 @@ pub struct VectorSearchRequest {
     pub include_metadata: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchSearchRequest {
     pub collection_id: String,
     pub query_vector: Vector,
@@ -621,7 +621,7 @@ pub struct BatchSearchRequest {
 }
 
 /// Search metadata for performance tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchMetadata {
     pub algorithm_used: String,
     pub query_id: Option<String>,
@@ -633,7 +633,7 @@ pub struct SearchMetadata {
 }
 
 /// Index performance statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStats {
     pub total_vectors: i64,
     pub vectors_compared: i64,
@@ -646,7 +646,7 @@ pub struct IndexStats {
 }
 
 /// Search debug information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchDebugInfo {
     pub search_steps: Vec<String>,
     pub clusters_searched: Vec<String>,
@@ -659,7 +659,7 @@ pub struct SearchDebugInfo {
     pub cost_breakdown: Option<std::collections::HashMap<String, f64>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorSearchResponse {
     pub success: bool,
     pub results: Vec<OptimizedSearchRecord>,
@@ -673,7 +673,7 @@ pub struct VectorSearchResponse {
 }
 
 /// Collection operation types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CollectionOperation {
     Create,
     Update,
@@ -684,7 +684,7 @@ pub enum CollectionOperation {
 }
 
 /// Unified collection request - handles all collection operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionRequest {
     /// Type of collection operation to perform
     pub operation: CollectionOperation,
@@ -701,7 +701,7 @@ pub struct CollectionRequest {
 }
 
 /// Unified collection response - handles all collection operation responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionResponse {
     /// Operation success status
     pub success: bool,
@@ -838,7 +838,7 @@ pub type NodeId = String;
 pub type Vector = Vec<f32>;
 
 /// Metadata filter for server-side filtering operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetadataFilter {
     /// Field-based filter with specific condition
     Field {
@@ -854,7 +854,7 @@ pub enum MetadataFilter {
 }
 
 /// Conditions for field-based filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FieldCondition {
     /// Equal to value
     Equals(serde_json::Value),
@@ -890,7 +890,7 @@ pub enum FieldCondition {
 }
 
 /// Vector operations for batch processing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorOperation {
     /// Insert a new vector
     Insert {
@@ -934,7 +934,7 @@ pub enum VectorOperation {
 ///
 /// # Usage
 /// Used by API handlers to receive search requests from clients.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchRequest {
     pub collection_id: String,
     pub query_vector: Vec<f32>,
@@ -949,7 +949,7 @@ pub struct SearchRequest {
 }
 
 /// Search strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SearchStrategy {
     /// Exact search (brute force)
     Exact,
@@ -964,7 +964,7 @@ pub enum SearchStrategy {
 }
 
 /// Operation result enum
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OperationResult {
     /// Vector was inserted
     Inserted { vector_id: String },
@@ -997,7 +997,7 @@ pub enum OperationResult {
 // Search metadata, index stats, and debug info are already defined above
 
 /// Health response structure for binary Avro serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthResponse {
     /// Service health status: "HEALTHY", "DEGRADED", "UNHEALTHY"
     pub status: String,
@@ -1022,7 +1022,7 @@ pub struct HealthResponse {
 }
 
 /// Metrics response structure for binary Avro serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricsResponse {
     /// Service-level metrics
     pub service_metrics: ServiceMetrics,
@@ -1033,7 +1033,7 @@ pub struct MetricsResponse {
 }
 
 /// Service-level performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ServiceMetrics {
     /// Total operations performed
     pub total_operations: i64,
@@ -1048,7 +1048,7 @@ pub struct ServiceMetrics {
 }
 
 /// Write Buffer-specific metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteBufferMetrics {
     /// Total entries in WAL
     pub total_entries: i64,
@@ -1063,7 +1063,7 @@ pub struct WriteBufferMetrics {
 }
 
 /// Generic operation result for any database operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OperationResponse {
     /// Operation success status
     pub success: bool,
