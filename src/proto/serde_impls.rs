@@ -233,3 +233,118 @@ impl Serialize for crate::proto::proximadb_v1::FilterClause {
         map.end()
     }
 }
+
+// Custom serde for VectorRecord
+impl Serialize for crate::proto::proximadb_v1::VectorRecord {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("VectorRecord", 6)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("vector", &self.vector)?;
+        state.serialize_field("metadata", &self.metadata)?;
+        state.serialize_field("timestamp", &self.timestamp)?;
+        state.serialize_field("updated_at", &self.updated_at)?;
+        state.serialize_field("expires_at", &self.expires_at)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Id,
+            Vector,
+            Metadata,
+            Timestamp,
+            UpdatedAt,
+            ExpiresAt,
+        }
+
+        struct VectorRecordVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for VectorRecordVisitor {
+            type Value = crate::proto::proximadb_v1::VectorRecord;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct VectorRecord")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::VectorRecord, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut id = None;
+                let mut vector = None;
+                let mut metadata = None;
+                let mut timestamp = None;
+                let mut updated_at = None;
+                let mut expires_at = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Id => {
+                            if id.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        Field::Vector => {
+                            if vector.is_some() {
+                                return Err(serde::de::Error::duplicate_field("vector"));
+                            }
+                            vector = Some(map.next_value()?);
+                        }
+                        Field::Metadata => {
+                            if metadata.is_some() {
+                                return Err(serde::de::Error::duplicate_field("metadata"));
+                            }
+                            metadata = Some(map.next_value()?);
+                        }
+                        Field::Timestamp => {
+                            if timestamp.is_some() {
+                                return Err(serde::de::Error::duplicate_field("timestamp"));
+                            }
+                            timestamp = Some(map.next_value()?);
+                        }
+                        Field::UpdatedAt => {
+                            if updated_at.is_some() {
+                                return Err(serde::de::Error::duplicate_field("updated_at"));
+                            }
+                            updated_at = Some(map.next_value()?);
+                        }
+                        Field::ExpiresAt => {
+                            if expires_at.is_some() {
+                                return Err(serde::de::Error::duplicate_field("expires_at"));
+                            }
+                            expires_at = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
+                let vector = vector.ok_or_else(|| serde::de::Error::missing_field("vector"))?;
+                let metadata = metadata.ok_or_else(|| serde::de::Error::missing_field("metadata"))?;
+                let timestamp = timestamp.ok_or_else(|| serde::de::Error::missing_field("timestamp"))?;
+
+                Ok(crate::proto::proximadb_v1::VectorRecord {
+                    id,
+                    vector,
+                    metadata,
+                    timestamp,
+                    updated_at,
+                    expires_at,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("VectorRecord", &["id", "vector", "metadata", "timestamp", "updated_at", "expires_at"], VectorRecordVisitor)
+    }
+}

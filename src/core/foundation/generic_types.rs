@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericConfig<T>
 where
-    T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
+    T: Serialize + serde::de::DeserializeOwned,
 {
     pub data: T,
     pub validation_rules: HashMap<String, String>,
