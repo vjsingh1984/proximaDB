@@ -202,7 +202,7 @@ use std::io::{Read, Write};
 // Stub types for parquet since it's disabled
 mod parquet {
     pub mod basic {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub enum Compression {
             UNCOMPRESSED,
             SNAPPY,
@@ -213,7 +213,7 @@ mod parquet {
             LZO,
         }
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct GzipLevel(u32);
         impl GzipLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
@@ -226,7 +226,7 @@ mod parquet {
             }
         }
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct ZstdLevel(i32);
         impl ZstdLevel {
             pub fn try_new(level: i32) -> Result<Self, String> {
@@ -239,7 +239,7 @@ mod parquet {
             }
         }
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct BrotliLevel(u32);
         impl BrotliLevel {
             pub fn try_new(level: u32) -> Result<Self, String> {
@@ -257,7 +257,7 @@ mod parquet {
         pub mod properties {
             use super::super::basic;
 
-            #[derive(Debug, Clone)]
+            #[derive(Debug, Clone, Serialize, Deserialize)]
             pub struct WriterProperties;
 
             impl WriterProperties {
@@ -266,7 +266,7 @@ mod parquet {
                 }
             }
 
-            #[derive(Debug, Clone)]
+            #[derive(Debug, Clone, Serialize, Deserialize)]
             pub struct WriterPropertiesBuilder;
 
             impl WriterPropertiesBuilder {

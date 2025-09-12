@@ -12,7 +12,6 @@ use std::marker::PhantomData;
 pub struct GenericConfig<T> {
     pub data: T,
     pub validation_rules: HashMap<String, String>,
-    #[serde(skip)]
     _phantom: PhantomData<T>,
 }
 

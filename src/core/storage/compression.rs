@@ -4,7 +4,7 @@ use crate::core::foundation::BaseConfig;
 use serde::{Deserialize, Serialize};
 
 /// Unified compression algorithm enum - replaces 10+ duplicates
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,

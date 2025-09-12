@@ -74,7 +74,7 @@ pub enum ExecutionStrategy {
 }
 
 /// Strategy configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StrategyConfig {
     /// Enable cost-based optimization
     pub enable_cost_based: bool,
@@ -96,7 +96,7 @@ pub struct StrategyConfig {
 }
 
 /// Collection metadata for strategy decisions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CollectionMetadata {
     pub collection_id: String,
     pub vector_count: usize,
@@ -118,7 +118,7 @@ struct CostEstimator {
     model_params: ModelParameters,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CostRecord {
     strategy: String,
     vector_count: usize,
@@ -128,7 +128,7 @@ struct CostRecord {
     cpu_usage_percent: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ModelParameters {
     /// Cost per vector for different operations (microseconds)
     fp32_cost_per_vector: f64,
@@ -154,7 +154,7 @@ struct PerformanceTracker {
     strategy_success: Arc<RwLock<HashMap<String, SuccessMetrics>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct QueryPerformance {
     query_id: u64,
     strategy: ExecutionStrategy,
@@ -553,7 +553,7 @@ impl SmartExecutionStrategy {
 }
 
 /// Query analysis results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct QueryAnalysis {
     has_filters: bool,
     filter_selectivity: f32,
@@ -567,7 +567,7 @@ struct QueryAnalysis {
 }
 
 /// Execution hints for optimizing the selected strategy
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionHints {
     pub prefetch_indexes: bool,
     pub warm_cache: bool,
@@ -743,7 +743,7 @@ impl ResourceMonitor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ResourceState {
     memory: MemoryStats,
     cpu: CpuStats,

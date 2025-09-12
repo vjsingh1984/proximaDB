@@ -19,7 +19,7 @@ use crate::core::memory::VectorMemoryPool;
 use crate::core::serialization::VectorSerializationConfig;
 
 /// Configuration for streaming compression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingConfig {
     /// Buffer size for batching vectors
     pub buffer_size: usize,

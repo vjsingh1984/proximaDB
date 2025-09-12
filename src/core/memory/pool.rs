@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, trace};
 
 /// Configuration for memory pool behavior
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolConfig {
     /// Initial pool size
     pub initial_size: usize,
@@ -557,7 +557,7 @@ impl Default for VectorMemoryPool {
 }
 
 /// Comprehensive statistics for vector memory pools
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorPoolStats {
     pub serialization: PoolStats,
     pub vector: PoolStats,

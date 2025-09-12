@@ -479,7 +479,7 @@ impl VectorSerializationConfig {
 }
 
 /// Analysis results for a vector
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorAnalysis {
     pub dimension: usize,
     pub sparsity: f32, // Ratio of zero/near-zero elements

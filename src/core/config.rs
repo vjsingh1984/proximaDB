@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
     pub storage: StorageConfig,
@@ -34,35 +33,27 @@ pub struct TlsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareConfig {
     /// Enable automatic hardware detection (default: true)
-    #[serde(default = "default_true")]
     pub enable_detection: bool,
 
     /// Enable GPU acceleration if detected (default: true)
-    #[serde(default = "default_true")]
     pub enable_gpu_acceleration: bool,
 
     /// Enable SIMD acceleration if detected (default: true)
-    #[serde(default = "default_true")]
     pub enable_simd: bool,
 
     /// Enable AVX-512 if available (default: true)
-    #[serde(default = "default_true")]
     pub enable_avx512: bool,
 
     /// Enable GPU for SQL parsing (default: true)
-    #[serde(default = "default_true")]
     pub enable_gpu_parsing: bool,
 
     /// Enable GPU for distance calculations (default: true)
-    #[serde(default = "default_true")]
     pub enable_gpu_similarity: bool,
 
     /// Minimum vector size to use GPU (default: 64)
-    #[serde(default = "default_gpu_min_vector_size")]
     pub gpu_min_vector_size: usize,
 
     /// Minimum batch size to use GPU (default: 100)
-    #[serde(default = "default_gpu_min_batch_size")]
     pub gpu_min_batch_size: usize,
 }
 
@@ -97,51 +88,39 @@ impl Default for HardwareConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SksConfig {
     /// Enable SKS features (default: false)
-    #[serde(default = "default_false_sks")]
     pub enabled: bool,
 
     /// Enable entity storage (default: true when SKS enabled)
-    #[serde(default = "default_true")]
     pub enable_entities: bool,
 
     /// Enable graph relationships (default: true when SKS enabled)
-    #[serde(default = "default_true")]
     pub enable_relations: bool,
 
     /// Enable provenance tracking (default: true when SKS enabled)
-    #[serde(default = "default_true")]
     pub enable_provenance: bool,
 
     /// Enable temporal versioning (default: false)
-    #[serde(default = "default_false_sks")]
     pub enable_temporal: bool,
 
     /// Enable SQL extensions (SIMILAR, FOLLOW, ASSEMBLE)
-    #[serde(default = "default_true")]
     pub enable_sql_extensions: bool,
 
     /// Maximum embedding versions per entity (default: 10)
-    #[serde(default = "default_max_embedding_versions")]
     pub max_embedding_versions: usize,
 
     /// Maximum graph traversal depth (default: 5)
-    #[serde(default = "default_max_traversal_depth")]
     pub max_traversal_depth: usize,
 
     /// Cache size for entity store in MB (default: 256)
-    #[serde(default = "default_entity_cache_mb")]
     pub entity_cache_mb: usize,
 
     /// Cache size for relations in MB (default: 128)
-    #[serde(default = "default_relations_cache_mb")]
     pub relations_cache_mb: usize,
 
     /// Default embedding model for text-to-vector conversion
-    #[serde(default = "default_embedding_model")]
     pub default_embedding_model: String,
 
     /// Storage backend for SKS data ("memory", "sst", "viper")
-    #[serde(default = "default_sks_backend")]
     pub storage_backend: String,
 }
 
@@ -215,7 +194,6 @@ impl Default for Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheRuntimeConfig {
     /// Total memory budget for orchestrator-managed caches (in MB)
-    #[serde(default = "default_orchestrator_budget_mb")]
     pub total_memory_mb: u64,
 }
 
@@ -229,14 +207,12 @@ impl Default for CacheRuntimeConfig {
 
 /// Graph runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct GraphRuntimeConfig {
     /// Enable bounded prefetch hints during traversals
     pub enable_prefetch: bool,
     /// Per-node/iteration adjacency prefetch budget
     pub prefetch_budget: usize,
     /// Select graph engine ("ORION"|"PULSAR"|"QUASAR")
-    #[serde(default = "default_graph_engine")] 
     pub engine: String,
 }
 
@@ -250,7 +226,6 @@ fn default_graph_engine() -> String { "ORION".to_string() }
 
 /// Hybrid query runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct HybridRuntimeConfig {
     /// Default seeding strategy ("AVERAGE"|"PER_SEED"|"NONE")
     pub seeding_strategy: String,
@@ -295,7 +270,6 @@ impl Default for StorageConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct ServerConfig {
     pub node_id: String,
     pub bind_address: String,
@@ -306,7 +280,6 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
 pub struct StorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
@@ -315,11 +288,9 @@ pub struct StorageConfig {
     pub metadata_url: String,
 
     /// Assignment configuration
-    #[serde(default)]
     pub assignment_config: AssignmentConfig,
 
     /// Write buffer configuration (global memtable settings)
-    #[serde(default)]
     pub wal_config: WriteBufferUserConfig,
 
     /// Storage engine configurations
@@ -331,7 +302,6 @@ pub struct StorageConfig {
     pub bloom_filter_config: Option<BloomFilterConfig>,
 
     /// Common compaction configuration (can be overridden per engine)
-    #[serde(default)]
     pub compaction_config: CompactionConfig,
 
     /// Filesystem optimization settings
@@ -345,11 +315,9 @@ pub struct StorageLocation {
     pub url: String,
 
     /// Weight for weighted distribution (default: 1)
-    #[serde(default = "default_weight")]
     pub weight: u32,
 
     /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"])
-    #[serde(default)]
     pub tags: Vec<String>,
 }
 
@@ -371,10 +339,8 @@ impl Default for StorageLocation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssignmentConfig {
     /// Assignment strategy: "hash", "round-robin", "weighted"
-    #[serde(default = "default_assignment_strategy")]
     pub strategy: String,
     /// Keep all collection data together (WAL, data, index on same location)
-    #[serde(default = "default_affinity")]
     pub affinity: bool,
 }
 
@@ -628,27 +594,21 @@ impl WriteBufferUserConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionConfig {
     /// L0 file count threshold for compaction (default: 5)
-    #[serde(default = "default_l0_file_threshold")]
     pub l0_file_threshold: usize,
 
     /// L0 size threshold in MB for compaction (default: 256MB)
-    #[serde(default = "default_l0_size_threshold_mb")]
     pub l0_size_threshold_mb: usize,
 
     /// Multiplier for higher level thresholds (default: 2.0)
-    #[serde(default = "default_level_multiplier")]
     pub level_multiplier: f64,
 
     /// Maximum number of levels (default: 7)
-    #[serde(default = "default_max_levels")]
     pub max_levels: u8,
 
     /// Compaction strategy: "count", "size", or "hybrid" (default: "hybrid")
-    #[serde(default = "default_compaction_strategy")]
     pub strategy: String,
 
     /// Target output file size in MB for size-based compaction (default: 128MB)
-    #[serde(default = "default_target_file_size_mb")]
     pub target_file_size_mb: usize,
 }
 
@@ -693,7 +653,6 @@ pub struct SstConfig {
     pub compaction_threshold: u32,
 
     /// Compaction configuration (overrides common config if specified)
-    #[serde(default)]
     pub compaction_config: Option<CompactionConfig>,
     /// SSTable block size in KB. Configurable from TOML, defaults to 1MB.
     ///
@@ -718,7 +677,6 @@ pub struct SstConfig {
     /// Compression algorithm (snappy, lz4, zstd, none)
     pub compression: String,
     /// Compression level (1-22 for ZSTD, ignored for other algorithms)
-    #[serde(default = "default_compression_level")]
     pub compression_level: i32,
     /// Bloom filter configuration for SST files
     pub bloom_filter_config: Option<BloomFilterConfig>,
@@ -753,7 +711,6 @@ pub struct ViperConfig {
     /// Compression for Parquet files (snappy, gzip, lz4, zstd)
     pub compression: String,
     /// Compression level (1-22 for ZSTD, ignored for other algorithms)
-    #[serde(default = "default_compression_level")]
     pub compression_level: i32,
     /// Enable statistics in Parquet files
     pub enable_statistics: bool,
@@ -763,7 +720,6 @@ pub struct ViperConfig {
     pub cache_size_mb: u64,
 
     /// Compaction configuration (overrides common config if specified)
-    #[serde(default)]
     pub compaction_config: Option<CompactionConfig>,
 }
 
@@ -944,23 +900,18 @@ pub struct ApiConfig {
     pub timeout_seconds: u64,
     pub enable_tls: Option<bool>,
     /// Interval for background TTL sweeper in seconds (default: 900 = 15 minutes)
-    #[serde(default = "default_ttl_sweep_interval")]
     pub ttl_sweep_interval_seconds: u64,
 
     /// Enable REST API compression (default: false)
-    #[serde(default = "default_false")]
     pub rest_compression: bool,
 
     /// Enable gRPC compression (default: false)
-    #[serde(default = "default_false")]
     pub grpc_compression: bool,
 
     /// Compression algorithm: "gzip", "deflate", "br" (default: "gzip")
-    #[serde(default = "default_compression_algorithm")]
     pub compression_algorithm: String,
 
     /// Compression level 1-9 for gzip, 1-11 for brotli (default: 6)
-    #[serde(default = "default_compression_level_api")]
     pub compression_level: i32,
 }
 
@@ -1005,48 +956,37 @@ pub struct WalStorageConfig {
     pub write_buffer_urls: Vec<String>,
 
     /// Distribution strategy for collections across WAL directories
-    #[serde(default)]
     pub distribution_strategy: WalDistributionStrategy,
 
     /// Whether to keep each collection on a single WAL directory
-    #[serde(default = "default_collection_affinity")]
     pub collection_affinity: bool,
 
     /// Memory flush threshold per collection (bytes)
-    #[serde(default = "default_memory_flush_size")]
     pub memory_flush_size_bytes: usize,
 
     /// Global WAL size threshold for forced flush (bytes)
-    #[serde(default = "default_global_flush_threshold")]
     pub global_flush_threshold: usize,
 
     /// WAL strategy type (Avro vs Bincode)
-    #[serde(default = "default_strategy_type")]
     pub strategy_type: Option<String>,
 
     /// Memtable type for memory structure
-    #[serde(default = "default_memtable_type")]
     pub memtable_type: Option<String>,
 
     /// Sync mode for durability vs performance tradeoff
-    #[serde(default = "default_sync_mode")]
     pub sync_mode: Option<String>,
 
     /// Batch threshold for operations
-    #[serde(default = "default_batch_threshold")]
     pub batch_threshold: Option<usize>,
 
     /// Write buffer size in MB
-    #[serde(default = "default_write_buffer_size_mb")]
     pub write_buffer_size_mb: Option<usize>,
 
     /// Maximum concurrent flush operations
-    #[serde(default = "default_concurrent_flushes")]
     pub concurrent_flushes: Option<usize>,
 
     /// Shrink factor for global threshold management (percentage)
     /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
-    #[serde(default = "default_global_shrink_factor")]
     pub global_shrink_factor: Option<f64>,
 }
 

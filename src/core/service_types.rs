@@ -105,7 +105,7 @@ lazy_static::lazy_static! {
 /// Unified vector record - single source of truth, generated from Avro schema
 /// This replaces ALL previous VectorRecord implementations across the codebase
 /// Aligned with proto: no created_at, optional fields where appropriate
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorRecord {
     pub id: String,
     pub collection_id: String,
@@ -280,27 +280,27 @@ impl VectorRecord {
             let sql_value = match value {
                 serde_json::Value::String(s) => {
                     crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
                     }
                 }
                 serde_json::Value::Number(n) => {
                     if let Some(f) = n.as_f64() {
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
                         }
                     } else {
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
+                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
                         }
                     }
                 }
                 serde_json::Value::Bool(b) => {
                     crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
+                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
                     }
                 }
                 _ => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
+                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(prost_types::NullValue::default().into())),
                 },
             };
             metadata_map.insert(key.clone(), sql_value);
@@ -374,7 +374,7 @@ impl VectorRecord {
 }
 
 /// Domain search hit (engine-agnostic)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
     pub id: String,
     pub score: f32,
@@ -384,7 +384,7 @@ pub struct SearchHit {
 }
 
 /// Domain search result set
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainSearchResult {
     pub results: Vec<SearchHit>,
     pub total_found: i64,
@@ -392,21 +392,18 @@ pub struct DomainSearchResult {
 }
 
 /// Use proto-generated enums as single source of truth
-pub use crate::proto::proximadb_v1::DistanceMetric;
-pub use crate::proto::proximadb_v1::IndexingAlgorithm;
-pub use crate::proto::proximadb_v1::StorageEngine;
+// Note: Using string representations instead of proto enums for JSON serialization
+// Proto enums don't derive Serialize/Deserialize by default
+pub type DistanceMetric = String;
+pub type IndexingAlgorithm = String;  
+pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompressionAlgorithm {
-    #[serde(rename = "NONE")]
     None,
-    #[serde(rename = "SNAPPY")]
     Snappy,
-    #[serde(rename = "LZ4")]
     Lz4,
-    #[serde(rename = "ZSTD")]
     Zstd,
-    #[serde(rename = "GZIP")]
     Gzip,
 }
 
@@ -417,15 +414,11 @@ impl Default for CompressionAlgorithm {
 }
 
 /// Compaction strategies for storage optimization
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CompactionStrategy {
-    #[serde(rename = "SIZE_TIERED")]
     SizeTiered,
-    #[serde(rename = "LEVELED")]
     Leveled,
-    #[serde(rename = "TIME_WINDOW")]
     TimeWindow,
-    #[serde(rename = "NONE")]
     None,
 }
 
@@ -476,33 +469,39 @@ pub struct CollectionConfig {
     /// Indexing configuration parameters
     pub indexing_config: HashMap<String, String>,
     /// New filterable columns API (replaces filterable_metadata_fields)
-    #[serde(default)]
     pub filterable_columns: Vec<String>,
+}
+
+/// Service-level Collection type (JSON-serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    pub dimension: i32,
+    pub distance_metric: String,
+    pub storage_engine: String,
+    pub indexing_algorithm: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Vector operation response metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorOperationMetrics {
     /// Total number of vectors processed
-    #[serde(default)]
     pub total_processed: i64,
     /// Number of successful operations
-    #[serde(default)]
     pub successful_count: i64,
     /// Number of failed operations
-    #[serde(default)]
     pub failed_count: i64,
     /// Number of updated vectors (for UPSERT)
-    #[serde(default)]
     pub updated_count: i64,
     /// Total processing time in microseconds
-    #[serde(default)]
     pub processing_time_us: i64,
     /// WAL write time in microseconds
-    #[serde(default)]
     pub wal_write_time_us: i64,
     /// Index update time in microseconds
-    #[serde(default)]
     pub index_update_time_us: i64,
 }
 
@@ -528,7 +527,6 @@ pub struct VectorInsertRequest {
     /// Vector records to insert (supports single or batch)
     pub vectors: Vec<VectorRecord>,
     /// Update if vector ID already exists
-    #[serde(default)]
     pub upsert_mode: bool,
     /// Optional batch identifier for tracking
     pub batch_id: Option<String>,
@@ -675,8 +673,7 @@ pub struct VectorSearchResponse {
 }
 
 /// Collection operation types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "UPPERCASE")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CollectionOperation {
     Create,
     Update,
@@ -692,19 +689,14 @@ pub struct CollectionRequest {
     /// Type of collection operation to perform
     pub operation: CollectionOperation,
     /// Collection identifier (required for all ops except CREATE and LIST)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub collection_id: Option<String>,
     /// Collection configuration (for CREATE and UPDATE operations)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub collection_config: Option<CollectionConfig>,
     /// Query parameters (limit, offset, filters, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub query_params: Option<HashMap<String, String>>,
     /// Operation options (force, include_stats, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<HashMap<String, bool>>,
     /// Migration configuration for MIGRATE operations
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub migration_config: Option<HashMap<String, String>>,
 }
 
@@ -715,26 +707,19 @@ pub struct CollectionResponse {
     pub success: bool,
     /// Type of operation that was performed
     pub operation: CollectionOperation,
-    /// Single collection result (for GET operation) - use proto Collection
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub collection: Option<crate::proto::proximadb_v1::Collection>,
-    /// Multiple collections result (for LIST operation) - use proto Collection
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub collections: Vec<crate::proto::proximadb_v1::Collection>,
+    /// Single collection result (for GET operation) - use service-level Collection
+    pub collection: Option<Collection>,
+    /// Multiple collections result (for LIST operation) - use service-level Collection
+    pub collections: Vec<Collection>,
     /// Number of affected items
-    #[serde(default)]
     pub affected_count: i64,
     /// Total count for pagination
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_count: Option<i64>,
     /// Operation metadata
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
     /// Error message if operation failed
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
     /// Error code if operation failed
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
     /// Processing time in microseconds
     pub processing_time_us: i64,
@@ -829,7 +814,7 @@ impl CollectionResponse {
     }
 
     /// Set the single collection result
-    pub fn with_collection(mut self, collection: crate::proto::proximadb_v1::Collection) -> Self {
+    pub fn with_collection(mut self, collection: Collection) -> Self {
         self.collection = Some(collection);
         self.affected_count = 1;
         self
@@ -838,7 +823,7 @@ impl CollectionResponse {
     /// Set the multiple collections result
     pub fn with_collections(
         mut self,
-        collections: Vec<crate::proto::proximadb_v1::Collection>,
+        collections: Vec<Collection>,
     ) -> Self {
         self.affected_count = collections.len() as i64;
         self.collections = collections;
@@ -853,7 +838,7 @@ pub type NodeId = String;
 pub type Vector = Vec<f32>;
 
 /// Metadata filter for server-side filtering operations
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetadataFilter {
     /// Field-based filter with specific condition
     Field {
@@ -869,7 +854,7 @@ pub enum MetadataFilter {
 }
 
 /// Conditions for field-based filtering
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FieldCondition {
     /// Equal to value
     Equals(serde_json::Value),
@@ -905,7 +890,7 @@ pub enum FieldCondition {
 }
 
 /// Vector operations for batch processing
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VectorOperation {
     /// Insert a new vector
     Insert {
@@ -949,7 +934,7 @@ pub enum VectorOperation {
 ///
 /// # Usage
 /// Used by API handlers to receive search requests from clients.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
     pub collection_id: String,
     pub query_vector: Vec<f32>,
@@ -964,7 +949,7 @@ pub struct SearchRequest {
 }
 
 /// Search strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SearchStrategy {
     /// Exact search (brute force)
     Exact,
@@ -979,7 +964,7 @@ pub enum SearchStrategy {
 }
 
 /// Operation result enum
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OperationResult {
     /// Vector was inserted
     Inserted { vector_id: String },
@@ -1091,7 +1076,6 @@ pub struct OperationResponse {
     /// Processing time in microseconds
     pub processing_time_us: i64,
     /// Additional metadata
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
 }
 
@@ -1178,5 +1162,5 @@ impl OperationResponse {
 // Type aliases for backward compatibility during migration
 pub type UnifiedVectorRecord = VectorRecord;
 pub type UnifiedSearchResult = OptimizedSearchRecord;
-pub type UnifiedCollection = crate::proto::proximadb_v1::Collection;
+pub type UnifiedCollection = Collection; // Now using service-level Collection type
 pub type VectorSearchResult = OptimizedSearchRecord; // Alias from schema_types.rs

@@ -17,7 +17,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
 /// Vector search result with storage tier metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// A search candidate from a specific storage tier awaiting deduplication
 pub struct TieredSearchCandidate {
     pub vector_record: VectorRecord,
@@ -213,34 +213,34 @@ impl MultiTierDeduplicator {
                             // Convert metadata value to JSON for comparison
                             let actual_json = match &item.value {
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                         s,
                                     ),
                                 ) => serde_json::Value::String(s.clone()),
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                         n,
                                     ),
                                 ) => serde_json::Number::from_f64(*n)
                                     .map(serde_json::Value::Number)
                                     .unwrap_or_else(|| serde_json::Value::String(n.to_string())),
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
                                 ) => serde_json::Value::Bool(*b),
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
                                 ) => serde_json::Value::Number(serde_json::Number::from(*i)),
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_),
                                 ) => serde_json::Value::String("[binary]".to_string()),
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_),
                                 ) => serde_json::Value::Null,
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_),
                                 ) => serde_json::Value::String("[array]".to_string()),
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_),
                                 ) => serde_json::Value::String("[object]".to_string()),
                                 None => serde_json::Value::Null,
                             };
@@ -439,7 +439,7 @@ impl MultiTierDeduplicator {
 }
 
 /// Statistics for deduplication process
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeduplicationStats {
     pub unique_ids: usize,
     pub records_without_id: usize,

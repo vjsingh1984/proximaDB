@@ -83,7 +83,7 @@
 //! - **Enterprise Ready**: RBAC, audit logs, compliance
 
 /// REST and gRPC API definitions and protocol contracts
-pub mod api;
+// pub mod api; // Removed - using proto types directly with serde compatibility
 
 /// Shared infrastructure components for cross-cutting concerns
 pub mod infrastructure;

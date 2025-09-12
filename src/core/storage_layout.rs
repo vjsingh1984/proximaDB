@@ -433,7 +433,7 @@ pub enum TempOperationType {
 }
 
 /// Collection paths result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionPaths {
     pub collection_uuid: String,
     pub wal_path: PathBuf,

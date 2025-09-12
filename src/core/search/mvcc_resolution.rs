@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use tracing::debug;
 
 /// MVCC resolution result for a single record
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MvccResolutionResult {
     /// Whether this record should be included in results
     pub include: bool,

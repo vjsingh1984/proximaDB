@@ -145,7 +145,7 @@ impl<D: FixedDimension> std::ops::IndexMut<usize> for FixedVector<D> {
 }
 
 /// Configuration for fixed-length vector serialization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixedLengthConfig {
     /// Enable compression for vectors above this sparsity threshold
     pub compression_sparsity_threshold: f32,
@@ -508,7 +508,7 @@ impl<D: FixedDimension> FixedLengthSerializer<D> {
 }
 
 /// Analysis results for fixed-length vectors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FixedVectorAnalysis {
     pub dimension: usize,
     pub sparsity: f32,

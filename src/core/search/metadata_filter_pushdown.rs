@@ -30,7 +30,7 @@ pub struct MetadataFilterPushdown {
 }
 
 /// Statistics for a metadata column
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStatistics {
     pub column_name: String,
     pub distinct_values: usize,
@@ -361,28 +361,28 @@ impl MetadataFilterPushdown {
         for (key, entry) in &record.metadata {
             // Convert the protobuf metadata value to serde_json::Value
             if let Some(ref proto_value) = entry.value {
-                use crate::proto::proximadb_v1::sql_value;
+                // No longer need sql_value module - using optional fields directly
                 let json_value = match proto_value {
-                    sql_value::Value::StringValue(s) => Value::String(s.clone()),
-                    sql_value::Value::NumberValue(n) => {
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Value::String(s.clone()),
+                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                         if let Some(num) = serde_json::Number::from_f64(*n) {
                             Value::Number(num)
                         } else {
                             continue;
                         }
                     }
-                    sql_value::Value::BoolValue(b) => Value::Bool(*b),
-                    sql_value::Value::Int64Value(i) => {
+                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Value::Bool(*b),
+                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                         if let Some(num) = serde_json::Number::from_f64(*i as f64) {
                             Value::Number(num)
                         } else {
                             continue;
                         }
                     }
-                    sql_value::Value::BytesValue(_) => Value::String("[binary]".to_string()),
-                    sql_value::Value::NullValue(_) => Value::Null,
-                    sql_value::Value::ArrayValue(_) => Value::String("[array]".to_string()),
-                    sql_value::Value::ObjectValue(_) => Value::String("[object]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => Value::String("[binary]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => Value::Null,
+                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => Value::String("[array]".to_string()),
+                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => Value::String("[object]".to_string()),
                 };
                 metadata.insert(key.clone(), json_value);
             }
