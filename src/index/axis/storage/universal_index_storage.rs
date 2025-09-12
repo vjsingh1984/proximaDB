@@ -47,7 +47,7 @@ pub trait IndexData: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync
 }
 
 /// Storage location and format
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageLocation {
     /// In-memory with bincode format
     Memory,
@@ -67,7 +67,7 @@ pub enum StorageEngine {
 }
 
 /// Index storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStorageConfig {
     pub storage_location: StorageLocation,
     pub storage_engine: StorageEngine,
@@ -508,7 +508,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                             "serialized_data".to_string(),
                             crate::proto::proximadb_v1::SqlValue {
                                 value: Some(
-                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                         base64_encode(&value),
                                     ),
                                 ),
@@ -594,7 +594,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
 }
 
 /// Example implementation for HNSW graph nodes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HnswNode {
     pub id: usize,
     pub layer: usize,
@@ -612,7 +612,7 @@ impl IndexData for HnswNode {
 }
 
 /// Example implementation for LSH hash buckets
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LshBucket {
     pub table_id: usize,
     pub hash: u64,

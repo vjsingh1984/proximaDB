@@ -64,7 +64,7 @@ use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 /// - **PatchedBase**: Base encoding with exceptions
 /// - **Dictionary**: Replace values with dictionary indices
 /// - **RunLength**: Compress runs of identical values
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FastLanesMetadata {
     /// Encoding scheme used for this block
     pub scheme: FastLanesScheme,
@@ -93,7 +93,7 @@ pub struct FastLanesMetadata {
 }
 
 /// Quantized section for hierarchical storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedSection {
     pub binary_vectors: Option<Vec<Vec<u8>>>,
     pub int8_vectors: Option<Vec<Vec<i8>>>,
@@ -102,7 +102,7 @@ pub struct QuantizedSection {
 }
 
 /// Block metadata statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockMetadataStats {
     pub unique_keys: u32,
     pub null_values: u32,
@@ -122,7 +122,7 @@ pub struct BlockMetadataStats {
 /// 3. **Progressive Refinement**: Support multiple quantization levels
 /// 4. **Zero-Copy**: Enable direct memory mapping when possible
 /// 5. **Extensibility**: Encoding marker allows future format evolution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FastLanesDataBlock {
     /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
     ///
@@ -201,7 +201,7 @@ pub struct FastLanesDataBlock {
 
 /// Block metadata for FastLanes encoded blocks
 /// Shared between SST and SWIFT engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FastLanesBlockMetadata {
     /// Basic information
     pub record_count: u32,
@@ -227,7 +227,7 @@ pub struct FastLanesBlockMetadata {
 }
 
 /// Column statistics for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStatistics {
     pub name: String,
     pub null_count: u32,
@@ -238,7 +238,7 @@ pub struct ColumnStatistics {
     pub bloom_filter_enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnData {
     String,
     Integer,
@@ -249,7 +249,7 @@ pub enum ColumnData {
 }
 
 /// Quantization statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationStatistics {
     pub has_binary: bool,
     pub has_int8: bool,
@@ -261,7 +261,7 @@ pub struct QuantizationStatistics {
 }
 
 /// Block compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockCompressionConfig {
     pub algorithm: CompressionAlgorithm,
     pub compression_level: u8,
@@ -272,7 +272,7 @@ pub struct BlockCompressionConfig {
 }
 
 /// Block statistics for performance monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockStatistics {
     pub read_count: u64,
     pub write_count: u64,
@@ -321,7 +321,7 @@ pub struct SuperBlock {
 }
 
 /// Block layout configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockLayout {
     /// Layout strategy
     pub layout_type: LayoutType,
@@ -337,7 +337,7 @@ pub struct BlockLayout {
     pub padding_strategy: PaddingStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LayoutType {
     /// Sequential layout for streaming access
     Sequential,
@@ -349,7 +349,7 @@ pub enum LayoutType {
     Adaptive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PaddingStrategy {
     /// No padding
     None,
@@ -362,7 +362,7 @@ pub enum PaddingStrategy {
 }
 
 /// Access pattern tracking for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessPattern {
     pub pattern_type: AccessPatternType,
     pub frequency: HashMap<String, u64>,
@@ -371,7 +371,7 @@ pub struct AccessPattern {
     pub read_write_ratio: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AccessPatternType {
     Sequential,
     Random,
@@ -381,7 +381,7 @@ pub enum AccessPatternType {
 }
 
 /// Block location for ID indexing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockLocation {
     pub superblock_id: u32,
     pub block_id: u32,
@@ -422,7 +422,7 @@ impl FastLanesDataBlock {
             r.metadata.iter().any(|(key, sql_value)| {
             key == "_deleted" && matches!(
                 sql_value.value.as_ref(),
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
+                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
             )
         })
         });
@@ -772,16 +772,16 @@ impl FastLanesDataBlock {
                     if let Some(value) = &sql_value.value {
                         // Encode the metadata value based on its type
                         let value_bytes = match value {
-                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 s.as_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                                 n.to_le_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                 i.to_le_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                 vec![if *b { 1 } else { 0 }]
                             }
                             _ => vec![], // Handle other variants

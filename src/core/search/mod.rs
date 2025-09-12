@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Custom recall rates for progressive search stages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveRecalls {
     pub binary_recall: Option<f32>,
     pub int8_recall: Option<f32>,
@@ -31,7 +31,7 @@ pub struct ProgressiveRecalls {
 }
 
 /// Unified search parameters for all storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchParams {
     // Core search parameters
     /// Query vectors for similarity search (supports single or batch search)
@@ -183,7 +183,7 @@ impl SearchParams {
 }
 
 /// Complex filter expression for advanced metadata filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterExpression {
     /// Single comparison operation
     Comparison {
@@ -200,7 +200,7 @@ pub enum FilterExpression {
 }
 
 /// Comparison operators for metadata filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ComparisonOperator {
     Equals,
     NotEquals,
@@ -842,28 +842,28 @@ pub mod protocol_conversions {
             .iter()
             .map(|(field, sql_value)| {
                 let value = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::json!(n)
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::json!(*i)
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(bytes)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(bytes)) => {
                         serde_json::Value::String(format!("BYTES({} bytes)", bytes.len()))
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                         serde_json::Value::Array(vec![])  // Simplified for now
                     }
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                         serde_json::Value::Object(serde_json::Map::new())  // Simplified for now
                     }
                     None => serde_json::Value::Null,

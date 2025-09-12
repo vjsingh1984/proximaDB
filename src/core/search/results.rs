@@ -45,15 +45,15 @@ fn convert_json_map_to_sql_value_map(
         .map(|(key, json_value)| {
             let sql_value = match json_value {
                 serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                 },
                 serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                         n.as_f64().unwrap_or(0.0),
                     )),
                 },
                 serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                 },
                 _ => crate::proto::proximadb_v1::SqlValue { value: None },
             };
@@ -109,7 +109,7 @@ pub struct InternalSearchResult {
 }
 
 /// Debug information for search results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchDebugInfo {
     /// Algorithm used for this result
     pub algorithm: String,
@@ -120,7 +120,7 @@ pub struct SearchDebugInfo {
 }
 
 /// Quantization information for search results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationInfo {
     /// Quantization level used
     pub level: UnifiedQuantizationLevel,
@@ -133,7 +133,7 @@ pub struct QuantizationInfo {
 }
 
 /// Engine-specific optimization statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineStats {
     /// Strategy used (DirectArrow, MetadataFiltered, QuantizedTwoStage, Hybrid)
     pub strategy_used: String,
@@ -402,17 +402,17 @@ impl InternalSearchResult {
             for (key, value) in &self.metadata {
                 let sql_value = match value {
                     serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                             s.clone(),
                         )),
                     },
                     serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                             n.as_f64().unwrap_or(0.0),
                         )),
                     },
                     serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
                     },
                     _ => crate::proto::proximadb_v1::SqlValue { value: None },
                 };
@@ -790,7 +790,7 @@ impl OptimizedSearchRecord {
 
 /// Collection of search results with metadata
 /// Using Arc<[OptimizedSearchRecord]> for immutable, zero-copy sharing of results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchResultSet {
     /// Individual search results - immutable for performance
     pub results: Arc<[OptimizedSearchRecord]>,

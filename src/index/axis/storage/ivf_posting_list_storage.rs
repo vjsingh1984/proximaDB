@@ -36,14 +36,14 @@ use crate::storage::engines::impls::sst::writer::SstableWriter;
 pub type PostingEntry = PostingListEntry;
 
 /// Posting list entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PostingListEntry {
     pub vector_id: String,
     pub distance_to_centroid: f32,
 }
 
 /// Complete posting list for a cluster
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PostingList {
     pub cluster_id: usize,
     pub entries: Vec<PostingListEntry>,
@@ -171,7 +171,7 @@ impl PostingListStorage {
                     metadata.insert(
                         "cluster_id".to_string(),
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                 cluster_id.to_string(),
                             )),
                         },
@@ -179,7 +179,7 @@ impl PostingListStorage {
                     metadata.insert(
                         "vector_id".to_string(), 
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                 entry.vector_id.clone(),
                             )),
                         },
